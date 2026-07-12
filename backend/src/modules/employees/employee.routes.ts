@@ -6,6 +6,7 @@ import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
+import { employeeService } from "./employee.service.js";
 import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
@@ -429,6 +430,17 @@ router.put("/me/nominee", h(async (req: any, res: any) => {
     );
   }
   return res.json({ success: true, message: "Nominee saved" });
+}));
+
+// GET /api/employees/org-tree — role-scoped hierarchical org chart (must be before /:id)
+router.get("/org-tree", requireAuth, h(async (req: any, res: any) => {
+  const result = await employeeService.getOrgTree({
+    userId: req.authUser!.id,
+    processId: req.query.process_id as string | undefined,
+    branchId:  req.query.branch_id as string | undefined,
+    departmentId: req.query.department_id as string | undefined,
+  });
+  return res.json({ success: true, ...result });
 }));
 
 // GET /api/employees/stats — aggregate counts (must be before /:id to avoid route collision)

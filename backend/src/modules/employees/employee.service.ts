@@ -289,4 +289,136 @@ export const employeeService = {
       [id]
     );
   },
+
+  // ── Org Chart tree endpoint ──────────────────────────────────────────────
+  async getOrgTree(params: {
+    userId: string;
+    processId?: string;
+    branchId?: string;
+    departmentId?: string;
+  }): Promise<{ nodes: OrgTreeServiceNode[]; totalCount: number }> {
+    const { userId, processId, branchId, departmentId } = params;
+
+    // Resolve requester roles
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+      [userId]
+    );
+    const roles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
+
+    const isSuperAdmin = roles.includes("super_admin");
+    const isAdmin      = roles.includes("admin");
+    const isCeo        = roles.includes("ceo");
+    const isHr         = roles.includes("hr");
+    const isBranchHead = roles.includes("branch_head");
+    const isProcMgr    = roles.includes("process_manager") || roles.includes("manager");
+    const isWfm        = roles.includes("wfm") || roles.includes("operations_manager");
+
+    // Resolve own employee record for scope lookups
+    const [selfRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, branch_id, process_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId]
+    );
+    const self = (selfRows as { id: string; branch_id: string | null; process_id: string | null }[])[0];
+
+    // Build scope WHERE
+    const wheres: string[] = ["e.active_status = 1"];
+    const qp: unknown[] = [];
+
+    if (isSuperAdmin || isAdmin || isCeo || isHr) {
+      if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
+      if (branchId)     { wheres.push("e.branch_id = ?");     qp.push(branchId); }
+      if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+    } else if (isBranchHead) {
+      const scopeBranch = self?.branch_id;
+      if (!scopeBranch) return { nodes: [], totalCount: 0 };
+      wheres.push("e.branch_id = ?");
+      qp.push(scopeBranch);
+    } else if (isProcMgr || isWfm) {
+      const scopeProcess = self?.process_id;
+      if (!scopeProcess) return { nodes: [], totalCount: 0 };
+      wheres.push("e.process_id = ?");
+      qp.push(scopeProcess);
+    } else {
+      // Employee / executive / agent: scope to own process
+      const scopeProcess = self?.process_id;
+      if (scopeProcess) {
+        wheres.push("e.process_id = ?");
+        qp.push(scopeProcess);
+      } else if (self?.id) {
+        wheres.push("e.id = ?");
+        qp.push(self.id);
+      } else {
+        return { nodes: [], totalCount: 0 };
+      }
+    }
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id,
+         e.employee_code,
+         TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
+         d.designation_name AS designation,
+         p.process_name,
+         b.branch_name,
+         dept.dept_name AS department_name,
+         COALESCE(NULLIF(TRIM(e.avatar_url), ''), NULLIF(TRIM(e.photo_url), '')) AS avatar_url,
+         COALESCE(e.reporting_manager_id, e.manager_id) AS reporting_manager_id,
+         (SELECT ur2.role_key FROM user_roles ur2
+          WHERE ur2.user_id = e.user_id AND ur2.active_status = 1
+          ORDER BY FIELD(ur2.role_key,
+            'super_admin','admin','ceo','hr','branch_head',
+            'process_manager','manager','team_leader','tl',
+            'assistant_manager','employee') LIMIT 1
+         ) AS role_key,
+         e.active_status
+       FROM employees e
+       LEFT JOIN designation_master d    ON d.id    = e.designation_id
+       LEFT JOIN process_master    p     ON p.id    = e.process_id
+       LEFT JOIN branch_master     b     ON b.id    = e.branch_id
+       LEFT JOIN department_master dept  ON dept.id = e.department_id
+      WHERE ${wheres.join(" AND ")}
+      ORDER BY e.date_of_joining ASC`,
+      qp
+    );
+
+    const employees = empRows as OrgTreeServiceNode[];
+    const totalCount = employees.length;
+
+    // Build tree in O(n) using a Map
+    const byId = new Map<string, OrgTreeServiceNode & { children: OrgTreeServiceNode[] }>();
+    for (const emp of employees) {
+      byId.set(emp.id, { ...emp, children: [] });
+    }
+
+    const scopedIds = new Set(employees.map((e) => e.id));
+    const roots: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
+
+    for (const emp of employees) {
+      const mgr = emp.reporting_manager_id;
+      if (!mgr || !scopedIds.has(mgr)) {
+        roots.push(byId.get(emp.id)!);
+      } else {
+        byId.get(mgr)!.children.push(byId.get(emp.id)!);
+      }
+    }
+
+    return { nodes: roots, totalCount };
+  },
 };
+
+// Internal type for org tree — not exported to avoid polluting Employee types
+interface OrgTreeServiceNode {
+  id: string;
+  employee_code: string;
+  name: string;
+  designation: string | null;
+  process_name: string | null;
+  branch_name: string | null;
+  department_name: string | null;
+  avatar_url: string | null;
+  reporting_manager_id: string | null;
+  role_key: string | null;
+  active_status: number;
+  children: OrgTreeServiceNode[];
+}

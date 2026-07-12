@@ -2,9 +2,9 @@ import type { FC, SVGProps } from "react";
 import {
   Activity, BarChart3, Bell, Briefcase, Building2, Calendar,
   CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
-  FileText, GraduationCap, Heart, Home, Landmark,
+  FileText, GitBranch, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
-  Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Wallet,
+  Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
@@ -21,6 +21,7 @@ export const navGroups: NavGroup[] = [
       { label: "My Modules",    href: "/modules",       icon: ic(Package),       description: "All allowed pages" },
       { label: "Notifications", href: "/notifications", icon: ic(Bell),          description: "Personal updates" },
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
+      { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], description: "Team attendance, leave, KPI & approvals" },
       { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Reports" },
     ],
   },
@@ -85,8 +86,9 @@ export const navGroups: NavGroup[] = [
   {
     title: "People & Hiring",
     items: [
-      { label: "Employees",    href: "/employees",   icon: ic(Users),     roles: ["admin","hr","manager","branch_head","process_manager"], description: "Directory" },
-      { label: "Departments",  href: "/departments", icon: ic(Building2), roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Departments" },
+      { label: "Employees",    href: "/employees",   icon: ic(Users),      roles: ["admin","hr","manager","branch_head","process_manager"], description: "Directory" },
+      { label: "Org Chart",    href: "/org-chart",   icon: ic(GitBranch),  pageCode: "ORG_CHART", description: "Company hierarchy" },
+      { label: "Departments",  href: "/departments", icon: ic(Building2),  roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Departments" },
       {
         label: "ATS",          href: "/ats/command-center", icon: ic(Briefcase), pageCode: "ATS_DASHBOARD", description: "Recruitment",
         children: [

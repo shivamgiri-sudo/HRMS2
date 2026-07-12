@@ -122,6 +122,7 @@ const NativePerformanceFeedbackForm = lazy(() => import("./pages/NativePerforman
 const NativePerformanceFeedbackTeamReports = lazy(() => import("./pages/NativePerformanceFeedbackTeamReports"));
 
 // People
+const NativeOrgChart                = lazy(() => import("./pages/NativeOrgChart"));
 const NativeEmployeeStatCard        = lazy(() => import("./pages/NativeEmployeeStatCard"));
 const NativeEmployee360             = lazy(() => import("./pages/NativeEmployee360"));
 const EmployeeJoiningDocumentsPage  = lazy(() => import("./pages/EmployeeJoiningDocumentsPage"));
@@ -266,6 +267,7 @@ const WfmDashboard          = lazy(() => import("./pages/dashboards/WfmDashboard
 const HrDashboard           = lazy(() => import("./pages/dashboards/HrDashboard"));
 const EmployeeSelfDashboard = lazy(() => import("./pages/dashboards/EmployeeSelfDashboard"));
 const ManagerDashboard      = lazy(() => import("./pages/dashboards/ManagerDashboard"));
+const MyTeamPage            = lazy(() => import("./pages/MyTeamPage"));
 
 // Expenses
 const MyExpenses = lazy(() => import("./pages/expenses/MyExpenses"));
@@ -325,6 +327,7 @@ const App = () => (
               <Route path="/walkin-registration" element={<Navigate to="/interview-registration" replace />} />
               <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
               <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
+              <Route path="/org-chart" element={<ProtectedRoute><Gate pageCode="ORG_CHART"><NativeOrgChart /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
               <Route path="/employees/:employeeId/joining-documents" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll', 'employee']}><EmployeeJoiningDocumentsPage /></ProtectedRoute>} />
@@ -584,6 +587,7 @@ const App = () => (
               <Route path="/wfm/dashboard" element={<ProtectedRoute><Gate pageCode="WFM_DASHBOARD"><WfmDashboard /></Gate></ProtectedRoute>} />
               <Route path="/hr/dashboard" element={<ProtectedRoute><Gate pageCode="HR_DASHBOARD"><HrDashboard /></Gate></ProtectedRoute>} />
               <Route path="/manager/dashboard" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><ManagerDashboard /></Gate></ProtectedRoute>} />
+              <Route path="/my-team" element={<ProtectedRoute roles={["manager","process_manager","tl","team_leader","assistant_manager","branch_head","admin","hr"]}><MyTeamPage /></ProtectedRoute>} />
               <Route path="/my-dashboard" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></Gate></ProtectedRoute>} />
 
               {/* DPDP Withdrawal */}
