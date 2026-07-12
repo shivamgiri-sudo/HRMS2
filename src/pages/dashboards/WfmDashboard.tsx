@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertCircle, ShieldX } from "lucide-react";
+import { AlertCircle, ShieldCheck, AlertTriangle, TrendingUp, Clock, ShieldX } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   DashboardDrilldownDrawer,
@@ -40,6 +40,13 @@ interface DrilldownState {
   metricName: string;
 }
 
+interface RosterHealth {
+  total_plans: number;
+  pending_approval: number;
+  best_coverage_score: number | null;
+  open_critical_gaps: number;
+}
+
 function hasValue(value: unknown): value is number | string {
   return value !== null && value !== undefined;
 }
@@ -58,6 +65,7 @@ export default function WfmDashboard() {
     metricCode: "",
     metricName: "",
   });
+  const [rosterHealth, setRosterHealth] = useState<RosterHealth | null>(null);
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -98,6 +106,15 @@ export default function WfmDashboard() {
       })
       .catch(() => {
         if (!cancelled) setOpsPulseFlags([]);
+      });
+
+    hrmsApi
+      .get<{ success: boolean; data: RosterHealth }>("/api/wfm/auto-roster/health-summary")
+      .then((res) => {
+        if (!cancelled) setRosterHealth(res?.data ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setRosterHealth(null);
       });
 
     return () => {
@@ -253,6 +270,35 @@ export default function WfmDashboard() {
         />
 
         <KpiMetricGrid metrics={metrics} columns={4} loading={summaryLoading} />
+
+        {rosterHealth && (
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-blue-600" />
+              Roster Health (last 30 days)
+            </h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-lg bg-slate-50 border p-3">
+                <p className="text-xs text-slate-500 font-medium flex items-center gap-1"><TrendingUp className="h-3 w-3" /> Active Plans</p>
+                <p className="mt-1 text-2xl font-black text-slate-900">{rosterHealth.total_plans}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 border p-3">
+                <p className="text-xs text-slate-500 font-medium flex items-center gap-1"><Clock className="h-3 w-3" /> Pending PM Approval</p>
+                <p className={`mt-1 text-2xl font-black ${rosterHealth.pending_approval > 0 ? "text-amber-600" : "text-slate-900"}`}>{rosterHealth.pending_approval}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 border p-3">
+                <p className="text-xs text-slate-500 font-medium flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> Best Coverage Score</p>
+                <p className={`mt-1 text-2xl font-black ${(rosterHealth.best_coverage_score ?? 0) >= 95 ? "text-emerald-600" : (rosterHealth.best_coverage_score ?? 0) >= 80 ? "text-amber-600" : "text-red-600"}`}>
+                  {rosterHealth.best_coverage_score != null ? `${rosterHealth.best_coverage_score}%` : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-slate-50 border p-3">
+                <p className="text-xs text-slate-500 font-medium flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Open Critical Gaps</p>
+                <p className={`mt-1 text-2xl font-black ${rosterHealth.open_critical_gaps > 0 ? "text-red-600" : "text-emerald-600"}`}>{rosterHealth.open_critical_gaps}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {opsPulseFlags.length > 0 && (
           <InterventionPanel flags={opsPulseFlags} title="Today's Operations Alerts" collapsible />

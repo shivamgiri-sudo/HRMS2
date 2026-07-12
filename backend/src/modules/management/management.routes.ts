@@ -171,6 +171,17 @@ router.post("/coaching/:coachingId/create-tni", requireRole("admin", "hr"), h(as
   res.status(201).json({ data });
 }));
 
+router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = await managementService.getAttritionBreakdown();
+    res.json({ success: true, data });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed";
+    console.error("[attrition-breakdown]", msg);
+    res.json({ success: true, data: [] });
+  }
+}));
+
 router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const data = await managementService.getCeoMetrics();

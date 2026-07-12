@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Loader2, Play, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Play, X, CheckCircle2, Clock, ArrowRight } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -52,8 +52,42 @@ type ActualRow = {
   branch_name: string | null;
   process_name: string | null;
 };
+const LIFECYCLE: string[] = ["draft", "submitted", "reviewed", "published", "acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed"];
 const next: Record<string, string> = { draft: "submitted", submitted: "reviewed", reviewed: "published", published: "acknowledged", acknowledged: "active", active: "variance_review", variance_review: "attendance_locked", attendance_locked: "payroll_input_ready", payroll_input_ready: "closed" };
 const today = new Date().toISOString().slice(0, 10);
+
+function formatIST(ts: string): string {
+  try {
+    return new Date(ts).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch { return ts; }
+}
+
+function LifecycleStepper({ status }: { status: string }) {
+  const currentIdx = LIFECYCLE.indexOf(status);
+  return (
+    <div className="flex flex-wrap items-center gap-1 py-3">
+      {LIFECYCLE.map((s, i) => {
+        const isPast = i < currentIdx;
+        const isCurrent = i === currentIdx;
+        const label = s.replaceAll("_", " ");
+        return (
+          <div key={s} className="flex items-center gap-1">
+            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition-all ${
+              isCurrent ? "bg-blue-700 text-white shadow-md" :
+              isPast    ? "bg-emerald-100 text-emerald-700" :
+                          "bg-slate-100 text-slate-400"
+            }`}>
+              {isPast && <CheckCircle2 className="h-3 w-3" />}
+              {isCurrent && <Clock className="h-3 w-3 animate-pulse" />}
+              <span className="capitalize">{label}</span>
+            </div>
+            {i < LIFECYCLE.length - 1 && <ArrowRight className="h-3 w-3 text-slate-300 flex-shrink-0" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function NativeWFMRoster() {
   const qc = useQueryClient();
@@ -66,6 +100,7 @@ export default function NativeWFMRoster() {
   const [rowsJson, setRowsJson] = useState("[]");
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [auditRunId, setAuditRunId] = useState<string | null>(null);
+  const [autoGenerateOnCreate, setAutoGenerateOnCreate] = useState(false);
 
   const processes = useQuery({ queryKey: ["processes"], queryFn: async () => (await hrmsApi.get<{ data: Process[] }>("/api/processes")).data ?? [] });
   const actualProcess = useQuery({
@@ -86,7 +121,7 @@ export default function NativeWFMRoster() {
   });
   const generationRuns = useQuery({
     queryKey: ["generation-runs", cycleId],
-    enabled: !!cycleId && showRunHistory,
+    enabled: !!cycleId,
     queryFn: async () => (await hrmsApi.get<{ data: GenerationRun[] }>(`/api/roster-gov/cycles/${cycleId}/generation-runs`)).data ?? [],
   });
   const decisionAudit = useQuery({
@@ -173,14 +208,40 @@ export default function NativeWFMRoster() {
         </Panel>
         <Panel title="Weekly Cycle" hint="Mapped Process Manager/WFM creates and publishes.">
           <div className="grid gap-2 sm:grid-cols-3"><Field label="Start" type="date" value={cycle.start} set={(v) => setCycle({ ...cycle, start: v })}/><Field label="End" type="date" value={cycle.end} set={(v) => setCycle({ ...cycle, end: v })}/><Field label="Required HC" type="number" value={cycle.hc} set={(v) => setCycle({ ...cycle, hc: v })}/></div>
-          <button className="mt-3 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { const r = await hrmsApi.post<{ data: Cycle }>("/api/roster-gov/cycles", { process_id: processId, week_start_date: cycle.start, week_end_date: cycle.end, required_hc_json: { weekly_required_hc: Number(cycle.hc || 0) } }); setCycleId(r.data.id); await qc.invalidateQueries({ queryKey: ["gov-cycles", processId] }); }, "Draft cycle created.")}>Create Draft Cycle</button>
+          <label className="mt-3 flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700">
+            <input type="checkbox" checked={autoGenerateOnCreate} onChange={(e) => setAutoGenerateOnCreate(e.target.checked)} className="h-4 w-4 rounded" />
+            Auto-generate roster immediately after creation
+          </label>
+          <button className="mt-3 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => {
+            const r = await hrmsApi.post<{ data: Cycle }>("/api/roster-gov/cycles", { process_id: processId, week_start_date: cycle.start, week_end_date: cycle.end, required_hc_json: { weekly_required_hc: Number(cycle.hc || 0) } });
+            const newCycleId = r.data.id;
+            setCycleId(newCycleId);
+            await qc.invalidateQueries({ queryKey: ["gov-cycles", processId] });
+            if (autoGenerateOnCreate) {
+              await hrmsApi.post(`/api/roster-gov/cycles/${newCycleId}/generate`, {});
+              setShowRunHistory(true);
+              await qc.invalidateQueries({ queryKey: ["generation-runs", newCycleId] });
+            }
+          }, autoGenerateOnCreate ? "Cycle created and generation triggered." : "Draft cycle created.")}>Create Draft Cycle</button>
           <div className="mt-3 space-y-2">{(cycles.data ?? []).map((c) => <button key={c.id} onClick={() => setCycleId(c.id)} className={`block w-full rounded-xl border p-3 text-left text-sm ${cycleId === c.id ? "bg-blue-50 border-blue-400" : ""}`}><b>{c.week_start_date} – {c.week_end_date}</b><span className="float-right capitalize">{c.status.replaceAll("_", " ")}</span></button>)}</div>
         </Panel>
       </div>
       {selected && <>
-        <Panel title={`Selected Cycle · ${selected.status.replaceAll("_", " ")}`} hint="Published roster assignments cannot be overwritten without recorded change control.">
-          <div className="flex flex-wrap gap-3">
-            {next[selected.status] && <button className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white" onClick={() => run(async () => { await hrmsApi.post(`/api/roster-gov/cycles/${cycleId}/status`, { status: next[selected.status] }); await qc.invalidateQueries({ queryKey: ["gov-cycles", processId] }); }, `Roster moved to ${next[selected.status]}.`)}>Advance to {next[selected.status].replaceAll("_", " ")}</button>}
+        <Panel title={`Selected Cycle · ${selected.week_start_date} – ${selected.week_end_date}`} hint="Published roster assignments cannot be overwritten without recorded change control.">
+          <LifecycleStepper status={selected.status} />
+          <div className="flex flex-wrap gap-3 mt-2">
+            {next[selected.status] && (
+              <button
+                className="flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-800"
+                onClick={() => run(async () => {
+                  await hrmsApi.post(`/api/roster-gov/cycles/${cycleId}/status`, { status: next[selected.status] });
+                  await qc.invalidateQueries({ queryKey: ["gov-cycles", processId] });
+                }, `Roster advanced to ${next[selected.status].replaceAll("_", " ")}.`)}
+              >
+                <ArrowRight className="h-4 w-4" />
+                Advance to {next[selected.status].replaceAll("_", " ")}
+              </button>
+            )}
             {(selected.status === "draft" || selected.status === "submitted") && (
               <button
                 disabled={generateMutation.isPending}
@@ -196,13 +257,41 @@ export default function NativeWFMRoster() {
               className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
             >
               {showRunHistory ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              Run History
+              Run History ({(generationRuns.data ?? []).length})
             </button>
           </div>
 
+          {/* Last generation run summary — always visible */}
+          {(generationRuns.data ?? []).length > 0 && (() => {
+            const lastRun = generationRuns.data![0];
+            return (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-500 mb-2">Last Generation Run</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { label: "Employees", value: lastRun.employees_processed ?? 0 },
+                    { label: "Assignments", value: lastRun.assignments_created ?? 0 },
+                    { label: "Week-offs", value: lastRun.weekoffs_allocated ?? 0 },
+                    { label: "Conflicts", value: lastRun.conflicts_found ?? 0, warn: (lastRun.conflicts_found ?? 0) > 0 },
+                  ].map((m) => (
+                    <div key={m.label} className={`rounded-xl p-3 text-center ${m.warn ? "bg-amber-50 border border-amber-200" : "bg-white border"}`}>
+                      <p className={`text-2xl font-black ${m.warn ? "text-amber-700" : "text-slate-900"}`}>{m.value}</p>
+                      <p className="text-xs text-slate-500">{m.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${lastRun.status === "completed" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{lastRun.status}</span>
+                  <span className="text-xs text-slate-400">{lastRun.started_at ? formatIST(lastRun.started_at) : ""}</span>
+                  {lastRun.error_details?.message && <span className="text-xs text-rose-600">{lastRun.error_details.message}</span>}
+                </div>
+              </div>
+            );
+          })()}
+
           {showRunHistory && (
             <div className="mt-4 space-y-3">
-              <h3 className="text-sm font-bold text-slate-700">Generation Runs</h3>
+              <h3 className="text-sm font-bold text-slate-700">All Generation Runs</h3>
               {generationRuns.isLoading ? (
                 <p className="text-sm text-slate-500">Loading...</p>
               ) : (generationRuns.data ?? []).length === 0 ? (

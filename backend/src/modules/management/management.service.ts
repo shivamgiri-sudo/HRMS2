@@ -954,4 +954,24 @@ export const managementService = {
       },
     };
   },
+
+  async getAttritionBreakdown(): Promise<{ reason: string; count: number; pct: number }[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(er.exit_reason_category, 'Not specified') AS reason,
+         COUNT(*) AS count,
+         ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct
+       FROM exit_request er
+       WHERE er.exit_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+         AND er.status IN ('completed', 'accepted', 'approved')
+       GROUP BY er.exit_reason_category
+       ORDER BY count DESC
+       LIMIT 6`
+    ).catch(() => [[]] as any);
+    return (rows as any[]).map((r) => ({
+      reason: String(r.reason),
+      count: Number(r.count),
+      pct: Number(r.pct),
+    }));
+  },
 };

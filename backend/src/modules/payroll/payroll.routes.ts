@@ -315,8 +315,8 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             spr.run_month, spr.disbursed_at AS paid_at, spr.status AS run_status,
             sp.acknowledged_at, sp.file_url, sp.payslip_ref,
             e.first_name, e.last_name,
-            COALESCE(eu.uan_number, eu.member_id, e.epf_number) AS epf_number,
-            eu.uan_number,
+            COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
+            eu.uan AS uan_number,
             e.pan_number,
             e.esic_number AS esi_number,
             CASE WHEN e.bank_account_number IS NOT NULL

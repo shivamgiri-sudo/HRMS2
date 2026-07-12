@@ -270,4 +270,10 @@ router.post(
   })
 );
 
+router.get(
+  "/health-summary",
+  requireRole("admin", "hr", "wfm", "process_manager", "branch_head", "ceo"),
+  h(async (_req, res) => res.json({ success: true, data: await s.getHealthSummary() }))
+);
+
 export { router as autoRosterSyncedRouter };

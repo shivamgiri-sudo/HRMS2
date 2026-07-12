@@ -157,8 +157,8 @@ export const payslipService = {
               e.ctc              AS ctc_annual,
               e.ctc,
               e.pan_number,
-              COALESCE(eu.uan_number, eu.member_id, e.epf_number) AS epf_number,
-              eu.uan_number,
+              COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
+              eu.uan AS uan_number,
               e.esic_number      AS esi_number,
               CASE WHEN e.bank_account_number IS NOT NULL
                 THEN CONCAT('XXXX', RIGHT(e.bank_account_number, 4))

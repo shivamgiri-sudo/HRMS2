@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowRight,
   Bell,
   CalendarDays,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Database,
   Lock,
@@ -303,8 +305,77 @@ function WeekOffRulesEmbed({ processId }: { processId: string }) {
   );
 }
 
+// ── Wizard stepper ────────────────────────────────────────────────────────────
+const WIZARD_STEPS = [
+  { key: "process", label: "Process & Period" },
+  { key: "requirements", label: "Slot Requirements" },
+  { key: "generate", label: "Generate & Review" },
+  { key: "submit", label: "Submit to PM" },
+];
+
+function WizardStepper({ activeStep }: { activeStep: number }) {
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {WIZARD_STEPS.map((s, i) => {
+        const isDone = i < activeStep;
+        const isCurrent = i === activeStep;
+        return (
+          <div key={s.key} className="flex items-center gap-1">
+            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-black
+              ${isCurrent ? "bg-blue-600 text-white" : isDone ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>
+              {isDone && <CheckCircle2 className="h-3 w-3" />}
+              <span>{i + 1}. {s.label}</span>
+            </div>
+            {i < WIZARD_STEPS.length - 1 && <ChevronRight className="h-3 w-3 text-slate-300 flex-shrink-0" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Status-aware primary action config ───────────────────────────────────────
+const NEXT_ACTION: Record<string, { label: string; action: "generate" | "submit" | "approve" | "publish" | "queue-manager-tasks"; tone: string; icon: React.ReactNode }> = {
+  draft:     { label: "Generate Draft",           action: "generate",            tone: "bg-blue-600 hover:bg-blue-700",     icon: <Play className="h-4 w-4" /> },
+  generated: { label: "Submit to Process Manager", action: "submit",             tone: "bg-slate-900 hover:bg-slate-800",   icon: <Send className="h-4 w-4" /> },
+  submitted: { label: "PM: Approve Roster",        action: "approve",            tone: "bg-emerald-600 hover:bg-emerald-700", icon: <CheckCircle2 className="h-4 w-4" /> },
+  approved:  { label: "PM: Publish + Lock",        action: "publish",            tone: "bg-red-600 hover:bg-red-700",       icon: <Lock className="h-4 w-4" /> },
+  published: { label: "Queue Manager Tasks",       action: "queue-manager-tasks", tone: "bg-purple-600 hover:bg-purple-700", icon: <ClipboardList className="h-4 w-4" /> },
+};
+
+// ── Generation progress animation ────────────────────────────────────────────
+const GEN_STEPS = ["Fetching employees", "Computing week-offs", "Assigning shifts", "Recomputing coverage", "Finalising…"];
+
+function GenerationProgress({ active }: { active: boolean }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    if (!active) { setStep(0); return; }
+    const t = setInterval(() => setStep((s) => Math.min(s + 1, GEN_STEPS.length - 1)), 900);
+    return () => clearInterval(t);
+  }, [active]);
+  if (!active) return null;
+  return (
+    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 space-y-2">
+      <p className="text-xs font-black text-blue-700 uppercase tracking-wide">Generating roster…</p>
+      <div className="flex flex-wrap gap-2">
+        {GEN_STEPS.map((s, i) => (
+          <div key={s} className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold
+            ${i < step ? "bg-blue-600 text-white" : i === step ? "animate-pulse bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-400"}`}>
+            {i < step && <CheckCircle2 className="h-3 w-3" />}
+            {s}
+          </div>
+        ))}
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-blue-100">
+        <div className="h-full rounded-full bg-blue-600 transition-all duration-700" style={{ width: `${Math.round((step / (GEN_STEPS.length - 1)) * 100)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export default function NativeWFMAutoRoster() {
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState("planner");
 
@@ -449,6 +520,7 @@ export default function NativeWFMAutoRoster() {
   const planAction = async (action: "generate" | "submit" | "approve" | "publish" | "queue-manager-tasks") => {
     if (!selectedPlanId) return setMessage("Select a plan first.");
     setLoading(true);
+    if (action === "generate") setGenerating(true);
     setMessage("");
     try {
       const body = action === "approve" ? { remarks: "Approved from Auto Roster Builder" } : {};
@@ -460,6 +532,7 @@ export default function NativeWFMAutoRoster() {
       setMessage(err.message || `${action} failed.`);
     } finally {
       setLoading(false);
+      setGenerating(false);
     }
   };
 
@@ -505,6 +578,18 @@ export default function NativeWFMAutoRoster() {
   const openCritical = conflicts.filter((c) => c.severity === "critical" && c.resolution_status === "open").length;
   const pendingAck = assignments.filter((a) => a.acknowledgement_required && a.acknowledgement_status !== "acknowledged").length;
 
+  const planStatus = selectedPlan?.approval_status ?? selectedPlan?.plan_status ?? "draft";
+  const nextAction = selectedPlanId ? NEXT_ACTION[planStatus] ?? null : null;
+  const noRequirements = requirements.length === 0;
+
+  // Wizard progress: 0=process, 1=requirements, 2=generate, 3=submit
+  const wizardStep = !planForm.process_id ? 0
+    : !selectedPlanId ? 0
+    : requirements.length === 0 ? 1
+    : planStatus === "draft" ? 2
+    : planStatus === "generated" ? 3
+    : 3;
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -535,7 +620,6 @@ export default function NativeWFMAutoRoster() {
           {[
             ["planner", "Planner"],
             ["requirements", "Slot Requirements"],
-            ["coverage", "Coverage"],
             ["planning_rules", "Planning Rules"],
             ["weekoff_rules", "Week-Off Rules"],
             ["assignments", "Assignments"],
@@ -546,6 +630,13 @@ export default function NativeWFMAutoRoster() {
           ].map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} className={`rounded-2xl px-4 py-2 text-sm font-black ${tab === k ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-700"}`}>{label}</button>
           ))}
+          {/* Coverage tab with critical conflict badge */}
+          <button onClick={() => setTab("coverage")} className={`relative rounded-2xl px-4 py-2 text-sm font-black ${tab === "coverage" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-700"}`}>
+            Coverage
+            {openCritical > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] font-black text-white">{openCritical}</span>
+            )}
+          </button>
         </div>
 
         <div className="rounded-3xl border bg-white p-5 shadow-sm">
@@ -569,40 +660,87 @@ export default function NativeWFMAutoRoster() {
         </div>
 
         {tab === "planner" && (
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="space-y-5">
+            {/* Wizard stepper */}
             <div className="rounded-3xl border bg-white p-5 shadow-sm">
-              <h2 className="font-black text-slate-950">Create synced auto roster cycle</h2>
-              <div className="mt-4 grid gap-3">
-                <input value={planForm.plan_name} onChange={(e) => setPlanForm({ ...planForm, plan_name: e.target.value })} className="rounded-2xl border px-4 py-3" placeholder="Plan name" />
-                <select value={planForm.process_id} onChange={(e) => setPlanForm({ ...planForm, process_id: e.target.value })} className="rounded-2xl border px-4 py-3">
-                  <option value="">All / select process</option>
-                  {masters.processes.map((p) => <option key={p.id ?? p.process_name} value={p.id ?? ""}>{p.process_name}</option>)}
-                </select>
-                <select value={planForm.branch_id} onChange={(e) => setPlanForm({ ...planForm, branch_id: e.target.value })} className="rounded-2xl border px-4 py-3">
-                  <option value="">All / select branch</option>
-                  {masters.branches.map((b) => <option key={b.id ?? b.branch_name} value={b.id ?? ""}>{b.branch_name}</option>)}
-                </select>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <input type="date" value={planForm.from_date} onChange={(e) => setPlanForm({ ...planForm, from_date: e.target.value })} className="rounded-2xl border px-4 py-3" />
-                  <input type="date" value={planForm.to_date} onChange={(e) => setPlanForm({ ...planForm, to_date: e.target.value })} className="rounded-2xl border px-4 py-3" />
-                  <input type="number" value={planForm.shrinkage_pct} onChange={(e) => setPlanForm({ ...planForm, shrinkage_pct: Number(e.target.value) })} className="rounded-2xl border px-4 py-3" placeholder="Shrinkage %" />
-                </div>
-                <button disabled={loading} onClick={createPlan} className="rounded-2xl bg-slate-950 px-5 py-3 font-bold text-white disabled:bg-slate-300">Create Cycle</button>
-              </div>
+              <p className="mb-3 text-xs font-black uppercase tracking-wider text-slate-500">Build Progress</p>
+              <WizardStepper activeStep={wizardStep} />
             </div>
 
-            <div className="rounded-3xl border bg-white p-5 shadow-sm">
-              <h2 className="font-black text-slate-950">Generation → PM approval → locked publish</h2>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <button disabled={loading || !selectedPlanId} onClick={() => planAction("generate")} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 font-bold text-white disabled:bg-slate-300"><Play className="h-4 w-4" /> Generate Draft</button>
-                <button disabled={loading || !selectedPlanId} onClick={() => planAction("submit")} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 font-bold text-white disabled:bg-slate-300"><Send className="h-4 w-4" /> Submit to PM</button>
-                <button disabled={loading || !selectedPlanId} onClick={() => planAction("approve")} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 font-bold text-white disabled:bg-slate-300"><CheckCircle2 className="h-4 w-4" /> PM Approve</button>
-                <button disabled={loading || !selectedPlanId} onClick={rejectPlan} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 px-5 py-3 font-bold text-white disabled:bg-slate-300"><AlertTriangle className="h-4 w-4" /> PM Reject</button>
-                <button disabled={loading || !selectedPlanId} onClick={() => planAction("publish")} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-5 py-3 font-bold text-white disabled:bg-slate-300"><Lock className="h-4 w-4" /> PM Publish + Lock</button>
-                <button disabled={loading || !selectedPlanId} onClick={() => planAction("queue-manager-tasks")} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-purple-600 px-5 py-3 font-bold text-white disabled:bg-slate-300"><ClipboardList className="h-4 w-4" /> Queue Manager Tasks</button>
+            <div className="grid gap-5 xl:grid-cols-2">
+              {/* Step 1: Create plan */}
+              <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                <h2 className="font-black text-slate-950">
+                  <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-black text-white">1</span>
+                  Process & Period
+                </h2>
+                <div className="mt-4 grid gap-3">
+                  <input value={planForm.plan_name} onChange={(e) => setPlanForm({ ...planForm, plan_name: e.target.value })} className="rounded-2xl border px-4 py-3" placeholder="Plan name" />
+                  <select value={planForm.process_id} onChange={(e) => setPlanForm({ ...planForm, process_id: e.target.value })} className="rounded-2xl border px-4 py-3">
+                    <option value="">All / select process</option>
+                    {masters.processes.map((p) => <option key={p.id ?? p.process_name} value={p.id ?? ""}>{p.process_name}</option>)}
+                  </select>
+                  <select value={planForm.branch_id} onChange={(e) => setPlanForm({ ...planForm, branch_id: e.target.value })} className="rounded-2xl border px-4 py-3">
+                    <option value="">All / select branch</option>
+                    {masters.branches.map((b) => <option key={b.id ?? b.branch_name} value={b.id ?? ""}>{b.branch_name}</option>)}
+                  </select>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <input type="date" value={planForm.from_date} onChange={(e) => setPlanForm({ ...planForm, from_date: e.target.value })} className="rounded-2xl border px-4 py-3" />
+                    <input type="date" value={planForm.to_date} onChange={(e) => setPlanForm({ ...planForm, to_date: e.target.value })} className="rounded-2xl border px-4 py-3" />
+                    <input type="number" value={planForm.shrinkage_pct} onChange={(e) => setPlanForm({ ...planForm, shrinkage_pct: Number(e.target.value) })} className="rounded-2xl border px-4 py-3" placeholder="Shrinkage %" />
+                  </div>
+                  <button disabled={loading} onClick={createPlan} className="rounded-2xl bg-slate-950 px-5 py-3 font-bold text-white disabled:bg-slate-300">
+                    Create Cycle
+                  </button>
+                </div>
               </div>
-              <div className="mt-5 rounded-2xl border border-dashed p-4 text-sm text-slate-600">
-                WFM can create/generate/submit. Process Manager approves, publishes and controls all published roster changes. Every publish/change creates locked notification rows.
+
+              {/* Steps 2-4: Actions panel */}
+              <div className="rounded-3xl border bg-white p-5 shadow-sm space-y-4">
+                <h2 className="font-black text-slate-950">
+                  <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-black text-white">→</span>
+                  Next Action
+                </h2>
+
+                {/* No-slot-requirement guard */}
+                {selectedPlanId && noRequirements && planStatus === "draft" && (
+                  <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <span>No slot requirements configured — generation will produce empty assignments. <button onClick={() => setTab("requirements")} className="font-bold underline">Add slot requirements →</button></span>
+                  </div>
+                )}
+
+                {/* Generation progress */}
+                <GenerationProgress active={generating} />
+
+                {/* Primary status-aware action button */}
+                {nextAction && (
+                  <button
+                    disabled={loading || !selectedPlanId}
+                    onClick={() => planAction(nextAction.action)}
+                    className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-base font-black text-white transition-colors disabled:bg-slate-300 ${nextAction.tone}`}
+                  >
+                    {nextAction.icon}
+                    {nextAction.label}
+                    <ArrowRight className="h-4 w-4 ml-auto" />
+                  </button>
+                )}
+
+                {/* Secondary: PM Reject (only in submitted state) */}
+                {planStatus === "submitted" && (
+                  <button
+                    disabled={loading || !selectedPlanId}
+                    onClick={rejectPlan}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-3 text-sm font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <AlertTriangle className="h-4 w-4" /> PM: Reject & Return to WFM
+                  </button>
+                )}
+
+                <div className="rounded-2xl border border-dashed p-4 text-xs text-slate-500">
+                  WFM: create → generate → submit. Process Manager: approve → publish+lock → queue manager tasks.
+                  Every publish/change creates locked notification rows.
+                </div>
               </div>
             </div>
           </div>
@@ -649,20 +787,72 @@ export default function NativeWFMAutoRoster() {
         )}
 
         {tab === "coverage" && (
-          <div className="grid gap-5 xl:grid-cols-2">
-            <div className="rounded-3xl border bg-white p-5 shadow-sm">
-              <h2 className="font-black text-slate-950">Coverage matrix</h2>
-              <div className="mt-4 max-h-[540px] overflow-auto">
-                <table className="w-full min-w-[900px] text-sm">
-                  <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="p-3">Date</th><th className="p-3">Slot</th><th className="p-3">Required</th><th className="p-3">Planned</th><th className="p-3">Buffer</th><th className="p-3">Gap</th><th className="p-3">Coverage</th></tr></thead>
-                  <tbody>{coverage.map((c) => <tr key={c.id} className="border-t"><td className="p-3">{c.roster_date}</td><td className="p-3">{c.slot_start} - {c.slot_end}</td><td className="p-3">{c.required_hc}</td><td className="p-3">{c.planned_hc}</td><td className="p-3">{c.buffer_hc}</td><td className="p-3 font-bold">{c.gap_hc}</td><td className="p-3">{c.coverage_pct}%</td></tr>)}</tbody>
-                </table>
+          <div className="space-y-5">
+            {/* Coverage heat-map: unique dates as columns, slots as rows */}
+            {coverage.length > 0 && (() => {
+              const uniqueDates = [...new Set(coverage.map((c) => c.roster_date as string))].sort().slice(0, 7);
+              const uniqueSlots = [...new Set(coverage.map((c) => `${c.slot_start}-${c.slot_end}`))].sort();
+              return (
+                <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                  <h2 className="font-black text-slate-950 mb-4">Coverage Heat-Map</h2>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-xs text-center">
+                      <thead>
+                        <tr>
+                          <th className="px-3 py-2 text-left text-slate-500 font-bold">Slot</th>
+                          {uniqueDates.map((d) => (
+                            <th key={d} className="px-3 py-2 font-bold text-slate-700">
+                              {new Date(d + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric" })}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {uniqueSlots.map((slot) => (
+                          <tr key={slot}>
+                            <td className="px-3 py-2 text-left font-semibold text-slate-600">{slot}</td>
+                            {uniqueDates.map((d) => {
+                              const cell = coverage.find((c) => c.roster_date === d && `${c.slot_start}-${c.slot_end}` === slot);
+                              const pct = Number(cell?.coverage_pct ?? 0);
+                              const bg = pct >= 95 ? "bg-emerald-100 text-emerald-800" : pct >= 80 ? "bg-amber-100 text-amber-800" : pct > 0 ? "bg-red-100 text-red-800" : "bg-slate-100 text-slate-400";
+                              return (
+                                <td key={d} className={`px-3 py-2 rounded font-black ${bg}`}>
+                                  {cell ? `${pct}%` : "—"}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
+                    <span className="flex items-center gap-1"><span className="h-3 w-3 rounded bg-emerald-100 inline-block" /> ≥95% (Good)</span>
+                    <span className="flex items-center gap-1"><span className="h-3 w-3 rounded bg-amber-100 inline-block" /> 80–94% (Caution)</span>
+                    <span className="flex items-center gap-1"><span className="h-3 w-3 rounded bg-red-100 inline-block" /> &lt;80% (Gap)</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="grid gap-5 xl:grid-cols-2">
+              <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                <h2 className="font-black text-slate-950">Coverage detail table</h2>
+                <div className="mt-4 max-h-[480px] overflow-auto">
+                  <table className="w-full min-w-[900px] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500"><tr><th className="p-3">Date</th><th className="p-3">Slot</th><th className="p-3">Required</th><th className="p-3">Planned</th><th className="p-3">Buffer</th><th className="p-3">Gap</th><th className="p-3">Coverage</th></tr></thead>
+                    <tbody>{coverage.map((c) => <tr key={c.id} className="border-t"><td className="p-3">{c.roster_date}</td><td className="p-3">{c.slot_start} - {c.slot_end}</td><td className="p-3">{c.required_hc}</td><td className="p-3">{c.planned_hc}</td><td className="p-3">{c.buffer_hc}</td><td className="p-3 font-bold">{c.gap_hc}</td><td className="p-3">{c.coverage_pct}%</td></tr>)}</tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-            <div className="rounded-3xl border bg-white p-5 shadow-sm">
-              <h2 className="font-black text-slate-950">Conflict center</h2>
-              <div className="mt-4 max-h-[540px] space-y-2 overflow-auto">
-                {conflicts.length ? conflicts.map((c) => <div key={c.id} className="rounded-2xl border p-3"><div className="flex items-center justify-between gap-3"><b>{c.conflict_type}</b><Pill tone={c.severity === "critical" ? "red" : c.severity === "high" ? "amber" : "slate"}>{c.severity}</Pill></div><p className="mt-1 text-sm text-slate-600">{c.message}</p></div>) : <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-slate-500">No conflicts loaded.</div>}
+              <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                <h2 className="font-black text-slate-950">
+                  Conflict center
+                  {openCritical > 0 && <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-black text-red-700">{openCritical} critical</span>}
+                </h2>
+                <div className="mt-4 max-h-[480px] space-y-2 overflow-auto">
+                  {conflicts.length ? conflicts.map((c) => <div key={c.id} className="rounded-2xl border p-3"><div className="flex items-center justify-between gap-3"><b>{c.conflict_type}</b><Pill tone={c.severity === "critical" ? "red" : c.severity === "high" ? "amber" : "slate"}>{c.severity}</Pill></div><p className="mt-1 text-sm text-slate-600">{c.message}</p></div>) : <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-slate-500">No conflicts loaded.</div>}
+                </div>
               </div>
             </div>
           </div>

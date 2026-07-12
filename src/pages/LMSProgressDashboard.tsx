@@ -18,12 +18,10 @@ export default function LMSProgressDashboard() {
   const { data: progressData = [], isLoading } = useQuery({
     queryKey: ["lms-progress-dashboard"],
     queryFn: async () => {
-      // TODO: Replace with actual endpoint when available
-      // For now, return empty array to prevent runtime errors
       const res = await hrmsApi.get<{ success: boolean; data: EmployeeProgress[] }>(
         "/api/lms/progress-summary"
       );
-      return res.data.data ?? [];
+      return res.data ?? [];
     },
     retry: false,
   });

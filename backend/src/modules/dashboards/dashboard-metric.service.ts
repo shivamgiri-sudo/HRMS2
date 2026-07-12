@@ -73,8 +73,39 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
       scopeParams
     );
     const active = Number((rows[0] as any)?.active ?? 0);
+
+    // Required HC: today's planned HC from slot requirements, fallback to workforce mandate
+    const { sql: reqScopeSql, params: reqScopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const [reqRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(
+        (SELECT SUM(ws.required_planned_hc)
+         FROM wfm_slot_requirement ws
+         WHERE ws.requirement_date = ${IST_DATE_EXPR} AND ${reqScopeSql}),
+        (SELECT SUM(CEIL(wm.mandated_hc * (1 + wm.shrinkage_pct / 100)))
+         FROM workforce_mandate wm
+         WHERE wm.active_status = 1 AND ${reqScopeSql})
+       ) AS required_hc`,
+      [...reqScopeParams, ...reqScopeParams]
+    ).catch(() => [[{ required_hc: null }]] as any);
+
+    // Available HC: employees clocked in/active today (IST)
+    const { sql: availScopeSql, params: availScopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const [availRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT s.employee_id) AS available_hc
+       FROM wfm_attendance_session s
+       JOIN employees e ON e.id = s.employee_id
+       WHERE DATE(CONVERT_TZ(s.session_date, '+00:00', '+05:30')) = ${IST_DATE_EXPR}
+         AND s.current_status IN ('Rostered', 'Active', 'Login')
+         AND ${availScopeSql}`,
+      availScopeParams
+    ).catch(() => [[{ available_hc: null }]] as any);
+
+    const required = reqRows[0] != null ? Number((reqRows[0] as any).required_hc ?? 0) || null : null;
+    const available = availRows[0] != null ? Number((availRows[0] as any).available_hc ?? 0) : null;
+    const short = required != null && available != null ? required - available : null;
+
     const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
-    return wrapEnriched("HEADCOUNT", active, { active, required: null, available: null, short: null }, status, true, scope.branchIds[0], scope.processIds[0]);
+    return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("HEADCOUNT");
   }

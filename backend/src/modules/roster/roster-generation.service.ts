@@ -3,6 +3,8 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
+import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./weekoff-rule.service.js";
+import type { WeekoffRule } from "./weekoff-rule.service.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -151,11 +153,15 @@ export const rosterGenerationService = {
       );
       const rosterTemplate = templateRows[0] ?? null;
 
+      // 7b. Load process week-off rules (blackout, min_gap, force_sunday, senior_priority)
+      const weekoffRules = await loadWeekoffRules(cycle.process_id).catch(() => [] as WeekoffRule[]);
+      const sortedEmployees = sortBySeniorPriority(weekoffRules, employees as any[]) as EmployeeRow[];
+
       // 8. Generate dates in the week
       const dates = getDatesInRange(cycle.week_start_date, cycle.week_end_date);
 
-      // 9. Process each employee
-      for (const emp of employees) {
+      // 9. Process each employee (sorted by seniority if senior_priority rule applies)
+      for (const emp of sortedEmployees) {
         result.employees_processed++;
         try {
           await processEmployee({
@@ -166,6 +172,7 @@ export const rosterGenerationService = {
             shiftTemplates,
             defaultShift,
             rosterTemplate,
+            weekoffRules,
             cycleId,
             runId,
             result,
@@ -309,18 +316,20 @@ async function processEmployee(ctx: {
   shiftTemplates: ShiftTemplateRow[];
   defaultShift: ShiftTemplateRow | null;
   rosterTemplate: RosterTemplateRow | null;
+  weekoffRules: WeekoffRule[];
   cycleId: string;
   runId: string;
   result: GenerationResult;
 }): Promise<void> {
-  const { emp, dates, holidays, approvedWeekoffs, defaultShift, cycleId, runId, result } = ctx;
+  const { emp, dates, holidays, approvedWeekoffs, defaultShift, weekoffRules, cycleId, runId, result } = ctx;
   const weekoff = approvedWeekoffs.get(emp.id);
+  let lastWeekoffDate: string | null = null;
 
   for (const date of dates) {
     const isHoliday = ctx.holidays.has(date);
     const dateObj = new Date(date + "T00:00:00");
     const dayOfWeek = dateObj.getDay(); // 0=Sun
-    const isWeekOffDay = weekoff ? weekoff.preferred_day === dayOfWeek : false;
+    let isWeekOffDay = weekoff ? weekoff.preferred_day === dayOfWeek : false;
 
     let decisionType: string;
     let shiftTemplateId: string | null = null;
@@ -330,9 +339,39 @@ async function processEmployee(ctx: {
       decisionType = "holiday_applied";
       ruleApplied = "holiday_override";
     } else if (isWeekOffDay && weekoff) {
-      decisionType = "weekoff_assigned";
-      ruleApplied = "fcfs";
-      result.weekoffs_allocated++;
+      // Apply process week-off rules before granting the week-off
+      const ruling = applyWeekoffRules(weekoffRules, {
+        employeeId: emp.id,
+        designation: emp.designation,
+        preferredDay: weekoff.preferred_day,
+        candidateDate: date,
+        dow: dayOfWeek,
+        lastWeekoffDate,
+      });
+      if (!ruling.allow) {
+        isWeekOffDay = false;
+        ruleApplied = ruling.reason;
+        decisionType = "weekoff_denied";
+        shiftTemplateId = defaultShift?.id ?? null;
+      } else if (ruling.override) {
+        // force_sunday override: only grant if this date IS Sunday
+        if (dayOfWeek === ruling.override.day) {
+          decisionType = "weekoff_assigned";
+          ruleApplied = ruling.reason;
+          result.weekoffs_allocated++;
+          lastWeekoffDate = date;
+        } else {
+          isWeekOffDay = false;
+          decisionType = "weekoff_redirected";
+          ruleApplied = ruling.reason;
+          shiftTemplateId = defaultShift?.id ?? null;
+        }
+      } else {
+        decisionType = "weekoff_assigned";
+        ruleApplied = "fcfs";
+        result.weekoffs_allocated++;
+        lastWeekoffDate = date;
+      }
     } else if (emp.shift_rotation_type === "frozen") {
       decisionType = "shift_frozen";
       shiftTemplateId = defaultShift?.id ?? null;

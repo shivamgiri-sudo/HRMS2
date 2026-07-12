@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
 
 type AnyRow = Record<string, any>;
 
@@ -597,10 +598,31 @@ export const autoRosterSyncedService = {
     const dates = dateRange(String(plan.from_date).slice(0, 10), String(plan.to_date).slice(0, 10));
     const prefs = await getWeekOffPreferences(plan.process_id);
     const shrinkagePct = Number(control.shrinkage_pct ?? 15);
+    const weekoffRules = await loadWeekoffRules(plan.process_id).catch(() => [] as Awaited<ReturnType<typeof loadWeekoffRules>>);
+    const blackoutDates = new Set(
+      weekoffRules
+        .filter((r) => r.rule_type === "blackout_date")
+        .map((r) => {
+          try { return (typeof r.rule_params === "string" ? JSON.parse(r.rule_params) : r.rule_params).blackout as string; }
+          catch { return null; }
+        })
+        .filter(Boolean) as string[]
+    );
     let created = 0;
     let skipped = 0;
 
     for (const rosterDate of dates) {
+      // Skip entirely if this date is a blackout date
+      if (blackoutDates.has(rosterDate)) {
+        await insertConflict({
+          plan_id: planId,
+          roster_date: rosterDate,
+          conflict_type: "blackout_date",
+          severity: "high",
+          message: `${rosterDate} is a blackout date per process week-off rules. No assignments generated.`,
+        });
+        continue;
+      }
       const dow = new Date(`${rosterDate}T00:00:00`).getDay();
       const reqs = await getRequirementsForPlan(plan, rosterDate);
       const pool = await getEmployeePool(plan, rosterDate);
@@ -1119,5 +1141,26 @@ export const autoRosterSyncedService = {
       [assignmentId]
     );
     return (rows[0] as AnyRow | undefined) ?? null;
+  },
+
+  async getHealthSummary(): Promise<{ total_plans: number; pending_approval: number; best_coverage_score: number | null; open_critical_gaps: number }> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT p.id)                                                      AS total_plans,
+         SUM(CASE WHEN c.approval_status IN ('generated','submitted') THEN 1 ELSE 0 END) AS pending_approval,
+         MAX(c.last_coverage_score)                                                AS best_coverage_score,
+         SUM(CASE WHEN cl.severity = 'critical' AND cl.resolution_status = 'open' THEN 1 ELSE 0 END) AS open_critical_gaps
+       FROM wfm_roster_plan p
+       LEFT JOIN wfm_roster_plan_control c  ON c.plan_id  = p.id
+       LEFT JOIN wfm_roster_conflict_log cl ON cl.plan_id = p.id
+       WHERE p.from_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`
+    ).catch(() => [[{ total_plans: 0, pending_approval: 0, best_coverage_score: null, open_critical_gaps: 0 }]] as any);
+    const r = rows[0] as AnyRow;
+    return {
+      total_plans: Number(r.total_plans ?? 0),
+      pending_approval: Number(r.pending_approval ?? 0),
+      best_coverage_score: r.best_coverage_score != null ? Number(r.best_coverage_score) : null,
+      open_critical_gaps: Number(r.open_critical_gaps ?? 0),
+    };
   },
 };

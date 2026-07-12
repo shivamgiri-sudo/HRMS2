@@ -148,6 +148,7 @@ export default function NativeManagementDashboard() {
   const [coachingForm, setCoachingForm] = useState<CoachingForm>({ employee_id: "", session_date: "", session_type: "one_on_one", notes: "", action_items: "" });
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [opsPulse, setOpsPulse] = useState<{ intervention_flags: { type: string; severity: "critical" | "warning" | "info"; detail: string; action: string }[] } | null>(null);
+  const [attritionBreakdown, setAttritionBreakdown] = useState<{ reason: string; count: number; pct: number }[]>([]);
 
   const loadDashboard = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: DashboardStats }>("/api/management/dashboard"); setDashStats(res.data ?? null); } catch { /* handled by summary UI */ } };
   const loadCeoMetrics = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: CeoMetrics }>("/api/management/ceo-metrics"); setCeoMetrics(res.data ?? null); } catch { /* silent */ } };
@@ -156,7 +157,8 @@ export default function NativeManagementDashboard() {
   const loadAlerts = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: PerformanceAlert[] }>("/api/management/alerts"); setAlerts(res.data ?? []); } catch { /* silent */ } };
   const loadTeamMembers = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: TeamMember[] }>("/api/management/team-members"); setTeamMembers(res.data ?? []); } catch { /* silent */ } };
   const loadOpsPulse = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: typeof opsPulse }>("/api/bi/daily-operations-pulse"); setOpsPulse(res.data ?? null); } catch { /* non-critical */ } };
-  const loadAll = async () => { setLoading(true); setMessage(""); try { await Promise.all([loadDashboard(), loadCeoMetrics(), loadKpi(), loadCoaching(), loadAlerts(), loadTeamMembers()]); void loadOpsPulse(); } catch (err: unknown) { setMessage(err instanceof Error ? err.message : "Unable to load data"); } finally { setLoading(false); } };
+  const loadAttritionBreakdown = async () => { try { const res = await hrmsApi.get<{ success: boolean; data: { reason: string; count: number; pct: number }[] }>("/api/management/attrition-breakdown"); setAttritionBreakdown(res.data ?? []); } catch { /* non-critical */ } };
+  const loadAll = async () => { setLoading(true); setMessage(""); try { await Promise.all([loadDashboard(), loadCeoMetrics(), loadKpi(), loadCoaching(), loadAlerts(), loadTeamMembers(), loadAttritionBreakdown()]); void loadOpsPulse(); } catch (err: unknown) { setMessage(err instanceof Error ? err.message : "Unable to load data"); } finally { setLoading(false); } };
 
   useEffect(() => { void loadAll(); }, []);
   useEffect(() => { void loadKpi(); }, [kpiPeriod]);
@@ -380,7 +382,7 @@ export default function NativeManagementDashboard() {
                   icon={<AlertCircle className="h-6 w-6 text-[#E8231A]" />}
                   trend="down"
                   trendValue="-12% WoW"
-                  insight="Daily revenue loss estimate from absenteeism and below-capacity operations. Primary drivers: unplanned leaves (40%), sick leaves (35%), shrinkage (25%). Target: reduce by 20% via predictive attendance management."
+                  insight="Daily revenue loss estimate from absenteeism and below-capacity operations. Target: reduce by 20% via predictive attendance management."
                   severity="danger"
                 />
 
@@ -405,7 +407,9 @@ export default function NativeManagementDashboard() {
                   icon={<TrendingDown className="h-6 w-6 text-[#E8231A]" />}
                   trend="up"
                   trendValue={`${ceoMetrics?.attrition_cost.exits_30d ?? 0} exits`}
-                  insight={`Estimated replacement cost for ${ceoMetrics?.attrition_cost.exits_30d ?? 0} exits in last 30 days. Includes recruitment, onboarding, training, and productivity ramp-up. Root causes: compensation mismatch (45%), career growth (30%), work-life balance (25%).`}
+                  insight={attritionBreakdown.length > 0
+                    ? `${ceoMetrics?.attrition_cost.exits_30d ?? 0} exits (30d). Top reasons (90d): ${attritionBreakdown.slice(0, 3).map(b => `${b.reason} (${b.pct}%)`).join(", ")}.`
+                    : `Estimated replacement cost for ${ceoMetrics?.attrition_cost.exits_30d ?? 0} exits in last 30 days. Review exit interviews for breakdown detail.`}
                   severity="warning"
                 />
 
