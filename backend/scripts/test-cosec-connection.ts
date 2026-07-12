@@ -18,7 +18,7 @@ type StatRow = {
 type SampleRow = {
   UserID?: string;
   punch_date?: Date | string | null;
-  punch_time?: string | null;
+  punch_time?: Date | string | null;
   AccessLocationID?: string | number | null;
 };
 
@@ -49,6 +49,12 @@ function formatDateOnly(value: Date | string | null | undefined): string {
   if (!value) return "N/A";
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   return String(value).slice(0, 10) || "N/A";
+}
+
+function formatTimeOnly(value: Date | string | null | undefined): string {
+  if (!value) return "N/A";
+  if (value instanceof Date) return value.toTimeString().slice(0, 8);
+  return String(value).slice(0, 8) || "N/A";
 }
 
 async function hasColumn(
@@ -148,7 +154,7 @@ async function testConnection() {
       sampleResult.recordset.forEach((row) => {
         const userId = String(row.UserID ?? "").padEnd(12);
         const date = formatDateOnly(row.punch_date).padEnd(12);
-        const time = String(row.punch_time ?? "N/A").padEnd(10);
+        const time = formatTimeOnly(row.punch_time).padEnd(10);
         const location = String(row.AccessLocationID ?? "").padEnd(8);
         console.log(`${userId} ${date} ${time} ${location}`);
       });
