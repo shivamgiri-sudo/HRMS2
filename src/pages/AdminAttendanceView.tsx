@@ -99,9 +99,10 @@ function fmtHours(v: unknown): string {
 // ── Summary cards ──────────────────────────────────────────────────────────
 
 function SummaryCards({ data }: { data: MonthlySummary }) {
+  const attendanceCredit = safeNum(data.presentDays) + safeNum(data.halfDays) * 0.5;
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-      <MetricCard label="Present" value={safeNum(data.presentDays)} description="Days marked present." icon={<CheckCircle2 className="h-5 w-5" />} tone="emerald" />
+      <MetricCard label="Attendance Credit" value={attendanceCredit} description="Present days plus half-day credit." icon={<CheckCircle2 className="h-5 w-5" />} tone="emerald" />
       <MetricCard label="Absent" value={safeNum(data.absentDays)} description="Days absent." icon={<AlertTriangle className="h-5 w-5" />} tone="rose" />
       <MetricCard label="Half Days" value={safeNum(data.halfDays)} description="Half-day records." icon={<Timer className="h-5 w-5" />} tone="amber" />
       <MetricCard label="LWP" value={safeNum(data.totalLwp) % 1 === 0 ? String(safeNum(data.totalLwp)) : safeNum(data.totalLwp).toFixed(1)} description="Leave without pay." icon={<TrendingDown className="h-5 w-5" />} tone="amber" />

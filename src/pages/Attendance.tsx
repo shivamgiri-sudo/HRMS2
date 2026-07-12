@@ -962,9 +962,9 @@ const Attendance = () => {
               <>
                 <div className={`grid gap-4 sm:grid-cols-2 ${isAdminOrHR ? 'xl:grid-cols-3' : 'xl:grid-cols-5'}`}>
                   <AttendanceMetricCard
-                    label="Present Days"
-                    value={summaryData.presentDays}
-                    description="Days marked present."
+                    label="Attendance Credit"
+                    value={safeNumber(summaryData.presentDays) + safeNumber(summaryData.halfDays) * 0.5}
+                    description="Present days plus half-day credit."
                     icon={<CheckCircle2 className="h-5 w-5" />}
                     tone="emerald"
                   />
