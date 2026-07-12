@@ -29,6 +29,10 @@ export interface HcInput {
   // Inbound voice
   forecast_calls?: number;
   aht_seconds?: number;
+  // SLA targets for Erlang-C correction (optional — falls back to erlang_lite when absent)
+  service_level_target_pct?: number;  // 0-100, e.g. 80 = "80% of calls answered within T seconds"
+  answer_time_seconds?: number;       // T seconds threshold, e.g. 20
+  occupancy_target_pct?: number;      // 0-100; cap check — if Erlang-C result implies higher occupancy, add agents
 
   // Outbound voice
   campaign_target_type?: string; // attempts | contacts | sales | collections | callbacks | appointments
@@ -85,11 +89,57 @@ function ceil(n: number): number {
   return Math.ceil(n);
 }
 
+// ── Erlang-C pure functions ────────────────────────────────────────────────────
+
+/**
+ * Erlang-C formula: probability that a call is queued (i.e. all N agents are busy).
+ * C(N, A) = [ (A^N / N!) × (N / (N - A)) ] / [ Σ_{k=0}^{N-1}(A^k / k!) + (A^N / N!) × (N / (N - A)) ]
+ * Returns value in [0, 1]. Returns 1 if N <= A (under-staffed — infinite queue).
+ */
+function erlangC(N: number, A: number): number {
+  if (N <= A) return 1; // unstable — must add more agents
+
+  // Compute sum of Poisson terms: Σ_{k=0}^{N-1} (A^k / k!)
+  let poissonSum = 0;
+  let term = 1; // A^0 / 0! = 1
+  for (let k = 1; k < N; k++) {
+    term *= A / k;
+    poissonSum += term;
+  }
+  poissonSum += 1; // add k=0 term
+
+  // Last term: A^N / N!  (reuse `term` from loop which ended at k=N-1)
+  const lastTerm = term * (A / N);
+  const intensityFactor = N / (N - A);
+  const numerator = lastTerm * intensityFactor;
+  return numerator / (poissonSum + numerator);
+}
+
+/**
+ * Predicted service level for N agents handling traffic A (Erlangs)
+ * with target answer time T (seconds) and mean handle time aht (seconds).
+ * SL(N,A,T) = 1 − C(N,A) × e^(−(N−A) × T / aht)
+ */
+function serviceLevel(N: number, A: number, T: number, aht: number): number {
+  if (aht <= 0) return 0;
+  const c = erlangC(N, A);
+  return 1 - c * Math.exp(-((N - A) * T) / aht);
+}
+
+/**
+ * Occupancy for N agents at traffic A: A / N (fraction of time agents are busy).
+ * Returns value in [0, 1].
+ */
+function occupancy(N: number, A: number): number {
+  return N > 0 ? A / N : 1;
+}
+
 // ── 1. Inbound Voice ──────────────────────────────────────────────────────────
 
 function calcInboundVoice(input: HcInput): HcResult {
   const errors: string[] = [];
-  const slotHours = input.slot_hours ?? 8;
+  const slotSeconds = (input.slot_hours ?? 8) * 3600;
+  const slotHours = slotSeconds / 3600;
   const shrinkage = input.shrinkage_pct ?? 0;
   const calls = input.forecast_calls ?? 0;
   const aht = input.aht_seconds ?? 0;
@@ -97,15 +147,68 @@ function calcInboundVoice(input: HcInput): HcResult {
   if (!calls) errors.push("forecast_calls is required for inbound_voice");
   if (!aht) errors.push("aht_seconds is required for inbound_voice");
 
+  // Traffic intensity in Erlangs: A = calls × AHT(s) / slot_seconds
+  const A = slotSeconds > 0 ? (calls * aht) / slotSeconds : 0;
+
+  const slTarget = input.service_level_target_pct;
+  const answerT = input.answer_time_seconds;
+  const occupancyCap = input.occupancy_target_pct != null ? input.occupancy_target_pct / 100 : null;
+
+  // ── Erlang-C path: both SLA inputs present ─────────────────────────────────
+  if (slTarget != null && answerT != null && A > 0 && aht > 0) {
+    const targetSL = slTarget / 100;
+    // Start from minimum agents needed to keep system stable (N > A)
+    let N = Math.max(1, Math.ceil(A + 0.0001));
+    const maxIter = 500;
+    for (let i = 0; i < maxIter; i++) {
+      const sl = serviceLevel(N, A, answerT, aht);
+      const occ = occupancy(N, A);
+      if (sl >= targetSL) {
+        // Also enforce occupancy cap if set
+        if (occupancyCap !== null && occ > occupancyCap) { N++; continue; }
+        break;
+      }
+      N++;
+    }
+    const productive_hc = N;
+    const planned_hc = shrink(productive_hc, shrinkage);
+    const actualSL = serviceLevel(N, A, answerT, aht);
+    const actualOcc = occupancy(N, A);
+
+    return {
+      productive_hc: ceil(productive_hc),
+      planned_hc: ceil(planned_hc),
+      calculation_method: "erlang_c",
+      notes: {
+        calls, aht_seconds: aht, slot_hours: slotHours, shrinkage_pct: shrinkage,
+        traffic_erlangs: +A.toFixed(3),
+        service_level_target_pct: slTarget, answer_time_seconds: answerT,
+        occupancy_cap_pct: input.occupancy_target_pct ?? null,
+        agents_required: N,
+        achieved_service_level_pct: +(actualSL * 100).toFixed(1),
+        achieved_occupancy_pct: +(actualOcc * 100).toFixed(1),
+        productive_hc: +productive_hc.toFixed(2),
+        formula: "erlang_c",
+      },
+      errors,
+    };
+  }
+
+  // ── Fallback: erlang_lite (simple workload, no queuing correction) ──────────
   const workload_hours = (calls * aht) / 3600;
-  const productive_hc = workload_hours / slotHours;
+  const productive_hc = slotHours > 0 ? workload_hours / slotHours : 0;
   const planned_hc = shrink(productive_hc, shrinkage);
 
   return {
     productive_hc: ceil(productive_hc),
     planned_hc: ceil(planned_hc),
     calculation_method: "erlang_lite",
-    notes: { calls, aht_seconds: aht, workload_hours: +workload_hours.toFixed(2), slot_hours: slotHours, shrinkage_pct: shrinkage, productive_hc: +productive_hc.toFixed(2) },
+    notes: {
+      calls, aht_seconds: aht, workload_hours: +workload_hours.toFixed(2),
+      slot_hours: slotHours, shrinkage_pct: shrinkage,
+      productive_hc: +productive_hc.toFixed(2),
+      note: "SLA inputs (service_level_target_pct, answer_time_seconds) not provided — using workload-hours formula. Provide both to enable Erlang-C correction.",
+    },
     errors,
   };
 }

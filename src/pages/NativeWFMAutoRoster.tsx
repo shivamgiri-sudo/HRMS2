@@ -849,9 +849,38 @@ export default function NativeWFMAutoRoster() {
                 <h2 className="font-black text-slate-950">
                   Conflict center
                   {openCritical > 0 && <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-black text-red-700">{openCritical} critical</span>}
+                  {conflicts.filter((c) => c.conflict_type === "hc_floor_weekoff_denied").length > 0 && (
+                    <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-black text-orange-700">
+                      {conflicts.filter((c) => c.conflict_type === "hc_floor_weekoff_denied").length} SLA week-off denied
+                    </span>
+                  )}
                 </h2>
                 <div className="mt-4 max-h-[480px] space-y-2 overflow-auto">
-                  {conflicts.length ? conflicts.map((c) => <div key={c.id} className="rounded-2xl border p-3"><div className="flex items-center justify-between gap-3"><b>{c.conflict_type}</b><Pill tone={c.severity === "critical" ? "red" : c.severity === "high" ? "amber" : "slate"}>{c.severity}</Pill></div><p className="mt-1 text-sm text-slate-600">{c.message}</p></div>) : <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-slate-500">No conflicts loaded.</div>}
+                  {conflicts.length ? conflicts.map((c) => {
+                    const isHcFloorDenied = c.conflict_type === "hc_floor_weekoff_denied";
+                    return (
+                      <div
+                        key={c.id}
+                        className={`rounded-2xl border p-3 ${isHcFloorDenied ? "border-orange-300 bg-orange-50" : ""}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            {isHcFloorDenied && (
+                              <span className="rounded-full bg-orange-200 px-2 py-0.5 text-xs font-black text-orange-800">SLA Floor</span>
+                            )}
+                            <b className="text-sm">{c.conflict_type}</b>
+                          </div>
+                          <Pill tone={c.severity === "critical" ? "red" : c.severity === "high" ? "amber" : "slate"}>
+                            {c.severity}
+                          </Pill>
+                        </div>
+                        <p className="mt-1 text-sm text-slate-600">{c.message}</p>
+                        {isHcFloorDenied && c.roster_date && (
+                          <p className="mt-1 text-xs text-orange-700">Date: {c.roster_date} — Week-off denied to protect SLA coverage floor.</p>
+                        )}
+                      </div>
+                    );
+                  }) : <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-slate-500">No conflicts loaded.</div>}
                 </div>
               </div>
             </div>

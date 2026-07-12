@@ -130,6 +130,10 @@ export const slotRequirementService = {
       connect_rate_pct:   slot.connect_rate_pct ?? rule?.connect_rate_pct,
       conversion_rate_pct: slot.conversion_rate_pct ?? rule?.conversion_rate_pct,
       dials_per_agent_hour: rule?.dials_per_agent_hour,
+      // Erlang-C SLA inputs — from planning rule (slot-level overrides not yet supported)
+      service_level_target_pct: rule?.service_level_target_pct ?? rule?.sla_target_pct,
+      answer_time_seconds:      rule?.answer_time_seconds,
+      occupancy_target_pct:     rule?.occupancy_target_pct,
     };
 
     const result = calculate(hcInput);
@@ -210,5 +214,99 @@ export const slotRequirementService = {
     if (!result.affectedRows) {
       throw new Error("Slot requirement not found or already deleted");
     }
+  },
+
+  // ── Forecast import: bulk upsert + auto-calculate HC ──────────────────────
+  async forecastImport(
+    rows: Array<Record<string, unknown>>,
+    userId: string
+  ): Promise<{ inserted: number; updated: number; calculated: number; errors: string[] }> {
+    if (!Array.isArray(rows) || rows.length === 0) throw new Error("rows array is required and must be non-empty");
+    if (rows.length > 5000) throw new Error("Maximum 5000 rows per import");
+
+    const WRITABLE_VOLUMES = new Set([
+      "forecast_calls", "chat_volume", "new_email_volume", "backlog_volume",
+      "sla_due_volume", "case_volume", "production_volume", "target_attempts",
+      "target_contacts", "target_sales", "connect_rate_pct", "conversion_rate_pct",
+      "aht_seconds_override", "shrinkage_pct_override", "chat_concurrency_override",
+      "emails_per_agent_hour_override", "cases_per_agent_hour_override",
+      "audit_sample_pct_override", "audits_per_qa_hour_override",
+      "slot_end", "branch_id", "required_skill", "required_certification",
+    ]);
+
+    let inserted = 0;
+    let updated = 0;
+    const errors: string[] = [];
+    const affectedSlotIds: string[] = [];
+    const affectedDates = new Map<string, { processId: string; fromDate: string; toDate: string }>();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] as any;
+      try {
+        const { process_id, requirement_date, slot_start = "00:00", workload_type } = row;
+        if (!process_id || !requirement_date || !workload_type) {
+          errors.push(`Row ${i + 1}: process_id, requirement_date and workload_type are required`);
+          continue;
+        }
+
+        // Check if row exists
+        const [existing] = await db.execute<RowDataPacket[]>(
+          "SELECT id FROM wfm_slot_requirement WHERE process_id = ? AND requirement_date = ? AND slot_start = ? AND workload_type = ? AND is_active = 1 LIMIT 1",
+          [process_id, requirement_date, slot_start, workload_type]
+        );
+        const existingRow = (existing as RowDataPacket[])[0];
+        const id = existingRow?.id ?? randomUUID();
+
+        if (!existingRow) {
+          const cols = ["id", "process_id", "requirement_date", "slot_start", "workload_type", "source_type", "created_by"];
+          const vals: unknown[] = [id, process_id, requirement_date, slot_start, workload_type, "api_push", userId];
+          for (const [k, v] of Object.entries(row)) {
+            if (WRITABLE_VOLUMES.has(k) && v !== undefined && v !== null) { cols.push(k); vals.push(v); }
+          }
+          await db.execute(
+            `INSERT INTO wfm_slot_requirement (${cols.join(", ")}) VALUES (${vals.map(() => "?").join(", ")})`,
+            vals
+          );
+          inserted++;
+        } else {
+          const sets = ["source_type = ?", "updated_by = ?"];
+          const vals: unknown[] = ["api_push", userId];
+          for (const [k, v] of Object.entries(row)) {
+            if (WRITABLE_VOLUMES.has(k) && v !== undefined && v !== null) { sets.push(`${k} = ?`); vals.push(v); }
+          }
+          vals.push(id);
+          await db.execute(`UPDATE wfm_slot_requirement SET ${sets.join(", ")} WHERE id = ?`, vals);
+          updated++;
+        }
+
+        affectedSlotIds.push(id);
+
+        // Track date range per process for bulk HC recalculation
+        const key = process_id;
+        const existing2 = affectedDates.get(key);
+        if (!existing2) {
+          affectedDates.set(key, { processId: process_id, fromDate: requirement_date, toDate: requirement_date });
+        } else {
+          if (requirement_date < existing2.fromDate) existing2.fromDate = requirement_date;
+          if (requirement_date > existing2.toDate) existing2.toDate = requirement_date;
+        }
+      } catch (e: any) {
+        errors.push(`Row ${i + 1}: ${e.message}`);
+      }
+    }
+
+    // Auto-trigger HC calculation for all affected processes/date ranges
+    let calculated = 0;
+    for (const { processId, fromDate, toDate } of affectedDates.values()) {
+      try {
+        const result = await this.calculateHcBulk(processId, fromDate, toDate, userId);
+        calculated += result.calculated;
+        result.errors.forEach((e) => errors.push(`HC calc: ${e}`));
+      } catch (e: any) {
+        errors.push(`HC bulk calc for ${processId}: ${e.message}`);
+      }
+    }
+
+    return { inserted, updated, calculated, errors };
   },
 };

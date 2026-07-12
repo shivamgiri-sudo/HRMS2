@@ -342,6 +342,26 @@ async function getRequirementsForPlan(plan: AnyRow, rosterDate?: string): Promis
   return rows as AnyRow[];
 }
 
+/**
+ * Returns the total required_planned_hc for a process on a specific date
+ * (sum across all slots). Returns null if no slot requirement data exists.
+ * Used to enforce SLA HC floor before granting week-offs.
+ */
+async function getHcFloorForDate(processId: string, date: string): Promise<number | null> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(required_planned_hc), 0) AS hc_floor
+         FROM wfm_slot_requirement
+        WHERE process_id = ? AND requirement_date = ? AND required_planned_hc IS NOT NULL`,
+      [processId, date]
+    );
+    const floor = Number((rows[0] as AnyRow).hc_floor ?? 0);
+    return floor > 0 ? floor : null;
+  } catch {
+    return null;
+  }
+}
+
 async function recomputeCoverage(planId: string): Promise<{ rows: AnyRow[]; score: number; openCriticalGaps: number }> {
   const plan = await getPlan(planId);
   await db.execute(`DELETE FROM wfm_roster_coverage_matrix WHERE plan_id = ?`, [planId]);
@@ -700,7 +720,43 @@ export const autoRosterSyncedService = {
         }
       }
 
+      // ── HC floor gate: check SLA floor before granting week-offs ────────────
+      const hcFloor = await getHcFloorForDate(plan.process_id, rosterDate);
+      const currentlyRostered = assignedToday.size;
+
       for (const emp of pool.filter((e) => !assignedToday.has(String(e.id)) && prefs.get(String(e.id)) === dow)) {
+        const weekoffGranted = skipped; // already granted week-offs on this date so far
+
+        // If floor is set and granting one more would leave us below floor → deny
+        if (hcFloor !== null && (currentlyRostered - weekoffGranted - 1) < hcFloor) {
+          await insertConflict({
+            plan_id: planId,
+            employee_id: String(emp.id),
+            roster_date: rosterDate,
+            conflict_type: "hc_floor_weekoff_denied",
+            severity: "high",
+            message: `Week-off denied for employee ${(emp as AnyRow).employee_code ?? emp.id} on ${rosterDate}: SLA floor requires ${hcFloor} agents, granting would leave ${currentlyRostered - weekoffGranted - 1}.`,
+          });
+          // Re-assign this employee to default shift to maintain coverage
+          const anyShift = await getShiftForSlot("00:00", "23:59").catch(() => null);
+          const deniedAssignmentId = randomUUID();
+          await db.execute(
+            `INSERT INTO wfm_roster_assignment
+             (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status)
+             VALUES (?, ?, ?, ?, ?, 'Rostered', NULL, NULL, ?, ?, 'draft')
+             ON DUPLICATE KEY UPDATE roster_status = 'Rostered', publish_status = 'draft'`,
+            [deniedAssignmentId, emp.id, anyShift?.id ?? null, planId, rosterDate, branchName, processName]
+          );
+          await db.execute(
+            `INSERT IGNORE INTO wfm_roster_assignment_control
+             (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status)
+             VALUES (?, ?, 'draft_editable', 0, 'not_required')`,
+            [deniedAssignmentId, planId]
+          );
+          created++;
+          continue;
+        }
+
         const assignmentId = randomUUID();
         await db.execute(
           `INSERT INTO wfm_roster_assignment

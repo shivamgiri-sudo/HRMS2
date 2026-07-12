@@ -409,6 +409,16 @@ wfmRouter.post("/slot-requirements/calculate-bulk", requireAuth, requireRole("ad
   return res.json({ success: true, data });
 }));
 
+// POST /api/wfm/slot-requirements/forecast-import  (bulk upsert volume rows + auto-recalculate HC)
+wfmRouter.post("/slot-requirements/forecast-import", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  const rows = req.body?.rows;
+  if (!Array.isArray(rows)) {
+    return res.status(400).json({ error: "req.body.rows must be a JSON array of slot requirement objects" });
+  }
+  const data = await slotRequirementService.forecastImport(rows, req.authUser!.id);
+  return res.status(200).json({ success: true, data });
+}));
+
 // PATCH /api/wfm/slot-requirements/:id
 wfmRouter.patch("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
   const data = await slotRequirementService.upsert({ ...req.body, id: req.params.id }, req.authUser!.id);

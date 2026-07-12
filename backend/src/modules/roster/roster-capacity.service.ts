@@ -172,6 +172,53 @@ class RosterCapacityService {
       }
     }
 
+    // ── HC floor gate: SLA coverage takes priority over week-off grants ─────────
+    // Query the required HC from wfm_slot_requirement for this date.
+    // If granting one more week-off would leave fewer agents than the floor, deny.
+    try {
+      const [floorRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(required_planned_hc), 0) AS hc_floor
+           FROM wfm_slot_requirement
+          WHERE process_id = ? AND requirement_date = ? AND required_planned_hc IS NOT NULL`,
+        [processId, allocationDate]
+      );
+      const hcFloor = Number((floorRows[0] as any).hc_floor ?? 0);
+
+      if (hcFloor > 0) {
+        // employees on leave on this date (approved leave_request rows)
+        const [leaveRows] = await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(DISTINCT lr.employee_id) AS on_leave
+             FROM leave_request lr
+             JOIN employees e ON e.id = lr.employee_id
+            WHERE e.process_id = ? AND lr.status = 'approved'
+              AND lr.start_date <= ? AND lr.end_date >= ?`,
+          [processId, allocationDate, allocationDate]
+        );
+        const onLeave = Number((leaveRows[0] as any).on_leave ?? 0);
+
+        // employees already getting week-off on this date (already allocated + about to be granted)
+        const alreadyWeekoff = currentCount; // currentCount = already allocated week-offs today
+
+        // available_for_work = total active − on_leave − already_on_weekoff
+        const availableForWork = processStrength - onLeave - alreadyWeekoff;
+
+        // If granting one more week-off would drop available below floor → deny
+        if ((availableForWork - 1) < hcFloor) {
+          return {
+            can_allocate: false,
+            current_count: currentCount,
+            max_count: config.max_weekoff_count,
+            max_percentage: config.max_weekoff_percentage,
+            process_strength: processStrength,
+            allocation_sequence: null,
+            reason: `hc_floor_breach:required_${hcFloor}_available_${availableForWork}. Granting this week-off would leave ${availableForWork - 1} agents, below the SLA floor of ${hcFloor}.`,
+          };
+        }
+      }
+    } catch {
+      // wfm_slot_requirement may not have data for this date — fall through, allow
+    }
+
     // Get next sequence number (FCFS)
     const [maxSeq] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(MAX(allocation_sequence), 0) as max_seq FROM weekoff_allocation_log
