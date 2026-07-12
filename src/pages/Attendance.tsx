@@ -917,6 +917,9 @@ const Attendance = () => {
               <p className="mt-1 text-xs leading-5 text-slate-500">
                 Attendance summary for {selectedMonthLabel} {selectedYear}.
               </p>
+              <div className="mt-2 inline-flex items-center rounded-full border border-[#c4dcf5] bg-[#e8f2fc] px-3 py-1 text-[11px] font-semibold text-[#1B6AB5]">
+                Source: Direct COSEC
+              </div>
             </div>
 
             {reportLoading ? (

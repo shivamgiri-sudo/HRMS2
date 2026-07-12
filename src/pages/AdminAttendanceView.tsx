@@ -277,6 +277,9 @@ export default function AdminAttendanceView() {
           <p className="text-sm text-slate-500">
             Search for any employee to view their monthly summary and daily attendance records.
           </p>
+          <div className="mt-2 inline-flex w-fit items-center rounded-full border border-[#c4dcf5] bg-[#e8f2fc] px-3 py-1 text-[11px] font-semibold text-[#1B6AB5]">
+            Source: Direct COSEC
+          </div>
         </div>
 
         {/* ── Employee selector ── */}
@@ -359,6 +362,9 @@ export default function AdminAttendanceView() {
               <h2 className="text-sm font-semibold text-slate-700 mb-3">
                 Monthly Summary — {monthLabel}
               </h2>
+              <div className="mb-3 inline-flex items-center rounded-full border border-[#c4dcf5] bg-[#e8f2fc] px-3 py-1 text-[11px] font-semibold text-[#1B6AB5]">
+                Summary Source: Direct COSEC
+              </div>
               {summaryLoading ? (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
                   {Array.from({ length: 7 }).map((_, i) => (
