@@ -31,7 +31,7 @@ interface AttendanceReportSummary {
 
 const EMPLOYEE_PAGE_SIZE = 500;
 const ATTENDANCE_PAGE_SIZE = 500;
-const NCOSEC_ENDPOINT = "/api/wfm/attendance/ncosec-monthly";
+const ATTENDANCE_ENDPOINT = "/api/wfm/attendance/daily";
 
 function safeNumber(value: unknown): number {
   const parsed = Number(value);
@@ -89,7 +89,7 @@ async function fetchAttendancePages(params: URLSearchParams): Promise<Attendance
     paged.set("limit", String(ATTENDANCE_PAGE_SIZE));
     paged.set("page", String(page));
     const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(
-      `${NCOSEC_ENDPOINT}?${paged}`
+      `${ATTENDANCE_ENDPOINT}?${paged}`
     );
     if (!res.success) throw new Error((res as any).message || "Failed to fetch attendance records");
     const batch = res.data ?? [];

@@ -3,7 +3,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 
 const ATTENDANCE_PAGE_LIMIT = 500;
-const NCOSEC_ENDPOINT = "/api/wfm/attendance/ncosec-monthly";
+const ATTENDANCE_ENDPOINT = "/api/wfm/attendance/daily";
 
 export interface AttendanceRecord {
   id: string;
@@ -89,7 +89,7 @@ async function fetchAttendancePages(params: URLSearchParams): Promise<Attendance
     const paged = new URLSearchParams(params);
     paged.set("limit", String(ATTENDANCE_PAGE_LIMIT));
     paged.set("page", String(page));
-    const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(`${NCOSEC_ENDPOINT}?${paged}`);
+    const res = await hrmsApi.get<{ success: boolean; data: AttendanceRecord[]; total?: number }>(`${ATTENDANCE_ENDPOINT}?${paged}`);
     if (!res.success) throw new Error((res as any).message || "Failed to fetch attendance records");
     const rows = res.data ?? [];
     allRecords.push(...rows);
@@ -107,7 +107,7 @@ export function useAttendance(month?: Date, employeeId?: string) {
   const end = format(endOfMonth(targetMonth), "yyyy-MM-dd");
 
   return useQuery({
-    queryKey: ["attendance-ncosec", start, end, employeeId ?? "all"],
+    queryKey: ["attendance-processed", start, end, employeeId ?? "all"],
     queryFn: async () => {
       const params = new URLSearchParams({ fromDate: start, toDate: end, limit: String(ATTENDANCE_PAGE_LIMIT) });
       if (employeeId) {
@@ -184,6 +184,7 @@ export function useClockIn() {
       return res.data;
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-processed"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-ncosec"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today-live"] });
@@ -205,6 +206,7 @@ export function useClockOut() {
       return res.data;
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-processed"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-ncosec"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today-live"] });
@@ -224,6 +226,7 @@ export function useWebPunchIn() {
       return res;
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-processed"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-ncosec"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
     },
@@ -242,6 +245,7 @@ export function useWebPunchOut() {
       return res;
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["attendance-processed"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-ncosec"] });
       queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
     },
@@ -290,7 +294,7 @@ export function useAttendanceReport(month: Date) {
   const end = format(endOfMonth(month), "yyyy-MM-dd");
 
   return useQuery({
-    queryKey: ["attendance-ncosec-report", start, end],
+    queryKey: ["attendance-processed-report", start, end],
     queryFn: async () => {
       const params = new URLSearchParams({ fromDate: start, toDate: end });
       const records = await fetchAttendancePages(params);
@@ -390,6 +394,7 @@ export function useSubmitRegularization() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-processed'] });
       queryClient.invalidateQueries({ queryKey: ['attendance-ncosec'] });
       queryClient.invalidateQueries({ queryKey: ['attendance-my-summary'] });
       queryClient.invalidateQueries({ queryKey: ['day-detail'] });
@@ -424,6 +429,7 @@ export function useSubmitLeaveRequest() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance-calendar'] });
+      queryClient.invalidateQueries({ queryKey: ['attendance-processed'] });
       queryClient.invalidateQueries({ queryKey: ['attendance-ncosec'] });
       queryClient.invalidateQueries({ queryKey: ['attendance-my-summary'] });
       queryClient.invalidateQueries({ queryKey: ['leave'] });

@@ -341,6 +341,21 @@ function nextDateText(dateText: string): string {
 }
 
 async function computeNcosecMonthlySummary(employeeId: string, month: string) {
+  const processedSummary = await attendanceEngineService.getMonthlySummary(employeeId, month);
+  const processedRecordCount =
+    processedSummary.presentDays +
+    processedSummary.halfDays +
+    processedSummary.absentDays +
+    processedSummary.leaveDays +
+    processedSummary.holidayDays +
+    processedSummary.weekOffDays;
+
+  // Payroll and the main Attendance page should prefer processed HRMS attendance
+  // because it is the same source used downstream for salary calculations.
+  if (processedRecordCount > 0 || processedSummary.totalHours > 0) {
+    return processedSummary;
+  }
+
   const monthStart = `${month}-01`;
   const monthEnd = formatMonthEnd(month);
   const currentShiftDate = resolveAttendanceShiftDate();
