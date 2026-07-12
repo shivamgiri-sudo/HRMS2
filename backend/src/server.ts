@@ -14,41 +14,17 @@ import { startIntegrationScheduler } from "./workers/integration-scheduler.worke
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
-// Attendance data sync workers — APR/dialler + biometric COSEC
 import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
-import { runNcosecBiometricSync } from "../scripts/migrate-ncosec-biometric.js";
-// Payroll nightly recalc
 import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
-// KPI, SLA, LMS sync
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
-// Phase 2: Business Action Signal Sync
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 
 // Single-instance guard: if server.ts is the sole entry point, run all workers here.
 // If all-workers.ts is also running (separate process), set WORKERS_PROCESS=external
 // to prevent double-scheduling.
 const WORKERS_EXTERNAL = process.env.WORKERS_PROCESS === "external";
-
-const BIOMETRIC_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 h
-
-async function startBiometricCosecWorker(): Promise<void> {
-  const run = async () => {
-    console.log("[biometric-cosec-sync] Starting NCOSEC sync...");
-    try {
-      const summary = await runNcosecBiometricSync();
-      console.log(
-        `[biometric-cosec-sync] Done — inserted: ${summary.attendance_inserted}, ` +
-        `updated: ${summary.attendance_updated}, errors: ${summary.errors.length}`
-      );
-    } catch (err: any) {
-      console.error("[biometric-cosec-sync] Failed:", err.message);
-    }
-  };
-  await run();
-  setInterval(run, BIOMETRIC_SYNC_INTERVAL_MS);
-}
 
 function startServer() {
   app.listen(env.PORT, () => {
@@ -66,26 +42,18 @@ function startServer() {
       startLeaveMonthlyWorker();
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
-      initBusinessActionSyncJobs(); // Phase 2: Business Action Signal Sync
+      initBusinessActionSyncJobs();
       console.log("[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync started");
 
       if (!WORKERS_EXTERNAL) {
-        // Attendance data sync: APR/dialler → apr table (daily at 01:30 IST)
         startAprVicidialSyncWorker().catch(err =>
           console.error("[apr-sync] startup error:", err.message)
         );
 
-        // Biometric COSEC → cosec_daily_agg → ADR (every 6h)
-        startBiometricCosecWorker().catch(err =>
-          console.error("[biometric-cosec-sync] startup error:", err.message)
-        );
-
-        // Payroll nightly recalculation (23:45 IST = 18:15 UTC)
         startPayrollNightlyRecalcWorker().catch(err =>
           console.error("[payroll-nightly-recalc] startup error:", err.message)
         );
 
-        // KPI daily sync, SLA breach detection, LMS sync
         startKpiDailySyncWorker().catch(err =>
           console.error("[kpi-daily-sync] startup error:", err.message)
         );
@@ -96,9 +64,10 @@ function startServer() {
           console.error("[lms-sync] startup error:", err.message)
         );
 
-        console.log("[workers] apr-sync, biometric-cosec-sync, payroll-nightly-recalc, kpi-sync, sla-breach, lms-sync started inline");
+        console.log("[workers] apr-sync, payroll-nightly-recalc, kpi-sync, sla-breach, lms-sync started inline");
+        console.log("[workers] biometric attendance sync is handled by the integration scheduler / cosec-sync worker");
       } else {
-        console.log("[workers] WORKERS_PROCESS=external — skipping inline workers (handled by all-workers process)");
+        console.log("[workers] WORKERS_PROCESS=external - skipping inline workers (handled by all-workers process)");
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
@@ -115,8 +84,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 }
 
 async function initializeRuntime() {
-  await withTimeout(migrateLegacyIntegrationSecrets(), 8000, 'migrateLegacyIntegrationSecrets');
-  const cosecActive = await withTimeout(bootstrapCosecIntegration(), 8000, 'bootstrapCosecIntegration');
+  await withTimeout(migrateLegacyIntegrationSecrets(), 8000, "migrateLegacyIntegrationSecrets");
+  const cosecActive = await withTimeout(bootstrapCosecIntegration(), 8000, "bootstrapCosecIntegration");
   console.log(`[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`);
   startServer();
 }

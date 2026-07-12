@@ -26,6 +26,8 @@ import { getNcosecPool, closeNcosecPool, testNcosecConnection } from '../src/db/
 import { db } from '../src/db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
+const IST_TIME_ZONE = 'Asia/Kolkata';
+
 interface NcosecRow {
   UserID:          string;   // nvarchar — employee name/code in Cosec
   Name:            string;   // from Mx_UserMst (may be same as UserID)
@@ -62,7 +64,7 @@ async function fetchNcosecPunchesForDay(
   dateStr: string  // 'YYYY-MM-DD'
 ): Promise<NcosecRow[]> {
   const result = await pool.request()
-    .input('d', sql.Date, new Date(dateStr))
+    .input('d', sql.VarChar(10), dateStr)
     .query<NcosecRow>(`
       SELECT
           e.UserID,
@@ -71,7 +73,7 @@ async function fetchNcosecPunchesForDay(
           MIN(e.IDateTime)            AS first_punch_in,
           MAX(e.IDateTime)            AS last_punch_out
       FROM Mx_ATDEventTrn e WITH (NOLOCK)
-      WHERE CAST(e.Edatetime AS DATE) = @d
+      WHERE CAST(e.Edatetime AS DATE) = CONVERT(date, @d, 23)
         AND e.IDateTime IS NOT NULL
         AND e.UserID    IS NOT NULL
         AND LEN(LTRIM(RTRIM(e.UserID))) > 0
@@ -81,15 +83,51 @@ async function fetchNcosecPunchesForDay(
   return result.recordset;
 }
 
+function formatDateParts(date: Date): { year: string; month: string; day: string; hour: string; minute: string; second: string } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: IST_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? '00';
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour'),
+    minute: get('minute'),
+    second: get('second'),
+  };
+}
+
+function formatISTDate(date: Date): string {
+  const { year, month, day } = formatDateParts(date);
+  return `${year}-${month}-${day}`;
+}
+
+function formatISTDateTime(date: Date): string {
+  const { year, month, day, hour, minute, second } = formatDateParts(date);
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function todayIST(): string {
+  return formatISTDate(new Date());
+}
+
 /** Generate array of date strings YYYY-MM-DD from startDate to today (inclusive) */
 function dateRange(startDate: Date): string[] {
   const dates: string[] = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
   const cur = new Date(startDate);
   cur.setHours(0, 0, 0, 0);
-  while (cur <= today) {
-    dates.push(cur.toISOString().slice(0, 10));
+  const today = todayIST();
+  while (formatISTDate(cur) <= today) {
+    dates.push(formatISTDate(cur));
     cur.setDate(cur.getDate() + 1);
   }
   return dates;
@@ -132,6 +170,9 @@ async function upsertBiometricLog(
   punchDate: string, punchIn: Date, punchOut: Date,
   rawMinutes: number
 ): Promise<string> {
+  const punchInText = formatISTDateTime(punchIn);
+  const punchOutText = formatISTDateTime(punchOut);
+
   await db.execute(`
     INSERT INTO biometric_attendance_log
       (id, employee_id, cosec_user_id, punch_date, first_punch_in, last_punch_out, raw_minutes, source_system)
@@ -141,7 +182,7 @@ async function upsertBiometricLog(
       last_punch_out = VALUES(last_punch_out),
       raw_minutes    = VALUES(raw_minutes),
       migrated_at    = NOW()
-  `, [employeeId, cosecUserId, punchDate, punchIn, punchOut, rawMinutes]);
+  `, [employeeId, cosecUserId, punchDate, punchInText, punchOutText, rawMinutes]);
 
   const [rows] = await db.execute<BiometricLogRow[]>(
     `SELECT id FROM biometric_attendance_log WHERE employee_id = ? AND punch_date = ? LIMIT 1`,
@@ -155,7 +196,9 @@ async function upsertAttendanceDailyRecord(
   punchIn: Date, punchOut: Date, rawMinutes: number,
   bioLogId: string
 ): Promise<'inserted' | 'updated'> {
-  const status = rawMinutes >= 360 ? 'present' : rawMinutes >= 180 ? 'half_day' : 'half_day';
+  const status = rawMinutes >= 360 ? 'present' : rawMinutes >= 180 ? 'half_day' : 'absent';
+  const punchInText = formatISTDateTime(punchIn);
+  const punchOutText = formatISTDateTime(punchOut);
 
   const [empInfo] = await db.execute<EmployeeInfoRow[]>(
     `SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1`, [employeeId]
@@ -174,7 +217,7 @@ async function upsertAttendanceDailyRecord(
       attendance_status = VALUES(attendance_status),
       attendance_source = 'biometric',
       created_by        = 'ncosec_migration'
-  `, [employeeId, punchDate, punchIn, punchOut, rawMinutes, status,
+  `, [employeeId, punchDate, punchInText, punchOutText, rawMinutes, status,
       emp.branch_id ?? null, emp.process_id ?? null]);
 
   const wasInsert = res.affectedRows === 1;
@@ -218,8 +261,9 @@ export async function runNcosecBiometricSync(): Promise<Summary> {
     const ncPool = await getNcosecPool();
 
     // Generate list of dates: last 3 months → today
+    const lookbackDays = Math.max(1, Number(process.env.NCOSEC_LEGACY_SYNC_LOOKBACK_DAYS ?? 90) || 90);
     const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - 3);
+    startDate.setDate(startDate.getDate() - (lookbackDays - 1));
     const dates = dateRange(startDate);
     console.log(`[NCOSEC] Will process ${dates.length} days (${dates[0]} → ${dates[dates.length - 1]})`);
 
@@ -258,7 +302,7 @@ export async function runNcosecBiometricSync(): Promise<Summary> {
         // Convert punch_date to YYYY-MM-DD string
         const pd = row.punch_date;
         const punchDate = pd instanceof Date
-          ? pd.toISOString().slice(0, 10)
+          ? formatISTDate(pd)
           : String(pd).slice(0, 10);
 
         // Skip single-scan days (same punch = can't distinguish in vs out)
