@@ -60,6 +60,10 @@ export interface PayrollRecord {
   netSalary: number;
   status: "paid" | "pending" | "processing";
   paidAt?: string;
+  branch?: string;
+  process?: string;
+  department?: string;
+  designation?: string;
 }
 
 interface PayrollTableProps {
@@ -283,7 +287,7 @@ export function PayrollTable({
           <MobileRecordCard
             key={record.id}
             title={record.employee.name}
-            subtitle={`${record.employeeCode} · ${record.month} ${record.year}`}
+            subtitle={[record.employeeCode, record.month + " " + record.year, record.branch, record.process].filter(Boolean).join(" · ")}
             status={
               <StatusBadgeV2
                 status={record.status === "paid" ? "success" : record.status === "processing" ? "info" : "pending"}
@@ -370,9 +374,14 @@ export function PayrollTable({
                         {record.employee.name.split(" ").map((n) => n[0]).join("")}
                       </AvatarFallback>
                     </Avatar>
-                    <div>
-                      <p className="font-medium text-foreground">{record.employee.name}</p>
-                      <p className="text-xs text-muted-foreground">{record.employee.email}</p>
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground truncate">{record.employee.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{record.employeeCode} · {record.employee.email}</p>
+                      {(record.branch || record.process) && (
+                        <p className="text-xs text-muted-foreground/70 truncate mt-0.5">
+                          {[record.branch, record.process].filter(Boolean).join(" › ")}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </TableCell>

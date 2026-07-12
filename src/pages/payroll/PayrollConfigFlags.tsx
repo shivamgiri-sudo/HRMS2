@@ -37,6 +37,18 @@ const FLAG_META: Record<string, { label: string; description: string }> = {
     label: "Auto recalculate payroll on attendance regularization",
     description: "When enabled, approving an attendance regularization automatically queues the affected employee's payroll for recalculation in the current open payroll run.",
   },
+  overtime_allowed: {
+    label: "Overtime allowed",
+    description: "Whether overtime hours can be recorded and paid for employees in this scope. Default is false (disabled). Must be enabled per process to allow OT entry.",
+  },
+  overtime_rate_multiplier: {
+    label: "Overtime rate multiplier",
+    description: "Multiplier applied to per-hour basic rate for overtime calculation. E.g. 1.5 = time-and-a-half, 2.0 = double time. Default is 1.5.",
+  },
+  overtime_monthly_cap_hours: {
+    label: "Overtime monthly cap (hours)",
+    description: "Maximum overtime hours allowed per employee per month for this scope. 0 = no cap. Prevents excessive OT entry beyond process policy.",
+  },
 };
 
 const BOOL_FLAGS = new Set([
@@ -44,6 +56,7 @@ const BOOL_FLAGS = new Set([
   "new_joiner_holiday_cutoff_enabled",
   "holiday_double_pay_requires_superadmin",
   "payroll_recalc_auto_on_regularization",
+  "overtime_allowed",
 ]);
 
 interface ConfigFlag {

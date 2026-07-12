@@ -35,6 +35,8 @@ export interface PayrollRecord {
   paidAt?: string;
   designation?: string;
   department?: string;
+  branch?: string;
+  process?: string;
 }
 
 const MONTH_NAMES = [
@@ -84,7 +86,9 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     status: normalizePayrollStatus(row.run_status, row.line_status),
     paidAt: row.disbursed_at ? String(row.disbursed_at).slice(0, 10) : undefined,
     designation: row.designation_name ?? row.designation ?? undefined,
-    department:  row.dept_name ?? row.department ?? undefined,
+    department:  row.dept_name ?? row.department_name ?? row.department ?? undefined,
+    branch:      row.branch_name ?? undefined,
+    process:     row.process_name ?? undefined,
   };
 };
 
@@ -507,7 +511,7 @@ export function usePayrollRunSummaries() {
     queryKey: ["payroll-run-summaries"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-        "/api/payroll/runs?limit=50"
+        "/api/payroll/runs?limit=200"
       );
       return (res.data ?? []).map((r: any) => ({
         id: String(r.id),
@@ -517,6 +521,88 @@ export function usePayrollRunSummaries() {
       }));
     },
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+export interface EmployeeSalaryHistoryPoint {
+  runMonth: string;
+  monthLabel: string;
+  basic: number;
+  allowances: number;
+  deductions: number;
+  netSalary: number;
+  status: PayrollRecord["status"];
+}
+
+export function useEmployeeSalaryHistory(employeeId: string | null | undefined) {
+  return useQuery<EmployeeSalaryHistoryPoint[]>({
+    queryKey: ["employee-salary-history", employeeId],
+    queryFn: async () => {
+      if (!employeeId) return [];
+      const p = new URLSearchParams({ limit: "24", page: "1" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number }>(
+        `/api/payroll/records?${p}&employeeId=${employeeId}`
+      );
+      // employeeId filter not supported in backend — use search by code from the records already fetched
+      return [];
+    },
+    enabled: false, // disabled — use useEmployeeSalaryHistoryByCode instead
+  });
+}
+
+export function useEmployeeSalaryHistoryByCode(employeeCode: string | null | undefined) {
+  return useQuery<EmployeeSalaryHistoryPoint[]>({
+    queryKey: ["employee-salary-history-code", employeeCode],
+    queryFn: async () => {
+      if (!employeeCode?.trim()) return [];
+      const p = new URLSearchParams({ search: employeeCode.trim(), limit: "24", page: "1" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[]; total: number; page: number; limit: number }>(
+        `/api/payroll/records?${p}`
+      );
+      const records = (res.data ?? []).map(mapPayrollRecord);
+      // Sort oldest → newest for charting
+      records.sort((a, b) => {
+        if (a.year !== b.year) return a.year - b.year;
+        return a.monthNum - b.monthNum;
+      });
+      return records.map((r) => ({
+        runMonth: `${r.year}-${String(r.monthNum).padStart(2, "0")}`,
+        monthLabel: `${r.month.slice(0, 3)} ${String(r.year).slice(2)}`,
+        basic: r.basic,
+        allowances: r.allowances,
+        deductions: r.deductions,
+        netSalary: r.netSalary,
+        status: r.status,
+      }));
+    },
+    enabled: !!employeeCode?.trim(),
+    staleTime: 2 * 60_000,
+  });
+}
+
+export function usePayrollEmployeeSearch(query: string) {
+  return useQuery<Array<{ employeeId: string; employeeCode: string; name: string; branch?: string; process?: string }>>({
+    queryKey: ["payroll-employee-search", query],
+    queryFn: async () => {
+      if (!query.trim() || query.trim().length < 2) return [];
+      const p = new URLSearchParams({ search: query.trim(), limit: "10", page: "1" });
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/payroll/records?${p}`
+      );
+      const records = (res.data ?? []).map(mapPayrollRecord);
+      // Deduplicate by employeeId — return one entry per employee
+      const seen = new Set<string>();
+      const out: Array<{ employeeId: string; employeeCode: string; name: string; branch?: string; process?: string }> = [];
+      for (const r of records) {
+        if (!seen.has(r.employeeId)) {
+          seen.add(r.employeeId);
+          out.push({ employeeId: r.employeeId, employeeCode: r.employeeCode, name: r.employee.name, branch: r.branch, process: r.process });
+        }
+      }
+      return out;
+    },
+    enabled: query.trim().length >= 2,
+    staleTime: 60_000,
   });
 }
 

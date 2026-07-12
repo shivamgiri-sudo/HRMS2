@@ -39,6 +39,8 @@ import {
   type PayrollRecord,
 } from "@/hooks/usePayroll";
 import { useCanAccessPayroll } from "@/hooks/useUserRole";
+import { useEmployeeDirectoryMasters } from "@/hooks/useEmployees";
+import { useDepartments } from "@/hooks/useDepartments";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useToast } from "@/hooks/use-toast";
 
@@ -110,11 +112,19 @@ const EmptyState = ({
 const Payroll = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [monthFilter, setMonthFilter] = useState("current");
+  const [currentStatus, setCurrentStatus] = useState("all");
+  const [currentBranchId, setCurrentBranchId] = useState("all");
+  const [currentDeptId, setCurrentDeptId] = useState("all");
+  const [currentProcessId, setCurrentProcessId] = useState("all");
 
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [historyMonth, setHistoryMonth] = useState("all");
   const [historyYear, setHistoryYear] = useState("all");
   const [historyStatus, setHistoryStatus] = useState("all");
+  const [historyBranchId, setHistoryBranchId] = useState("all");
+  const [historyDeptId, setHistoryDeptId] = useState("all");
+  const [historyProcessId, setHistoryProcessId] = useState("all");
+
   const [currentPage, setCurrentPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const [currentPageSize, setCurrentPageSize] = useState(10);
@@ -127,6 +137,8 @@ const Payroll = () => {
 
   const { toast } = useToast();
   const { canAccessPayroll, isLoading: roleLoading } = useCanAccessPayroll();
+  const { data: directoryMasters } = useEmployeeDirectoryMasters();
+  const { data: departments = [] } = useDepartments();
 
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth() + 1;
@@ -138,9 +150,13 @@ const Payroll = () => {
     month: monthFilter === "current" ? currentMonth : undefined,
     year:  monthFilter === "current" ? currentYear  : undefined,
     search: debouncedSearchQuery || undefined,
+    status: currentStatus !== "all" ? currentStatus : undefined,
+    branchId:     currentBranchId  !== "all" ? currentBranchId  : undefined,
+    departmentId: currentDeptId    !== "all" ? currentDeptId    : undefined,
+    processId:    currentProcessId !== "all" ? currentProcessId : undefined,
     page: currentPage,
     limit: currentPageSize,
-  }), [monthFilter, currentMonth, currentYear, debouncedSearchQuery, currentPage, currentPageSize]);
+  }), [monthFilter, currentMonth, currentYear, debouncedSearchQuery, currentStatus, currentBranchId, currentDeptId, currentProcessId, currentPage, currentPageSize]);
   const { data: recordsPage, isLoading } = usePayrollRecords(currentMonthFilters);
   const currentRecords = recordsPage?.records ?? [];
   const currentTotalItems = recordsPage?.total ?? 0;
@@ -155,9 +171,12 @@ const Payroll = () => {
     year:  historyYear  !== "all" ? parseInt(historyYear)  : undefined,
     status: historyStatus !== "all" ? historyStatus : undefined,
     search: debouncedHistorySearchQuery || undefined,
+    branchId:     historyBranchId  !== "all" ? historyBranchId  : undefined,
+    departmentId: historyDeptId    !== "all" ? historyDeptId    : undefined,
+    processId:    historyProcessId !== "all" ? historyProcessId : undefined,
     page: historyPage,
     limit: historyPageSize,
-  }), [historyMonth, historyYear, historyStatus, debouncedHistorySearchQuery, historyPage, historyPageSize]);
+  }), [historyMonth, historyYear, historyStatus, debouncedHistorySearchQuery, historyBranchId, historyDeptId, historyProcessId, historyPage, historyPageSize]);
   const { data: historyRecordsPage, isLoading: isLoadingHistoryRecords } = usePayrollRecords(historyFilters);
   const historyRecords = historyRecordsPage?.records ?? [];
   const historyTotalItems = historyRecordsPage?.total ?? 0;
@@ -171,11 +190,20 @@ const Payroll = () => {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearchQuery, monthFilter, currentPageSize]);
+  }, [debouncedSearchQuery, monthFilter, currentStatus, currentBranchId, currentDeptId, currentProcessId, currentPageSize]);
 
   useEffect(() => {
     setHistoryPage(1);
-  }, [debouncedHistorySearchQuery, historyMonth, historyYear, historyStatus, historyPageSize]);
+  }, [debouncedHistorySearchQuery, historyMonth, historyYear, historyStatus, historyBranchId, historyDeptId, historyProcessId, historyPageSize]);
+
+  // Cascade resets: when branch changes, clear dependent filters
+  useEffect(() => {
+    setCurrentProcessId("all");
+  }, [currentBranchId]);
+
+  useEffect(() => {
+    setHistoryProcessId("all");
+  }, [historyBranchId]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-IN", {
@@ -212,6 +240,9 @@ const Payroll = () => {
       year: historyYear !== "all" ? parseInt(historyYear) : undefined,
       status: historyStatus !== "all" ? historyStatus : undefined,
       search: debouncedHistorySearchQuery || undefined,
+      branchId:     historyBranchId  !== "all" ? historyBranchId  : undefined,
+      departmentId: historyDeptId    !== "all" ? historyDeptId    : undefined,
+      processId:    historyProcessId !== "all" ? historyProcessId : undefined,
     };
     const firstPage = await fetchPayrollRecordPage({
       ...baseFilters,
@@ -262,6 +293,10 @@ const Payroll = () => {
       "Employee Code",
       "Employee Name",
       "Email",
+      "Branch",
+      "Process",
+      "Department",
+      "Designation",
       "Month",
       "Year",
       "Basic Salary",
@@ -278,6 +313,10 @@ const Payroll = () => {
           `"${record.employeeCode}"`,
           `"${record.employee.name}"`,
           `"${record.employee.email}"`,
+          `"${record.branch ?? ""}"`,
+          `"${record.process ?? ""}"`,
+          `"${record.department ?? ""}"`,
+          `"${record.designation ?? ""}"`,
           `"${record.month}"`,
           `"${record.year}"`,
           `"${record.basic}"`,
@@ -351,7 +390,8 @@ const Payroll = () => {
         [
           "Emp Code",
           "Name",
-          "Email",
+          "Branch",
+          "Process",
           "Month",
           "Year",
           "Basic",
@@ -364,7 +404,8 @@ const Payroll = () => {
       body: dataToExport.map((record) => [
         record.employeeCode,
         record.employee.name,
-        record.employee.email,
+        record.branch ?? "",
+        record.process ?? "",
         record.month,
         record.year,
         formatCurrency(record.basic),
@@ -373,7 +414,7 @@ const Payroll = () => {
         formatCurrency(record.netSalary),
         record.status.charAt(0).toUpperCase() + record.status.slice(1),
       ]),
-      styles: { fontSize: 8 },
+      styles: { fontSize: 7 },
       headStyles: { fillColor: [15, 23, 42] },
     });
 
@@ -706,12 +747,16 @@ const Payroll = () => {
     );
   };
 
-  const hasCurrentFilters = searchQuery.trim() || monthFilter !== "current";
-  const hasHistoryFilters =
+  const hasCurrentFilters = !!(searchQuery.trim() || monthFilter !== "current" || currentStatus !== "all" || currentBranchId !== "all" || currentDeptId !== "all" || currentProcessId !== "all");
+  const hasHistoryFilters = !!(
     historySearchQuery.trim() ||
     historyMonth !== "all" ||
     historyYear !== "all" ||
-    historyStatus !== "all";
+    historyStatus !== "all" ||
+    historyBranchId !== "all" ||
+    historyDeptId !== "all" ||
+    historyProcessId !== "all"
+  );
 
   if (roleLoading) {
     return (
@@ -848,37 +893,83 @@ const Payroll = () => {
             </div>
 
             <TabsContent value="current" className="mt-0 space-y-4">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-3 lg:grid-cols-[1fr_220px_auto]">
-                  <div className="relative">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1fr_140px_140px]">
+                  <div className="relative sm:col-span-2 xl:col-span-1">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
                     <Input
-                      placeholder="Search employee name, email, code, month or status..."
-                      className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
+                      placeholder="Search by name, email or employee code..."
+                      className="h-10 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
                     />
                   </div>
-
                   <Select value={monthFilter} onValueChange={setMonthFilter}>
-                    <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
                       <SelectValue />
                     </SelectTrigger>
-
                     <SelectContent>
                       <SelectItem value="current">Current Month</SelectItem>
-                      <SelectItem value="all">All Records</SelectItem>
+                      <SelectItem value="all">All Months</SelectItem>
                     </SelectContent>
                   </Select>
-
+                  <Select value={currentStatus} onValueChange={setCurrentStatus}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="processing">Processing</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto]">
+                  <Select value={currentBranchId} onValueChange={setCurrentBranchId}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Branches" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Branches</SelectItem>
+                      {(directoryMasters?.branches ?? []).map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={currentDeptId} onValueChange={setCurrentDeptId}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Departments" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Departments</SelectItem>
+                      {departments.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={currentProcessId} onValueChange={setCurrentProcessId}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Processes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Processes</SelectItem>
+                      {(directoryMasters?.processes ?? []).map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   {hasCurrentFilters && (
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center gap-1 rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-900"
+                      className="inline-flex h-10 items-center justify-center gap-1 rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-900"
                       onClick={() => {
                         setSearchQuery("");
                         setMonthFilter("current");
+                        setCurrentStatus("all");
+                        setCurrentBranchId("all");
+                        setCurrentDeptId("all");
+                        setCurrentProcessId("all");
                         setCurrentPage(1);
                       }}
                     >
@@ -948,56 +1039,43 @@ const Payroll = () => {
             </TabsContent>
 
             <TabsContent value="history" className="mt-0 space-y-4">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-3 xl:grid-cols-[1fr_160px_160px_160px_auto]">
-                  <div className="relative">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1fr_140px_140px_140px]">
+                  <div className="relative sm:col-span-2 xl:col-span-1">
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-
                     <Input
-                      placeholder="Search payroll history..."
-                      className="h-11 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
+                      placeholder="Search by name, email or employee code..."
+                      className="h-10 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
                       value={historySearchQuery}
-                      onChange={(event) =>
-                        setHistorySearchQuery(event.target.value)
-                      }
+                      onChange={(event) => setHistorySearchQuery(event.target.value)}
                     />
                   </div>
-
                   <Select value={historyMonth} onValueChange={setHistoryMonth}>
-                    <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
                       <SelectValue placeholder="Month" />
                     </SelectTrigger>
-
                     <SelectContent>
                       <SelectItem value="all">All Months</SelectItem>
                       {months.map((month) => (
-                        <SelectItem key={month.value} value={month.value}>
-                          {month.label}
-                        </SelectItem>
+                        <SelectItem key={month.value} value={month.value}>{month.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-
                   <Select value={historyYear} onValueChange={setHistoryYear}>
-                    <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
                       <SelectValue placeholder="Year" />
                     </SelectTrigger>
-
                     <SelectContent>
                       <SelectItem value="all">All Years</SelectItem>
                       {availableYears.map((year) => (
-                        <SelectItem key={year} value={year.toString()}>
-                          {year}
-                        </SelectItem>
+                        <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-
                   <Select value={historyStatus} onValueChange={setHistoryStatus}>
-                    <SelectTrigger className="h-11 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
-
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
                       <SelectItem value="pending">Pending</SelectItem>
@@ -1005,16 +1083,53 @@ const Payroll = () => {
                       <SelectItem value="paid">Paid</SelectItem>
                     </SelectContent>
                   </Select>
-
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto]">
+                  <Select value={historyBranchId} onValueChange={setHistoryBranchId}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Branches" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Branches</SelectItem>
+                      {(directoryMasters?.branches ?? []).map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={historyDeptId} onValueChange={setHistoryDeptId}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Departments" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Departments</SelectItem>
+                      {departments.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={historyProcessId} onValueChange={setHistoryProcessId}>
+                    <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
+                      <SelectValue placeholder="All Processes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Processes</SelectItem>
+                      {(directoryMasters?.processes ?? []).map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   {hasHistoryFilters && (
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center gap-1 rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-900"
+                      className="inline-flex h-10 items-center justify-center gap-1 rounded-xl px-3 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-900"
                       onClick={() => {
                         setHistorySearchQuery("");
                         setHistoryMonth("all");
                         setHistoryYear("all");
                         setHistoryStatus("all");
+                        setHistoryBranchId("all");
+                        setHistoryDeptId("all");
+                        setHistoryProcessId("all");
                         setHistoryPage(1);
                       }}
                     >

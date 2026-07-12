@@ -150,6 +150,62 @@ router.post("/batches/:id/import", requireRole("admin", "hr"), h(async (req: Aut
     return res.json({ success: true, data });
   }
 
+  if (rpc_name === "import_upload_batch") {
+    const { importEmployeeMasterBatch } = await import(
+      "../bulk-upload/employee-master-bulk.service.js"
+    );
+    const data = await importEmployeeMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_process_upload_batch") {
+    const { importProcessMasterBatch } = await import(
+      "../bulk-upload/process-master-bulk.service.js"
+    );
+    const data = await importProcessMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_department_upload_batch") {
+    const { importDepartmentMasterBatch } = await import(
+      "../bulk-upload/department-master-bulk.service.js"
+    );
+    const data = await importDepartmentMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_asset_upload_batch") {
+    const { importAssetMasterBatch } = await import(
+      "../bulk-upload/asset-master-bulk.service.js"
+    );
+    const data = await importAssetMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_branch_upload_batch") {
+    const { importBranchMasterBatch } = await import(
+      "../bulk-upload/branch-master-bulk.service.js"
+    );
+    const data = await importBranchMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_lob_upload_batch") {
+    const { importLobMasterBatch } = await import(
+      "../bulk-upload/lob-master-bulk.service.js"
+    );
+    const data = await importLobMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
+  if (rpc_name === "import_designation_upload_batch") {
+    const { importDesignationMasterBatch } = await import(
+      "../bulk-upload/designation-master-bulk.service.js"
+    );
+    const data = await importDesignationMasterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
   return res.status(501).json({
     success: false,
     error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,

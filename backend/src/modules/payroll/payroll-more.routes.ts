@@ -630,3 +630,69 @@ payrollMoreRouter.patch("/holidays/:holidayId/extra-pay-eligible", requireRole("
 
   return res.json({ success: true, message: 'Holiday extra pay eligibility updated' });
 }));
+
+// ─── Overtime Process Configuration ──────────────────────────────────────────
+
+// GET /api/payroll/overtime/config/processes
+// List all processes with their overtime eligibility status + rate/cap
+payrollMoreRouter.get("/overtime/config/processes", requireRole("admin", "super_admin", "payroll_head", "wfm"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [processes] = await db.execute<RowDataPacket[]>(`
+    SELECT p.id, p.process_code, p.process_name,
+           COALESCE(pcf_allowed.config_value, 'false') AS overtime_allowed,
+           COALESCE(pcf_rate.config_value, '1.5') AS overtime_rate_multiplier,
+           COALESCE(pcf_cap.config_value, '0') AS overtime_monthly_cap_hours
+    FROM process_master p
+    LEFT JOIN payroll_config_flags pcf_allowed
+      ON pcf_allowed.process_id = p.id
+     AND pcf_allowed.branch_id IS NULL
+     AND pcf_allowed.config_key = 'overtime_allowed'
+    LEFT JOIN payroll_config_flags pcf_rate
+      ON pcf_rate.process_id = p.id
+     AND pcf_rate.branch_id IS NULL
+     AND pcf_rate.config_key = 'overtime_rate_multiplier'
+    LEFT JOIN payroll_config_flags pcf_cap
+      ON pcf_cap.process_id = p.id
+     AND pcf_cap.branch_id IS NULL
+     AND pcf_cap.config_key = 'overtime_monthly_cap_hours'
+    WHERE p.active_status = 1
+    ORDER BY p.process_name
+  `);
+  return res.json({ success: true, data: processes });
+}));
+
+// PATCH /api/payroll/overtime/config/process/:processId
+// Enable/disable overtime + set rate/cap for a process
+payrollMoreRouter.patch("/overtime/config/process/:processId", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId } = req.params;
+  const { overtime_allowed, overtime_rate_multiplier, overtime_monthly_cap_hours } = req.body as {
+    overtime_allowed?: boolean;
+    overtime_rate_multiplier?: number;
+    overtime_monthly_cap_hours?: number;
+  };
+
+  if (overtime_allowed !== undefined) {
+    await db.execute(`
+      INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
+      VALUES (UUID(), ?, 'overtime_allowed', ?, 'Whether overtime is allowed for this process')
+      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
+    `, [processId, overtime_allowed ? 'true' : 'false']);
+  }
+
+  if (overtime_rate_multiplier !== undefined) {
+    await db.execute(`
+      INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
+      VALUES (UUID(), ?, 'overtime_rate_multiplier', ?, 'OT rate multiplier for this process')
+      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
+    `, [processId, String(overtime_rate_multiplier)]);
+  }
+
+  if (overtime_monthly_cap_hours !== undefined) {
+    await db.execute(`
+      INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
+      VALUES (UUID(), ?, 'overtime_monthly_cap_hours', ?, 'Monthly OT cap hours for this process')
+      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
+    `, [processId, String(overtime_monthly_cap_hours)]);
+  }
+
+  return res.json({ success: true, message: 'Overtime configuration updated for process' });
+}));

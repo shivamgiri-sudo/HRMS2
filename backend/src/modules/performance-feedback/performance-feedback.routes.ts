@@ -7,6 +7,7 @@ import {
   getEmployeeQualityTrend,
   getTeamQualityMetrics
 } from "./quality-data.service.js";
+import { importQualityRows } from "./quality-upload.service.js";
 
 const router = Router();
 
@@ -107,6 +108,19 @@ router.post("/quality/team", h(async (req: any, res: any) => {
   const metrics = await getTeamQualityMetrics(employeeCodes, startDate, endDate);
 
   return res.json({ success: true, data: metrics });
+}));
+
+// POST /api/performance-feedback/quality/upload — batch import quality audit rows
+router.post("/quality/upload", requireRole("admin", "hr", "qa"), h(async (req: any, res: any) => {
+  const rows = req.body?.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Body must contain a non-empty `rows` array of quality records",
+    });
+  }
+  const result = await importQualityRows(rows, req.authUser?.id ?? "system");
+  return res.json({ success: true, data: result });
 }));
 
 export { router as performanceFeedbackRouter };

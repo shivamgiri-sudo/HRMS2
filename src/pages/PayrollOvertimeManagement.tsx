@@ -8,13 +8,18 @@ import {
   Filter,
   Download,
   CalendarDays,
+  Settings2,
+  ShieldCheck,
+  ShieldOff,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { format } from "date-fns";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OvertimeUpdateDialog } from "@/components/payroll/OvertimeUpdateDialog";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 
@@ -39,6 +44,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
 
 interface PayrollLine {
   id: string;
@@ -88,8 +94,18 @@ const currentDate = new Date();
 const currentMonth = currentDate.getMonth() + 1;
 const currentYear = currentDate.getFullYear();
 
+interface OTProcessConfig {
+  id: string;
+  process_code: string;
+  process_name: string;
+  overtime_allowed: string;
+  overtime_rate_multiplier: string;
+  overtime_monthly_cap_hours: string;
+}
+
 export default function PayrollOvertimeManagement() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const [selectedMonth, setSelectedMonth] = useState(currentMonth.toString());
   const [selectedYear, setSelectedYear] = useState(currentYear.toString());
@@ -97,6 +113,7 @@ export default function PayrollOvertimeManagement() {
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
   const [selectedLine, setSelectedLine] = useState<PayrollLine | null>(null);
+  const [showOTConfig, setShowOTConfig] = useState(false);
 
   const runMonth = `${selectedYear}-${selectedMonth.padStart(2, "0")}`;
 
@@ -170,6 +187,34 @@ export default function PayrollOvertimeManagement() {
 
   const selectedRunData = runs?.find((r) => r.id === selectedRun);
   const isEditable = selectedRunData?.status === "draft";
+
+  // ─── OT Process Configuration ─────────────────────────────────────────────
+  const { data: otProcessConfigs, isLoading: otConfigLoading } = useQuery({
+    queryKey: ["overtime-process-configs"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: OTProcessConfig[] }>("/api/payroll/overtime/config/processes");
+      return res.data;
+    },
+  });
+
+  const toggleOTMutation = useMutation({
+    mutationFn: async ({ processId, enabled, rateMultiplier, capHours }: {
+      processId: string; enabled?: boolean; rateMultiplier?: number; capHours?: number;
+    }) => {
+      await hrmsApi.patch(`/api/payroll/overtime/config/process/${processId}`, {
+        overtime_allowed: enabled,
+        overtime_rate_multiplier: rateMultiplier,
+        overtime_monthly_cap_hours: capHours,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["overtime-process-configs"] });
+      toast({ title: "OT Configuration Updated", description: "Process overtime settings saved." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to update", variant: "destructive" });
+    },
+  });
 
   return (
     <DashboardLayout
@@ -294,6 +339,114 @@ export default function PayrollOvertimeManagement() {
             </CardContent>
           </Card>
         </div>
+
+        {/* OT Process Configuration Panel */}
+        <Card>
+          <CardHeader
+            className="cursor-pointer select-none"
+            onClick={() => setShowOTConfig((v) => !v)}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5 text-muted-foreground" />
+                <CardTitle className="text-base">Process Overtime Configuration</CardTitle>
+                <Badge variant="outline" className="text-xs">
+                  {otProcessConfigs?.filter((p) => p.overtime_allowed === "true").length ?? 0} / {otProcessConfigs?.length ?? 0} enabled
+                </Badge>
+              </div>
+              {showOTConfig ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Overtime must be explicitly enabled per process. Employees in disabled processes cannot have OT recorded.
+            </p>
+          </CardHeader>
+          {showOTConfig && (
+            <CardContent>
+              {otConfigLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+                </div>
+              ) : !otProcessConfigs || otProcessConfigs.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No processes found.</p>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Process</TableHead>
+                        <TableHead className="text-center w-[120px]">OT Allowed</TableHead>
+                        <TableHead className="text-center w-[120px]">Rate (x)</TableHead>
+                        <TableHead className="text-center w-[140px]">Monthly Cap (h)</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {otProcessConfigs.map((proc) => {
+                        const allowed = proc.overtime_allowed === "true";
+                        return (
+                          <TableRow key={proc.id}>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                {allowed ? (
+                                  <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                                ) : (
+                                  <ShieldOff className="h-4 w-4 text-slate-300" />
+                                )}
+                                <span className="font-medium">{proc.process_name}</span>
+                                <span className="text-xs text-muted-foreground">({proc.process_code})</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Switch
+                                checked={allowed}
+                                onCheckedChange={(checked) =>
+                                  toggleOTMutation.mutate({ processId: proc.id, enabled: checked })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                type="number"
+                                step="0.5"
+                                min="1"
+                                max="5"
+                                className="w-20 h-7 text-center text-sm mx-auto"
+                                defaultValue={proc.overtime_rate_multiplier}
+                                disabled={!allowed}
+                                onBlur={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val) && val > 0 && val !== parseFloat(proc.overtime_rate_multiplier)) {
+                                    toggleOTMutation.mutate({ processId: proc.id, rateMultiplier: val });
+                                  }
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                type="number"
+                                step="1"
+                                min="0"
+                                max="500"
+                                className="w-20 h-7 text-center text-sm mx-auto"
+                                defaultValue={proc.overtime_monthly_cap_hours}
+                                disabled={!allowed}
+                                onBlur={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val) && val >= 0 && val !== parseFloat(proc.overtime_monthly_cap_hours)) {
+                                    toggleOTMutation.mutate({ processId: proc.id, capHours: val });
+                                  }
+                                }}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
 
         {/* Status Alert */}
         {selectedRunData && !isEditable && (

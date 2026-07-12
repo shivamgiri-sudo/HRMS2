@@ -641,6 +641,58 @@ export const payrollService = {
     if (data.overtimeHours  !== undefined) { fields.push("overtime_hours = ?");  params.push(data.overtimeHours); }
     if (data.overtimeAmount !== undefined) { fields.push("overtime_amount = ?"); params.push(data.overtimeAmount); }
     if (!fields.length) throw Object.assign(new Error("No overtime fields to update"), { statusCode: 400 });
+
+    // Enforce overtime eligibility: check if this employee's process allows OT
+    const [lineEmp] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id FROM salary_prep_line spl
+       JOIN employees e ON e.id = spl.employee_id
+       WHERE spl.id = ? LIMIT 1`,
+      [lineId]
+    );
+    const processId = (lineEmp as any[])?.[0]?.process_id;
+    if (processId) {
+      const [cfgRows] = await db.execute<RowDataPacket[]>(
+        `SELECT config_value FROM payroll_config_flags
+         WHERE process_id = ? AND config_key = 'overtime_allowed' LIMIT 1`,
+        [processId]
+      );
+      const allowed = (cfgRows as any[])?.[0]?.config_value;
+      if (allowed !== 'true') {
+        throw Object.assign(
+          new Error("Overtime is not allowed for this employee's process. Enable it in Overtime Configuration first."),
+          { statusCode: 403 }
+        );
+      }
+      // Enforce monthly cap if configured
+      if (data.overtimeHours !== undefined && data.overtimeHours > 0) {
+        const [capRows] = await db.execute<RowDataPacket[]>(
+          `SELECT config_value FROM payroll_config_flags
+           WHERE process_id = ? AND config_key = 'overtime_monthly_cap_hours' LIMIT 1`,
+          [processId]
+        );
+        const capHours = parseFloat((capRows as any[])?.[0]?.config_value || '0');
+        if (capHours > 0 && data.overtimeHours > capHours) {
+          throw Object.assign(
+            new Error(`Overtime hours (${data.overtimeHours}) exceed monthly cap of ${capHours}h for this process.`),
+            { statusCode: 400 }
+          );
+        }
+      }
+    } else {
+      // No process assigned — check global default
+      const [globalRows] = await db.execute<RowDataPacket[]>(
+        `SELECT config_value FROM payroll_config_flags
+         WHERE process_id IS NULL AND branch_id IS NULL AND config_key = 'overtime_allowed' LIMIT 1`
+      );
+      const globalAllowed = (globalRows as any[])?.[0]?.config_value;
+      if (globalAllowed !== 'true') {
+        throw Object.assign(
+          new Error("Overtime is not allowed globally. Enable it for the relevant process in Overtime Configuration."),
+          { statusCode: 403 }
+        );
+      }
+    }
+
     fields.push("updated_at = NOW()");
     params.push(lineId);
     await db.execute(`UPDATE salary_prep_line SET ${fields.join(", ")} WHERE id = ?`, params);
