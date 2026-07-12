@@ -31,7 +31,7 @@ interface AttendanceReportSummary {
 
 const EMPLOYEE_PAGE_SIZE = 500;
 const ATTENDANCE_PAGE_SIZE = 500;
-const ATTENDANCE_ENDPOINT = "/api/wfm/attendance/daily";
+const ATTENDANCE_ENDPOINT = "/api/wfm/attendance/ncosec-monthly";
 
 function safeNumber(value: unknown): number {
   const parsed = Number(value);

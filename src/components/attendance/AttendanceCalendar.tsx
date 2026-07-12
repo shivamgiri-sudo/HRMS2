@@ -795,7 +795,7 @@ export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: At
       const startDate = fmtDate(currentYear, currentMonth, 1);
       const endDate   = fmtDate(currentYear, currentMonth, getDaysInMonth(currentYear, currentMonth));
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-        `/api/wfm/attendance/daily?${new URLSearchParams({ employeeId, fromDate: startDate, toDate: endDate, limit: "100" })}`
+        `/api/wfm/attendance/ncosec-monthly?${new URLSearchParams({ employeeId, fromDate: startDate, toDate: endDate, limit: "100" })}`
       );
       return (res.data || []).map((r: any) => ({
         date:        normalizeDate(r.date || r.record_date),
