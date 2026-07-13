@@ -766,9 +766,9 @@ export default function NativeLMSIntegration() {
               <>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                   {[
-                    { label: "Selected", value: batchPlanner.summary.selected_candidates, hint: "ATS candidates in funnel", tone: "text-blue-700 bg-blue-50" },
-                    { label: "Onboarded", value: batchPlanner.summary.confirmed_onboarded, hint: "Confirmed for training", tone: "text-emerald-700 bg-emerald-50" },
-                    { label: "LMS Ready", value: batchPlanner.summary.lms_provisioned, hint: "Mapped to LMS learner IDs", tone: "text-violet-700 bg-violet-50" },
+                    { label: "Selected Count", value: batchPlanner.summary.selected_candidates, hint: "ATS candidates in the training funnel", tone: "text-blue-700 bg-blue-50" },
+                    { label: "Confirmed Onboarded", value: batchPlanner.summary.confirmed_onboarded, hint: "HR-confirmed for training intake", tone: "text-emerald-700 bg-emerald-50" },
+                    { label: "LMS Provisioned", value: batchPlanner.summary.lms_provisioned, hint: "Mapped to LMS learner IDs", tone: "text-violet-700 bg-violet-50" },
                     { label: "Ready to Train", value: batchPlanner.summary.ready_for_training, hint: "Assigned and provisioned", tone: "text-amber-700 bg-amber-50" },
                     { label: "Open Slots", value: batchPlanner.summary.open_slots, hint: `${batchPlanner.summary.filling_batches} batches still have capacity`, tone: "text-slate-700 bg-slate-100" },
                   ].map((card) => (

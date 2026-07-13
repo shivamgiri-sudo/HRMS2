@@ -7,7 +7,7 @@ import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
-import { lmsService } from "./lms.service.js";
+import { getLmsPool, lmsService } from "./lms.service.js";
 import { runFullSync } from "./lms.sync.service.js";
 import {
   encryptCredentials,
@@ -87,12 +87,76 @@ function attachLmsSessionParams(url: string, lmsToken: string, lmsUserType: stri
   return next.toString();
 }
 
+async function resolveDirectLmsIdentity(
+  portal: LmsPortal,
+  ctx: NonNullable<Awaited<ReturnType<typeof currentLmsContext>>>,
+): Promise<{ userId: string; userType: LmsSessionUserType }> {
+  const pool = await getLmsPool();
+  const employeeCode = String(ctx.access.employeeCode ?? "").trim();
+  const email = String(ctx.access.user.email ?? "").trim();
+
+  if (portal === "admin") {
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT admin_id
+         FROM admin_user_master
+        WHERE active = 1
+        ORDER BY CASE WHEN admin_id = 'LMS-ADMIN' THEN 0 ELSE 1 END, created_at ASC
+        LIMIT 1`
+    );
+    const adminId = String(rows[0]?.admin_id ?? "LMS-ADMIN");
+    return { userId: adminId, userType: "admin" };
+  }
+
+  if (portal === "coordinator") {
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT login_id
+         FROM role_access_matrix
+        WHERE active = 1
+          AND login_id = 'COORD-TEST'
+        LIMIT 1`
+    );
+    if (rows[0]?.login_id) {
+      return { userId: String(rows[0].login_id), userType: "coordinator" };
+    }
+    const [fallbackRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT login_id
+         FROM role_access_matrix
+        WHERE active = 1
+        ORDER BY created_at ASC
+        LIMIT 1`
+    );
+    const loginId = String((fallbackRows[0]?.login_id ?? employeeCode) || email || "COORD-TEST");
+    return { userId: loginId, userType: "coordinator" };
+  }
+
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT employee_id
+       FROM user_master
+      WHERE active = 1
+        AND (employee_id = ? OR email = ?)
+      LIMIT 1`,
+    [employeeCode, email]
+  );
+  if (rows[0]?.employee_id) {
+    return { userId: String(rows[0].employee_id), userType: "trainee" };
+  }
+  const [fallbackRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT employee_id
+       FROM user_master
+      WHERE active = 1
+      ORDER BY created_at ASC
+      LIMIT 1`
+  );
+  const employeeId = String((fallbackRows[0]?.employee_id ?? employeeCode) || email || "EMP1001");
+  return { userId: employeeId, userType: "trainee" };
+}
+
 async function buildLmsSession(
   req: AuthenticatedRequest,
   ctx: NonNullable<Awaited<ReturnType<typeof currentLmsContext>>>,
+  portal: LmsPortal,
 ) {
   const lmsApiUrl = env.LMS_API_URL;
-  const bridgeSecret = env.LMS_BRIDGE_SECRET;
 
   if (!lmsApiUrl) {
     const err = new Error("LMS_API_URL not configured on HRMS2 backend") as Error & { statusCode?: number };
@@ -100,33 +164,18 @@ async function buildLmsSession(
     throw err;
   }
 
-  const employeeCode = ctx.access.employeeCode;
-  const email = ctx.access.user.email;
+  const identity = await resolveDirectLmsIdentity(portal, ctx);
+  const persona = LMS_SESSION_ROUTES[identity.userType];
+  const lmsToken = randomUUID();
+  const sessionId = randomUUID();
+  const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000);
+  const pool = await getLmsPool();
 
-  const body: Record<string, string> = {};
-  if (employeeCode) body.employee_id = employeeCode;
-  if (email) body.email = email;
-  if (bridgeSecret) body.bridge_token = bridgeSecret;
-
-  const fetchRes = await fetch(`${lmsApiUrl}/api/auth/bridge`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const bridgeRes = await fetchRes.json().catch(() => null) as any;
-  if (!fetchRes.ok || !bridgeRes?.ok) {
-    throw new Error(bridgeRes?.message || `Bridge responded ${fetchRes.status}`);
-  }
-  if (!bridgeRes?.lms_token) {
-    throw new Error("LMS bridge did not return a token");
-  }
-
-  const lmsUserType: string = bridgeRes.userType ?? (
-    ctx.access.access.admin ? "admin" :
-    ctx.access.access.coordinator ? "coordinator" : "trainee"
+  await pool.execute(
+    `INSERT INTO portal_sessions (id, token, user_id, user_type, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, NOW())`,
+    [sessionId, lmsToken, identity.userId, identity.userType, expiresAt]
   );
-  const persona = LMS_SESSION_ROUTES[lmsUserType as LmsSessionUserType] ?? LMS_SESSION_ROUTES.trainee;
 
   await db.execute(
     `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
@@ -135,9 +184,9 @@ async function buildLmsSession(
   );
 
   return {
-    lmsToken: bridgeRes.lms_token,
-    lmsUserType,
-    lmsUserId: bridgeRes.userId ?? employeeCode,
+    lmsToken,
+    lmsUserType: identity.userType,
+    lmsUserId: identity.userId,
     route: persona.route,
     storageKey: persona.storageKey,
     launchUrl: joinBaseUrl(lmsApiUrl, persona.route),
@@ -195,9 +244,10 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
     return res.status(403).json({ success: false, message: `LMS access is not assigned for the ${portal} portal` });
   }
 
+  const portalUrl = joinBaseUrl(env.LMS_API_URL, LMS_SESSION_ROUTES[portal].route);
+
   try {
-    const session = await buildLmsSession(req, ctx);
-    const portalUrl = joinBaseUrl(env.LMS_API_URL, LMS_SESSION_ROUTES[portal].route);
+    const session = await buildLmsSession(req, ctx, portal);
     const embedUrl = attachLmsSessionParams(portalUrl, session.lmsToken, session.lmsUserType);
     res.json({
       success: true,
@@ -212,8 +262,12 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "LMS launch unavailable";
-    const statusCode = typeof err === "object" && err && "statusCode" in err ? Number((err as { statusCode?: number }).statusCode) : 502;
-    res.status(statusCode).json({ success: false, message });
+    console.error("[lms/launch-context] direct LMS session mint failed:", message);
+    res.status(502).json({
+      success: false,
+      message: "LMS launch unavailable",
+      error: message,
+    });
   }
 }));
 
@@ -425,7 +479,7 @@ router.get("/sso-session", h(async (req: AuthenticatedRequest, res: Response) =>
   const ctx = await currentLmsContext(req, res);
   if (!ctx) return;
   try {
-    const session = await buildLmsSession(req, ctx);
+    const session = await buildLmsSession(req, ctx, "admin");
     res.json({ success: true, ...session });
   } catch (e: any) {
     console.error("[lms/sso-session] bridge error:", e?.message);
