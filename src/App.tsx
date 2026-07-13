@@ -202,6 +202,10 @@ const NocManagement                 = lazy(() => import("./pages/payroll/NocMana
 const BranchPayrollReadiness        = lazy(() => import("./pages/payroll/BranchPayrollReadiness"));
 const PayrollCalendar               = lazy(() => import("./pages/payroll/PayrollCalendar"));
 const PayrollCostSummary            = lazy(() => import("./pages/payroll/PayrollCostSummary"));
+const StatutoryFilingTracker        = lazy(() => import("./pages/payroll/StatutoryFilingTracker"));
+const PayrollAuditTrail             = lazy(() => import("./pages/payroll/PayrollAuditTrail"));
+const PayrollVarianceReport         = lazy(() => import("./pages/payroll/PayrollVarianceReport"));
+const BulkOutputs                   = lazy(() => import("./pages/payroll/BulkOutputs"));
 const WeekoffFairness               = lazy(() => import("./pages/wfm/WeekoffFairness"));
 
 // Communication
@@ -542,6 +546,10 @@ const App = () => (
               <Route path="/payroll/branch-readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch']}><BranchPayrollReadiness /></ProtectedRoute>} />
               <Route path="/payroll/calendar" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><PayrollCalendar /></ProtectedRoute>} />
               <Route path="/payroll/cost-summary" element={<ProtectedRoute roles={['super_admin','payroll_head','finance']}><PayrollCostSummary /></ProtectedRoute>} />
+              <Route path="/payroll/statutory-filing" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><StatutoryFilingTracker /></ProtectedRoute>} />
+              <Route path="/payroll/audit-trail" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><PayrollAuditTrail /></ProtectedRoute>} />
+              <Route path="/payroll/variance" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><PayrollVarianceReport /></ProtectedRoute>} />
+              <Route path="/payroll/bulk-outputs" element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><BulkOutputs /></ProtectedRoute>} />
               <Route path="/wfm/weekoff-fairness" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
 
               {/* Communication */}
