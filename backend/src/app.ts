@@ -31,6 +31,8 @@ import { payrollVarianceRouter } from "./modules/payroll/payroll-variance.routes
 import { payrollAuditTrailRouter } from "./modules/payroll/payroll-audit-trail.routes.js";
 import { loansRouter } from "./modules/payroll/loans.routes.js";
 import { payrollSignoffRouter } from "./modules/payroll/payroll-signoff.routes.js";
+import { payrollCertificatesRouter } from "./modules/payroll/payroll-certificates.routes.js";
+import { reimbursementsRouter } from "./modules/payroll/reimbursements.routes.js";
 import { payrollStatutoryOverrideRouter } from "./modules/payroll/payroll-statutory-override.routes.js";
 import { chequeValidationRouter } from "./modules/payroll/cheque-validation.routes.js";
 import { disbursalRouter } from "./modules/payroll/disbursal.routes.js";
@@ -276,6 +278,8 @@ app.use("/api/payroll/variance", listEndpointLimiter, payrollVarianceRouter);
 app.use("/api/payroll/audit-trail", listEndpointLimiter, payrollAuditTrailRouter);
 app.use("/api/payroll/loans", listEndpointLimiter, loansRouter);
 app.use("/api/payroll/signoff", listEndpointLimiter, payrollSignoffRouter);
+app.use("/api/payroll/salary-certificates", listEndpointLimiter, payrollCertificatesRouter);
+app.use("/api/payroll/reimbursements", listEndpointLimiter, reimbursementsRouter);
 app.use("/api/payroll/statutory-overrides", payrollStatutoryOverrideRouter);
 app.use("/api/payroll/cheque-validation", chequeValidationRouter);
 app.use("/api/payroll", disbursalRouter);

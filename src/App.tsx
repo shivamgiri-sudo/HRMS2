@@ -209,6 +209,8 @@ const PayrollVarianceReport         = lazy(() => import("./pages/payroll/Payroll
 const BulkOutputs                   = lazy(() => import("./pages/payroll/BulkOutputs"));
 const LoanManagement                = lazy(() => import("./pages/payroll/LoanManagement"));
 const PayrollSignOff                = lazy(() => import("./pages/payroll/PayrollSignOff"));
+const SalaryCertificate             = lazy(() => import("./pages/payroll/SalaryCertificate"));
+const ReimbursementManagement       = lazy(() => import("./pages/payroll/ReimbursementManagement"));
 const WeekoffFairness               = lazy(() => import("./pages/wfm/WeekoffFairness"));
 
 // Communication
@@ -556,6 +558,8 @@ const App = () => (
               <Route path="/payroll/bulk-outputs" element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><BulkOutputs /></ProtectedRoute>} />
               <Route path="/payroll/loans" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><LoanManagement /></ProtectedRoute>} />
               <Route path="/payroll/sign-off" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','ceo','admin']}><PayrollSignOff /></ProtectedRoute>} />
+              <Route path="/payroll/salary-certificates" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><SalaryCertificate /></ProtectedRoute>} />
+              <Route path="/payroll/reimbursements" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><ReimbursementManagement /></ProtectedRoute>} />
               <Route path="/wfm/weekoff-fairness" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
 
               {/* Communication */}
