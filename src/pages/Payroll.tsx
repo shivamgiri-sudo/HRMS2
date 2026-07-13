@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CreditCard,
@@ -16,6 +17,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { format } from "date-fns";
 
+import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   EnterprisePageHeader,
@@ -39,7 +41,7 @@ import {
   useUpdatePayrollStatus,
   type PayrollRecord,
 } from "@/hooks/usePayroll";
-import { useCanAccessPayroll } from "@/hooks/useUserRole";
+import { useCanAccessPayroll, useUserRole } from "@/hooks/useUserRole";
 import { useEmployeeDirectoryMasters } from "@/hooks/useEmployees";
 import { useDepartments } from "@/hooks/useDepartments";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -66,6 +68,13 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const months = [
   { value: "1", label: "January" },
@@ -907,6 +916,7 @@ const Payroll = () => {
                 <TabsTrigger value="history">Payroll History</TabsTrigger>
                 <TabsTrigger value="analytics">Analytics</TabsTrigger>
                 <TabsTrigger value="salary">Salary Structure</TabsTrigger>
+                <TabsTrigger value="finance">Finance Queue</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1210,6 +1220,10 @@ const Payroll = () => {
                 <SalaryStructureManager />
               </div>
             </TabsContent>
+
+            <TabsContent value="finance" className="mt-0">
+              <FinanceApprovalQueue />
+            </TabsContent>
           </Tabs>
         </section>
 
@@ -1222,5 +1236,138 @@ const Payroll = () => {
     </DashboardLayout>
   );
 };
+
+// ── Finance Approval Queue ───────────────────────────────────────────────────
+
+function FinanceApprovalQueue() {
+  const { roleKeys } = useUserRole();
+  const isFinance = roleKeys.some((r) => ["finance", "admin", "super_admin"].includes(r));
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [approvalModal, setApprovalModal] = useState<{ runId: string; runMonth: string } | null>(null);
+  const [confirmChecked, setConfirmChecked] = useState(false);
+
+  if (!isFinance) {
+    return (
+      <div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
+        Finance role required to view this queue
+      </div>
+    );
+  }
+
+  const { data: runsRaw, refetch: refetchRuns } = useQuery({
+    queryKey: ["payroll-runs-locked"],
+    queryFn: () => hrmsApi.get("/api/payroll/runs?status=locked").then((r) => r.data),
+  });
+  const runs = (runsRaw as any[]) ?? [];
+
+  const approveMut = useMutation({
+    mutationFn: (runId: string) =>
+      hrmsApi.post(`/api/payroll/runs/${runId}/finance-approve`, {}),
+    onSuccess: () => {
+      toast({ title: "Success", description: "Run approved and marked for disbursement" });
+      setApprovalModal(null);
+      setConfirmChecked(false);
+      void refetchRuns();
+    },
+    onError: (e: any) =>
+      toast({ title: "Error", description: e?.response?.data?.message ?? "Approval failed", variant: "destructive" }),
+  });
+
+  return (
+    <div className="space-y-4 mt-0">
+      <div className="rounded-lg border bg-card p-4">
+        <h3 className="font-semibold mb-2">Runs Awaiting Finance Approval</h3>
+        <p className="text-sm text-muted-foreground mb-4">Runs locked and ready for disbursement authorization</p>
+
+        {runs.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No runs pending finance approval
+          </p>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="px-3 py-2 text-left">Run Month</th>
+                  <th className="px-3 py-2 text-right">Employees</th>
+                  <th className="px-3 py-2 text-right">Total Gross (₹)</th>
+                  <th className="px-3 py-2 text-left">Last Updated</th>
+                  <th className="px-3 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run: any) => (
+                  <tr key={run.id} className="border-t">
+                    <td className="px-3 py-2 font-medium">{run.run_month}</td>
+                    <td className="px-3 py-2 text-right">{run.employee_count ?? 0}</td>
+                    <td className="px-3 py-2 text-right">₹{fmt(run.total_gross)}</td>
+                    <td className="px-3 py-2 text-sm">{fmtDate(run.updated_at)}</td>
+                    <td className="px-3 py-2">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() => {
+                          setApprovalModal({ runId: run.id, runMonth: run.run_month });
+                          setConfirmChecked(false);
+                        }}
+                      >
+                        Review & Approve
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {approvalModal && (
+        <Dialog open={!!approvalModal} onOpenChange={() => setApprovalModal(null)}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Approve Run for Disbursement</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="rounded-lg bg-muted p-3 text-sm space-y-2">
+                <div>
+                  <span className="font-medium">Run Month:</span> {approvalModal.runMonth}
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="confirm-cb"
+                  checked={confirmChecked}
+                  onChange={(e) => setConfirmChecked(e.target.checked)}
+                  className="mt-1"
+                />
+                <label htmlFor="confirm-cb" className="text-sm">
+                  I have verified all disbursement details and payment methods are correct
+                </label>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setApprovalModal(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="default"
+                disabled={!confirmChecked || approveMut.isPending}
+                onClick={() => approveMut.mutate(approvalModal.runId)}
+              >
+                {approveMut.isPending ? "Approving..." : "Approve & Mark Disbursed"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
 
 export default Payroll;
