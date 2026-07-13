@@ -1211,7 +1211,8 @@ const Payroll = () => {
               )}
             </TabsContent>
 
-            <TabsContent value="analytics" className="mt-0">
+            <TabsContent value="analytics" className="mt-0 space-y-4">
+              <LifecyclePipelineCard />
               <PayrollAnalytics availableMonths={availableMonths} />
             </TabsContent>
 
@@ -1236,6 +1237,79 @@ const Payroll = () => {
     </DashboardLayout>
   );
 };
+
+// ── Run Lifecycle Board ──────────────────────────────────────────────────────
+
+function LifecyclePipelineCard() {
+  const { roleKeys } = useUserRole();
+  const isPayrollRoleOK = roleKeys.some((r) => ["payroll", "payroll_head", "admin", "super_admin"].includes(r));
+
+  const { data: runsRaw } = useQuery({
+    queryKey: ["payroll-all-runs"],
+    queryFn: () => hrmsApi.get("/api/payroll/runs?limit=100").then((r) => r.data),
+  });
+  const allRuns = (runsRaw as any[]) ?? [];
+
+  const stages = ["draft", "calculating", "reviewed", "approved", "locked", "finance-approved", "disbursed"];
+  const stageCounts: Record<string, number> = {};
+  stages.forEach((s) => {
+    stageCounts[s] = allRuns.filter((r: any) => r.status === s).length;
+  });
+
+  const getStageColor = (stage: string) => {
+    const count = stageCounts[stage];
+    return count > 0 ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-500";
+  };
+
+  if (!isPayrollRoleOK) return null;
+
+  const totalRuns = allRuns.length;
+  const completedRuns = stageCounts["disbursed"];
+  const activeRuns = totalRuns - completedRuns;
+
+  return (
+    <div className="rounded-lg border bg-card p-4 space-y-4">
+      <div>
+        <h3 className="font-semibold text-base">Run Pipeline</h3>
+        <p className="text-xs text-muted-foreground mt-1">Payroll run lifecycle stages</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 text-sm">
+        <div className="rounded-lg bg-slate-50 p-2 border"><p className="text-muted-foreground text-xs">Total Runs</p><p className="font-semibold">{totalRuns}</p></div>
+        <div className="rounded-lg bg-blue-50 p-2 border border-blue-200"><p className="text-blue-600 text-xs">In Progress</p><p className="font-semibold text-blue-700">{activeRuns}</p></div>
+        <div className="rounded-lg bg-green-50 p-2 border border-green-200"><p className="text-green-600 text-xs">Completed</p><p className="font-semibold text-green-700">{completedRuns}</p></div>
+      </div>
+
+      <div className="flex items-center gap-1 overflow-x-auto pb-2">
+        {stages.map((stage, idx) => (
+          <div key={stage} className="flex items-center gap-1 flex-shrink-0">
+            <div
+              className={`rounded-lg border px-2 py-1.5 text-xs font-medium text-center min-w-20 ${getStageColor(stage)}`}
+            >
+              <div className="text-[10px] capitalize font-semibold">{stage}</div>
+              <div className="text-xs font-bold">{stageCounts[stage]}</div>
+            </div>
+            {idx < stages.length - 1 && <div className="text-muted-foreground text-lg">→</div>}
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-lg bg-muted/30 p-3">
+        <h4 className="font-medium text-xs mb-2">Stage Breakdown</h4>
+        <table className="w-full text-xs">
+          <tbody>
+            {stages.map((stage) => (
+              <tr key={stage} className="border-b last:border-0">
+                <td className="py-1 capitalize">{stage}</td>
+                <td className="py-1 text-right font-medium">{stageCounts[stage]} run{stageCounts[stage] !== 1 ? "s" : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 // ── Finance Approval Queue ───────────────────────────────────────────────────
 
