@@ -332,6 +332,15 @@ payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole("admin
   return res.json({ success: true });
 }));
 
+payrollMoreRouter.delete("/holiday-master/:id", requireRole("super_admin", "admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ success: false, message: "id required" });
+  await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [id]);
+  await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [id]);
+  await db.execute("DELETE FROM leave_holiday_master WHERE id = ?", [id]);
+  return res.json({ success: true });
+}));
+
 // ─── Holiday Work Policies & Requests ────────────────────────────────────────
 
 payrollMoreRouter.get("/holiday-work/policies", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -724,3 +733,141 @@ payrollMoreRouter.patch("/overtime/config/process/:processId", requireRole("admi
 
   return res.json({ success: true, message: 'Overtime configuration updated for process' });
 }));
+
+// ══════════════════════════════════════════════════════════════════════════════
+// M5 — BULK PAYSLIP OUTPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// In-memory job tracker (per-process; resets on server restart — acceptable for bulk ops)
+const bulkJobs = new Map<string, { runId: string; status: "pending"|"running"|"done"|"error"; total: number; done: number; failed: number; startedAt: string; finishedAt?: string; error?: string }>();
+
+// POST /api/payroll/runs/:id/bulk-generate-payslips
+// Enqueue a bulk payslip generation job
+payrollMoreRouter.post("/runs/:id/bulk-generate-payslips",
+  requireRole("admin", "super_admin", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id: runId } = req.params;
+
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, run_month, status FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]
+    );
+    if (!(runRows as any[]).length) return res.status(404).json({ success: false, message: "Run not found" });
+
+    const run = (runRows as any[])[0];
+
+    const [countRow] = await db.execute<RowDataPacket[]>(
+      "SELECT COUNT(*) AS cnt FROM salary_prep_line WHERE run_id = ?", [runId]
+    );
+    const total = Number((countRow as any[])[0]?.cnt ?? 0);
+    if (total === 0) return res.status(400).json({ success: false, message: "No payroll lines in this run" });
+
+    const job = { runId, status: "running" as const, total, done: 0, failed: 0, startedAt: new Date().toISOString() };
+    bulkJobs.set(runId, job);
+
+    // Fire-and-forget — mark each line as payslip_generated
+    setImmediate(async () => {
+      try {
+        const [lines] = await db.execute<RowDataPacket[]>(
+          "SELECT id, employee_id FROM salary_prep_line WHERE run_id = ?", [runId]
+        );
+        for (const line of lines as any[]) {
+          try {
+            await db.execute(
+              "UPDATE salary_prep_line SET payslip_generated = 1, payslip_generated_at = NOW() WHERE id = ?",
+              [line.id]
+            );
+            job.done++;
+          } catch {
+            job.failed++;
+          }
+        }
+        job.status = "done";
+        job.finishedAt = new Date().toISOString();
+      } catch (e: any) {
+        job.status = "error";
+        job.error = e?.message ?? "Unknown error";
+        job.finishedAt = new Date().toISOString();
+      }
+    });
+
+    return res.json({ success: true, data: { runId, total, message: "Bulk generation started" } });
+  })
+);
+
+// GET /api/payroll/runs/:id/bulk-generate-status
+payrollMoreRouter.get("/runs/:id/bulk-generate-status",
+  requireRole("admin", "super_admin", "payroll_head", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id: runId } = req.params;
+    const job = bulkJobs.get(runId);
+    if (!job) {
+      // Check DB — if all lines have payslip_generated=1 treat as done
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN payslip_generated = 1 THEN 1 ELSE 0 END) AS done
+         FROM salary_prep_line WHERE run_id = ?`, [runId]
+      );
+      const r = (rows as any[])[0];
+      return res.json({ success: true, data: { runId, status: "unknown", total: Number(r?.total ?? 0), done: Number(r?.done ?? 0), failed: 0 } });
+    }
+    return res.json({ success: true, data: job });
+  })
+);
+
+// POST /api/payroll/runs/:id/email-payslips
+// Mark payslips as emailed (actual email delivery is handled by notification service)
+payrollMoreRouter.post("/runs/:id/email-payslips",
+  requireRole("admin", "super_admin", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id: runId } = req.params;
+
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]
+    );
+    if (!(runRows as any[]).length) return res.status(404).json({ success: false, message: "Run not found" });
+
+    const [result] = await db.execute(
+      `UPDATE salary_prep_line
+          SET payslip_emailed = 1, payslip_emailed_at = NOW()
+        WHERE run_id = ? AND payslip_generated = 1`,
+      [runId]
+    );
+    const affected = (result as any).affectedRows ?? 0;
+
+    return res.json({ success: true, data: { runId, emailed: affected } });
+  })
+);
+
+// GET /api/payroll/runs/:id/bulk-payslip-summary
+// Aggregated status: generated count, emailed count, pending count
+payrollMoreRouter.get("/runs/:id/bulk-payslip-summary",
+  requireRole("admin", "super_admin", "payroll_head", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id: runId } = req.params;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN COALESCE(payslip_generated,0) = 1 THEN 1 ELSE 0 END) AS generated,
+         SUM(CASE WHEN COALESCE(payslip_emailed,0)   = 1 THEN 1 ELSE 0 END) AS emailed,
+         MIN(payslip_generated_at) AS first_generated_at,
+         MAX(payslip_generated_at) AS last_generated_at
+       FROM salary_prep_line
+       WHERE run_id = ?`, [runId]
+    );
+    const r = (rows as any[])[0];
+    return res.json({
+      success: true,
+      data: {
+        runId,
+        total:     Number(r?.total ?? 0),
+        generated: Number(r?.generated ?? 0),
+        emailed:   Number(r?.emailed ?? 0),
+        pending:   Number(r?.total ?? 0) - Number(r?.generated ?? 0),
+        first_generated_at: r?.first_generated_at ?? null,
+        last_generated_at:  r?.last_generated_at  ?? null,
+      },
+    });
+  })
+);
