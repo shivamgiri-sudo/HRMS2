@@ -323,6 +323,9 @@ SOURCE sql/401_payroll_calendar.sql;
 -- ── Phase 3 compliance / reporting (402) ─────────────────────────────────────
 SOURCE sql/402_salary_prep_line_bulk_outputs.sql;
 
+-- ── Phase 4 sign-off / loans (403) ────────────────────────────────────────────
+SOURCE sql/403_payroll_run_signoff.sql;
+
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
 SOURCE sql/999_create_missing_engagement_tables.sql;
