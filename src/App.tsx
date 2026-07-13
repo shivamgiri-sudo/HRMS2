@@ -123,6 +123,7 @@ const NativePerformanceFeedbackTeamReports = lazy(() => import("./pages/NativePe
 
 // People
 const NativeOrgChart                = lazy(() => import("./pages/NativeOrgChart"));
+const OrgChartSettings              = lazy(() => import("./pages/OrgChartSettings"));
 const NativeEmployeeStatCard        = lazy(() => import("./pages/NativeEmployeeStatCard"));
 const NativeEmployee360             = lazy(() => import("./pages/NativeEmployee360"));
 const EmployeeJoiningDocumentsPage  = lazy(() => import("./pages/EmployeeJoiningDocumentsPage"));
@@ -340,6 +341,7 @@ const App = () => (
               <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
               <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
               <Route path="/org-chart" element={<ProtectedRoute><Gate pageCode="ORG_CHART"><NativeOrgChart /></Gate></ProtectedRoute>} />
+              <Route path="/org-chart/settings" element={<ProtectedRoute><OrgChartSettings /></ProtectedRoute>} />
               <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
               <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
               <Route path="/employees/:employeeId/joining-documents" element={<ProtectedRoute roles={['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll', 'employee']}><EmployeeJoiningDocumentsPage /></ProtectedRoute>} />

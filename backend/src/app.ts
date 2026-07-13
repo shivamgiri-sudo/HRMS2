@@ -187,6 +187,7 @@ import { salaryIncrementRouter } from "./modules/salary-increment/salaryIncremen
 import { breakDeskRouter } from "./modules/break-management/break-desk.routes.js";
 import { breakManagementRouter } from "./modules/break-management/break-management.routes.js";
 import { candidateOnboardingRouter } from "./modules/candidate-onboarding/candidate-onboarding.routes.js";
+import { orgChartRouter } from "./modules/org-chart/org-chart.routes.js";
 
 export const app = express();
 
@@ -325,6 +326,7 @@ app.use("/api/audit", auditLogRouter);
 app.use("/api/org/settings", orgSettingsRouter);
 app.use("/api/org/events", eventsRouter);
 app.use("/api/org", orgRouter);
+app.use("/api/org-chart", orgChartRouter);
 app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);
