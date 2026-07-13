@@ -27,9 +27,11 @@ import {
   XCircle,
   Building2,
   MinusCircle,
+  Wallet,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { useUserRole } from "@/hooks/useUserRole";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1890,6 +1892,173 @@ function DedTypeForm({ form, onChange }: { form: ReturnType<typeof emptyDedTypeF
   );
 }
 
+// ── Advance Requests Tab ─────────────────────────────────────────────────────
+
+function AdvanceRequestsTab() {
+  const { roleKeys } = useUserRole();
+  const isHRorFinance = roleKeys.some((r) => ["payroll_head", "finance", "admin", "super_admin"].includes(r));
+  const [requestForm, setRequestForm] = useState({ amount: "", purpose: "Personal", recovery_months: "3" });
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: advancesRaw } = useQuery({
+    queryKey: ["advances"],
+    queryFn: () => hrmsApi.get("/api/payroll/advances").then((r) => r.data),
+  });
+  const advances = (advancesRaw as any[]) ?? [];
+
+  const requestMut = useMutation({
+    mutationFn: (payload: object) => hrmsApi.post("/api/payroll/advances", payload),
+    onSuccess: () => {
+      toast({ title: "Success", description: "Advance request submitted" });
+      setRequestForm({ amount: "", purpose: "Personal", recovery_months: "3" });
+      qc.invalidateQueries({ queryKey: ["advances"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e?.response?.data?.message ?? "Request failed", variant: "destructive" }),
+  });
+
+  const approveMut = useMutation({
+    mutationFn: ({ id }: { id: string }) => hrmsApi.patch(`/api/payroll/advances/${id}/approve`, {}),
+    onSuccess: () => {
+      toast({ title: "Success", description: "Advance approved" });
+      qc.invalidateQueries({ queryKey: ["advances"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e?.response?.data?.message ?? "Approval failed", variant: "destructive" }),
+  });
+
+  const rejectMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      hrmsApi.patch(`/api/payroll/advances/${id}/reject`, { reason }),
+    onSuccess: () => {
+      toast({ title: "Success", description: "Advance rejected" });
+      qc.invalidateQueries({ queryKey: ["advances"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e?.response?.data?.message ?? "Rejection failed", variant: "destructive" }),
+  });
+
+  const filteredAdvances = advances.filter((a: any) => statusFilter === "all" || a.status === statusFilter);
+
+  return (
+    <div className="space-y-6">
+      {!isHRorFinance && (
+        <div className="rounded-lg border bg-slate-50 p-4">
+          <h3 className="font-semibold mb-3">Request a Salary Advance</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <div>
+              <Label className="text-xs font-medium">Amount (₹)</Label>
+              <Input type="number" placeholder="10000" value={requestForm.amount} onChange={(e) => setRequestForm((p) => ({ ...p, amount: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs font-medium">Purpose</Label>
+              <Select value={requestForm.purpose} onValueChange={(v) => setRequestForm((p) => ({ ...p, purpose: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Personal">Personal</SelectItem>
+                  <SelectItem value="Medical">Medical</SelectItem>
+                  <SelectItem value="Emergency">Emergency</SelectItem>
+                  <SelectItem value="Educational">Educational</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs font-medium">Recovery Months</Label>
+              <Select value={requestForm.recovery_months} onValueChange={(v) => setRequestForm((p) => ({ ...p, recovery_months: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[1, 3, 6, 9, 12].map((m) => (
+                    <SelectItem key={m} value={String(m)}>{m} months</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Button onClick={() => {
+            if (!requestForm.amount || Number(requestForm.amount) <= 0) {
+              toast({ title: "Error", description: "Amount must be positive", variant: "destructive" });
+              return;
+            }
+            requestMut.mutate({
+              amount: Number(requestForm.amount),
+              purpose: requestForm.purpose,
+              recovery_months: Number(requestForm.recovery_months),
+            });
+          }} disabled={requestMut.isPending}>
+            {requestMut.isPending ? "Submitting..." : "Submit Request"}
+          </Button>
+        </div>
+      )}
+
+      <div className="rounded-lg border bg-slate-50 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">{isHRorFinance ? "Approval Queue" : "My Requests"}</h3>
+          {isHRorFinance && (
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {filteredAdvances.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No advances {statusFilter !== "all" ? `with status "${statusFilter}"` : "yet"}</p>
+        ) : (
+          <div className="overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-200">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold">Emp Code</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold">Name</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold">Amount</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold">Purpose</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold">Months</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold">Status</th>
+                  {isHRorFinance && <th className="px-3 py-2 text-left text-xs font-semibold">Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAdvances.map((adv: any) => (
+                  <tr key={adv.id} className="border-t">
+                    <td className="px-3 py-2 font-mono text-xs">{adv.employee_code}</td>
+                    <td className="px-3 py-2">{adv.employee_name}</td>
+                    <td className="px-3 py-2 text-right font-medium">₹{fmt(adv.amount)}</td>
+                    <td className="px-3 py-2">{adv.purpose}</td>
+                    <td className="px-3 py-2">{adv.recovery_months}</td>
+                    <td className="px-3 py-2"><StatusBadge status={adv.status} /></td>
+                    {isHRorFinance && (
+                      <td className="px-3 py-2 space-x-1">
+                        {adv.status === "pending" && (
+                          <>
+                            <Button size="sm" variant="default" onClick={() => approveMut.mutate({ id: adv.id })} disabled={approveMut.isPending}>
+                              Approve
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => {
+                              const reason = window.prompt("Rejection reason:");
+                              if (reason) rejectMut.mutate({ id: adv.id, reason });
+                            }} disabled={rejectMut.isPending}>
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const TABS = [
   { value: "optout", label: "PF/ESI Opt-Out", icon: ShieldAlert },
   { value: "tds", label: "Manual TDS", icon: FileText },
@@ -1898,6 +2067,7 @@ const TABS = [
   { value: "salhistory", label: "Salary History", icon: TrendingUp },
   { value: "window", label: "Run Windows", icon: Clock },
   { value: "deductions", label: "Custom Deductions", icon: MinusCircle },
+  { value: "advances", label: "Advance Requests", icon: Wallet },
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1963,6 +2133,9 @@ export default function NativePayrollHOQueues() {
             </TabsContent>
             <TabsContent value="deductions" className="mt-0">
               <CustomDeductionsTab />
+            </TabsContent>
+            <TabsContent value="advances" className="mt-0">
+              <AdvanceRequestsTab />
             </TabsContent>
           </div>
         </Tabs>
