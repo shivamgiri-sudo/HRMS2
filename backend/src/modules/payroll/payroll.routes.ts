@@ -1508,4 +1508,28 @@ router.get("/compliance", requireRole("admin", "super_admin", "finance", "payrol
   return res.json({ success: true, data: compliance });
 }));
 
+// POST /api/payroll/runs/:id/finance-approve — Finance team approves run for disbursement
+router.post(
+  "/runs/:id/finance-approve",
+  requireAuth,
+  requireRole("finance", "admin", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const actorUserId = req.authUser!.id;
+    try {
+      const result = await (await import("./payroll.service.js")).approveRunForDisbursement(id, actorUserId);
+      return res.json(result);
+    } catch (err: any) {
+      const msg = err.message ?? "Approval failed";
+      if (msg.includes("not found")) {
+        return res.status(404).json({ success: false, message: msg });
+      }
+      if (msg.includes("must be in")) {
+        return res.status(400).json({ success: false, message: msg });
+      }
+      throw err;
+    }
+  })
+);
+
 export { router as payrollRouter };

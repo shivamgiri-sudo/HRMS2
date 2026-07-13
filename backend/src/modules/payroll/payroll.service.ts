@@ -802,4 +802,46 @@ export function breakSpecialAllowance(
   const ma = Math.round((specialAmount * MA_DEFAULT / totalDefault) * 100) / 100;
   const pa = Math.round((specialAmount - conv - ma) * 100) / 100;
   return { conv, ma, pa };
+};
+
+// ── Finance Approval ──────────────────────────────────────────────────────────
+export async function approveRunForDisbursement(
+  runId: string,
+  approverUserId: string
+): Promise<{ success: boolean; run_id: string; status: string }> {
+  // Verify run exists and is in 'locked' status
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, status FROM salary_prep_run WHERE id = ? LIMIT 1`,
+    [runId]
+  );
+  const run = (runRows as any[])[0];
+  if (!run) {
+    throw new Error(`Run ${runId} not found`);
+  }
+  if (run.status !== "locked") {
+    throw new Error(`Run must be in 'locked' status to approve for disbursement (current: ${run.status})`);
+  }
+
+  // Update run status to 'disbursed' + record approver
+  await db.execute(
+    `UPDATE salary_prep_run
+        SET status = 'disbursed',
+            finance_approved_by = ?,
+            finance_approved_at = NOW()
+      WHERE id = ?`,
+    [approverUserId, runId]
+  );
+
+  // Log audit
+  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  await logSensitiveAction({
+    actor_user_id: approverUserId,
+    action_type: "FINANCE_APPROVAL",
+    module_key: "payroll",
+    entity_type: "salary_prep_run",
+    entity_id: runId,
+    change_summary: { run_id: runId, new_status: "disbursed" },
+  });
+
+  return { success: true, run_id: runId, status: "disbursed" };
 }
