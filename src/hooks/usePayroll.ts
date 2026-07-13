@@ -505,6 +505,7 @@ export interface PayrollRunSummary {
   run_month: string;
   status: string;
   total_employees: number;
+  incentives_applied_at: string | null;
 }
 
 export function usePayrollRunSummaries() {
@@ -519,6 +520,7 @@ export function usePayrollRunSummaries() {
         run_month: String(r.run_month ?? ""),
         status: String(r.status ?? ""),
         total_employees: Number(r.total_employees ?? 0),
+        incentives_applied_at: r.incentives_applied_at ? String(r.incentives_applied_at) : null,
       }));
     },
     staleTime: 5 * 60 * 1000,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  AlertTriangle,
   CreditCard,
   FileText,
   IndianRupee,
@@ -213,6 +214,10 @@ const Payroll = () => {
       maximumFractionDigits: 0,
     }).format(amount);
   };
+
+  // Current month run — used for incentive-applied warning
+  const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
+  const currentMonthRun = runSummaries.find(r => r.run_month === currentMonthStr) ?? null;
 
   const availableYears = useMemo(() => {
     const years = new Set<number>();
@@ -845,6 +850,19 @@ const Payroll = () => {
             />
           ))}
         </KpiCardGrid>
+
+        {/* Incentive-applied warning: shown when current month run has incentives locked in */}
+        {currentMonthRun?.incentives_applied_at && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-sm">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+            <div>
+              <span className="font-semibold">Incentives applied to this month's run — </span>
+              recalculating will wipe them. Re-apply incentives from{" "}
+              <a href="/payroll/incentives" className="underline font-medium">Incentives page</a> after any recalculation.
+              Applied on {new Date(currentMonthRun.incentives_applied_at).toLocaleString("en-IN")}.
+            </div>
+          </div>
+        )}
 
         <ExceptionPanel
           title="Payroll status checkpoints"

@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { usePayrollRunSummaries } from "@/hooks/usePayroll";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -813,6 +815,9 @@ function ApprovalQueueTab() {
   } | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
 
+  const { data: runSummaries = [] } = usePayrollRunSummaries();
+  const selectedRunSummary = runSummaries.find(r => r.id === runId);
+
   const actionMutation = useMutation({
     mutationFn: () => {
       if (!actionBatch) throw new Error("No batch selected.");
@@ -929,14 +934,43 @@ function ApprovalQueueTab() {
           <CardTitle className="text-base">Apply Approved Incentives to Payroll Run</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Incentive-wipe warning — shown when selected run already had incentives applied */}
+          {selectedRunSummary?.incentives_applied_at && (
+            <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+              <div>
+                <p className="font-semibold">Incentives already applied to this run</p>
+                <p className="text-amber-700 mt-0.5">
+                  Applied on {new Date(selectedRunSummary.incentives_applied_at).toLocaleString("en-IN")}.
+                  Re-applying will add the amounts again. If you recalculate the run after applying,
+                  incentives will be wiped and must be re-applied.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-1">
-              <Label>Payroll Run ID *</Label>
-              <Input
+              <Label>Payroll Run *</Label>
+              <select
                 value={runId}
-                onChange={(e) => setRunId(e.target.value)}
-                placeholder="e.g. RUN_2026_06_001"
-              />
+                onChange={(e) => {
+                  setRunId(e.target.value);
+                  const run = runSummaries.find(r => r.id === e.target.value);
+                  if (run) setApplyMonth(run.run_month);
+                }}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">— Select a run —</option>
+                {runSummaries
+                  .filter(r => !["disbursed", "finalized", "finalised"].includes(r.status))
+                  .map(r => (
+                    <option key={r.id} value={r.id}>
+                      {r.run_month} — {r.status} ({r.total_employees} emp)
+                      {r.incentives_applied_at ? " ⚠ incentives applied" : ""}
+                    </option>
+                  ))}
+              </select>
             </div>
             <div className="space-y-1">
               <Label>Pay Month *</Label>
@@ -950,12 +984,10 @@ function ApprovalQueueTab() {
             <div className="flex items-end">
               <Button
                 onClick={() => { setApplyResult(null); setApplyError(null); applyMutation.mutate(); }}
-                disabled={applyMutation.isPending}
+                disabled={applyMutation.isPending || !runId}
                 className="w-full sm:w-auto"
               >
-                {applyMutation.isPending
-                  ? "Applying…"
-                  : "Apply Approved Incentives"}
+                {applyMutation.isPending ? "Applying…" : "Apply Approved Incentives"}
               </Button>
             </div>
           </div>
