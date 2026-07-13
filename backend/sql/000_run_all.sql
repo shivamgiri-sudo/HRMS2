@@ -326,6 +326,9 @@ SOURCE sql/402_salary_prep_line_bulk_outputs.sql;
 -- ── Phase 4 sign-off / loans (403) ────────────────────────────────────────────
 SOURCE sql/403_payroll_run_signoff.sql;
 
+-- ── Bug fixes: B6 incentive tracking (404) ───────────────────────────────────
+SOURCE sql/404_payroll_incentive_tracking.sql;
+
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
 SOURCE sql/999_create_missing_engagement_tables.sql;
