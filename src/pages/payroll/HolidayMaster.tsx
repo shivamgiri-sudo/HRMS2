@@ -118,9 +118,11 @@ export default function HolidayMaster() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["holiday-master"] }),
   });
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const deleteMutation = useMutation({
     mutationFn: (id: string) => hrmsApi.delete(`/api/payroll/holiday-master/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["holiday-master"] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["holiday-master"] }); setDeletingId(null); },
+    onError: () => setDeletingId(null),
   });
 
   const ccMutation = useMutation({
@@ -185,6 +187,7 @@ export default function HolidayMaster() {
 
   const handleDelete = (h: Holiday) => {
     if (!window.confirm(`Delete holiday "${h.holiday_name}" on ${h.holiday_date?.slice(0, 10)}? This cannot be undone.`)) return;
+    setDeletingId(h.id);
     deleteMutation.mutate(h.id);
   };
 
@@ -272,10 +275,10 @@ export default function HolidayMaster() {
                             size="sm"
                             variant="outline"
                             className="text-red-600 border-red-300 hover:bg-red-50"
-                            disabled={deleteMutation.isPending}
+                            disabled={deletingId === h.id}
                             onClick={() => handleDelete(h)}
                           >
-                            Delete
+                            {deletingId === h.id ? "Deleting…" : "Delete"}
                           </Button>
                         </div>
                       </td>
