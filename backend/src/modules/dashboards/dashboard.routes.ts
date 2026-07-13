@@ -381,4 +381,62 @@ router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRe
   });
 }));
 
+// ─── Employee Self Dashboard ──────────────────────────────────────────────────
+router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) => {
+  const user = req.authUser!;
+  const { getEmployeeForUser: getEmpForUser } = await import("../../shared/accessGuard.js");
+  const selfEmp = await getEmpForUser(user.id);
+
+  if (!selfEmp) {
+    return res.json({ success: true, data: { metrics: {} } });
+  }
+
+  // Get current month in IST
+  const now = new Date();
+  const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const year = istDate.getFullYear();
+  const month = String(istDate.getMonth() + 1).padStart(2, '0');
+  const monthStr = `${year}-${month}`;
+
+  // Calculate month-to-date attendance summary
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS present,
+       SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS half_day,
+       SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
+       SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS late,
+       COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END) AS total_working_days,
+       ROUND(
+         (SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) +
+          SUM(CASE WHEN attendance_status = 'half_day' THEN 0.5 ELSE 0 END)) /
+         NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END), 0) * 100,
+         1
+       ) AS attendance_pct
+     FROM attendance_daily_record
+     WHERE employee_id = ? AND DATE_FORMAT(record_date, '%Y-%m') = ?`,
+    [(selfEmp as any).id, monthStr]
+  ).catch(() => [[{ present: 0, half_day: 0, absent: 0, late: 0, total_working_days: 0, attendance_pct: 0 }]] as any);
+
+  const attData = rows[0] as any ?? { present: 0, half_day: 0, absent: 0, late: 0, total_working_days: 0, attendance_pct: 0 };
+
+  return res.json({
+    success: true,
+    data: {
+      metrics: {
+        att: {
+          value: Number(attData.attendance_pct ?? 0),
+          detail: {
+            present: Number(attData.present ?? 0),
+            half_day: Number(attData.half_day ?? 0),
+            absent: Number(attData.absent ?? 0),
+            late: Number(attData.late ?? 0),
+            total_working_days: Number(attData.total_working_days ?? 0),
+          }
+        }
+      },
+      generatedAt: new Date().toISOString(),
+    },
+  });
+}));
+
 export { router as dashboardRouter };

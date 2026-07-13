@@ -310,11 +310,21 @@ export default function EmployeeSelfDashboard() {
     if (!user) return;
     let cancelled = false;
 
-    // Attendance
+    // Attendance (month-to-date summary)
     setAttendanceLoading(true);
     hrmsApi.get("/api/wfm/my-attendance")
       .then((json: any) => {
-        if (!cancelled) setAttendance(json?.data ?? json);
+        if (!cancelled) {
+          const data = json?.data ?? {};
+          // Map backend response to expected format
+          setAttendance({
+            presentDays: data.presentDays ?? 0,
+            absentDays: data.absentDays ?? 0,
+            lateDays: data.lateDays ?? 0,
+            totalWorkingDays: data.totalWorkingDays ?? 0,
+            attendancePct: data.attendancePct ?? 0,
+          });
+        }
       })
       .catch((err: any) => {
         if (!cancelled) setAttendanceError(err.message ?? "Failed to load attendance.");

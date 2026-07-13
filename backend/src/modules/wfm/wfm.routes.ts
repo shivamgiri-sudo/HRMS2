@@ -1031,7 +1031,7 @@ wfmRouter.get(
   })
 );
 
-// GET /api/wfm/my-attendance — employee's own attendance summary (stub for dashboard widget)
+// GET /api/wfm/my-attendance — employee's own attendance summary (month-to-date)
 wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const selfEmp = await getEmployeeForUser(req.authUser.id);
@@ -1039,17 +1039,121 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
     return res.json({ success: true, data: {} });
   }
 
-  // Return today's attendance if exists, otherwise empty
-  const today = new Date().toISOString().split('T')[0];
+  // Get current month in IST
+  const now = new Date();
+  const istDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const year = istDate.getFullYear();
+  const month = String(istDate.getMonth() + 1).padStart(2, '0');
+  const monthStr = `${year}-${month}`;
+
+  // Calculate month-to-date attendance summary
   const [rows] = await db.execute(
-    `SELECT record_date, attendance_status, clock_in_time, clock_out_time, raw_minutes
+    `SELECT
+       SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS presentDays,
+       SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS halfDays,
+       SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
+       SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS lateDays,
+       SUM(CASE WHEN attendance_status = 'leave_approved' THEN 1 ELSE 0 END) AS leaveDays,
+       SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END) AS holidayDays,
+       SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END) AS weekOffDays,
+       SUM(COALESCE(lwp_value, 0)) AS totalLwp,
+       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks,
+       COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END) AS totalWorkingDays,
+       ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
+       SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays,
+       ROUND(
+         (SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) +
+          SUM(CASE WHEN attendance_status = 'half_day' THEN 0.5 ELSE 0 END)) /
+         NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END), 0) * 100,
+         1
+       ) AS attendancePct
      FROM attendance_daily_record
-     WHERE employee_id = ? AND record_date = ?`,
-    [selfEmp.id, today]
+     WHERE employee_id = ? AND DATE_FORMAT(record_date, '%Y-%m') = ?`,
+    [selfEmp.id, monthStr]
   );
+
+  const data = (rows as any[])[0] ?? {
+    presentDays: 0,
+    halfDays: 0,
+    absentDays: 0,
+    lateDays: 0,
+    leaveDays: 0,
+    holidayDays: 0,
+    weekOffDays: 0,
+    totalLwp: 0,
+    lateMarks: 0,
+    totalWorkingDays: 0,
+    totalHours: 0,
+    wfoDays: 0,
+    attendancePct: 0,
+  };
 
   return res.json({
     success: true,
-    data: (rows as any[])[0] ?? {}
+    data
+  });
+}));
+
+// GET /api/wfm/attendance/summary/:employeeId/:month — monthly attendance summary for specific employee/month
+wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: any) => {
+  const { employeeId, month } = req.params;
+  const { db } = await import("../../db/mysql.js");
+
+  // Security: employee can only view own data unless privileged
+  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
+  const isPrivileged = await checkRole(
+    req.authUser.id,
+    "super_admin", "admin", "hr", "wfm", "manager", "branch_head", "process_manager"
+  );
+
+  if (!isPrivileged) {
+    const selfEmp = await getEmployeeForUser(req.authUser.id);
+    if (!selfEmp || selfEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+  }
+
+  // Validate month format (YYYY-MM)
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ success: false, error: "Invalid month format. Use YYYY-MM" });
+  }
+
+  const [rows] = await db.execute(
+    `SELECT
+       SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS presentDays,
+       SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS halfDays,
+       SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
+       SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS lateDays,
+       SUM(CASE WHEN attendance_status = 'leave_approved' THEN 1 ELSE 0 END) AS leaveDays,
+       SUM(CASE WHEN attendance_status = 'holiday' THEN 1 ELSE 0 END) AS holidayDays,
+       SUM(CASE WHEN attendance_status = 'week_off' THEN 1 ELSE 0 END) AS weekOffDays,
+       SUM(COALESCE(lwp_value, 0)) AS totalLwp,
+       SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks,
+       COUNT(CASE WHEN attendance_status NOT IN ('holiday', 'week_off') THEN 1 END) AS totalWorkingDays,
+       ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
+       SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays
+     FROM attendance_daily_record
+     WHERE employee_id = ? AND DATE_FORMAT(record_date, '%Y-%m') = ?`,
+    [employeeId, month]
+  );
+
+  const data = (rows as any[])[0] ?? {
+    presentDays: 0,
+    halfDays: 0,
+    absentDays: 0,
+    lateDays: 0,
+    leaveDays: 0,
+    holidayDays: 0,
+    weekOffDays: 0,
+    totalLwp: 0,
+    lateMarks: 0,
+    totalWorkingDays: 0,
+    totalHours: 0,
+    wfoDays: 0,
+  };
+
+  return res.json({
+    success: true,
+    data
   });
 }));
