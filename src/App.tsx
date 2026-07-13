@@ -195,6 +195,7 @@ const PayrollConfigFlags            = lazy(() => import("./pages/payroll/Payroll
 const RecalculationQueue            = lazy(() => import("./pages/payroll/RecalculationQueue"));
 const RunningPayrollBreakdown       = lazy(() => import("./pages/payroll/RunningPayrollBreakdown"));
 const HolidayMaster                 = lazy(() => import("./pages/payroll/HolidayMaster"));
+const DisbursalManagement           = lazy(() => import("./pages/payroll/DisbursalManagement"));
 const HolidayWorkRequest            = lazy(() => import("./pages/payroll/HolidayWorkRequest"));
 const HolidayWorkApprovals          = lazy(() => import("./pages/payroll/HolidayWorkApprovals"));
 const PayrollValidationScreen       = lazy(() => import("./pages/payroll/PayrollValidationScreen"));
@@ -529,6 +530,7 @@ const App = () => (
               <Route path="/payroll/pf-batches" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfBatchesPage /></ProtectedRoute>} />
               <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
               <Route path="/payroll/full-final" element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/disbursal" element={<ProtectedRoute roles={['super_admin', 'payroll', 'finance']}><DisbursalManagement /></ProtectedRoute>} />
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
               <Route path="/payroll/masters" element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
               <Route path="/payroll/ho-queues" element={<ProtectedRoute><NativePayrollHOQueues /></ProtectedRoute>} />

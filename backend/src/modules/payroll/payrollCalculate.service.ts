@@ -790,6 +790,29 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       );
     }
 
+    // Step 10b: Update advance recovery ledger — accumulate recovered_amount per run,
+    // flip status to 'recovered' when fully paid so the deduction stops in future runs.
+    if (advanceRecovery > 0) {
+      const [activeAdvances] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, amount, recovery_months, COALESCE(recovered_amount, 0) AS recovered_amount
+           FROM salary_advance_log
+          WHERE employee_id = ? AND status = 'active'`,
+        [emp.employee_id]
+      );
+      for (const adv of activeAdvances as Array<{ id: string; amount: number; recovery_months: number; recovered_amount: number }>) {
+        const installment = Math.round((adv.amount / Math.max(1, adv.recovery_months)) * 100) / 100;
+        const newRecovered = Math.min(Number(adv.recovered_amount) + installment, Number(adv.amount));
+        const newStatus = newRecovered >= Number(adv.amount) ? "recovered" : "active";
+        await conn.execute(
+          `UPDATE salary_advance_log
+              SET recovered_amount = ?,
+                  status = ?
+            WHERE id = ?`,
+          [newRecovered, newStatus, adv.id]
+        );
+      }
+    }
+
     // Step 11: Audit log per employee
     await conn.execute(
       `INSERT INTO sensitive_action_log
