@@ -270,6 +270,23 @@ export const payrollService = {
   // ─── Prep Runs ─────────────────────────────────────────────────────────────
 
   async createRun(input: CreateRunInput, userId: string): Promise<SalaryPrepRun> {
+    // M1 Branch Readiness Gate: validate that all branches are ready
+    try {
+      const { payrollBranchReadinessService } = await import("./payroll-branch-readiness.service.js");
+      const validation = await payrollBranchReadinessService.validatePayrollRunCreation(input.runMonth);
+      if (validation.blocked.length > 0) {
+        throw new Error(
+          `Cannot create payroll run. The following branches are not ready: ${validation.blocked.join(", ")}. ` +
+          `Ensure attendance is frozen and readiness score ≥ 80 for all branches, or apply HO override.`
+        );
+      }
+    } catch (err: unknown) {
+      // If error is the validation message, throw it; otherwise log and allow creation (table may not exist yet)
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("not ready")) throw err;
+      console.warn("[createRun] Branch readiness check skipped:", msg);
+    }
+
     const [dup] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM salary_prep_run
         WHERE run_month = ?

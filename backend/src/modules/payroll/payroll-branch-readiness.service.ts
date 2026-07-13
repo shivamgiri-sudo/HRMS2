@@ -9,6 +9,7 @@
 
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -57,6 +58,72 @@ export interface BranchReadinessRecord {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Auto-create the payroll_branch_readiness table if it doesn't exist */
+async function ensureTable(): Promise<void> {
+  try {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS payroll_branch_readiness (
+        id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+        process_month VARCHAR(7) NOT NULL,
+        branch_id VARCHAR(36) NOT NULL,
+
+        attendance_frozen TINYINT(1) NOT NULL DEFAULT 0,
+        attendance_frozen_at DATETIME NULL,
+        attendance_frozen_by VARCHAR(36) NULL,
+
+        incentives_status ENUM('not_uploaded','uploaded','approved') NOT NULL DEFAULT 'not_uploaded',
+        incentives_confirmed_at DATETIME NULL,
+        incentives_confirmed_by VARCHAR(36) NULL,
+
+        custom_deductions_uploaded TINYINT(1) NOT NULL DEFAULT 0,
+        custom_deductions_confirmed_at DATETIME NULL,
+        custom_deductions_confirmed_by VARCHAR(36) NULL,
+
+        overtime_entered TINYINT(1) NOT NULL DEFAULT 0,
+        overtime_confirmed_at DATETIME NULL,
+        overtime_confirmed_by VARCHAR(36) NULL,
+
+        bank_details_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
+        uan_complete_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
+        noc_resolved TINYINT(1) NOT NULL DEFAULT 0,
+        holiday_work_approved TINYINT(1) NOT NULL DEFAULT 0,
+
+        branch_head_signoff TINYINT(1) NOT NULL DEFAULT 0,
+        branch_head_signoff_at DATETIME NULL,
+        branch_head_signoff_by VARCHAR(36) NULL,
+        branch_head_remarks TEXT NULL,
+
+        readiness_score DECIMAL(5,2) NOT NULL DEFAULT 0,
+        readiness_status ENUM('not_started','in_progress','ready','blocked') NOT NULL DEFAULT 'not_started',
+
+        projected_gross DECIMAL(14,2) NULL,
+        projected_net DECIMAL(14,2) NULL,
+        employee_count INT NOT NULL DEFAULT 0,
+        projection_computed_at DATETIME NULL,
+
+        ho_override_ready TINYINT(1) NOT NULL DEFAULT 0,
+        ho_override_by VARCHAR(36) NULL,
+        ho_override_at DATETIME NULL,
+        ho_override_reason TEXT NULL,
+
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        UNIQUE KEY uk_branch_month (process_month, branch_id),
+        KEY idx_branch (branch_id),
+        KEY idx_month (process_month),
+        KEY idx_status (readiness_status)
+      )
+    `);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Only log if error is NOT "table already exists" — that's expected
+    if (!msg.includes("already exists")) {
+      console.warn(`[BranchReadiness] ensureTable warning — ${msg}`);
+    }
+  }
+}
+
 /** Returns true when the payroll_branch_readiness table is accessible. */
 async function tableExists(): Promise<boolean> {
   try {
@@ -92,6 +159,7 @@ export const payrollBranchReadinessService = {
   // -------------------------------------------------------------------------
 
   async ensureRecord(month: string, branchId: string): Promise<void> {
+    await ensureTable();
     if (!(await tableExists())) return;
 
     try {
@@ -668,6 +736,16 @@ export const payrollBranchReadinessService = {
       [userId, remarks, month, branchId]
     );
 
+    // Audit log
+    void logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "PAYROLL_BRANCH_SIGNOFF",
+      module_key: "payroll",
+      entity_type: "branch_readiness",
+      entity_id: branchId,
+      change_summary: { month, branch_id: branchId, remarks },
+    });
+
     // Recompute score/status after sign-off
     const rec = await this.getOrRefresh(month, branchId);
     const score = this.computeScore(rec);
@@ -715,6 +793,16 @@ export const payrollBranchReadinessService = {
         WHERE process_month = ? AND branch_id = ?`,
       [userId, reason, month, branchId]
     );
+
+    // Audit log
+    void logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "PAYROLL_BRANCH_HO_OVERRIDE",
+      module_key: "payroll",
+      entity_type: "branch_readiness",
+      entity_id: branchId,
+      change_summary: { month, branch_id: branchId, reason },
+    });
   },
 
   // -------------------------------------------------------------------------

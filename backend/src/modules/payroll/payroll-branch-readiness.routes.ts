@@ -41,12 +41,34 @@ function resolveMonth(raw: unknown): string {
 payrollBranchReadinessRouter.get(
   "/summary",
   requireAuth,
-  requireRole("super_admin", "payroll_head", "payroll"),
+  requireRole("super_admin", "payroll_head", "payroll", "admin"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
       const data = await payrollBranchReadinessService.getHOSummary(month);
-      return res.json({ success: true, month, data });
+
+      // Compute summary stats
+      const total = data.length;
+      const ready = data.filter((b) => b.readiness_status === "ready").length;
+      const in_progress = data.filter((b) => b.readiness_status === "in_progress").length;
+      const blocked = data.filter((b) => b.readiness_status === "blocked").length;
+      const avg_score =
+        total > 0
+          ? Math.round(data.reduce((s, b) => s + b.readiness_score, 0) / total)
+          : 0;
+
+      return res.json({
+        success: true,
+        month,
+        data,
+        summary: {
+          total,
+          ready,
+          in_progress,
+          blocked,
+          avg_score,
+        },
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /summary error:", msg);
@@ -280,6 +302,72 @@ payrollBranchReadinessRouter.get(
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[BranchReadiness] GET /:branchId/projection error:", msg);
       return res.status(500).json({ success: false, message: "Failed to fetch projection" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// GET /export?month=YYYY-MM&format=csv
+// CSV export for HO summary
+// Roles: payroll_head, super_admin, admin
+// ---------------------------------------------------------------------------
+
+payrollBranchReadinessRouter.get(
+  "/export",
+  requireAuth,
+  requireRole("payroll_head", "super_admin", "admin"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const month = resolveMonth(req.query.month);
+      const format = (req.query.format as string) ?? "csv";
+
+      if (format !== "csv") {
+        return res.status(400).json({
+          success: false,
+          message: "Only 'csv' format is supported",
+        });
+      }
+
+      const data = await payrollBranchReadinessService.getHOSummary(month);
+
+      // CSV header
+      const csvRows = [
+        "Branch Name,Employee Count,Attendance Frozen,Incentives Status,Custom Deductions,Overtime Entered,Bank Details %,UAN Complete %,NOC Resolved,Holiday Work Approved,Branch Head Signoff,Readiness Score,Readiness Status,Projected Gross,Projected Net,HO Override",
+      ];
+
+      // CSV data rows
+      for (const branch of data) {
+        const row = [
+          branch.branch_name ?? "—",
+          branch.employee_count,
+          branch.attendance_frozen ? "Yes" : "No",
+          branch.incentives_status.replace("_", " "),
+          branch.custom_deductions_uploaded ? "Yes" : "No",
+          branch.overtime_entered ? "Yes" : "No",
+          `${branch.bank_details_pct}%`,
+          `${branch.uan_complete_pct}%`,
+          branch.noc_resolved ? "Yes" : "No",
+          branch.holiday_work_approved ? "Yes" : "No",
+          branch.branch_head_signoff ? "Yes" : "No",
+          branch.readiness_score,
+          branch.readiness_status.replace("_", " "),
+          branch.projected_gross != null ? branch.projected_gross.toFixed(2) : "—",
+          branch.projected_net != null ? branch.projected_net.toFixed(2) : "—",
+          branch.ho_override_ready ? "Yes" : "No",
+        ];
+        csvRows.push(row.join(","));
+      }
+
+      const csv = csvRows.join("\n");
+      const filename = `branch-readiness-${month}.csv`;
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(csv);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[BranchReadiness] GET /export error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to generate CSV export" });
     }
   }
 );

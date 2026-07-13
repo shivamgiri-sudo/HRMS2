@@ -618,9 +618,8 @@ function ManualToggleButton({
   const qc = useQueryClient();
   const mutation = useMutation({
     mutationFn: async (newVal: number) => {
-      await hrmsApi.post(`/api/payroll/branch-readiness/${branchId}/manual-item`, {
-        month,
-        field: fieldKey,
+      await hrmsApi.post(`/api/payroll/branch-readiness/${branchId}/checklist?month=${month}`, {
+        item: fieldKey,
         value: newVal,
       });
     },
@@ -865,7 +864,7 @@ function HOView({ month }: { month: string }) {
     queryKey: ["branch-readiness", month],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: BranchReadiness[] }>(
-        `/api/payroll/branch-readiness?month=${month}`
+        `/api/payroll/branch-readiness/summary?month=${month}`
       );
       return res.data ?? [];
     },
