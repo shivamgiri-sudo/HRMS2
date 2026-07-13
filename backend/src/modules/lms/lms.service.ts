@@ -198,7 +198,7 @@ export const lmsService = {
   },
 
   async getNativeBatchPlanner() {
-    const [batchRows] = await lmsQuery<RowDataPacket[]>(`
+    const batchRows = await lmsQuery<RowDataPacket[]>(`
       SELECT
         b.batch_no,
         b.batch_name,
@@ -256,7 +256,7 @@ export const lmsService = {
         c.updated_at,
         c.applied_for_branch,
         c.applied_for_process,
-        c.applied_for_role,
+        COALESCE(c.role_applied, c.process_text, c.applied_for_process) AS applied_for_role,
         c.employee_code AS candidate_employee_code,
         COALESCE(e.employee_code, c.employee_code) AS hrms_employee_code,
         e.id AS hrms_employee_id,

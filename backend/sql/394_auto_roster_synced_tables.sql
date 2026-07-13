@@ -25,17 +25,31 @@ SET @col_exists = (
     AND COLUMN_NAME = 'plan_id'
 );
 
+SET @fk_exists = (
+  SELECT CONSTRAINT_NAME
+  FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'wfm_roster_conflict_log'
+    AND COLUMN_NAME = 'employee_id'
+    AND REFERENCED_TABLE_NAME = 'employees'
+  LIMIT 1
+);
+
 SET @sql = IF(@col_exists = 0,
-  'ALTER TABLE wfm_roster_conflict_log
-     MODIFY COLUMN employee_id VARCHAR(36) NULL,
-     ADD COLUMN plan_id         VARCHAR(36) NULL AFTER id,
-     ADD COLUMN assignment_id   VARCHAR(36) NULL AFTER plan_id,
-     ADD COLUMN roster_date     DATE        NULL,
-     ADD COLUMN severity        ENUM(''info'',''medium'',''high'',''critical'') NOT NULL DEFAULT ''medium'',
-     ADD COLUMN message         TEXT        NULL,
-     ADD COLUMN resolution_status ENUM(''open'',''resolved'',''dismissed'') NOT NULL DEFAULT ''open'',
-     ADD INDEX  idx_wrcl_plan   (plan_id),
-     ADD INDEX  idx_wrcl_sev    (severity, resolution_status)',
+  CONCAT(
+    'ALTER TABLE wfm_roster_conflict_log ',
+    IF(@fk_exists IS NOT NULL, CONCAT('DROP FOREIGN KEY `', @fk_exists, '`, '), ''),
+    'MODIFY COLUMN employee_id VARCHAR(36) NULL, ',
+    'ADD COLUMN plan_id         VARCHAR(36) NULL AFTER id, ',
+    'ADD COLUMN assignment_id   VARCHAR(36) NULL AFTER plan_id, ',
+    'ADD COLUMN roster_date     DATE        NULL, ',
+    'ADD COLUMN severity        ENUM(''info'',''medium'',''high'',''critical'') NOT NULL DEFAULT ''medium'', ',
+    'ADD COLUMN message         TEXT        NULL, ',
+    'ADD COLUMN resolution_status ENUM(''open'',''resolved'',''dismissed'') NOT NULL DEFAULT ''open'', ',
+    'ADD INDEX  idx_wrcl_plan   (plan_id), ',
+    'ADD INDEX  idx_wrcl_sev    (severity, resolution_status), ',
+    'ADD CONSTRAINT fk_wrcl_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL'
+  ),
   'SELECT 1 -- wfm_roster_conflict_log already has plan_id column, skipping ALTER'
 );
 PREPARE stmt FROM @sql;

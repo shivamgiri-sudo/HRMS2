@@ -34,7 +34,7 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
   currentEmployeeId,
   searchQuery = "",
 }: OrgChartNodeProps) {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const [expanded, setExpanded] = useState(depth < 3);
   const hasChildren = node.children && node.children.length > 0;
   const style = getStyle(depth);
   const isMe = node.id === currentEmployeeId;
@@ -148,26 +148,22 @@ export const OrgChartNodeCard = memo(function OrgChartNodeCard({
             transition={{ duration: 0.25 }}
             className="flex flex-col items-center overflow-visible"
           >
-            {/* Vertical line from card down */}
-            <div className="w-px h-7 bg-slate-300/80" />
+            {/* Vertical line from card down to horizontal bar */}
+            <div className="w-px h-7 bg-slate-300" />
 
-            {/* Children wrapper */}
-            <div className="relative flex items-start gap-3">
-              {/* Horizontal connector bar across children (only when >1 child) */}
+            {/* Children wrapper with horizontal connector */}
+            <div className="relative flex items-start">
+              {/* Horizontal connector bar — spans from first child center to last child center */}
               {node.children.length > 1 && (
-                <div
-                  className="absolute top-0 h-px bg-slate-300/80"
-                  style={{
-                    left: "calc(50% - " + ((node.children.length - 1) * 0.5 * 213) + "px)",
-                    right: "calc(50% - " + ((node.children.length - 1) * 0.5 * 213) + "px)",
-                  }}
+                <div className="absolute top-0 left-[calc(50%/var(--child-count))] right-[calc(50%/var(--child-count))] h-px bg-slate-300"
+                  style={{ left: `calc(100% / ${node.children.length} / 2)`, right: `calc(100% / ${node.children.length} / 2)` }}
                 />
               )}
 
               {node.children.map((child) => (
-                <div key={child.id} className="flex flex-col items-center">
-                  {/* Vertical connector from horizontal bar to child */}
-                  <div className="w-px h-5 bg-slate-300/80" />
+                <div key={child.id} className="flex flex-col items-center px-2">
+                  {/* Vertical connector from horizontal bar down to child card */}
+                  <div className="w-px h-5 bg-slate-300" />
                   <OrgChartNodeCard
                     node={child}
                     depth={depth + 1}

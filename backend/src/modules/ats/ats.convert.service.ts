@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { atsService } from "./ats.service.js";
+import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 
 export interface ConvertResult {
   employee_id: string;
@@ -25,6 +26,21 @@ export async function convertCandidateToEmployee(
   );
   const bridge = rows[0];
   if (bridge?.employee_id && bridge?.employee_code) {
+    try {
+      const lmsResult = await provisionLmsIdentityForEmployee({
+        employeeCode: String(bridge.employee_code),
+        createdBy: actorId,
+      });
+      if (lmsResult.message) {
+        console.info(`[ATS] LMS provisioning for ${bridge.employee_code}: ${lmsResult.message}`);
+      }
+    } catch (err) {
+      console.warn(
+        `[ATS] LMS provisioning skipped for ${bridge.employee_code}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
     return {
       employee_id: String(bridge.employee_id),
       employee_code: String(bridge.employee_code),
