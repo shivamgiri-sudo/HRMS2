@@ -352,10 +352,23 @@ const Attendance = () => {
   const longBreakCount = safeNumber(
     breakSummary?.long_break_count ?? todayRecord?.long_break_count ?? 0
   );
-  const todayBreakStatus =
-    breakSummary?.final_status ??
-    todayRecord?.break_status ??
-    (displayClockOut ? "Shift Completed" : displayClockIn ? "On Duty" : "No Punch");
+  const scheduledShiftHours = getExpectedHours(
+    currentEmployee?.working_hours_start || "09:00:00",
+    currentEmployee?.working_hours_end || "18:00:00"
+  );
+  const hasMetShiftHours =
+    displayHours != null && displayHours + 0.01 >= scheduledShiftHours;
+  const isShiftCompleted = !!displayClockOut && hasMetShiftHours;
+  const isShiftClosedEarly = !!displayClockOut && !hasMetShiftHours;
+  const todayBreakStatus = isShiftCompleted
+    ? "Shift Completed"
+    : isShiftClosedEarly
+      ? "Shift Closed Early"
+      : breakSummary?.active_break
+        ? "On Break"
+        : todayRecord?.break_status ??
+          breakSummary?.final_status ??
+          (displayClockIn ? "On Duty" : "No Punch");
 
   const formatTimeDisplay = (time: string | null): string => {
     if (!time) return "--:--";
@@ -750,7 +763,19 @@ const Attendance = () => {
                           { label: "Mini", value: String(miniBreakCount), tone: "text-[#1B6AB5] bg-[#eef6ff]" },
                           { label: "Long", value: String(longBreakCount), tone: "text-[#3BAD49] bg-[#eef9f0]" },
                           { label: "Break Time", value: formatBreakMinutes(totalBreakMinutes), tone: "text-[#d97706] bg-[#fff6e8]" },
-                          { label: "Live State", value: breakSummary?.active_break ? "On Break" : displayClockOut ? "Closed" : displayClockIn ? "On Duty" : "Waiting", tone: "text-slate-700 bg-slate-100" },
+                          {
+                            label: "Live State",
+                            value: breakSummary?.active_break
+                              ? "On Break"
+                              : isShiftCompleted
+                                ? "Completed"
+                                : isShiftClosedEarly
+                                  ? "Closed Early"
+                                  : displayClockIn
+                                    ? "On Duty"
+                                    : "Waiting",
+                            tone: "text-slate-700 bg-slate-100"
+                          },
                         ].map((item) => (
                           <div key={item.label} className={`rounded-xl border border-white/70 px-3 py-3 ${item.tone}`}>
                             <p className="text-[10px] font-bold uppercase tracking-[0.14em] opacity-70">
@@ -765,9 +790,17 @@ const Attendance = () => {
                     </div>
 
                   {displayClockOut && (
-                    <div className="mt-5 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
+                    <div
+                      className={`mt-5 flex items-center gap-2 rounded-2xl px-4 py-3 text-xs font-semibold ${
+                        isShiftCompleted
+                          ? "border border-emerald-100 bg-emerald-50 text-emerald-700"
+                          : "border border-amber-100 bg-amber-50 text-amber-700"
+                      }`}
+                    >
                       <CheckCircle2 className="h-4 w-4" />
-                      Completed for today
+                      {isShiftCompleted
+                        ? "Completed for today"
+                        : `Clocked out before completing ${scheduledShiftHours.toFixed(0)} hrs`}
                     </div>
                   )}
 

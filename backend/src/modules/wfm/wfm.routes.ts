@@ -1068,7 +1068,9 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
          1
        ) AS attendancePct
      FROM attendance_daily_record
-     WHERE employee_id = ? AND DATE_FORMAT(record_date, '%Y-%m') = ?`,
+     WHERE employee_id = ?
+       AND DATE_FORMAT(record_date, '%Y-%m') = ?
+       AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
     [selfEmp.id, monthStr]
   );
 
@@ -1133,8 +1135,13 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
        ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS totalHours,
        SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END) AS wfoDays
      FROM attendance_daily_record
-     WHERE employee_id = ? AND DATE_FORMAT(record_date, '%Y-%m') = ?`,
-    [employeeId, month]
+     WHERE employee_id = ?
+       AND DATE_FORMAT(record_date, '%Y-%m') = ?
+       AND (
+         ? <> DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m')
+         OR record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
+       )`,
+    [employeeId, month, month]
   );
 
   const data = (rows as any[])[0] ?? {
