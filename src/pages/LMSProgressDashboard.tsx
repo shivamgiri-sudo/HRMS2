@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Award, BookOpen, Clock } from "lucide-react";
+import type { ReactNode } from "react";
+import { Award, BookOpen, Clock, TrendingUp } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 interface EmployeeProgress {
   employee_id: string;
@@ -14,12 +16,32 @@ interface EmployeeProgress {
   last_activity: string;
 }
 
+function SectionCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mcn-page-card overflow-hidden">
+      <div className="border-b border-slate-200/80 bg-white px-6 py-5">
+        <h2 className="mcn-section-title">{title}</h2>
+        {subtitle && <p className="mcn-section-subtitle">{subtitle}</p>}
+      </div>
+      <div className="bg-[var(--card-solid)] p-6">{children}</div>
+    </section>
+  );
+}
+
 export default function LMSProgressDashboard() {
   const { data: progressData = [], isLoading } = useQuery({
     queryKey: ["lms-progress-dashboard"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: EmployeeProgress[] }>(
-        "/api/lms/progress-summary"
+        "/api/lms/progress-summary",
       );
       return res.data ?? [];
     },
@@ -29,9 +51,7 @@ export default function LMSProgressDashboard() {
   const stats = {
     totalLearners: progressData.length,
     avgCompletion: progressData.length
-      ? Math.round(
-          progressData.reduce((sum, p) => sum + p.completion_percent, 0) / progressData.length
-        )
+      ? Math.round(progressData.reduce((sum, p) => sum + p.completion_percent, 0) / progressData.length)
       : 0,
     totalCertifications: progressData.reduce((sum, p) => sum + p.certifications_earned, 0),
     activeLearners: progressData.filter((p) => {
@@ -44,72 +64,67 @@ export default function LMSProgressDashboard() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-slate-950">LMS Progress Dashboard</h1>
-          <p className="mt-1 text-slate-600">
-            Read-only view of employee learning progress from integrated LMS
-          </p>
-        </div>
+        <header className="mcn-page-card overflow-hidden">
+          <div className="border-b border-slate-200/80 bg-white px-6 py-5">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-700">MCN LMS</p>
+            <h1 className="mt-1 text-2xl font-black text-slate-950">LMS Progress Dashboard</h1>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">
+              Read-only view of employee learning progress from the integrated LMS, rendered in the same compact LMS card style.
+            </p>
+          </div>
+        </header>
 
-        {/* Stats */}
         <div className="grid gap-4 md:grid-cols-4">
-          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="mcn-page-card p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-500">Total Learners</p>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Total Learners</p>
                 <p className="mt-2 text-3xl font-black text-slate-950">{stats.totalLearners}</p>
               </div>
-              <div className="rounded-2xl bg-blue-100 p-3 text-blue-600">
-                <BookOpen className="h-6 w-6" />
+              <div className="rounded-2xl bg-blue-50 p-3 text-blue-700">
+                <BookOpen className="h-5 w-5" />
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="mcn-page-card p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-500">Avg Completion</p>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Avg Completion</p>
                 <p className="mt-2 text-3xl font-black text-slate-950">{stats.avgCompletion}%</p>
               </div>
-              <div className="rounded-2xl bg-green-100 p-3 text-green-600">
-                <TrendingUp className="h-6 w-6" />
+              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
+                <TrendingUp className="h-5 w-5" />
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="mcn-page-card p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-500">Certifications</p>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Certifications</p>
                 <p className="mt-2 text-3xl font-black text-slate-950">{stats.totalCertifications}</p>
               </div>
-              <div className="rounded-2xl bg-purple-100 p-3 text-purple-600">
-                <Award className="h-6 w-6" />
+              <div className="rounded-2xl bg-amber-50 p-3 text-amber-700">
+                <Award className="h-5 w-5" />
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="mcn-page-card p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-500">Active (7d)</p>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Active (7d)</p>
                 <p className="mt-2 text-3xl font-black text-slate-950">{stats.activeLearners}</p>
               </div>
-              <div className="rounded-2xl bg-yellow-100 p-3 text-yellow-600">
-                <Clock className="h-6 w-6" />
+              <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+                <Clock className="h-5 w-5" />
               </div>
             </div>
           </div>
         </div>
 
-        {/* Progress Table */}
-        <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <h2 className="text-xl font-bold text-slate-950">Employee Progress</h2>
-            <p className="text-sm text-slate-600">Learning progress synced from external LMS</p>
-          </div>
-
+        <SectionCard title="Employee Progress" subtitle="Learning progress synced from the external LMS">
           {isLoading ? (
             <div className="py-12 text-center text-slate-500">Loading progress data...</div>
           ) : progressData.length === 0 ? (
@@ -133,9 +148,7 @@ export default function LMSProgressDashboard() {
                 <tbody>
                   {progressData.map((progress) => (
                     <tr key={progress.employee_id} className="border-b hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
-                        {progress.employee_name}
-                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-950">{progress.employee_name}</td>
                       <td className="px-4 py-3 text-slate-700">{progress.employee_code}</td>
                       <td className="px-4 py-3 text-slate-700">{progress.modules_assigned}</td>
                       <td className="px-4 py-3 text-slate-700">{progress.modules_completed}</td>
@@ -154,7 +167,7 @@ export default function LMSProgressDashboard() {
                       </td>
                       <td className="px-4 py-3">
                         {progress.certifications_earned > 0 ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                             <Award className="h-3 w-3" />
                             {progress.certifications_earned}
                           </span>
@@ -171,10 +184,9 @@ export default function LMSProgressDashboard() {
               </table>
             </div>
           )}
-        </div>
+        </SectionCard>
 
-        {/* Note */}
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+        <div className="mcn-page-card border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
           <p className="font-semibold">Integration Note:</p>
           <p className="mt-1">
             This dashboard displays read-only progress data synced from the external LMS system.
