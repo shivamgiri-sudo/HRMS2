@@ -67,18 +67,18 @@ export default function HolidayMaster() {
   });
 
   const { data: branches = [] } = useQuery<Branch[]>({
-    queryKey: ["org-branches"],
-    queryFn: () => hrmsApi.get<any>("/api/org/branches").then((d: any) => d.data ?? d ?? []),
+    queryKey: ["org-branches-active"],
+    queryFn: () => hrmsApi.get<any>("/api/org/branches?active_status=1").then((d: any) => d.data ?? d ?? []),
   });
 
   const { data: costCentres = [] } = useQuery<CostCentre[]>({
-    queryKey: ["org-cost-centres"],
-    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres").then((d: any) => d.data ?? d ?? []),
+    queryKey: ["org-cost-centres-active"],
+    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?active_status=1").then((d: any) => d.data ?? d ?? []),
   });
 
   const { data: designations = [] } = useQuery<Designation[]>({
-    queryKey: ["org-designations"],
-    queryFn: () => hrmsApi.get<any>("/api/org/designations").then((d: any) => d.data ?? d ?? []),
+    queryKey: ["org-designations-active"],
+    queryFn: () => hrmsApi.get<any>("/api/org/designations?active_status=1").then((d: any) => d.data ?? d ?? []),
   });
 
   const branchMap = useMemo(() => new Map(branches.map((b) => [b.id, b.branch_name])), [branches]);
