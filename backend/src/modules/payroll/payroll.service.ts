@@ -547,9 +547,12 @@ export const payrollService = {
     if (filters.processId){ innerConds.push("e.process_id = ?");  innerParams.push(filters.processId); }
     if (filters.departmentId) { innerConds.push("e.department_id = ?"); innerParams.push(filters.departmentId); }
     if (filters.search) {
-      innerConds.push("(e.employee_code LIKE ? OR e.full_name LIKE ? OR e.email LIKE ?)");
+      innerConds.push(
+        "(e.employee_code LIKE ? OR e.full_name LIKE ? OR e.email LIKE ?" +
+        " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ?)"
+      );
       const s = `%${filters.search}%`;
-      innerParams.push(s, s, s);
+      innerParams.push(s, s, s, s);
     }
 
     // scope enforcement — use 1=0 deny-all when no scope provided rather than fallback to open
@@ -589,6 +592,7 @@ export const payrollService = {
         COALESCE(spl.hra, 0)               AS hra,
         COALESCE(spl.special_allowance, 0) AS special_allowance,
         COALESCE(spl.gross_salary, 0)      AS gross_salary,
+        COALESCE(spl.incentive_total, 0)   AS incentive_total,
         COALESCE(spl.total_deductions, 0)  AS total_deductions,
         COALESCE(spl.net_salary, 0)        AS net_salary,
         COALESCE(spl.working_days, 0)      AS working_days,
@@ -620,20 +624,49 @@ export const payrollService = {
       "SELECT id, run_month, status, total_employees, total_gross, total_net FROM salary_prep_run WHERE run_month = ? LIMIT 1",
       [runMonth]
     );
-    const run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
+    let run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
+    let isFallback = false;
+    let effectiveRunMonth = runMonth;
+
+    // If no run exists for requested month, fall back to the most recent completed run
+    if (!run) {
+      const [fallbackRow] = await db.execute<RowDataPacket[]>(
+        `SELECT id, run_month, status, total_employees, total_gross, total_net
+           FROM salary_prep_run
+          WHERE status IN ('disbursed','finalized','finalised','calculated','reviewed','approved','locked')
+          ORDER BY run_month DESC
+          LIMIT 1`
+      );
+      if (Array.isArray(fallbackRow) && fallbackRow.length) {
+        run = fallbackRow[0];
+        effectiveRunMonth = String(run.run_month);
+        isFallback = true;
+      }
+    }
+
     const [stats] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as employee_count,
-              SUM(spl.gross_salary) as total_gross,
-              SUM(spl.net_salary) as total_net,
-              SUM(spl.pf_employee) as total_pf,
-              SUM(spl.esic_employee) as total_esi,
-              SUM(spl.tds) as total_tds
+      `SELECT COUNT(DISTINCT spl.employee_id) AS employee_count,
+              SUM(spl.basic)             AS total_basic,
+              SUM(spl.gross_salary)      AS total_gross,
+              SUM(spl.net_salary)        AS total_net,
+              SUM(spl.total_deductions)  AS total_deductions,
+              SUM(spl.pf_employee)       AS total_pf,
+              SUM(spl.esic_employee)     AS total_esi,
+              SUM(spl.tds)               AS total_tds,
+              CASE WHEN COUNT(DISTINCT spl.employee_id) > 0
+                   THEN ROUND(SUM(spl.net_salary) / COUNT(DISTINCT spl.employee_id), 2)
+                   ELSE 0 END            AS avg_net
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        WHERE spr.run_month = ?`,
-      [runMonth]
+      [effectiveRunMonth]
     );
-    return { run, stats: Array.isArray(stats) && stats.length ? stats[0] : null, runMonth };
+    return {
+      run,
+      stats: Array.isArray(stats) && stats.length ? stats[0] : null,
+      runMonth: effectiveRunMonth,
+      isFallback,
+    };
   },
 
   async updateOvertime(

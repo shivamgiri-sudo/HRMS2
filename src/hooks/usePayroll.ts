@@ -168,7 +168,8 @@ export function usePayrollStats() {
 
         const totalPayroll    = Number(stats.total_net      ?? run.total_net      ?? 0);
         const payrollEmployees = Number(stats.employee_count ?? run.total_employees ?? 0);
-        const avgSalary = payrollEmployees > 0 ? totalPayroll / payrollEmployees : 0;
+        // Use server-computed avg_net (COUNT DISTINCT) rather than client-side division
+        const avgSalary = Number(stats.avg_net ?? (payrollEmployees > 0 ? totalPayroll / payrollEmployees : 0));
 
         return {
           totalPayroll,
@@ -178,9 +179,9 @@ export function usePayrollStats() {
           salaryAssignedEmployees: payrollEmployees,
           payrollEmployees,
           missingPayrollEmployees: 0,
-          totalBasic: Number(stats.total_basic ?? 0),
-          totalAllowances: Number(stats.total_allowances ?? 0),
-          totalDeductions: Number(stats.total_deductions ?? stats.total_pf ?? 0),
+          totalBasic:       Number(stats.total_basic       ?? 0),
+          totalAllowances:  Number(stats.total_allowances  ?? 0),
+          totalDeductions:  Number(stats.total_deductions  ?? stats.total_pf ?? 0),
           effectiveRunMonth: overview.runMonth ?? null,
           isFallback: overview.isFallback ?? false,
         };

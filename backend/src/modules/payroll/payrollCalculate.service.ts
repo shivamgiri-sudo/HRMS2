@@ -8,6 +8,7 @@ import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import { detectAndCalculateHolidayWork, isHolidayWorkAutoGenEnabled } from "./holiday-work-auto.service.js";
+import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -558,12 +559,37 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     // Those amounts are applied in a post-calculation pass (see applyManualTds below).
     let tdsMonthly = 0;
     if (tdsMode === 'auto') {
-      const annualGross = grossAfterLwp * 12;
-      const declHra  = decl ? Number(decl.declared_hra)  : 0;
-      const decl80c  = decl ? Number(decl.declared_80c)  : 0;
-      const decl80d  = decl ? Number(decl.declared_80d)  : 0;
-      const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
-      tdsMonthly = calculateTds(taxableIncome, statConfig).tds_monthly;
+      // monthsRemaining: months left in FY from this run month (April=start, March=end)
+      // e.g. run_month April(4) → 12 months; October(10) → 6 months; March(3) → 1 month
+      const fyEndMonth = 3; // March
+      const fyEndYear  = month <= 3 ? year : year + 1;
+      const runDate    = new Date(year, month - 1, 1);
+      const fyEndDate  = new Date(fyEndYear, fyEndMonth - 1, 1);
+      const diffMs     = fyEndDate.getTime() - runDate.getTime();
+      const monthsRemaining = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24 * 30.4375)));
+
+      try {
+        const tdsResult = await taxEngineService.calculateMonthlyTds({
+          financialYear,
+          annualGross: grossAfterLwp * 12,
+          declaration: decl ? {
+            regime:        decl.regime as string | null,
+            declared_hra:  Number(decl.declared_hra)  || 0,
+            declared_80c:  Number(decl.declared_80c)  || 0,
+            declared_80d:  Number(decl.declared_80d)  || 0,
+          } : null,
+          monthsRemaining,
+        });
+        tdsMonthly = tdsResult.tds_monthly;
+      } catch {
+        // Fallback to synchronous engine if taxEngine DB tables unavailable
+        const annualGross = grossAfterLwp * 12;
+        const declHra = decl ? Number(decl.declared_hra) : 0;
+        const decl80c = decl ? Number(decl.declared_80c) : 0;
+        const decl80d = decl ? Number(decl.declared_80d) : 0;
+        const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
+        tdsMonthly = calculateTds(taxableIncome, statConfig).tds_monthly;
+      }
     }
 
     // 5d. Salary advance monthly recovery
