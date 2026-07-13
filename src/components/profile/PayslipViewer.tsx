@@ -207,6 +207,23 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     enabled: !!employeeId,
   });
 
+  // Fetch running salary for the current month if it hasn't been finalized
+  const now = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const hasCurrentMonthPayslip = payrollRecords?.some((r) => r.run_month?.startsWith(currentMonthKey));
+
+  const { data: runningSalary } = useQuery({
+    queryKey: ["running-salary", employeeId, currentMonthKey],
+    queryFn: async () => {
+      if (!employeeId) return null;
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        `/api/payroll/running-summary/me?month=${currentMonthKey}`
+      );
+      return res.data ?? null;
+    },
+    enabled: !!employeeId && parseInt(selectedYear) === currentDate.getFullYear() && !hasCurrentMonthPayslip,
+  });
+
   // Check for new payslips and show alert
   useEffect(() => {
     if (payrollRecords && payrollRecords.length > 0) {
@@ -367,9 +384,17 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const allowanceBreakdown = getAllowanceBreakdown();
   const deductionBreakdown = getDeductionBreakdown();
   const latestRecord = payrollRecords?.[0];
-  const latestGross = Number(latestRecord?.gross_salary ?? 0);
-  const latestDeductions = Number(latestRecord?.total_deductions ?? 0);
-  const latestNet = Number(latestRecord?.net_salary ?? 0);
+
+  // Use running salary for current month if available, otherwise show latest finalized payslip
+  const displayGross = (runningSalary && !hasCurrentMonthPayslip)
+    ? Number(runningSalary.earned_salary_till_date ?? 0)
+    : Number(latestRecord?.gross_salary ?? 0);
+  const displayDeductions = (runningSalary && !hasCurrentMonthPayslip)
+    ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0) + Number(runningSalary.professional_tax ?? 0)
+    : Number(latestRecord?.total_deductions ?? 0);
+  const displayNet = (runningSalary && !hasCurrentMonthPayslip)
+    ? Number(runningSalary.earned_net_till_date ?? 0)
+    : Number(latestRecord?.net_salary ?? 0);
 
   return (
     <Card className="overflow-hidden border-0 bg-transparent shadow-none">
@@ -438,23 +463,58 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
           </Card>
         )}
 
+        {/* Running Salary for Current Month (if not yet finalized) */}
+        {runningSalary && parseInt(selectedYear) === currentDate.getFullYear() && !hasCurrentMonthPayslip && (
+          <Card className="rounded-3xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-cyan-50 shadow-md">
+            <CardContent className="p-5">
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-blue-800">
+                    <CalendarCheck className="size-4" />
+                    Earned Till Date — {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  </div>
+                  <p className="mt-2 text-3xl font-black tabular-nums text-blue-900">
+                    {renderSensitive(formatCurrency(runningSalary.earned_net_till_date || 0))}
+                  </p>
+                  <p className="mt-1 text-xs text-blue-700">
+                    Gross till date: {renderSensitive(formatCurrency(runningSalary.earned_salary_till_date || 0))}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-lg bg-white/60 p-2.5">
+                    <p className="text-muted-foreground">Earned days</p>
+                    <p className="mt-1 font-bold text-blue-900">{runningSalary.earned_payable_days || 0}</p>
+                  </div>
+                  <div className="rounded-lg bg-white/60 p-2.5">
+                    <p className="text-muted-foreground">Projected month-end</p>
+                    <p className="mt-1 font-bold text-blue-900">{renderSensitive(formatCurrency(runningSalary.projected_net || 0))}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-blue-600 italic">
+                  This is a live estimate based on today's attendance. Final payslip will be available after payroll processing.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <section className="grid gap-4 sm:grid-cols-3">
           {[
             {
-              label: "Latest gross salary",
-              value: latestRecord ? formatCurrency(latestGross) : "Not available",
+              label: (runningSalary && !hasCurrentMonthPayslip) ? "Earned gross (till date)" : "Latest gross salary",
+              value: (latestRecord || runningSalary) ? formatCurrency(displayGross) : "Not available",
               icon: Plus,
               tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
             },
             {
               label: "Total deductions",
-              value: latestRecord ? formatCurrency(latestDeductions) : "Not available",
+              value: (latestRecord || runningSalary) ? formatCurrency(displayDeductions) : "Not available",
               icon: Minus,
               tone: "border-rose-200 bg-rose-50 text-rose-800",
             },
             {
-              label: "Net salary",
-              value: latestRecord ? formatCurrency(latestNet) : "Not available",
+              label: (runningSalary && !hasCurrentMonthPayslip) ? "Earned net (till date)" : "Net salary",
+              value: (latestRecord || runningSalary) ? formatCurrency(displayNet) : "Not available",
               icon: Wallet,
               tone: "border-blue-200 bg-blue-50 text-[#073f78]",
             },
@@ -468,6 +528,18 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
             </div>
           ))}
         </section>
+
+        {/* Live running salary indicator */}
+        {runningSalary && !hasCurrentMonthPayslip && parseInt(selectedYear) === currentDate.getFullYear() && (
+          <Alert className="rounded-2xl border-blue-300 bg-blue-50/50">
+            <TrendingUp className="h-4 w-4 text-blue-600" />
+            <AlertTitle className="text-blue-900">Live Salary Tracking Active</AlertTitle>
+            <AlertDescription className="text-blue-700">
+              You're viewing real-time earned salary for {new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}.
+              The amounts shown above reflect your attendance till today. Final payslip will appear here after month-end processing.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
