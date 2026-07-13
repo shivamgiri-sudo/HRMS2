@@ -1,4 +1,12 @@
 const mysql = require('mysql2/promise');
+let provisionerPromise;
+
+function getLmsProvisioner() {
+  if (!provisionerPromise) {
+    provisionerPromise = import('../src/modules/lms/lms-provisioning.service.js');
+  }
+  return provisionerPromise;
+}
 
 function requiredEnv(name) {
   const value = process.env[name] && process.env[name].trim();
@@ -140,6 +148,19 @@ async function runFullSync() {
           emp.Adrress1, emp.Adrress2, emp.City, emp.State, emp.PinCode,
           emp.Status === '1', emp.lastUpdated, emp.id,
         ]);
+
+        try {
+          const { provisionLmsIdentityForEmployee } = await getLmsProvisioner();
+          const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: String(emp.EmpCode).trim() });
+          if (lmsResult.message) {
+            console.log(`[Legacy Sync] LMS provisioning for ${emp.EmpCode}: ${lmsResult.message}`);
+          }
+        } catch (err) {
+          console.warn(
+            `[Legacy Sync] LMS provisioning skipped for ${emp.EmpCode}:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
 
         if (result.insertId) {
           inserted++;

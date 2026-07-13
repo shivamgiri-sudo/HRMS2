@@ -6,11 +6,12 @@ import {
   parseLegacyDate, splitName, normalizeGender,
   toDecimal, boolFlag, buildAddress, parseUAN,
 } from './migrate-legacy.transforms.js';
+import { provisionLmsIdentityForEmployee } from '../src/modules/lms/lms-provisioning.service.js';
 
 export interface EmployeeMigrationResult {
   inserted: number;
-  skipped:  number;
-  errors:   Array<{ empCode: string; error: string }>;
+  skipped: number;
+  errors: Array<{ empCode: string; error: string }>;
 }
 
 export async function migrateEmployees(
@@ -19,7 +20,7 @@ export async function migrateEmployees(
   srcTable: string,
   masters: MasterMaps,
 ): Promise<EmployeeMigrationResult> {
-  console.log('  [Phase 2] Migrating employees…');
+  console.log('  [Phase 2] Migrating employeesâ€¦');
 
   const [rows] = await src.execute<RowDataPacket[]>(`SELECT * FROM ${srcTable}`);
   const result: EmployeeMigrationResult = { inserted: 0, skipped: 0, errors: [] };
@@ -53,7 +54,7 @@ async function migrateOneEmployee(
   }
   const { firstName, lastName } = splitName(row.EmpName);
 
-  const isLeft   = row.Status === 'L';
+  const isLeft = row.Status === 'L';
   const empStatus = isLeft ? 'Resigned' : 'Active';
   const activeStatus = isLeft ? 0 : 1;
 
@@ -62,15 +63,14 @@ async function migrateOneEmployee(
     result.errors.push({ empCode: row.EmpCode, error: 'Missing or invalid date_of_joining (DOJ)' });
     return;
   }
-  const dob      = parseLegacyDate(row.DOB);
+  const dob = parseLegacyDate(row.DOB);
   const exitDate = isLeft ? parseLegacyDate(row.LeftDate) : null;
 
-  const branchId      = row.Location ? (masters.branch.get(row.Location.trim()) ?? null)      : null;
-  const departmentId  = row.Depart   ? (masters.department.get(row.Depart.trim()) ?? null)     : null;
-  const processId     = row.Process  ? (masters.process.get(row.Process.trim()) ?? null)       : null;
-  const designationId = row.Desig    ? (masters.designation.get(row.Desig.trim()) ?? null)     : null;
+  const branchId = row.Location ? (masters.branch.get(row.Location.trim()) ?? null) : null;
+  const departmentId = row.Depart ? (masters.department.get(row.Depart.trim()) ?? null) : null;
+  const processId = row.Process ? (masters.process.get(row.Process.trim()) ?? null) : null;
+  const designationId = row.Desig ? (masters.designation.get(row.Desig.trim()) ?? null) : null;
 
-  // ── Core employee ───────────────────────────────────────────────────────────
   await dst.execute(
     `INSERT INTO employees
        (employee_code, first_name, last_name, email, mobile, gender,
@@ -115,7 +115,18 @@ async function migrateOneEmployee(
     return;
   }
 
-  // ── Bank detail ─────────────────────────────────────────────────────────────
+  try {
+    const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: String(row.EmpCode).trim() });
+    if (lmsResult.message) {
+      console.info(`[Legacy Migration] LMS provisioning for ${row.EmpCode}: ${lmsResult.message}`);
+    }
+  } catch (err) {
+    console.warn(
+      `[Legacy Migration] LMS provisioning skipped for ${row.EmpCode}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
   if (row.AcNo) {
     await dst.execute(
       `INSERT INTO employee_bank_detail
@@ -135,7 +146,6 @@ async function migrateOneEmployee(
     );
   }
 
-  // ── Statutory info ──────────────────────────────────────────────────────────
   await dst.execute(
     `INSERT INTO employee_statutory_info
        (employee_id, epf_number, esi_number, uan_number, pan_number,
@@ -159,7 +169,6 @@ async function migrateOneEmployee(
     ],
   );
 
-  // ── Salary snapshot ─────────────────────────────────────────────────────────
   await dst.execute(
     `INSERT INTO employee_salary_snapshot
        (employee_id, snapshot_date, basic, hra, conveyance, da,
@@ -198,7 +207,6 @@ async function migrateOneEmployee(
     ],
   );
 
-  // ── Client mapping ──────────────────────────────────────────────────────────
   if (row.ClientName || row.CostCenter) {
     await dst.execute(
       `INSERT INTO employee_client_mapping
@@ -214,7 +222,6 @@ async function migrateOneEmployee(
     );
   }
 
-  // ── KPI assignment ──────────────────────────────────────────────────────────
   if (row.KPIId) {
     await dst.execute(
       `INSERT INTO employee_kpi_assignment (employee_id, legacy_kpi_id, assign_date)
@@ -224,7 +231,6 @@ async function migrateOneEmployee(
     );
   }
 
-  // ── Legacy meta ─────────────────────────────────────────────────────────────
   await dst.execute(
     `INSERT INTO employee_legacy_meta
        (employee_id, father_name, relationship_type, acc_holder_name, blood_group,

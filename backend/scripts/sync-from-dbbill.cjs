@@ -13,6 +13,7 @@
 const mysql = require('mysql2/promise');
 const path = require('path');
 const crypto = require('crypto');
+let provisionerPromise;
 
 // Load env from backend/.env
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
@@ -38,6 +39,13 @@ if (!FIX_STATUS && !FIX_SALARY && !FIX_DOCS && !FIX_NEW_EMPS && !FIX_LEFT) {
 
 function uuid() {
   return crypto.randomUUID();
+}
+
+function getLmsProvisioner() {
+  if (!provisionerPromise) {
+    provisionerPromise = import('../src/modules/lms/lms-provisioning.service.js');
+  }
+  return provisionerPromise;
 }
 
 const DOC_TYPE_CATEGORY_MAP = {
@@ -448,6 +456,19 @@ async function run() {
         emp.Adrress1 || null, emp.Adrress2 || null, emp.City || null, emp.State || null, emp.PinCode || null,
         emp.EmpType || 'ONROLL', emp.Source || null,
       ]);
+
+      try {
+        const { provisionLmsIdentityForEmployee } = await getLmsProvisioner();
+        const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: String(emp.EmpCode).trim() });
+        if (lmsResult.message) {
+          console.log(`[DBBill Sync] LMS provisioning for ${emp.EmpCode}: ${lmsResult.message}`);
+        }
+      } catch (err) {
+        console.warn(
+          `[DBBill Sync] LMS provisioning skipped for ${emp.EmpCode}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
 
       // Create salary assignment if CTC > 0
       if (ctcMonthly > 0) {
