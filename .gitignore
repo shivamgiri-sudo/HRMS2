@@ -49,3 +49,4 @@ backups/
 playwright-report/
 playwright-results.json
 test-results/
+.tmp-backend.err
