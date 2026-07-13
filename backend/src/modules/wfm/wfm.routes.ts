@@ -1122,7 +1122,7 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
 
   const [rows] = await db.execute(
     `SELECT
-       SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS presentDays,
+       SUM(CASE WHEN attendance_status IN ('present', 'late') THEN 1 ELSE 0 END) AS presentDays,
        SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS halfDays,
        SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absentDays,
        SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS lateDays,

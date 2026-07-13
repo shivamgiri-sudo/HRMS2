@@ -32,7 +32,7 @@ interface Holiday {
 }
 
 interface Branch { id: string; branch_name: string; }
-interface CostCentre { id: string; cost_centre_name: string; cost_centre_code: string; branch_id: string; }
+interface CostCentre { id: string; cost_centre_name: string; cost_centre_code: string; branch_id: string; process_name?: string | null; }
 interface Designation { id: string; designation_name: string; }
 
 const emptyForm = { holiday_name: "", holiday_date: "", holiday_type: "national", branch_id: "", active_status: 1 };
@@ -51,6 +51,7 @@ export default function HolidayMaster() {
   const [ccRow, setCcRow] = useState<Holiday | null>(null);
   const [ccSelected, setCcSelected] = useState<Set<string>>(new Set());
   const [ccSearch, setCcSearch] = useState("");
+  const [ccBranchFilter, setCcBranchFilter] = useState<Set<string>>(new Set());
 
   const [desRow, setDesRow] = useState<Holiday | null>(null);
   const [desSelected, setDesSelected] = useState<Set<string>>(new Set());
@@ -84,9 +85,14 @@ export default function HolidayMaster() {
   const branchMap = useMemo(() => new Map(branches.map((b) => [b.id, b.branch_name])), [branches]);
 
   const filteredCostCentres = useMemo(() =>
-    costCentres.filter((cc) =>
-      !ccSearch || cc.cost_centre_name.toLowerCase().includes(ccSearch.toLowerCase()) || cc.cost_centre_code.toLowerCase().includes(ccSearch.toLowerCase())
-    ), [costCentres, ccSearch]);
+    costCentres.filter((cc) => {
+      const matchesSearch = !ccSearch ||
+        cc.cost_centre_name.toLowerCase().includes(ccSearch.toLowerCase()) ||
+        cc.cost_centre_code.toLowerCase().includes(ccSearch.toLowerCase()) ||
+        (cc.process_name && cc.process_name.toLowerCase().includes(ccSearch.toLowerCase()));
+      const matchesBranch = ccBranchFilter.size === 0 || ccBranchFilter.has(cc.branch_id);
+      return matchesSearch && matchesBranch;
+    }), [costCentres, ccSearch, ccBranchFilter]);
 
   const ccByBranch = useMemo(() => {
     const map = new Map<string, CostCentre[]>();
@@ -177,6 +183,7 @@ export default function HolidayMaster() {
     setCcRow(h);
     setCcSelected(new Set(Array.isArray(h.cost_centre_ids) ? h.cost_centre_ids.filter(Boolean) : []));
     setCcSearch("");
+    setCcBranchFilter(new Set());
   };
 
   const openDesDialog = (h: Holiday) => {
@@ -380,16 +387,43 @@ export default function HolidayMaster() {
                 <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   className="pl-8 h-8 text-sm"
-                  placeholder="Search cost centres…"
+                  placeholder="Search cost centres or processes…"
                   value={ccSearch}
                   onChange={e => setCcSearch(e.target.value)}
                 />
               </div>
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">Filter by Branch:</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {branches.map(b => (
+                    <label key={b.id} className="inline-flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs hover:bg-muted/30 select-none"
+                      style={{ backgroundColor: ccBranchFilter.has(b.id) ? 'rgb(224 242 254)' : 'transparent' }}>
+                      <input
+                        type="checkbox"
+                        className="h-3 w-3"
+                        checked={ccBranchFilter.has(b.id)}
+                        onChange={e => {
+                          const next = new Set(ccBranchFilter);
+                          e.target.checked ? next.add(b.id) : next.delete(b.id);
+                          setCcBranchFilter(next);
+                        }}
+                      />
+                      <span>{b.branch_name}</span>
+                    </label>
+                  ))}
+                  {ccBranchFilter.size > 0 && (
+                    <button
+                      className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
+                      onClick={() => setCcBranchFilter(new Set())}
+                    >Clear filters</button>
+                  )}
+                </div>
+              </div>
               <div className="flex gap-2">
                 <Button
                   size="sm" variant="outline" className="text-xs h-7"
-                  onClick={() => setCcSelected(new Set(costCentres.map(c => c.id)))}
-                >Select all</Button>
+                  onClick={() => setCcSelected(new Set(filteredCostCentres.map(c => c.id)))}
+                >Select filtered</Button>
                 <Button
                   size="sm" variant="outline" className="text-xs h-7"
                   onClick={() => setCcSelected(new Set())}
@@ -413,8 +447,13 @@ export default function HolidayMaster() {
                             setCcSelected(next);
                           }}
                         />
-                        <span>{cc.cost_centre_name}</span>
-                        <span className="ml-auto text-xs text-muted-foreground">{cc.cost_centre_code}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium">{cc.cost_centre_name}</div>
+                          {cc.process_name && (
+                            <div className="text-xs text-muted-foreground mt-0.5">Process: {cc.process_name}</div>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">{cc.cost_centre_code}</span>
                       </label>
                     ))}
                   </div>

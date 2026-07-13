@@ -236,7 +236,9 @@ export const attendanceEngineService = {
     employeeId: string,
     date: string,
     branchId: string | null,
-    dateOfJoining?: string | null
+    dateOfJoining?: string | null,
+    costCentreId?: string | null,
+    designationId?: string | null
   ): Promise<{ status: AttendanceStatus; isRosterWeekOff?: boolean } | null> {
     // 1. Approved leave
     const [leaveRows] = await db.execute<RowDataPacket[]>(
@@ -247,16 +249,38 @@ export const attendanceEngineService = {
     );
     if ((leaveRows as RowDataPacket[]).length > 0) return { status: 'leave_approved' };
 
-    // 2. Holiday (branch-aware) + G7 DOJ exclusion
+    // 2. Holiday (branch-aware) + cost centre/designation scope + G7 DOJ exclusion
     const dojExclusionEnabled = await getFeatureFlagBool('doj_holiday_exclusion_enabled', true);
-    let holidaySql = `SELECT id FROM leave_holiday_master
-       WHERE holiday_date = ? AND active_status = 1
-         AND (branch_id IS NULL OR branch_id = ?)`;
+    let holidaySql = `
+      SELECT lhm.id
+      FROM leave_holiday_master lhm
+      WHERE lhm.holiday_date = ? AND lhm.active_status = 1
+        AND (lhm.branch_id IS NULL OR lhm.branch_id = ?)`;
     const holidayParams: unknown[] = [date, branchId ?? null];
     if (dojExclusionEnabled && dateOfJoining) {
-      holidaySql += ` AND holiday_date >= ?`;
+      holidaySql += ` AND lhm.holiday_date >= ?`;
       holidayParams.push(dateOfJoining);
     }
+    // Cost centre scope: if mapping exists, employee's cost centre must be mapped
+    holidaySql += `
+        AND (
+          NOT EXISTS (SELECT 1 FROM holiday_cost_centre_map WHERE holiday_id = lhm.id)
+          OR EXISTS (
+            SELECT 1 FROM holiday_cost_centre_map hccm
+            WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = ?
+          )
+        )`;
+    holidayParams.push(costCentreId ?? null);
+    // Designation scope: if mapping exists, employee's designation must be mapped
+    holidaySql += `
+        AND (
+          NOT EXISTS (SELECT 1 FROM holiday_designation_map WHERE holiday_id = lhm.id)
+          OR EXISTS (
+            SELECT 1 FROM holiday_designation_map hdm
+            WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = ?
+          )
+        )`;
+    holidayParams.push(designationId ?? null);
     holidaySql += ` LIMIT 1`;
     const [holidayRows] = await db.execute<RowDataPacket[]>(holidaySql, holidayParams);
     if ((holidayRows as RowDataPacket[]).length > 0) return { status: 'holiday' };
@@ -480,7 +504,7 @@ export const attendanceEngineService = {
   async processEmployee(employeeId: string, date: string): Promise<EngineResult> {
     // Fetch employee info including dept/designation/department_id for APR determination
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id,
+      `SELECT e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id, e.cost_centre_id,
          e.date_of_joining, e.reporting_manager_id,
          LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
          LOWER(COALESCE(desig.designation_name,'')) AS designation_name
@@ -498,6 +522,7 @@ export const attendanceEngineService = {
     const departmentId: string | null = emp.department_id ?? null;
     const processId: string | null = emp.process_id ?? null;
     const branchId: string | null = emp.branch_id ?? null;
+    const costCentreId: string | null = emp.cost_centre_id ?? null;
     const dateOfJoining: string | null = emp.date_of_joining ?? null;
 
     // Resolve rule
@@ -515,7 +540,7 @@ export const attendanceEngineService = {
     const biometricMinutes = biometricEvidence.minutes;
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
-    const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining);
+    const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
 
     if (override) {
       // G12: If roster says week_off but employee actually has attendance data, mark week_off_worked
@@ -900,7 +925,7 @@ export const attendanceEngineService = {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         COUNT(CASE WHEN attendance_status = 'present'        THEN 1 END) AS present_days,
+         COUNT(CASE WHEN attendance_status IN ('present', 'late') THEN 1 END) AS present_days,
          COUNT(CASE WHEN attendance_status = 'half_day'       THEN 1 END) AS half_days,
          COUNT(CASE WHEN attendance_status = 'absent'         THEN 1 END) AS absent_days,
          COUNT(CASE WHEN attendance_status = 'leave_approved' THEN 1 END) AS leave_days,
