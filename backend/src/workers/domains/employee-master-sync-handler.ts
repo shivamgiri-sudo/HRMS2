@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { DomainSyncBase } from './domain-sync-base.js';
+import { provisionLmsIdentityForEmployee } from '../../modules/lms/lms-provisioning.service.js';
 
 const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000001';
 
@@ -163,6 +164,15 @@ export class EmployeeMasterSyncHandler extends DomainSyncBase {
         );
         if (res.affectedRows === 1) inserted++;
         else updated++;
+
+        try {
+          const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: row.EmpCode.trim() });
+          if (lmsResult.message) {
+            console.warn(`[Employee Master Sync] LMS provisioning for ${row.EmpCode.trim()}: ${lmsResult.message}`);
+          }
+        } catch (err) {
+          console.error(`[Employee Master Sync] LMS provisioning failed for ${row.EmpCode.trim()}:`, err instanceof Error ? err.message : String(err));
+        }
       } catch {
         failed++;
       }

@@ -1,5 +1,5 @@
-import { LmsPortalFrame } from "@/components/lms/LmsPortalFrame";
+import NativeLMSIntegration from "./NativeLMSIntegration";
 
 export default function LMSIntegrationAdmin() {
-  return <LmsPortalFrame portal="admin" />;
+  return <NativeLMSIntegration />;
 }

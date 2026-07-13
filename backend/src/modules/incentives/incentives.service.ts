@@ -285,5 +285,13 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
     );
   }
 
+  // Stamp the run so recalculation knows incentives are applied
+  if (applied > 0) {
+    await db.execute(
+      `UPDATE salary_prep_run SET incentives_applied_at = NOW() WHERE id = ?`,
+      [runId]
+    );
+  }
+
   return { batches_applied: (batches as any[]).length, lines_applied: applied };
 }

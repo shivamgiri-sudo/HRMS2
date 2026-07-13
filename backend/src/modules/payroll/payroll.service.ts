@@ -470,8 +470,9 @@ export const payrollService = {
     const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
     const esicEmr = esicApplicable ? r2(gross * 0.0325) : 0;
 
-    // Gratuity: 4.81% of Basic — employer cost, not employee deduction
-    const gratuity = r2(basic * 0.0481);
+    // Gratuity: configurable % of Basic — employer cost, not employee deduction
+    const gratuityPct = (p.gratuityPct ?? 4.81) / 100;
+    const gratuity = r2(basic * gratuityPct);
 
     const totalDed = r2(pfEmp + esicEmp + p.professionalTax + p.tds);
     const net = r2(gross - totalDed);
@@ -501,9 +502,13 @@ export const payrollService = {
 
   async getEmployeeSalaryHistory(employeeId: string): Promise<any[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT spr.run_month, spl.gross_pay, spl.net_pay, spl.basic_pay, spl.hra, spl.conveyance,
-              spl.pf_employee, spl.esi_employee, spl.professional_tax, spl.tds_deducted,
-              spl.total_deductions, spl.days_payable, spl.lop_days, spl.status
+      `SELECT spr.run_month,
+              spl.gross_salary AS gross_pay, spl.net_salary AS net_pay,
+              spl.basic AS basic_pay, spl.hra, spl.special_allowance AS conveyance,
+              spl.pf_employee, spl.esic_employee AS esi_employee,
+              spl.professional_tax, spl.tds AS tds_deducted,
+              spl.total_deductions, spl.paid_working_days AS days_payable,
+              spl.lwp_days AS lop_days, spl.status
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        WHERE spl.employee_id = ?
@@ -678,6 +683,43 @@ export const payrollService = {
           );
         }
       }
+      // Apply rounding rules: minimum threshold + floor to rounding unit
+      if (data.overtimeHours !== undefined && data.overtimeHours > 0) {
+        const [roundCfg] = await db.execute<RowDataPacket[]>(
+          `SELECT config_key, config_value FROM payroll_config_flags
+           WHERE process_id = ? AND config_key IN ('overtime_minimum_hours', 'overtime_rounding_unit')`,
+          [processId]
+        );
+        const cfgMap: Record<string, string> = {};
+        for (const row of roundCfg as any[]) cfgMap[row.config_key] = row.config_value;
+        // Fall back to global defaults if process-level not set
+        if (!cfgMap['overtime_minimum_hours'] || !cfgMap['overtime_rounding_unit']) {
+          const [globalRound] = await db.execute<RowDataPacket[]>(
+            `SELECT config_key, config_value FROM payroll_config_flags
+             WHERE process_id IS NULL AND branch_id IS NULL
+             AND config_key IN ('overtime_minimum_hours', 'overtime_rounding_unit')`
+          );
+          for (const row of globalRound as any[]) {
+            if (!cfgMap[row.config_key]) cfgMap[row.config_key] = row.config_value;
+          }
+        }
+        const minHours = parseFloat(cfgMap['overtime_minimum_hours'] || '0');
+        const roundUnit = parseFloat(cfgMap['overtime_rounding_unit'] || '0');
+        if (minHours > 0 && data.overtimeHours < minHours) {
+          data.overtimeHours = 0;
+          data.overtimeAmount = 0;
+        } else if (roundUnit > 0) {
+          data.overtimeHours = Math.floor(data.overtimeHours / roundUnit) * roundUnit;
+        }
+        if (data.overtimeHours === 0) {
+          data.overtimeAmount = 0;
+        }
+        // Rebuild fields/params with rounded values
+        fields.length = 0;
+        params.length = 0;
+        fields.push("overtime_hours = ?");  params.push(data.overtimeHours);
+        fields.push("overtime_amount = ?"); params.push(data.overtimeAmount ?? 0);
+      }
     } else {
       // No process assigned — check global default
       const [globalRows] = await db.execute<RowDataPacket[]>(
@@ -704,9 +746,13 @@ export const payrollService = {
   },
 };
 
-export function breakSpecialAllowance(specialAmount: number): { conv: number; ma: number; pa: number } {
-  const CONV_DEFAULT = 1600;
-  const MA_DEFAULT = 1250;
+export function breakSpecialAllowance(
+  specialAmount: number,
+  convDefault?: number,
+  maDefault?: number,
+): { conv: number; ma: number; pa: number } {
+  const CONV_DEFAULT = convDefault ?? 1600;
+  const MA_DEFAULT = maDefault ?? 1250;
   const totalDefault = CONV_DEFAULT + MA_DEFAULT;
 
   if (specialAmount <= 0) return { conv: 0, ma: 0, pa: 0 };

@@ -18,6 +18,7 @@ import { providerFactory } from '../communication/providers/provider.factory.js'
 import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
 import { autoGenerateJoiningDocuments } from '../employees/employeeJoiningDocuments.service.js';
 import { sendPayrollHrJoiningDocNotification } from './ats.email.service.js';
+import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
@@ -792,6 +793,15 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     throw err;
   } finally {
     conn.release();
+  }
+
+  try {
+    const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode, createdBy: approverId });
+    if (lmsResult.message) {
+      console.warn(`[ATS] LMS provisioning for ${employeeCode}: ${lmsResult.message}`);
+    }
+  } catch (err) {
+    console.error('[ATS] LMS provisioning failed for', employeeCode, ':', err instanceof Error ? err.message : String(err));
   }
 
   appendJourneyEvent({

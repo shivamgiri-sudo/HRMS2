@@ -575,7 +575,23 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
     const advanceRecovery = Number((advRows as Array<{ monthly_recovery: number }>)[0]?.monthly_recovery ?? 0);
 
-    // Custom deductions from employee_deduction_entries (canteen, uniform, loan EMI, etc.)
+    // 5e. Loan EMI recovery from employee_loans
+    let loanEmi = 0;
+    try {
+      const monthStart = `${run.run_month.slice(0, 7)}-01`;
+      const [loanRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(deduction_per_month), 0) AS loan_emi
+           FROM employee_loans
+          WHERE employee_id = ? AND status = 'active'
+            AND start_date <= ? AND (end_date IS NULL OR end_date >= ?)`,
+        [emp.employee_id, monthStart, monthStart]
+      );
+      loanEmi = Number((loanRows as Array<{ loan_emi: number }>)[0]?.loan_emi ?? 0);
+    } catch {
+      // employee_loans table may not exist — non-fatal
+    }
+
+    // Custom deductions from employee_deduction_entries (canteen, uniform, etc.)
     let miscDeductions = 0;
     const miscComponents: Array<{ code: string; name: string; amount: number }> = [];
     try {
@@ -633,11 +649,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       hraPct: emp.hra_pct ?? 20,
       pfOptOut,
       esicOptOut,
+      gratuityPct: statConfig["gratuity_pct"],
     });
 
-    // Net pay = payrollService net + holiday work extra payout - advance recovery - misc deductions
-    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - miscDeductions);
-    const totalDedFinal = calc.total_deductions + advanceRecovery + miscDeductions;
+    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions
+    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
+    const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
     // 6. Upsert prep line with extended columns
     const prepLineId = randomUUID();
@@ -649,12 +666,13 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
           basic, hra, special_allowance,
           pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
+          loan_emi,
           paid_working_days, eligible_weekoff_days, eligible_holiday_days,
           final_payable_days, active_calendar_days, holiday_work_extra_payout,
           other_deductions,
           attendance_data_source,
           status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
          lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
@@ -666,6 +684,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
          professional_tax = VALUES(professional_tax),
          tds = VALUES(tds), tds_amount = VALUES(tds_amount),
          lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         loan_emi = VALUES(loan_emi),
          paid_working_days = VALUES(paid_working_days),
          eligible_weekoff_days = VALUES(eligible_weekoff_days),
          eligible_holiday_days = VALUES(eligible_holiday_days),
@@ -682,6 +701,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         calc.basic, calc.hra, calc.special_allowance,
         calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
         calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
+        loanEmi,
         effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
         miscDeductions,
         hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
@@ -689,7 +709,11 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
 
     // 6b. Insert component-level breakdown for payslip display
-    const { conv, ma, pa } = breakSpecialAllowance(calc.special_allowance);
+    const { conv, ma, pa } = breakSpecialAllowance(
+      calc.special_allowance,
+      statConfig["conv_allowance_default"],
+      statConfig["medical_allowance_default"],
+    );
     const components = [
       { code: "BASIC", name: "Basic Salary", amount: calc.basic },
       { code: "HRA", name: "House Rent Allowance", amount: calc.hra },
@@ -716,6 +740,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       { code: "TDS", name: "Income Tax (TDS)", amount: tdsMonthly },
       { code: "LWP_DEDUCTION", name: "LWP / Leave Without Pay", amount: lwpDeduction },
       { code: "ADVANCE_RECOVERY", name: "Advance Recovery", amount: advanceRecovery },
+      { code: "LOAN_EMI", name: "Loan EMI", amount: loanEmi },
     ];
     for (const ded of statutoryDeductions) {
       if (ded.amount <= 0) continue;

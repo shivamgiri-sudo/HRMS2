@@ -25,13 +25,14 @@ export async function syncMappings(actorId?: string): Promise<{ count: number; e
   let count = 0;
 
   const trainees = await lmsQuery<RowDataPacket[]>(
-    `SELECT employee_id, permanent_emp_id, email, trainee_name
+    `SELECT employee_id, permanent_emp_id, lms_id, email, trainee_name
        FROM trainee_master
       WHERE status != 'Dropped'
       LIMIT 2000`
   ).catch((e: any) => { errors.push(`fetchTrainees: ${e?.message}`); return [] as RowDataPacket[]; });
 
   for (const t of trainees) {
+    const learnerId = String(t.lms_id || t.permanent_emp_id || t.employee_id || "").trim();
     const empCode = String(t.permanent_emp_id || t.employee_id || "").trim();
     if (!empCode) continue;
     try {
@@ -45,7 +46,7 @@ export async function syncMappings(actorId?: string): Promise<{ count: number; e
         `INSERT INTO lms_employee_mapping (id, employee_id, lms_learner_id, email)
          VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE lms_learner_id = VALUES(lms_learner_id), email = COALESCE(VALUES(email), email)`,
-        [randomUUID(), emp.id, empCode, t.email || emp.email || null]
+        [randomUUID(), emp.id, learnerId, t.email || emp.email || null]
       );
       count++;
     } catch (e: any) {
@@ -68,7 +69,7 @@ export async function syncProgress(actorId?: string): Promise<{ count: number; e
   let count = 0;
 
   const trainees = await lmsQuery<RowDataPacket[]>(
-    `SELECT t.employee_id, t.permanent_emp_id, t.batch_no, t.classroom_id,
+    `SELECT t.employee_id, t.permanent_emp_id, t.lms_id, t.batch_no, t.classroom_id,
             t.course_completion_pct, t.assessment_pass_pct, t.risk_status, t.status,
             b.batch_name, c.classroom_name
        FROM trainee_master t
@@ -79,6 +80,7 @@ export async function syncProgress(actorId?: string): Promise<{ count: number; e
   ).catch((e: any) => { errors.push(`fetchProgress: ${e?.message}`); return [] as RowDataPacket[]; });
 
   for (const t of trainees) {
+    const learnerId = String(t.lms_id || t.permanent_emp_id || t.employee_id || "").trim();
     const empCode = String(t.permanent_emp_id || t.employee_id || "").trim();
     if (!empCode) continue;
     try {
@@ -102,7 +104,7 @@ export async function syncProgress(actorId?: string): Promise<{ count: number; e
            score = VALUES(score),
            status = VALUES(status),
            synced_at = NOW()`,
-        [randomUUID(), emp.id, empCode, t.batch_no ?? null, t.classroom_name ?? t.batch_name ?? null, completionPct, score, status]
+        [randomUUID(), emp.id, learnerId, t.batch_no ?? null, t.classroom_name ?? t.batch_name ?? null, completionPct, score, status]
       );
       count++;
     } catch (e: any) {
@@ -125,7 +127,7 @@ export async function syncCertifications(actorId?: string): Promise<{ count: num
   let count = 0;
 
   const certified = await lmsQuery<RowDataPacket[]>(
-    `SELECT t.employee_id, t.permanent_emp_id, t.certification_status,
+    `SELECT t.employee_id, t.permanent_emp_id, t.lms_id, t.certification_status,
             t.batch_no, c.classroom_name,
             t.last_updated_at
        FROM trainee_master t

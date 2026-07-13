@@ -156,3 +156,28 @@ payrollMastersRouter.delete('/minimum-wages/:id', requireRole('admin'), h(async 
   await svc.deleteMinWage(req.params.id);
   res.json({ success: true });
 }));
+
+// ── COST CENTRES (proxy to org service) ──────────────────────────────────────
+import { costCentreService } from '../org/org.service.js';
+
+payrollMastersRouter.get('/cost-centres', h(async (req, res) => {
+  const data = await costCentreService.list({
+    q: req.query.search as string | undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+payrollMastersRouter.post('/cost-centres', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+  const data = await costCentreService.create(req.body);
+  res.status(201).json({ success: true, data });
+}));
+
+payrollMastersRouter.put('/cost-centres/:id', requireRole('admin', 'hr', 'finance'), h(async (req, res) => {
+  const data = await costCentreService.update(req.params.id, req.body);
+  res.json({ success: true, data });
+}));
+
+payrollMastersRouter.delete('/cost-centres/:id', requireRole('admin'), h(async (req, res) => {
+  await costCentreService.delete(req.params.id);
+  res.json({ success: true });
+}));

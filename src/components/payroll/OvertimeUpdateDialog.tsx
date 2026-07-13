@@ -27,6 +27,8 @@ interface OvertimeUpdateDialogProps {
   currentGross?: number;
   currentNet?: number;
   onSuccess?: () => void;
+  otMinHours?: number;
+  otRoundingUnit?: number;
 }
 
 export const OvertimeUpdateDialog = ({
@@ -40,6 +42,8 @@ export const OvertimeUpdateDialog = ({
   currentGross = 0,
   currentNet = 0,
   onSuccess,
+  otMinHours = 0,
+  otRoundingUnit = 0,
 }: OvertimeUpdateDialogProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -48,6 +52,16 @@ export const OvertimeUpdateDialog = ({
 
   const hours = parseFloat(overtimeHours) || 0;
   const amount = parseFloat(overtimeAmount) || 0;
+
+  // Rounding preview (UX only — server is authoritative)
+  const computeRoundedHours = (raw: number) => {
+    if (raw <= 0) return 0;
+    if (otMinHours > 0 && raw < otMinHours) return 0;
+    if (otRoundingUnit > 0) return Math.floor(raw / otRoundingUnit) * otRoundingUnit;
+    return raw;
+  };
+  const roundedHours = computeRoundedHours(hours);
+  const hasRoundingConfig = otMinHours > 0 || otRoundingUnit > 0;
 
   // Calculate preview values
   const oldOvertimeAmount = currentOvertimeAmount || 0;
@@ -138,9 +152,19 @@ export const OvertimeUpdateDialog = ({
                 placeholder="0.0"
                 className="text-right"
               />
-              <p className="text-xs text-slate-500">
-                Maximum 200 hours per month
-              </p>
+              {hasRoundingConfig && hours > 0 ? (
+                <p className={`text-xs font-medium ${roundedHours === 0 ? "text-red-500" : roundedHours < hours ? "text-amber-600" : "text-slate-500"}`}>
+                  {roundedHours === 0
+                    ? `Below minimum (${otMinHours}h) — will count as 0h`
+                    : roundedHours < hours
+                    ? `After rounding: ${roundedHours}h (min ${otMinHours}h, floor to ${otRoundingUnit}h unit)`
+                    : `Effective: ${roundedHours}h`}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Maximum 200 hours per month
+                </p>
+              )}
             </div>
 
             {/* Overtime Amount */}

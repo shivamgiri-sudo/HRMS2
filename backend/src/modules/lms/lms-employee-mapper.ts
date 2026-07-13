@@ -34,8 +34,8 @@ export const lmsEmployeeMapper = {
     try {
       const [traineeRows] = await lmsQuery<RowDataPacket[]>(
         `SELECT employee_id, permanent_emp_id, trainee_name, email, mobile
-           FROM trainee_master WHERE employee_id = ? OR permanent_emp_id = ? LIMIT 1`,
-        [lmsId, lmsId]
+           FROM trainee_master WHERE employee_id = ? OR permanent_emp_id = ? OR lms_id = ? LIMIT 1`,
+        [lmsId, lmsId, lmsId]
       );
       if (!traineeRows?.length) {
         await this._logFailure(auditId, log, "LMS trainee not found");

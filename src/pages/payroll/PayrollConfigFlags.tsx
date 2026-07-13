@@ -49,6 +49,14 @@ const FLAG_META: Record<string, { label: string; description: string }> = {
     label: "Overtime monthly cap (hours)",
     description: "Maximum overtime hours allowed per employee per month for this scope. 0 = no cap. Prevents excessive OT entry beyond process policy.",
   },
+  overtime_minimum_hours: {
+    label: "Overtime minimum hours threshold",
+    description: "Below this threshold, OT counts as 0. E.g. 1 means 45-min OT = 0h. Prevents trivial OT from being recorded.",
+  },
+  overtime_rounding_unit: {
+    label: "Overtime rounding unit (floor)",
+    description: "OT hours are floored to this granularity. E.g. 1 = floor to full hours (1.5h→1h), 0.5 = floor to half-hours (1.7h→1.5h).",
+  },
 };
 
 const BOOL_FLAGS = new Set([

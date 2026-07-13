@@ -238,7 +238,12 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   currentY = (doc as any).lastAutoTable.finalY + 2;
 
   // ── DEDUCTIONS SECTION ────────────────────────────────────────────────────────
-  const totalDeductions = data.pf + data.esic + data.pt + data.tds + data.lwpDeduction + data.loan + data.adDed + data.otherDed;
+  // Use the authoritative net/gross from payroll rather than recomputing,
+  // since LWP is already reflected in reduced gross (not a cash deduction from net)
+  const computedDeductions = data.pf + data.esic + data.pt + data.tds + data.loan + data.adDed + data.otherDed;
+  const totalDeductions = (data.grossSalary && data.netSalary)
+    ? (data.grossSalary - data.netSalary)
+    : computedDeductions;
 
   const dedHeaderStyle = { fontStyle: "bold" as const, fillColor: MCN_BLUE, textColor: WHITE as [number, number, number], halign: "center" as const };
   const dedValueStyle = { fillColor: [240, 245, 255] as [number, number, number], halign: "center" as const };
@@ -252,7 +257,6 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "ESIC", styles: dedHeaderStyle },
         { content: "PT", styles: dedHeaderStyle },
         { content: "TDS", styles: dedHeaderStyle },
-        { content: "LWP", styles: dedHeaderStyle },
         { content: "Loan", styles: dedHeaderStyle },
         { content: "Advance", styles: dedHeaderStyle },
         { content: "Other", styles: dedHeaderStyle },
@@ -266,7 +270,6 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: formatINR(data.esic), styles: dedValueStyle },
         { content: formatINR(data.pt), styles: dedValueStyle },
         { content: formatINR(data.tds), styles: dedValueStyle },
-        { content: formatINR(data.lwpDeduction), styles: dedValueStyle },
         { content: formatINR(data.loan), styles: dedValueStyle },
         { content: formatINR(data.adDed), styles: dedValueStyle },
         { content: formatINR(data.otherDed), styles: dedValueStyle },
@@ -290,20 +293,19 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   if (data.employerPf || data.employerEsic) {
     currentY = (doc as any).lastAutoTable.finalY + 2;
     doc.setFontSize(7.5);
-    doc.setFont("helvetica", "italic");
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(80, 80, 80);
     const parts: string[] = [];
-    if (data.employerPf) parts.push(`Employer PF: ₹${formatINR(data.employerPf)}`);
-    if (data.employerEsic) parts.push(`Employer ESI: ₹${formatINR(data.employerEsic)}`);
-    doc.text(`Employer Contributions (not deducted from salary): ${parts.join("  |  ")}`, 14, currentY + 3);
+    if (data.employerPf) parts.push(`Employer PF: Rs.${formatINR(data.employerPf)}`);
+    if (data.employerEsic) parts.push(`Employer ESI: Rs.${formatINR(data.employerEsic)}`);
+    doc.text(`Employer Contributions (not deducted from salary):  ${parts.join("  |  ")}`, 14, currentY + 3);
     currentY += 6;
   } else {
     currentY = (doc as any).lastAutoTable.finalY + 3;
   }
 
-  // ── FORM 16 COMPACT SUMMARY ───────────────────────────────────────────────────
+  // ── FORM 16 COMPACT SUMMARY (only show if meaningful tax data exists) ────────
   const form16Entries: [string, string][] = [];
-  if (data.grossSalary) form16Entries.push(["Gross Salary", formatINR(data.grossSalary)]);
   if (data.exemptionUs10) form16Entries.push(["Exemption U/S 10", formatINR(data.exemptionUs10)]);
   if (data.balance) form16Entries.push(["Balance", formatINR(data.balance)]);
   if (data.deductionUs24) form16Entries.push(["Deduction U/S 24", formatINR(data.deductionUs24)]);
@@ -363,14 +365,14 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   doc.setFillColor(...MCN_NAVY);
   doc.rect(14, currentY, pageWidth - 28, netBandH, "F");
 
-  // Cheque/UTR info (left)
-  doc.setFontSize(8.5);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(...WHITE);
-  const chequeLabel = data.chequeNo
-    ? `Cheque/UTR: ${data.chequeNo}${data.paymentMode ? `  |  ${data.paymentMode}` : ""}${data.paymentDate ? `  |  ${data.paymentDate}` : ""}`
-    : "Payment details not yet uploaded";
-  doc.text(chequeLabel, 18, currentY + 6);
+  // Cheque/UTR info (left) — only show when payment details exist
+  if (data.chequeNo) {
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...WHITE);
+    const chequeLabel = `Cheque/UTR: ${data.chequeNo}${data.paymentMode ? `  |  ${data.paymentMode}` : ""}${data.paymentDate ? `  |  ${data.paymentDate}` : ""}`;
+    doc.text(chequeLabel, 18, currentY + 6);
+  }
 
   // Net salary (right)
   doc.setFontSize(10);

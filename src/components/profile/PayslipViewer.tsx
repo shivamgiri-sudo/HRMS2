@@ -254,8 +254,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       return latestRecord.earnings
         .filter((component) => {
           if (component.component_code === "BASIC") return false;
-          // If per-type incentive lines exist, hide the rollup INCENTIVE to avoid double-counting
           if (hasPerTypeIncentives && component.component_code === "INCENTIVE") return false;
+          if (Number(component.amount) === 0) return false;
           return true;
         })
         .map((component) => ({
@@ -279,10 +279,12 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
 
     // Use component breakdown if available
     if (latestRecord.deductions && latestRecord.deductions.length > 0) {
-      return latestRecord.deductions.map((component) => ({
-        label: component.component_name,
-        amount: Number(component.amount ?? 0),
-      }));
+      return latestRecord.deductions
+        .filter((component) => Number(component.amount) > 0)
+        .map((component) => ({
+          label: component.component_name,
+          amount: Number(component.amount ?? 0),
+        }));
     }
 
     // Fallback to old structure
@@ -325,10 +327,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const esic = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(record.esic_employee ?? 0);
     const pt = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(record.professional_tax ?? 0);
     const tds = getDeduction('TDS') || Number(record.tds ?? 0);
-    const lwpDed = getDeduction('LWP_DEDUCTION') || Number(record.lwp_deduction ?? 0);
     const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY');
     const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? 0);
-    const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
+    // LWP is already reflected in reduced gross (pro-rata), not a cash deduction from net
+    const knownDeductions = pf + esic + pt + tds + loan + adDed;
     const otherDed = Math.max(Number(record.total_deductions ?? 0) - knownDeductions, 0);
 
     await downloadMasCallnetPayslip({
@@ -349,7 +351,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       lwpDays: Number(record.lwp_days ?? 0),
       totalDaysInMonth: Number(record.working_days ?? 30),
       basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
-      pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
+      pf, esic, pt, tds, lwpDeduction: 0, loan, adDed, otherDed,
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
       grossSalary: Number(record.gross_salary ?? 0),
@@ -673,9 +675,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payrollRecords.map((record) => {
+                  {payrollRecords.map((record, idx) => {
                     const [, recMonNum] = (record.run_month || "").split("-");
                     const monthName = MONTHS.find((m) => m.value === String(Number(recMonNum)))?.label || record.run_month || "";
+                    const isDuplicate = payrollRecords.some((r, i) => i !== idx && r.run_month === record.run_month);
                     const basicSal = Number(record.basic ?? record.basic_salary ?? 0);
                     const totalAllowances = Number(record.gross_salary ?? 0) - basicSal;
                     const isExpanded = expandedRecord === record.id;
@@ -685,7 +688,15 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                           <TableCell>
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </TableCell>
-                          <TableCell className="font-medium">{monthName}</TableCell>
+                          <TableCell className="font-medium">
+                            {monthName}
+                            {isDuplicate && record.payslip_ref && (
+                              <span className="ml-1.5 text-xs text-slate-400">({record.payslip_ref})</span>
+                            )}
+                            {isDuplicate && !record.payslip_ref && (
+                              <span className="ml-1.5 text-xs text-slate-400">(Run {idx + 1})</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right">
                             {renderSensitive(formatCurrency(basicSal))}
                           </TableCell>
@@ -726,7 +737,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                   <table className="w-full text-sm">
                                     <tbody>
                                       {record.earnings && record.earnings.length > 0 ? (
-                                        record.earnings.map((earning) => (
+                                        record.earnings.filter((e) => Number(e.amount) > 0).map((earning) => (
                                           <tr key={earning.component_code} className="border-b last:border-0">
                                             <td className="py-1 text-muted-foreground">{earning.component_name}</td>
                                             <td className="py-1 text-right font-mono font-semibold text-green-600">
@@ -764,7 +775,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                   <table className="w-full text-sm">
                                     <tbody>
                                       {record.deductions && record.deductions.length > 0 ? (
-                                        record.deductions.map((deduction) => (
+                                        record.deductions.filter((d) => Number(d.amount) > 0).map((deduction) => (
                                           <tr key={deduction.component_code} className="border-b last:border-0">
                                             <td className="py-1 text-muted-foreground">{deduction.component_name}</td>
                                             <td className="py-1 text-right font-mono font-semibold text-red-600">

@@ -101,6 +101,8 @@ interface OTProcessConfig {
   overtime_allowed: string;
   overtime_rate_multiplier: string;
   overtime_monthly_cap_hours: string;
+  overtime_minimum_hours: string;
+  overtime_rounding_unit: string;
 }
 
 export default function PayrollOvertimeManagement() {
@@ -198,13 +200,16 @@ export default function PayrollOvertimeManagement() {
   });
 
   const toggleOTMutation = useMutation({
-    mutationFn: async ({ processId, enabled, rateMultiplier, capHours }: {
+    mutationFn: async ({ processId, enabled, rateMultiplier, capHours, minHours, roundingUnit }: {
       processId: string; enabled?: boolean; rateMultiplier?: number; capHours?: number;
+      minHours?: number; roundingUnit?: number;
     }) => {
       await hrmsApi.patch(`/api/payroll/overtime/config/process/${processId}`, {
         overtime_allowed: enabled,
         overtime_rate_multiplier: rateMultiplier,
         overtime_monthly_cap_hours: capHours,
+        overtime_minimum_hours: minHours,
+        overtime_rounding_unit: roundingUnit,
       });
     },
     onSuccess: () => {
@@ -374,9 +379,11 @@ export default function PayrollOvertimeManagement() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Process</TableHead>
-                        <TableHead className="text-center w-[120px]">OT Allowed</TableHead>
-                        <TableHead className="text-center w-[120px]">Rate (x)</TableHead>
-                        <TableHead className="text-center w-[140px]">Monthly Cap (h)</TableHead>
+                        <TableHead className="text-center w-[100px]">OT Allowed</TableHead>
+                        <TableHead className="text-center w-[100px]">Rate (x)</TableHead>
+                        <TableHead className="text-center w-[110px]">Cap (h/mo)</TableHead>
+                        <TableHead className="text-center w-[100px]">Min Hours</TableHead>
+                        <TableHead className="text-center w-[110px]">Rounding</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -436,6 +443,44 @@ export default function PayrollOvertimeManagement() {
                                   }
                                 }}
                               />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                max="10"
+                                className="w-20 h-7 text-center text-sm mx-auto"
+                                defaultValue={proc.overtime_minimum_hours}
+                                disabled={!allowed}
+                                onBlur={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val) && val >= 0 && val !== parseFloat(proc.overtime_minimum_hours)) {
+                                    toggleOTMutation.mutate({ processId: proc.id, minHours: val });
+                                  }
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Select
+                                defaultValue={proc.overtime_rounding_unit}
+                                disabled={!allowed}
+                                onValueChange={(v) => {
+                                  const val = parseFloat(v);
+                                  if (val !== parseFloat(proc.overtime_rounding_unit)) {
+                                    toggleOTMutation.mutate({ processId: proc.id, roundingUnit: val });
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="w-24 h-7 text-xs mx-auto">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="0.25">15 min</SelectItem>
+                                  <SelectItem value="0.5">30 min</SelectItem>
+                                  <SelectItem value="1">1 hour</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </TableCell>
                           </TableRow>
                         );
@@ -577,20 +622,27 @@ export default function PayrollOvertimeManagement() {
       </div>
 
       {/* Overtime Update Dialog */}
-      {selectedLine && (
-        <OvertimeUpdateDialog
-          open={overtimeDialogOpen}
-          onOpenChange={setOvertimeDialogOpen}
-          lineId={selectedLine.id}
-          employeeCode={selectedLine.employee_code}
-          employeeName={selectedLine.employee_name}
-          currentOvertimeHours={selectedLine.overtime_hours}
-          currentOvertimeAmount={selectedLine.overtime_amount}
-          currentGross={selectedLine.gross_salary}
-          currentNet={selectedLine.net_salary}
-          onSuccess={handleOvertimeSuccess}
-        />
-      )}
+      {selectedLine && (() => {
+        const enabledProcs = otProcessConfigs?.filter((p) => p.overtime_allowed === "true") ?? [];
+        const defaultMin = enabledProcs.length === 1 ? parseFloat(enabledProcs[0].overtime_minimum_hours) : 1;
+        const defaultUnit = enabledProcs.length === 1 ? parseFloat(enabledProcs[0].overtime_rounding_unit) : 1;
+        return (
+          <OvertimeUpdateDialog
+            open={overtimeDialogOpen}
+            onOpenChange={setOvertimeDialogOpen}
+            lineId={selectedLine.id}
+            employeeCode={selectedLine.employee_code}
+            employeeName={selectedLine.employee_name}
+            currentOvertimeHours={selectedLine.overtime_hours}
+            currentOvertimeAmount={selectedLine.overtime_amount}
+            currentGross={selectedLine.gross_salary}
+            currentNet={selectedLine.net_salary}
+            onSuccess={handleOvertimeSuccess}
+            otMinHours={defaultMin}
+            otRoundingUnit={defaultUnit}
+          />
+        );
+      })()}
     </DashboardLayout>
   );
 }

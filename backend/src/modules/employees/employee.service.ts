@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
+import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 
 const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: string; label: string }> = [
   { inputKey: "branchId",           dbCol: "branch_id",           label: "Branch" },
@@ -137,6 +138,15 @@ export const employeeService = {
     if (input.structureId && input.ctcAnnual) {
       const salaryDate = input.salaryStartDate ?? input.dateOfJoining;
       await assignSalary(id, input.structureId, input.ctcAnnual, salaryDate);
+    }
+
+    try {
+      const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: input.employeeCode, createdBy: _userId });
+      if (lmsResult.message) {
+        console.warn(`[WARN] LMS provisioning for ${input.employeeCode}: ${lmsResult.message}`);
+      }
+    } catch (error) {
+      console.error(`[WARN] Failed to provision LMS identity for employee ${input.employeeCode}:`, error);
     }
 
     return employee;
@@ -362,6 +372,8 @@ export const employeeService = {
          p.process_name,
          b.branch_name,
          dept.dept_name AS department_name,
+         e.process_id,
+         e.branch_id AS emp_branch_id,
          COALESCE(NULLIF(TRIM(e.avatar_url), ''), NULLIF(TRIM(e.photo_url), '')) AS avatar_url,
          COALESCE(e.reporting_manager_id, e.manager_id) AS reporting_manager_id,
          (SELECT ur2.role_key FROM user_roles ur2
@@ -385,25 +397,125 @@ export const employeeService = {
     const employees = empRows as OrgTreeServiceNode[];
     const totalCount = employees.length;
 
-    // Build tree in O(n) using a Map
+    // ── Role seniority map (lower = higher rank) ──
+    const SENIORITY: Record<string, number> = {
+      super_admin: 0, admin: 0, ceo: 0,
+      hr: 1, branch_head: 1,
+      process_manager: 2, manager: 2, operations_manager: 2, wfm: 2,
+      assistant_manager: 3, team_leader: 3, tl: 3,
+      employee: 4, executive: 4, agent: 4,
+    };
+    function getSeniority(roleKey: string | null): number {
+      return SENIORITY[roleKey ?? ""] ?? 4;
+    }
+
+    // ── Phase 1: Build tree using explicit reporting_manager_id ──
     const byId = new Map<string, OrgTreeServiceNode & { children: OrgTreeServiceNode[] }>();
     for (const emp of employees) {
       byId.set(emp.id, { ...emp, children: [] });
     }
 
     const scopedIds = new Set(employees.map((e) => e.id));
-    const roots: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
+    const explicitRoots: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
+    const orphans: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
 
     for (const emp of employees) {
       const mgr = emp.reporting_manager_id;
       if (!mgr || !scopedIds.has(mgr)) {
-        roots.push(byId.get(emp.id)!);
+        // No explicit manager in scope — potential orphan
+        const node = byId.get(emp.id)!;
+        const seniority = getSeniority(emp.role_key);
+        if (seniority <= 1) {
+          // Top-level executives (CEO, admin, HR, branch head) are real roots
+          explicitRoots.push(node);
+        } else {
+          orphans.push(node);
+        }
       } else {
         byId.get(mgr)!.children.push(byId.get(emp.id)!);
       }
     }
 
-    return { nodes: roots, totalCount };
+    // ── Phase 2: Infer hierarchy for orphans by process + seniority ──
+    // Group orphans by process_id
+    const orphansByProcess = new Map<string, (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[]>();
+    const noProcessOrphans: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
+
+    for (const o of orphans) {
+      const pid = (o as any).process_id as string | null;
+      if (pid) {
+        if (!orphansByProcess.has(pid)) orphansByProcess.set(pid, []);
+        orphansByProcess.get(pid)!.push(o);
+      } else {
+        noProcessOrphans.push(o);
+      }
+    }
+
+    // For each process group, build a synthetic hierarchy based on role seniority
+    const processRoots: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
+
+    orphansByProcess.forEach((group) => {
+      // Sort by seniority ascending (higher rank first)
+      group.sort((a, b) => getSeniority(a.role_key) - getSeniority(b.role_key));
+
+      // The highest-ranked person becomes process root
+      const processLead = group[0];
+      // Bucket the rest by seniority level
+      const byLevel: Map<number, (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[]> = new Map();
+      for (const emp of group) {
+        const lvl = getSeniority(emp.role_key);
+        if (!byLevel.has(lvl)) byLevel.set(lvl, []);
+        byLevel.get(lvl)!.push(emp);
+      }
+
+      const levels = Array.from(byLevel.keys()).sort((a, b) => a - b);
+
+      // Chain levels: each level's members parent under the previous level's first member
+      // e.g., Process Manager → Team Leaders → Agents
+      for (let i = 1; i < levels.length; i++) {
+        const parentLevel = levels[i - 1];
+        const childLevel = levels[i];
+        const parents = byLevel.get(parentLevel)!;
+        const children = byLevel.get(childLevel)!;
+
+        // Distribute children roughly evenly among parents of the level above
+        for (let c = 0; c < children.length; c++) {
+          const parentIdx = c % parents.length;
+          parents[parentIdx].children.push(children[c]);
+        }
+      }
+
+      processRoots.push(processLead);
+    });
+
+    // No-process orphans remain as flat roots (rare edge case)
+    const finalRoots = [...explicitRoots, ...processRoots, ...noProcessOrphans];
+
+    // If there's only explicit roots with children and process roots, try to attach
+    // process roots under branch heads from explicitRoots
+    if (explicitRoots.length > 0 && processRoots.length > 0) {
+      const branchHeads = explicitRoots.filter(
+        (r) => getSeniority(r.role_key) === 1 && (r as any).emp_branch_id
+      );
+      if (branchHeads.length > 0) {
+        const attached = new Set<string>();
+        for (const pr of processRoots) {
+          const prBranch = (pr as any).emp_branch_id as string | null;
+          if (prBranch) {
+            const bh = branchHeads.find((h) => (h as any).emp_branch_id === prBranch);
+            if (bh) {
+              bh.children.push(pr);
+              attached.add(pr.id);
+            }
+          }
+        }
+        // Remove attached process roots from finalRoots
+        const cleanedRoots = finalRoots.filter((r) => !attached.has(r.id));
+        return { nodes: cleanedRoots, totalCount };
+      }
+    }
+
+    return { nodes: finalRoots, totalCount };
   },
 };
 

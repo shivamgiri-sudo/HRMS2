@@ -73,6 +73,84 @@ interface SyncLogEntry {
   created_at: string;
 }
 
+interface BatchPlannerSummary {
+  total_batches: number;
+  active_batches: number;
+  selected_candidates: number;
+  confirmed_onboarded: number;
+  lms_provisioned: number;
+  ready_for_training: number;
+  batch_assigned: number;
+  open_slots: number;
+  overbooked: number;
+  average_fill_pct: number;
+  filling_batches: number;
+}
+
+interface BatchPlannerBatch {
+  batch_no: string;
+  batch_name: string;
+  batch_type: string | null;
+  branch: string | null;
+  process: string | null;
+  lob: string | null;
+  classroom_id: string | null;
+  classroom_name: string | null;
+  batch_status: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  expected_trainees: number;
+  total_trainees: number;
+  trainee_count: number;
+  confirmed_onboarded_count: number;
+  lms_ready_count: number;
+  ojt_ready_count: number;
+  handover_to_ops_count: number;
+  certified_count: number;
+  fill_pct: number;
+  remaining_slots: number;
+  overbooked: number;
+  fill_state: string;
+  created_at: string | null;
+  last_updated_at: string | null;
+}
+
+interface BatchPlannerCandidate {
+  candidate_id: string;
+  candidate_code: string | null;
+  full_name: string | null;
+  branch_name: string | null;
+  process_name: string | null;
+  current_stage: string | null;
+  profile_status: string | null;
+  employee_code: string | null;
+  employee_name: string | null;
+  employee_id: string | null;
+  lms_learner_id: string | null;
+  batch_no: string | null;
+  batch_status: string | null;
+  onboarding_status: string | null;
+  course_completion_pct: number | null;
+  attendance_pct: number | null;
+  certification_status: string | null;
+  risk_status: string | null;
+  confirmed_onboarded: boolean;
+  lms_provisioned: boolean;
+  batch_assigned: boolean;
+  ready_for_training: boolean;
+  readiness_state: string;
+  suggested_batch_no: string | null;
+  suggested_batch_reason: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+interface BatchPlannerData {
+  summary: BatchPlannerSummary;
+  batches: BatchPlannerBatch[];
+  candidates: BatchPlannerCandidate[];
+}
+
 interface ApiList<T> {
   success: boolean;
   data: T[];
@@ -142,7 +220,7 @@ function ProgressBar({ pct }: { pct: number }) {
 
 // ── Tab definitions ────────────────────────────────────────────────────────────
 
-type Tab = "learning" | "mapping" | "sync-log";
+type Tab = "learning" | "batch-planner" | "mapping" | "sync-log";
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
@@ -169,6 +247,10 @@ export default function NativeLMSIntegration() {
   // Tab 3 — Sync Log
   const [syncLog, setSyncLog]           = useState<SyncLogEntry[]>([]);
   const [loadingSyncLog, setLoadingSyncLog] = useState(false);
+
+  // Tab 4 — Batch Planner
+  const [batchPlanner, setBatchPlanner] = useState<BatchPlannerData | null>(null);
+  const [loadingBatchPlanner, setLoadingBatchPlanner] = useState(false);
 
   // ── Connection & Sync Control ─────────────────────────────────────────────
   const [connStatus, setConnStatus] = useState<LmsConnectionStatus | null>(null);
@@ -298,11 +380,25 @@ export default function NativeLMSIntegration() {
     }
   }, []);
 
+  const loadBatchPlanner = useCallback(async () => {
+    setLoadingBatchPlanner(true);
+    setMessage("");
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: BatchPlannerData }>("/api/lms/batch-planner");
+      setBatchPlanner(res.data ?? null);
+    } catch (err) {
+      setMessage((err as Error).message || "Failed to load batch planner.");
+    } finally {
+      setLoadingBatchPlanner(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab === "learning")   void loadLearning();
+    if (activeTab === "batch-planner") void loadBatchPlanner();
     if (activeTab === "mapping")    void loadMappings();
     if (activeTab === "sync-log")   void loadSyncLog();
-  }, [activeTab, loadLearning, loadMappings, loadSyncLog]);
+  }, [activeTab, loadBatchPlanner, loadLearning, loadMappings, loadSyncLog]);
 
   // ── Add Mapping ────────────────────────────────────────────────────────────
 
@@ -333,6 +429,7 @@ export default function NativeLMSIntegration() {
 
   const tabs: { id: Tab; label: string; adminOnly: boolean }[] = [
     { id: "learning",  label: "My Learning",       adminOnly: false },
+    { id: "batch-planner", label: "Batch Planner", adminOnly: true  },
     { id: "mapping",   label: "Employee Mapping",   adminOnly: true  },
     { id: "sync-log",  label: "Sync Log",           adminOnly: true  },
   ];
@@ -346,15 +443,16 @@ export default function NativeLMSIntegration() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Learning & Development</p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950">LMS Integration</h1>
+            <h1 className="mt-2 text-3xl font-black text-slate-950">LMS Admin</h1>
             <p className="mt-2 max-w-3xl text-slate-600">
-              Access the Learning Management System, view your progress snapshots, and manage employee LMS mappings.
+              Access the Learning Management System natively inside HRMS, view progress snapshots, manage employee LMS mappings, and plan training batches from one admin screen.
             </p>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
                 if (activeTab === "learning")  void loadLearning();
+                if (activeTab === "batch-planner") void loadBatchPlanner();
                 if (activeTab === "mapping")   void loadMappings();
                 if (activeTab === "sync-log")  void loadSyncLog();
               }}
@@ -518,10 +616,10 @@ export default function NativeLMSIntegration() {
               )}
             </div>
 
-            {/* Integration Hub Link */}
+            {/* Native LMS Console Link */}
             <div className="rounded-3xl border bg-white p-5 shadow-sm flex flex-col gap-4">
-              <h2 className="flex items-center gap-2 font-black text-slate-950"><Settings className="h-4 w-4 text-slate-500" />Integration Hub</h2>
-              <p className="text-xs text-slate-500 flex-1">Manage schedule, view run history, configure field mappings and monitor all connectors from the central Integration Hub.</p>
+              <h2 className="flex items-center gap-2 font-black text-slate-950"><Settings className="h-4 w-4 text-slate-500" />Native LMS Console</h2>
+              <p className="text-xs text-slate-500 flex-1">Manage schedule, view run history, configure field mappings and monitor LMS sync directly from HRMS.</p>
               <button onClick={() => navigate("/integration-hub")} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">
                 Open Integration Hub →
               </button>
@@ -658,6 +756,191 @@ export default function NativeLMSIntegration() {
         )}
 
         {/* ── Tab 2: Employee Mapping ────────────────────────────────────────── */}
+        {activeTab === "batch-planner" && isAdminOrHR && (
+          <div className="space-y-6">
+            {loadingBatchPlanner ? (
+              <div className="flex items-center justify-center rounded-3xl border bg-white py-24 shadow-sm">
+                <Loader className="h-8 w-8 animate-spin text-slate-400" />
+              </div>
+            ) : batchPlanner ? (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                  {[
+                    { label: "Selected", value: batchPlanner.summary.selected_candidates, hint: "ATS candidates in funnel", tone: "text-blue-700 bg-blue-50" },
+                    { label: "Onboarded", value: batchPlanner.summary.confirmed_onboarded, hint: "Confirmed for training", tone: "text-emerald-700 bg-emerald-50" },
+                    { label: "LMS Ready", value: batchPlanner.summary.lms_provisioned, hint: "Mapped to LMS learner IDs", tone: "text-violet-700 bg-violet-50" },
+                    { label: "Ready to Train", value: batchPlanner.summary.ready_for_training, hint: "Assigned and provisioned", tone: "text-amber-700 bg-amber-50" },
+                    { label: "Open Slots", value: batchPlanner.summary.open_slots, hint: `${batchPlanner.summary.filling_batches} batches still have capacity`, tone: "text-slate-700 bg-slate-100" },
+                  ].map((card) => (
+                    <div key={card.label} className="rounded-3xl border bg-white p-5 shadow-sm">
+                      <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">{card.label}</p>
+                      <div className={`mt-3 inline-flex rounded-2xl px-4 py-2 text-3xl font-black ${card.tone}`}>{card.value}</div>
+                      <p className="mt-3 text-xs text-slate-500">{card.hint}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                      <h2 className="font-black text-slate-950">Batch capacity snapshot</h2>
+                      <p className="mt-1 text-sm text-slate-500">Active and planned batches with live fill status from LMS</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600">
+                      Average fill {batchPlanner.summary.average_fill_pct}% across {batchPlanner.summary.total_batches} batches
+                    </div>
+                  </div>
+                  <div className="mt-5 overflow-x-auto">
+                    <table className="w-full min-w-[980px] text-sm">
+                      <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                        <tr>
+                          {["Batch", "Scope", "Fill", "Assignment", "Status"].map((h) => (
+                            <th key={h} className="p-4 font-semibold">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchPlanner.batches.map((batch) => (
+                          <tr key={batch.batch_no} className="border-t hover:bg-slate-50/70 transition-colors">
+                            <td className="p-4">
+                              <div className="font-semibold text-slate-950">{batch.batch_name}</div>
+                              <div className="font-mono text-xs text-slate-400">{batch.batch_no}</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {batch.classroom_name ?? "No classroom"} {batch.start_date ? ` | ${formatIST(batch.start_date)}` : ""}
+                              </div>
+                            </td>
+                            <td className="p-4 text-slate-600">
+                              <div>{batch.branch ?? "Any branch"}</div>
+                              <div className="text-xs text-slate-400">{batch.process ?? "Any process"} {batch.lob ? ` | ${batch.lob}` : ""}</div>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex items-center gap-3">
+                                <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-100">
+                                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, batch.fill_pct)}%` }} />
+                                </div>
+                                <span className="text-xs font-bold text-slate-700">{batch.fill_pct}%</span>
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {batch.total_trainees}/{batch.expected_trainees} allocated {batch.remaining_slots > 0 ? ` | ${batch.remaining_slots} open` : batch.overbooked > 0 ? ` | ${batch.overbooked} over` : ""}
+                              </div>
+                            </td>
+                            <td className="p-4 text-slate-600">
+                              <div className="text-sm font-semibold text-slate-900">{batch.trainee_count} trainees</div>
+                              <div className="text-xs text-slate-500">
+                                {batch.confirmed_onboarded_count} onboarded | {batch.lms_ready_count} LMS ready
+                              </div>
+                              <div className="text-xs text-slate-400">
+                                {batch.ojt_ready_count} OJT | {batch.certified_count} certified | {batch.handover_to_ops_count} handover
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <Badge
+                                label={batch.fill_state}
+                                colorClass={
+                                  batch.fill_state === "filled"
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : batch.fill_state === "nearly_full"
+                                      ? "bg-amber-50 text-amber-700"
+                                      : batch.fill_state === "overbooked"
+                                        ? "bg-red-50 text-red-700"
+                                        : "bg-blue-50 text-blue-700"
+                                }
+                              />
+                              <div className="mt-2 text-xs text-slate-500">{batch.batch_status ?? "Unknown status"}</div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                      <h2 className="font-black text-slate-950">Candidate queue for training batches</h2>
+                      <p className="mt-1 text-sm text-slate-500">Selected and onboarded candidates with suggested batch placement</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600">
+                      {batchPlanner.summary.batch_assigned} already assigned, {Math.max(0, batchPlanner.summary.selected_candidates - batchPlanner.summary.batch_assigned)} waiting
+                    </div>
+                  </div>
+                  <div className="mt-5 overflow-x-auto">
+                    <table className="w-full min-w-[1120px] text-sm">
+                      <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                        <tr>
+                          {["Candidate", "Pipeline", "LMS", "Batch", "Readiness"].map((h) => (
+                            <th key={h} className="p-4 font-semibold">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchPlanner.candidates.map((candidate) => (
+                          <tr key={candidate.candidate_id} className="border-t hover:bg-slate-50/70 transition-colors">
+                            <td className="p-4">
+                              <div className="font-semibold text-slate-950">{candidate.full_name ?? "Unnamed candidate"}</div>
+                              <div className="font-mono text-xs text-slate-400">{candidate.candidate_code ?? candidate.employee_code ?? candidate.candidate_id}</div>
+                              <div className="mt-1 text-xs text-slate-500">{candidate.branch_name ?? "No branch"} {candidate.process_name ? ` | ${candidate.process_name}` : ""}</div>
+                            </td>
+                            <td className="p-4 text-slate-600">
+                              <div className="text-sm font-semibold text-slate-900">{candidate.current_stage ?? "unknown"}</div>
+                              <div className="text-xs text-slate-500">{candidate.profile_status ?? "profile pending"}</div>
+                              <div className="text-xs text-slate-400">{candidate.onboarding_status ?? "no onboarding bridge"}</div>
+                            </td>
+                            <td className="p-4 text-slate-600">
+                              <div className="text-sm font-semibold text-slate-900">{candidate.lms_learner_id ?? "not provisioned"}</div>
+                              <div className="text-xs text-slate-500">
+                                {candidate.lms_provisioned ? "LMS record available" : "Waiting on LMS provision"}
+                              </div>
+                            </td>
+                            <td className="p-4 text-slate-600">
+                              <div className="text-sm font-semibold text-slate-900">{candidate.batch_no ?? candidate.suggested_batch_no ?? "unassigned"}</div>
+                              <div className="text-xs text-slate-500">{candidate.batch_no ? "Assigned batch" : candidate.suggested_batch_reason ?? "Needs placement"}</div>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge
+                                  label={candidate.readiness_state}
+                                  colorClass={
+                                    candidate.readiness_state === "ready_for_training"
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : candidate.readiness_state === "batch_assigned"
+                                        ? "bg-blue-50 text-blue-700"
+                                        : candidate.readiness_state === "lms_ready"
+                                          ? "bg-violet-50 text-violet-700"
+                                          : candidate.readiness_state === "onboarded"
+                                            ? "bg-amber-50 text-amber-700"
+                                            : "bg-slate-100 text-slate-600"
+                                  }
+                                />
+                                {candidate.suggested_batch_no && (
+                                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                                    Suggest: {candidate.suggested_batch_no}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-2 text-xs text-slate-500">
+                                {candidate.ready_for_training ? "Ready for HR batch sign-off" : candidate.suggested_batch_reason ?? "No suggestion yet"}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-3xl border bg-white p-12 text-center shadow-sm">
+                <ShieldCheck className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                <p className="font-semibold text-slate-900">No batch planner data yet.</p>
+                <p className="mt-1 text-sm text-slate-500">Once batches and trainees exist in LMS, the planning view will populate here.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* â”€â”€ Tab 3: Employee Mapping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {activeTab === "mapping" && isAdminOrHR && (
           <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
             <div className="flex items-center justify-between border-b p-5">

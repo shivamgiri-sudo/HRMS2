@@ -16,7 +16,8 @@
     "migrate:fresh:test": "tsx scripts/migrate-fresh-test.ts",
     "phase2:describe": "tsx scripts/phase2-describe.ts",
     "phase2:smoke": "npm run phase2:smoke:live:dangerous",
-    "phase2:smoke:live:dangerous": "tsx scripts/smoke/hrms2-lifecycle-smoke.ts"
+    "phase2:smoke:live:dangerous": "tsx scripts/smoke/hrms2-lifecycle-smoke.ts",
+    "lms:backfill-identities": "tsx scripts/backfill-lms-identities.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

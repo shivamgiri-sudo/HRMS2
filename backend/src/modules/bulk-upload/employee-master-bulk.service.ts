@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -109,6 +110,14 @@ export async function importEmployeeMasterBatch(
         `UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`,
         [row.id]
       );
+      try {
+        const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode, createdBy: importedByUserId });
+        if (lmsResult.message) {
+          console.warn(`[Bulk Import] LMS provisioning for ${employeeCode}: ${lmsResult.message}`);
+        }
+      } catch (err) {
+        console.error(`[Bulk Import] LMS provisioning failed for ${employeeCode}:`, err instanceof Error ? err.message : String(err));
+      }
       importedRows++;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

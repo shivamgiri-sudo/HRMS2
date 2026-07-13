@@ -143,6 +143,7 @@ export interface NetSalaryParams {
   allowances?: SalaryAllowance[]; // variable pay: night shift, incentives, etc.
   pfOptOut?: boolean;      // true = employee voluntarily opted out of PF deduction
   esicOptOut?: boolean;    // true = employee voluntarily opted out of ESI deduction
+  gratuityPct?: number;    // employer gratuity provision % of basic (default 4.81)
 }
 
 export interface PaginatedResult<T> {

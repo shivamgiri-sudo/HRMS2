@@ -214,6 +214,24 @@ router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance"
         });
       }
     }
+
+    // B6 gate: warn if incentives were already applied to this run
+    const forceRecalc = req.body?.force === true || req.query?.force === "true";
+    if (!forceRecalc) {
+      const [incCheck] = await db.execute<RowDataPacket[]>(
+        `SELECT incentives_applied_at FROM salary_prep_run WHERE id = ? LIMIT 1`,
+        [req.params.id]
+      );
+      const appliedAt = (incCheck as RowDataPacket[])[0]?.incentives_applied_at;
+      if (appliedAt) {
+        return res.status(409).json({
+          success: false,
+          message: "Incentives were applied to this run. Recalculating will wipe them. Pass force=true to confirm, then re-apply incentives after.",
+          data: { incentives_applied_at: appliedAt },
+        });
+      }
+    }
+
     const result = await calculatePayrollRun(req.params.id, actorId);
     void logSensitiveAction({
       actor_user_id: actorId,
@@ -344,6 +362,10 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('draft')
+        AND (
+          spr.run_month < DATE_FORMAT(CURDATE(), '%Y-%m')
+          OR srd.cheque_no IS NOT NULL
+        )
       ORDER BY spr.run_month DESC`,
     [callerEmp.id, `${year}-%`]
   );
@@ -665,6 +687,64 @@ router.get("/tax-declaration/:employeeId/:year/documents", h(async (req: Authent
   );
 
   res.json({ success: true, data: rows });
+}));
+
+// PATCH /api/payroll/tax-declaration/:employeeId/:year/verify — HR verify or reject a declaration
+router.patch("/tax-declaration/:employeeId/:year/verify", requireRole("admin", "hr", "super_admin", "payroll", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, year } = req.params;
+  const { status, review_note } = req.body as { status?: "verified" | "rejected"; review_note?: string };
+  const targetStatus = status === "rejected" ? "rejected" : "verified";
+
+  const declaration = await taxDeclarationService.find(employeeId, year);
+  if (!declaration) {
+    return res.status(404).json({ success: false, message: "Tax declaration not found" });
+  }
+
+  await db.execute(
+    `UPDATE tax_declaration_form12bb_detail
+        SET submission_status = ?, verified_by = ?, verified_at = NOW(), review_note = ?
+      WHERE declaration_id = ?`,
+    [targetStatus, req.authUser!.id, review_note ?? null, declaration.id]
+  );
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "tax_declaration_verify",
+    module_key: "payroll",
+    entity_type: "tax_declaration",
+    entity_id: declaration.id,
+    change_summary: { employee_id: employeeId, financial_year: year, status: targetStatus, review_note },
+    req,
+  });
+
+  return res.json({ success: true, message: `Declaration ${targetStatus}`, data: { submission_status: targetStatus } });
+}));
+
+// DELETE /api/payroll/tax-declaration/:employeeId/:year/document/:docId — delete a tax proof document
+router.delete("/tax-declaration/:employeeId/:year/document/:docId", requireRole("admin", "hr", "super_admin", "payroll", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, docId } = req.params;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, file_url FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1`,
+    [docId, employeeId]
+  );
+  if (!(rows as RowDataPacket[]).length) {
+    return res.status(404).json({ success: false, message: "Document not found" });
+  }
+
+  await db.execute(`DELETE FROM employee_documents WHERE id = ?`, [docId]);
+
+  void logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "tax_document_delete",
+    module_key: "payroll",
+    entity_type: "employee_documents",
+    entity_id: docId,
+    change_summary: { employee_id: employeeId },
+    req,
+  });
+
+  return res.json({ success: true, message: "Document deleted" });
 }));
 
 // ─── UAN ─────────────────────────────────────────────────────────────────────

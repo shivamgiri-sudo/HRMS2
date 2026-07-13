@@ -62,6 +62,89 @@ async function resolveOwnEmployeeId(req: AuthenticatedRequest, res: Response) {
   return emp.id;
 }
 
+type LmsPortal = "trainee" | "coordinator" | "admin";
+type LmsSessionUserType = LmsPortal | "management";
+
+const LMS_SESSION_ROUTES: Record<LmsSessionUserType, { route: string; storageKey: string }> = {
+  trainee: { route: "/lms", storageKey: "lms_token_trainee" },
+  coordinator: { route: "/coordinator", storageKey: "lms_token_coordinator" },
+  admin: { route: "/admin", storageKey: "lms_token_admin" },
+  management: { route: "/management", storageKey: "lms_token_management" },
+};
+
+function isLmsPortal(value: unknown): value is LmsPortal {
+  return value === "trainee" || value === "coordinator" || value === "admin";
+}
+
+function joinBaseUrl(baseUrl: string, route: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${route}`;
+}
+
+function attachLmsSessionParams(url: string, lmsToken: string, lmsUserType: string): string {
+  const next = new URL(url);
+  next.searchParams.set("hrms_lms_token", lmsToken);
+  next.searchParams.set("lms_user_type", lmsUserType);
+  return next.toString();
+}
+
+async function buildLmsSession(
+  req: AuthenticatedRequest,
+  ctx: NonNullable<Awaited<ReturnType<typeof currentLmsContext>>>,
+) {
+  const lmsApiUrl = env.LMS_API_URL;
+  const bridgeSecret = env.LMS_BRIDGE_SECRET;
+
+  if (!lmsApiUrl) {
+    const err = new Error("LMS_API_URL not configured on HRMS2 backend") as Error & { statusCode?: number };
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const employeeCode = ctx.access.employeeCode;
+  const email = ctx.access.user.email;
+
+  const body: Record<string, string> = {};
+  if (employeeCode) body.employee_id = employeeCode;
+  if (email) body.email = email;
+  if (bridgeSecret) body.bridge_token = bridgeSecret;
+
+  const fetchRes = await fetch(`${lmsApiUrl}/api/auth/bridge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const bridgeRes = await fetchRes.json().catch(() => null) as any;
+  if (!fetchRes.ok || !bridgeRes?.ok) {
+    throw new Error(bridgeRes?.message || `Bridge responded ${fetchRes.status}`);
+  }
+  if (!bridgeRes?.lms_token) {
+    throw new Error("LMS bridge did not return a token");
+  }
+
+  const lmsUserType: string = bridgeRes.userType ?? (
+    ctx.access.access.admin ? "admin" :
+    ctx.access.access.coordinator ? "coordinator" : "trainee"
+  );
+  const persona = LMS_SESSION_ROUTES[lmsUserType as LmsSessionUserType] ?? LMS_SESSION_ROUTES.trainee;
+
+  await db.execute(
+    `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
+     VALUES (?, 'sso_session', 1, 0, 'success', ?)`,
+    [randomUUID(), req.authUser!.id]
+  );
+
+  return {
+    lmsToken: bridgeRes.lms_token,
+    lmsUserType,
+    lmsUserId: bridgeRes.userId ?? employeeCode,
+    route: persona.route,
+    storageKey: persona.storageKey,
+    launchUrl: joinBaseUrl(lmsApiUrl, persona.route),
+    bridgeError: null as string | null,
+  };
+}
+
 // Native HRMS-integrated LMS access. No external link or LMS re-login required.
 router.get("/native/access", h(async (req: AuthenticatedRequest, res: Response) => {
   const ctx = await currentLmsContext(req, res);
@@ -95,6 +178,42 @@ router.get("/native/admin", h(async (req: AuthenticatedRequest, res: Response) =
     const msg = err instanceof Error ? err.message : "LMS service error";
     console.error("[lms/native/admin]", msg);
     res.status(500).json({ success: false, error: "LMS dashboard unavailable", _details: msg });
+  }
+}));
+
+router.get("/batch-planner", requireRole("admin", "hr", "super_admin", "operations_head", "trainer"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const data = await lmsService.getNativeBatchPlanner();
+  res.json({ success: true, data });
+}));
+
+router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response) => {
+  const portal = isLmsPortal(req.query.portal) ? req.query.portal : "admin";
+  const ctx = await currentLmsContext(req, res);
+  if (!ctx) return;
+
+  if (!ctx.access.access[portal]) {
+    return res.status(403).json({ success: false, message: `LMS access is not assigned for the ${portal} portal` });
+  }
+
+  try {
+    const session = await buildLmsSession(req, ctx);
+    const portalUrl = joinBaseUrl(env.LMS_API_URL, LMS_SESSION_ROUTES[portal].route);
+    const embedUrl = attachLmsSessionParams(portalUrl, session.lmsToken, session.lmsUserType);
+    res.json({
+      success: true,
+      data: {
+        portal: portal,
+        portal_url: portalUrl,
+        embed_url: embedUrl,
+        lms_token: session.lmsToken,
+        lms_user_type: session.lmsUserType,
+        bridge_error: session.bridgeError,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "LMS launch unavailable";
+    const statusCode = typeof err === "object" && err && "statusCode" in err ? Number((err as { statusCode?: number }).statusCode) : 502;
+    res.status(statusCode).json({ success: false, message });
   }
 }));
 
@@ -305,66 +424,16 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
 router.get("/sso-session", h(async (req: AuthenticatedRequest, res: Response) => {
   const ctx = await currentLmsContext(req, res);
   if (!ctx) return;
-
-  const lmsApiUrl = env.LMS_API_URL;
-  const bridgeSecret = env.LMS_BRIDGE_SECRET;
-
-  if (!lmsApiUrl) {
-    return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS2 backend" });
-  }
-
-  const employeeCode = ctx.access.employeeCode;
-  const email = ctx.access.user.email;
-
-  const body: Record<string, string> = {};
-  if (employeeCode) body.employee_id = employeeCode;
-  if (email) body.email = email;
-  if (bridgeSecret) body.bridge_token = bridgeSecret;
-
-  let bridgeRes: any;
   try {
-    const fetchRes = await fetch(`${lmsApiUrl}/api/auth/bridge`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    bridgeRes = await fetchRes.json();
-    if (!fetchRes.ok || !bridgeRes.ok) {
-      throw new Error(bridgeRes.message || `Bridge responded ${fetchRes.status}`);
-    }
+    const session = await buildLmsSession(req, ctx);
+    res.json({ success: true, ...session });
   } catch (e: any) {
     console.error("[lms/sso-session] bridge error:", e?.message);
+    if (e?.statusCode === 503) {
+      return res.status(503).json({ success: false, message: e.message });
+    }
     return res.status(502).json({ success: false, message: "LMS SSO unavailable. Please try again or contact support." });
   }
-
-  const userType: string = bridgeRes.userType ?? (
-    ctx.access.access.admin ? "admin" :
-    ctx.access.access.coordinator ? "coordinator" : "trainee"
-  );
-
-  const personaMap: Record<string, { route: string; storageKey: string }> = {
-    trainee:     { route: "/lms",         storageKey: "lms_token_trainee" },
-    coordinator: { route: "/coordinator", storageKey: "lms_token_coordinator" },
-    admin:       { route: "/admin",       storageKey: "lms_token_admin" },
-    management:  { route: "/management",  storageKey: "lms_token_management" },
-  };
-  const persona = personaMap[userType] ?? personaMap.trainee;
-
-  await db.execute(
-    `INSERT INTO lms_sync_audit_log (id, sync_type, records_synced, errors_count, status, initiated_by)
-     VALUES (?, 'sso_session', 1, 0, 'success', ?)`,
-    [randomUUID(), req.authUser!.id]
-  );
-
-  return res.json({
-    success: true,
-    lmsToken: bridgeRes.lms_token,
-    lmsUserType: userType,
-    lmsUserId: bridgeRes.userId ?? employeeCode,
-    route: persona.route,
-    storageKey: persona.storageKey,
-    launchUrl: `${lmsApiUrl}${persona.route}`,
-  });
 }));
 
 router.get("/launch-audit",

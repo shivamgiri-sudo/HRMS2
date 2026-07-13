@@ -1,11 +1,13 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { calculateTds } from "./payrollCalculate.service.js";
+import { payrollService } from "./payroll.service.js";
 
 /**
  * Payroll gap-fix service — addresses calculation gaps identified in Phase 0 audit:
  *  1. Working days calculation: holiday-calendar-aware (with 26-day fallback)
  *  2. LWP deduction formula — basis-config-aware
- *  3. Basic TDS slab projection — config-gated, no hardcoded defaults
+ *  3. Basic TDS slab projection — delegates to main calculateTds engine
  */
 
 // FIX E — exported TDS projection type
@@ -128,10 +130,8 @@ export const payrollGapsService = {
   },
 
   /**
-   * FIX E — Compute a basic projected TDS.
-   * Returns pending_configuration (tds: 0) when no tds_slab_* keys exist in statutory_config.
-   * Returns configured with computed TDS when keys are present.
-   * NO hardcoded slab defaults — admin must configure before projection runs.
+   * Compute a basic projected TDS by delegating to the main engine's calculateTds().
+   * Loads statutory_config from DB and calls the unified slab computation.
    */
   async computeBasicTds(annualTaxable: number): Promise<TdsProjection> {
     if (annualTaxable <= 0) {
@@ -151,75 +151,13 @@ export const payrollGapsService = {
       };
     }
 
-    // Load slab limits and rates from statutory_config
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT config_key, config_value FROM statutory_config WHERE config_key LIKE 'tds_slab_%'"
-    );
-    const slabMap: Record<string, number> = {};
-    for (const r of rows as { config_key: string; config_value: number }[]) {
-      slabMap[r.config_key] = Number(r.config_value);
-    }
-
-    const s1 = slabMap["tds_slab_1_limit"];
-    const s2 = slabMap["tds_slab_2_limit"];
-    const s3 = slabMap["tds_slab_3_limit"];
-    const s4 = slabMap["tds_slab_4_limit"];
-    const s5 = slabMap["tds_slab_5_limit"];
-
-    // All five limit keys are required for a valid computation
-    if (!s1 || !s2 || !s3 || !s4 || !s5) {
-      return {
-        tds: 0,
-        status: "pending_configuration",
-        note: "TDS projection requires approved tax slab configuration. No hardcoded defaults applied.",
-      };
-    }
-
-    if (annualTaxable <= s1) {
-      return {
-        tds: 0,
-        status: "configured",
-        note: "Provisional projection from statutory_config. Not a filed value.",
-      };
-    }
-
-    // All six rate keys are required — no hardcoded fallback rates
-    const r1 = slabMap["tds_slab_1_rate"];
-    const r2 = slabMap["tds_slab_2_rate"];
-    const r3 = slabMap["tds_slab_3_rate"];
-    const r4 = slabMap["tds_slab_4_rate"];
-    const r5 = slabMap["tds_slab_5_rate"];
-    const r6 = slabMap["tds_slab_6_rate"];
-
-    if (r1 === undefined || r2 === undefined || r3 === undefined ||
-        r4 === undefined || r5 === undefined || r6 === undefined) {
-      return {
-        tds: 0,
-        status: "pending_configuration",
-        note: "TDS projection requires approved tax slab configuration. No hardcoded defaults applied.",
-      };
-    }
-
-    const slabs = [
-      { from: 0,  to: s1,       rate: r1 },
-      { from: s1, to: s2,       rate: r2 },
-      { from: s2, to: s3,       rate: r3 },
-      { from: s3, to: s4,       rate: r4 },
-      { from: s4, to: s5,       rate: r5 },
-      { from: s5, to: Infinity, rate: r6 },
-    ];
-
-    let tax = 0;
-    for (const slab of slabs) {
-      if (annualTaxable <= slab.from) break;
-      const taxable = Math.min(annualTaxable, slab.to) - slab.from;
-      tax += taxable * slab.rate;
-    }
+    const statConfig = await payrollService.getStatutoryConfig();
+    const result = calculateTds(annualTaxable, statConfig);
 
     return {
-      tds: Math.round(tax * 100) / 100,
+      tds: result.tds_annual,
       status: "configured",
-      note: "Provisional projection from statutory_config. Not a filed value.",
+      note: "Provisional projection from statutory_config via unified TDS engine.",
     };
   },
 };

@@ -640,7 +640,9 @@ payrollMoreRouter.get("/overtime/config/processes", requireRole("admin", "super_
     SELECT p.id, p.process_code, p.process_name,
            COALESCE(pcf_allowed.config_value, 'false') AS overtime_allowed,
            COALESCE(pcf_rate.config_value, '1.5') AS overtime_rate_multiplier,
-           COALESCE(pcf_cap.config_value, '0') AS overtime_monthly_cap_hours
+           COALESCE(pcf_cap.config_value, '0') AS overtime_monthly_cap_hours,
+           COALESCE(pcf_min.config_value, '1') AS overtime_minimum_hours,
+           COALESCE(pcf_round.config_value, '1') AS overtime_rounding_unit
     FROM process_master p
     LEFT JOIN payroll_config_flags pcf_allowed
       ON pcf_allowed.process_id = p.id
@@ -654,6 +656,14 @@ payrollMoreRouter.get("/overtime/config/processes", requireRole("admin", "super_
       ON pcf_cap.process_id = p.id
      AND pcf_cap.branch_id IS NULL
      AND pcf_cap.config_key = 'overtime_monthly_cap_hours'
+    LEFT JOIN payroll_config_flags pcf_min
+      ON pcf_min.process_id = p.id
+     AND pcf_min.branch_id IS NULL
+     AND pcf_min.config_key = 'overtime_minimum_hours'
+    LEFT JOIN payroll_config_flags pcf_round
+      ON pcf_round.process_id = p.id
+     AND pcf_round.branch_id IS NULL
+     AND pcf_round.config_key = 'overtime_rounding_unit'
     WHERE p.active_status = 1
     ORDER BY p.process_name
   `);
@@ -664,10 +674,12 @@ payrollMoreRouter.get("/overtime/config/processes", requireRole("admin", "super_
 // Enable/disable overtime + set rate/cap for a process
 payrollMoreRouter.patch("/overtime/config/process/:processId", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { processId } = req.params;
-  const { overtime_allowed, overtime_rate_multiplier, overtime_monthly_cap_hours } = req.body as {
+  const { overtime_allowed, overtime_rate_multiplier, overtime_monthly_cap_hours, overtime_minimum_hours, overtime_rounding_unit } = req.body as {
     overtime_allowed?: boolean;
     overtime_rate_multiplier?: number;
     overtime_monthly_cap_hours?: number;
+    overtime_minimum_hours?: number;
+    overtime_rounding_unit?: number;
   };
 
   if (overtime_allowed !== undefined) {
@@ -692,6 +704,22 @@ payrollMoreRouter.patch("/overtime/config/process/:processId", requireRole("admi
       VALUES (UUID(), ?, 'overtime_monthly_cap_hours', ?, 'Monthly OT cap hours for this process')
       ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
     `, [processId, String(overtime_monthly_cap_hours)]);
+  }
+
+  if (overtime_minimum_hours !== undefined) {
+    await db.execute(`
+      INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
+      VALUES (UUID(), ?, 'overtime_minimum_hours', ?, 'Minimum OT hours threshold for this process')
+      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
+    `, [processId, String(overtime_minimum_hours)]);
+  }
+
+  if (overtime_rounding_unit !== undefined) {
+    await db.execute(`
+      INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
+      VALUES (UUID(), ?, 'overtime_rounding_unit', ?, 'OT rounding granularity (floor) for this process')
+      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
+    `, [processId, String(overtime_rounding_unit)]);
   }
 
   return res.json({ success: true, message: 'Overtime configuration updated for process' });

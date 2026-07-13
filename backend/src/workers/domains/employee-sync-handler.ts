@@ -1,6 +1,7 @@
 import { getLegacyPool } from '../../db/legacyDb.js';
 import { db as mysqlDb } from '../../db/mysql.js';
 import { randomUUID } from 'crypto';
+import { provisionLmsIdentityForEmployee } from '../../modules/lms/lms-provisioning.service.js';
 
 interface LegacyEmployee {
   id: number;
@@ -300,6 +301,15 @@ export class EmployeeSyncHandler {
           inserted++;
         } else {
           updated++;
+        }
+
+        try {
+          const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode: record.employee_code });
+          if (lmsResult.message) {
+            console.warn(`[Employee Sync] LMS provisioning for ${record.employee_code}: ${lmsResult.message}`);
+          }
+        } catch (err) {
+          console.error(`[Employee Sync] LMS provisioning failed for ${record.employee_code}:`, err instanceof Error ? err.message : String(err));
         }
       } catch (error: any) {
         console.error(`[Employee Sync] Failed to sync ${record.employee_code}:`, error.message);
