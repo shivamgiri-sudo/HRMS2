@@ -738,9 +738,30 @@ payrollMoreRouter.patch("/overtime/config/process/:processId", requireRole("admi
 // M5 — BULK PAYSLIP OUTPUTS
 // ══════════════════════════════════════════════════════════════════════════════
 
-interface BulkJob { runId: string; status: "pending"|"running"|"done"|"error"; total: number; done: number; failed: number; startedAt: string; finishedAt?: string; error?: string; }
+type BulkJobStatus = "pending" | "running" | "done" | "error";
+interface BulkJob {
+  runId: string;
+  status: BulkJobStatus;
+  total: number;
+  done: number;
+  failed: number;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+}
 // In-memory job tracker (per-process; resets on server restart — acceptable for bulk ops)
 const bulkJobs = new Map<string, BulkJob>();
+
+function createBulkJob(runId: string, total: number): BulkJob {
+  return {
+    runId,
+    status: "running",
+    total,
+    done: 0,
+    failed: 0,
+    startedAt: new Date().toISOString(),
+  };
+}
 
 // POST /api/payroll/runs/:id/bulk-generate-payslips
 // Enqueue a bulk payslip generation job
@@ -762,7 +783,7 @@ payrollMoreRouter.post("/runs/:id/bulk-generate-payslips",
     const total = Number((countRow as any[])[0]?.cnt ?? 0);
     if (total === 0) return res.status(400).json({ success: false, message: "No payroll lines in this run" });
 
-    const job: BulkJob = { runId, status: "running", total, done: 0, failed: 0, startedAt: new Date().toISOString() };
+    const job = createBulkJob(runId, total);
     bulkJobs.set(runId, job);
 
     // Fire-and-forget — mark each line as payslip_generated
