@@ -39,8 +39,27 @@ import { Textarea } from "../../components/ui/textarea";
 import { useWorkforceAccess } from "../../hooks/useUserRole";
 import { hrmsApi } from "../../lib/hrmsApi";
 import { useFreezeAttendance } from "../../hooks/usePayroll";
+import { useQuery } from "@tanstack/react-query";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface BranchReadinessRow {
+  branch_id: string;
+  branch_name?: string;
+  employee_count: number;
+  attendance_frozen: number | boolean;
+  incentives_status: string;
+  bank_details_pct: number;
+  uan_complete_pct: number;
+  readiness_score: number;
+  readiness_status: "not_started" | "in_progress" | "ready" | "blocked";
+}
+
+interface BranchReadinessSummary {
+  rows: BranchReadinessRow[];
+  ready_count: number;
+  total_count: number;
+}
 
 interface PayrollRun {
   id: number | string;
@@ -127,6 +146,117 @@ function AttSourceBadge({ source, dataSource }: { source?: string | null; dataSo
     >
       {isDialler ? "APR/Dialler" : "Biometric"}
     </Badge>
+  );
+}
+
+function BranchReadinessGrid({ month }: { month: string }) {
+  const { data, isError } = useQuery<BranchReadinessSummary>({
+    queryKey: ["branch-readiness-summary", month],
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>(
+        `/api/payroll/branch-readiness/summary?month=${month}`,
+      );
+      return res as BranchReadinessSummary;
+    },
+    enabled: !!month,
+    retry: false,
+  });
+
+  if (isError || !data) return null;
+  if (!data.rows || data.rows.length === 0) return null;
+
+  const statusColor = (s: BranchReadinessRow["readiness_status"]) => {
+    if (s === "ready") return "bg-green-50 text-green-800 border-green-200";
+    if (s === "in_progress") return "bg-amber-50 text-amber-800 border-amber-200";
+    return "bg-red-50 text-red-800 border-red-200";
+  };
+
+  const readyCount = data.ready_count ?? data.rows.filter((r) => r.readiness_status === "ready").length;
+  const totalCount = data.total_count ?? data.rows.length;
+
+  return (
+    <Card>
+      <CardHeader className="px-6 py-3 border-b flex flex-row items-center justify-between">
+        <CardTitle className="text-sm font-semibold text-slate-800">
+          Branch Readiness Status
+        </CardTitle>
+        <span
+          className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
+            readyCount === totalCount
+              ? "bg-green-100 text-green-800 border-green-200"
+              : "bg-amber-100 text-amber-800 border-amber-200"
+          }`}
+        >
+          {readyCount} of {totalCount} branches ready for payroll
+        </span>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50">
+                <TableHead className="whitespace-nowrap">Branch</TableHead>
+                <TableHead className="whitespace-nowrap text-right">Employees</TableHead>
+                <TableHead className="whitespace-nowrap text-center">Att. Frozen</TableHead>
+                <TableHead className="whitespace-nowrap text-center">Incentives</TableHead>
+                <TableHead className="whitespace-nowrap text-right">Bank%</TableHead>
+                <TableHead className="whitespace-nowrap text-right">UAN%</TableHead>
+                <TableHead className="whitespace-nowrap text-right">Score</TableHead>
+                <TableHead className="whitespace-nowrap text-center">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.rows.map((row) => (
+                <TableRow key={row.branch_id} className="hover:bg-slate-50">
+                  <TableCell className="font-medium text-sm whitespace-nowrap">
+                    {row.branch_name ?? row.branch_id}
+                  </TableCell>
+                  <TableCell className="text-right text-sm">{row.employee_count}</TableCell>
+                  <TableCell className="text-center">
+                    {row.attendance_frozen ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600 mx-auto" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-red-400 mx-auto" />
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        row.incentives_status === "approved"
+                          ? "bg-green-100 text-green-700"
+                          : row.incentives_status === "uploaded"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {row.incentives_status === "not_uploaded" ? "Not Uploaded" : row.incentives_status}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right text-sm font-mono">
+                    {Number(row.bank_details_pct).toFixed(1)}%
+                  </TableCell>
+                  <TableCell className="text-right text-sm font-mono">
+                    {Number(row.uan_complete_pct).toFixed(1)}%
+                  </TableCell>
+                  <TableCell className="text-right text-sm font-semibold">
+                    {Number(row.readiness_score).toFixed(1)}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium border ${statusColor(
+                        row.readiness_status,
+                      )}`}
+                    >
+                      {row.readiness_status.replace("_", " ")}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -273,6 +403,9 @@ export default function PayrollValidationScreen() {
     }
   };
 
+  // ── Selected month (derived from run) ───────────────────────────────────────
+  const selectedMonth = selectedRun?.run_month ?? "";
+
   // ── KPI aggregates ───────────────────────────────────────────────────────────
   const totalEmployees = lines.length;
   const totalGross = lines.reduce(
@@ -398,6 +531,9 @@ export default function PayrollValidationScreen() {
             </Button>
           </div>
         </div>
+
+        {/* Branch Readiness Status */}
+        {selectedMonth && <BranchReadinessGrid month={selectedMonth} />}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

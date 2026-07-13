@@ -316,6 +316,10 @@ SOURCE sql/376_break_management_module.sql;
 SOURCE sql/393_break_kiosk_allowed_processes.sql;
 SOURCE sql/394_auto_roster_synced_tables.sql;
 
+-- ── Payroll readiness / calendar (400–401) ────────────────────────────────────
+SOURCE sql/400_payroll_branch_readiness.sql;
+SOURCE sql/401_payroll_calendar.sql;
+
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
 SOURCE sql/999_create_missing_engagement_tables.sql;

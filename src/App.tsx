@@ -199,6 +199,9 @@ const HolidayWorkRequest            = lazy(() => import("./pages/payroll/Holiday
 const HolidayWorkApprovals          = lazy(() => import("./pages/payroll/HolidayWorkApprovals"));
 const PayrollValidationScreen       = lazy(() => import("./pages/payroll/PayrollValidationScreen"));
 const NocManagement                 = lazy(() => import("./pages/payroll/NocManagement"));
+const BranchPayrollReadiness        = lazy(() => import("./pages/payroll/BranchPayrollReadiness"));
+const PayrollCalendar               = lazy(() => import("./pages/payroll/PayrollCalendar"));
+const PayrollCostSummary            = lazy(() => import("./pages/payroll/PayrollCostSummary"));
 const WeekoffFairness               = lazy(() => import("./pages/wfm/WeekoffFairness"));
 
 // Communication
@@ -536,6 +539,9 @@ const App = () => (
               <Route path="/payroll/holiday-work-approvals" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm']}><HolidayWorkApprovals /></ProtectedRoute>} />
               <Route path="/payroll/validation" element={<ProtectedRoute roles={['super_admin','payroll_head']}><PayrollValidationScreen /></ProtectedRoute>} />
               <Route path="/payroll/noc" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><NocManagement /></ProtectedRoute>} />
+              <Route path="/payroll/branch-readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch']}><BranchPayrollReadiness /></ProtectedRoute>} />
+              <Route path="/payroll/calendar" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><PayrollCalendar /></ProtectedRoute>} />
+              <Route path="/payroll/cost-summary" element={<ProtectedRoute roles={['super_admin','payroll_head','finance']}><PayrollCostSummary /></ProtectedRoute>} />
               <Route path="/wfm/weekoff-fairness" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
 
               {/* Communication */}
