@@ -227,7 +227,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        q_token,
        applied_for_process,
        applied_for_branch,
-       status,
+       COALESCE(status, current_stage, 'Waiting') AS status,
        recruiter_assigned_name,
        TIMESTAMPDIFF(MINUTE,
          CONCAT(COALESCE(created_date, DATE(created_at)), ' ', COALESCE(created_time, TIME(created_at))),
@@ -236,7 +236,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
      FROM ats_candidate
      WHERE active_status = 1
        ${recruiterClause}
-       AND status = 'Waiting'
+       AND (status = 'Waiting' OR (status IS NULL AND current_stage IN ('New', 'Applied', 'Screening', 'Registered')))
      ORDER BY pending_minutes DESC`,
     params
   );

@@ -41,14 +41,15 @@ export const moveStagingSchema = z.object({
 });
 
 export const candidateFiltersSchema = z.object({
-  page:      z.coerce.number().int().min(1).default(1),
-  limit:     z.coerce.number().int().min(1).max(500).default(50),
-  stage:     z.string().optional(),
-  branch:    z.string().optional(),
-  process:   z.string().optional(),
-  search:    z.string().optional(),
-  fromDate:  z.string().regex(DATE_RE).optional(),
-  toDate:    z.string().regex(DATE_RE).optional(),
+  page:            z.coerce.number().int().min(1).default(1),
+  limit:           z.coerce.number().int().min(1).max(500).default(50),
+  stage:           z.string().optional(),
+  branch:          z.string().optional(),
+  process:         z.string().optional(),
+  search:          z.string().optional(),
+  fromDate:        z.string().regex(DATE_RE).optional(),
+  toDate:          z.string().regex(DATE_RE).optional(),
+  sourcingChannel: z.string().optional(),
 });
 
 export const createOnboardingBridgeSchema = z.object({

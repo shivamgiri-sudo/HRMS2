@@ -121,19 +121,27 @@ export default function NativeATSWaitingQueue() {
     void load();
   }, []);
 
-  const branches = useMemo(() => ["All", ...Array.from(new Set(rows.map((r) => r.branch_name || r.assignment?.branch_name || "Unmapped"))).sort()], [rows]);
-  const recruiters = useMemo(() => ["All", ...Array.from(new Set(rows.map((r) => r.assignment?.recruiter_name || r.recruiter_name || "Unassigned"))).sort()], [rows]);
+  const branches = useMemo(() => {
+    const uniqueBranches = Array.from(new Set(rows.map((r) => (r.branch_name || r.assignment?.branch_name || "Unmapped").trim()).filter(Boolean)));
+    return ["All", ...uniqueBranches.sort()];
+  }, [rows]);
+
+  const recruiters = useMemo(() => {
+    const uniqueRecruiters = Array.from(new Set(rows.map((r) => (r.assignment?.recruiter_name || r.recruiter_name || "Unassigned").trim()).filter(Boolean)));
+    return ["All", ...uniqueRecruiters.sort()];
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
-      const branchName = r.branch_name || r.assignment?.branch_name || "Unmapped";
-      const recruiterName = r.assignment?.recruiter_name || r.recruiter_name || "Unassigned";
+      const branchName = (r.branch_name || r.assignment?.branch_name || "Unmapped").trim();
+      const recruiterName = (r.assignment?.recruiter_name || r.recruiter_name || "Unassigned").trim();
       const text = [r.candidate_code, r.full_name, r.mobile, r.email, branchName, recruiterName, r.role_applied].join(" ").toLowerCase();
-      return inDateRange(r.created_at, fromDate, toDate)
-        && (branch === "All" || branchName === branch)
-        && (recruiter === "All" || recruiterName === recruiter)
-        && (!q || text.includes(q));
+      const matchDate = inDateRange(r.created_at, fromDate, toDate);
+      const matchBranch = branch === "All" || branchName === branch;
+      const matchRecruiter = recruiter === "All" || recruiterName === recruiter;
+      const matchSearch = !q || text.includes(q);
+      return matchDate && matchBranch && matchRecruiter && matchSearch;
     });
   }, [rows, search, fromDate, toDate, branch, recruiter]);
 
@@ -167,12 +175,57 @@ export default function NativeATSWaitingQueue() {
 
         <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="grid gap-3 lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr]">
-            <label className="relative block"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, mobile, candidate ID, recruiter..." className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-3 text-sm outline-none focus:border-blue-400" /></label>
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-blue-400" />
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-blue-400" />
-            <select value={branch} onChange={(e) => setBranch(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-blue-400">{branches.map((b) => <option key={b}>{b}</option>)}</select>
-            <select value={recruiter} onChange={(e) => setRecruiter(e.target.value)} className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-blue-400">{recruiters.map((r) => <option key={r}>{r}</option>)}</select>
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, mobile, candidate ID, recruiter..."
+                className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-3 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            />
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            />
+            <select
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              className={`h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${branch !== "All" ? "bg-blue-50 border-blue-300 text-blue-900" : ""}`}
+            >
+              {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <select
+              value={recruiter}
+              onChange={(e) => setRecruiter(e.target.value)}
+              className={`h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${recruiter !== "All" ? "bg-blue-50 border-blue-300 text-blue-900" : ""}`}
+            >
+              {recruiters.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
           </div>
+          {(branch !== "All" || recruiter !== "All" || search.trim()) && (
+            <div className="mt-3 flex items-center gap-2 text-sm">
+              <Filter className="h-4 w-4 text-blue-600" />
+              <span className="font-semibold text-slate-700">Active filters:</span>
+              <span className="text-slate-600">
+                Showing {filtered.length} of {rows.length} candidates
+              </span>
+              <button
+                onClick={() => { setBranch("All"); setRecruiter("All"); setSearch(""); }}
+                className="ml-auto text-xs font-bold text-blue-600 hover:text-blue-700"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">

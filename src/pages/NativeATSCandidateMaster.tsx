@@ -787,7 +787,7 @@ export default function NativeATSCandidateMaster() {
     try {
       const endpoint = isRecruiter
         ? "/api/ats/recruiter/my-candidates"
-        : "/api/ats/candidates?limit=500&page=1";
+        : "/api/ats/candidates?limit=500&page=1&sourcingChannel=Walk-In";
       const res = await hrmsApi.get<{ success: boolean; data: any[]; total?: number }>(endpoint);
       const raw: any[] = res.data ?? [];
       const enriched: EnrichedCandidate[] = raw.map((c: any): EnrichedCandidate => ({

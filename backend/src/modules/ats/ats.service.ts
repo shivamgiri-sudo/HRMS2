@@ -45,6 +45,7 @@ export const atsService = {
     if (filters.stage)    { conds.push("current_stage = ?");         params.push(filters.stage); }
     if (filters.branch)   { conds.push("applied_for_branch = ?");   params.push(filters.branch); }
     if (filters.process)  { conds.push("applied_for_process = ?");  params.push(filters.process); }
+    if (filters.sourcingChannel) { conds.push("sourcing_channel = ?"); params.push(filters.sourcingChannel); }
     if (filters.search) {
       conds.push("(full_name LIKE ? OR mobile LIKE ? OR candidate_code LIKE ?)");
       const search = `%${filters.search}%`;
