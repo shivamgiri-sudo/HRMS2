@@ -4,7 +4,6 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
-import { VitePWA } from "vite-plugin-pwa";
 
 function versionUpdatePlugin(): Plugin {
   return {
@@ -37,50 +36,6 @@ export default defineConfig(({ mode }) => ({
     react(),
     mode === "development" && componentTagger(),
     mode === "production" && versionUpdatePlugin(),
-    VitePWA({
-      registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "favicon.svg", "pwa-192x192.png", "pwa-512x512.png"],
-      workbox: {
-        navigateFallbackDenylist: [/^\/~oauth/],
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        importScripts: ["sw-push.js"],
-      },
-      manifest: {
-        name: "Peoplo - HR Management System",
-        short_name: "Peoplo",
-        description: "Comprehensive HR management system for employee onboarding, leave tracking, asset management, and payroll processing.",
-        theme_color: "#0284C5",
-        background_color: "#edf3f7",
-        display: "standalone",
-        orientation: "portrait-primary",
-        scope: "/",
-        start_url: "/",
-        icons: [
-          {
-            src: "favicon.svg",
-            sizes: "any",
-            type: "image/svg+xml",
-          },
-          {
-            src: "pwa-192x192.png",
-            sizes: "192x192",
-            type: "image/png",
-          },
-          {
-            src: "pwa-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-          },
-          {
-            src: "pwa-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any maskable",
-          },
-        ],
-      },
-    }),
   ].filter(Boolean),
   resolve: {
     alias: {
