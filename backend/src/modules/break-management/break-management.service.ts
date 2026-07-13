@@ -98,6 +98,7 @@ const AUTO_CLOSE_CHECK_INTERVAL_MS = 15_000;
 const autoCloseState = new Map<string, { lastRunAt: number; promise: Promise<void> | null }>();
 const HARD_MAX_DAILY_BREAK_MINUTES = 60;
 const HARD_MAX_SINGLE_BREAK_MINUTES = 30;
+const MINIMUM_SHIFT_COMPLETION_MINUTES = 9 * 60;
 
 function normalizeJsonArray(value: unknown): string[] {
   if (!value) return [];
@@ -509,11 +510,27 @@ function resolveCompletedBreakStatus(input: {
   return "COMPLETED" as const;
 }
 
+function resolveShiftWorkedMinutes(row: {
+  biometric_minutes?: unknown;
+  biometric_punch_in_time?: unknown;
+  biometric_punch_out_time?: unknown;
+}) {
+  const biometricMinutes = Number(row.biometric_minutes ?? 0);
+  if (Number.isFinite(biometricMinutes) && biometricMinutes > 0) {
+    return biometricMinutes;
+  }
+  if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
+    return minutesBetween(String(row.biometric_punch_in_time), String(row.biometric_punch_out_time)).minutes;
+  }
+  return 0;
+}
+
 function deriveStatus(row: any, settings: BreakSettingsRow) {
   const activeMinutes = row.active_break_start_time
     ? minutesBetween(row.active_break_start_time, currentIstDateTime().dateTime).minutes
     : 0;
   const isExceeded = Boolean(row.active_break_id) && activeMinutes >= Number(settings.active_break_alert_minutes ?? 10);
+  const workedMinutes = resolveShiftWorkedMinutes(row);
 
   if (row.leave_name) {
     return { label: "Leave", tone: "leave", activeMinutes, isExceeded };
@@ -524,7 +541,7 @@ function deriveStatus(row: any, settings: BreakSettingsRow) {
   if (row.active_break_id) {
     return { label: isExceeded ? "Break Exceeded" : "On Break", tone: isExceeded ? "danger" : "warning", activeMinutes, isExceeded };
   }
-  if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
+  if (row.biometric_punch_in_time && row.biometric_punch_out_time && workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES) {
     return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
   }
   if (row.biometric_punch_in_time) {
@@ -575,11 +592,16 @@ async function rebuildDailySummary(employeeId: string, employeeCode: string, shi
   const totals = (sessionRows as any[])[0] ?? {};
   const rosterStatus = (rosterRows as any[])[0]?.roster_status ?? null;
   const leaveName = (leaveRows as any[])[0]?.leave_name ?? null;
+  const workedMinutes = resolveShiftWorkedMinutes({
+    biometric_minutes: biometric.biometricMinutes,
+    biometric_punch_in_time: biometric.punchIn,
+    biometric_punch_out_time: biometric.punchOut,
+  });
   const attendanceStatus = leaveName
     ? "Leave"
     : String(rosterStatus ?? "").toLowerCase().includes("week off")
       ? "W/O"
-      : biometric.punchIn && biometric.punchOut
+      : biometric.punchIn && biometric.punchOut && workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES
         ? "Shift Completed"
         : biometric.punchIn
           ? "On Duty"
