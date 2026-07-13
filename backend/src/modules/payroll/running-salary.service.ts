@@ -214,7 +214,20 @@ export async function computeRunningSalary(
     projectedEligibleWeekoffs + eligibleHolidaysTillDate + futureHolidays +
     futurePresent;
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
-  const projectedSalary = (monthlyGross / activeCalDays) * projectedPayableDays;
+  let projectedSalary = (monthlyGross / activeCalDays) * projectedPayableDays;
+
+  // E1.9: Add approved incentives to projected salary
+  const [incentiveRows] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(COALESCE(iul.amount, 0)) AS total_incentives
+       FROM incentive_upload_line iul
+       JOIN incentive_batch_upload ibu ON ibu.id = iul.batch_id
+      WHERE iul.employee_id = ?
+        AND ibu.month = ?
+        AND ibu.status = 'approved'`,
+    [employeeId, runMonth.slice(0, 7)]
+  );
+  const approvedIncentives = Number((incentiveRows[0] as any)?.total_incentives ?? 0);
+  projectedSalary += approvedIncentives;
 
   // Prorated deductions on projected gross
   const ptProjected = emp.state_code

@@ -144,6 +144,8 @@ const Payroll = () => {
   const [selectedRecord, setSelectedRecord] = useState<PayrollRecord | null>(
     null
   );
+  const [branchBreakdownOpen, setBranchBreakdownOpen] = useState(false);
+  const [branchBreakdownRunId, setBranchBreakdownRunId] = useState<string | null>(null);
 
   const { toast } = useToast();
   const { canAccessPayroll, isLoading: roleLoading } = useCanAccessPayroll();
@@ -847,18 +849,32 @@ const Payroll = () => {
           }
         />
 
-        <KpiCardGrid>
-          {payrollStats.map((stat) => (
-            <KpiCard
-              key={stat.label}
-              title={stat.label}
-              value={stat.value}
-              description={stat.description}
-              icon={stat.icon}
-              tone={stat.tone}
-            />
-          ))}
-        </KpiCardGrid>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <KpiCardGrid>
+            {payrollStats.map((stat) => (
+              <KpiCard
+                key={stat.label}
+                title={stat.label}
+                value={stat.value}
+                description={stat.description}
+                icon={stat.icon}
+                tone={stat.tone}
+              />
+            ))}
+          </KpiCardGrid>
+          {currentMonthRun && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setBranchBreakdownRunId(currentMonthRun.id);
+                setBranchBreakdownOpen(true);
+              }}
+            >
+              Branch Breakdown
+            </Button>
+          )}
+        </div>
 
         {/* Incentive-applied warning: shown when current month run has incentives locked in */}
         {currentMonthRun?.incentives_applied_at && (
@@ -1440,7 +1456,79 @@ function FinanceApprovalQueue() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* E1.1: Branch Breakdown Modal */}
+      <BranchBreakdownDialog
+        open={branchBreakdownOpen}
+        onOpenChange={setBranchBreakdownOpen}
+        runId={branchBreakdownRunId}
+      />
     </div>
+  );
+}
+
+// E1.1: Branch Breakdown Dialog Component
+function BranchBreakdownDialog({
+  open,
+  onOpenChange,
+  runId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  runId: string | null;
+}) {
+  const { data: breakdown, isLoading } = useQuery({
+    queryKey: ["payroll-branch-breakdown", runId],
+    queryFn: async () => {
+      if (!runId) return [];
+      const response = await hrmsApi.get(`/payroll/runs/${runId}/branch-breakdown`);
+      return response.data.data ?? [];
+    },
+    enabled: open && !!runId,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Branch Breakdown</DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-full" />
+          </div>
+        ) : (
+          <div className="relative overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-left">
+                <tr>
+                  <th className="px-4 py-2 font-semibold">Branch</th>
+                  <th className="px-4 py-2 font-semibold text-right">Employee Count</th>
+                  <th className="px-4 py-2 font-semibold text-right">Total Gross</th>
+                  <th className="px-4 py-2 font-semibold text-right">Total Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdown?.map((row: any, idx: number) => (
+                  <tr key={idx} className="border-b">
+                    <td className="px-4 py-2">{row.branch_name}</td>
+                    <td className="px-4 py-2 text-right">{row.employee_count}</td>
+                    <td className="px-4 py-2 text-right">
+                      ₹{Number(row.total_gross).toLocaleString("en-IN")}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      ₹{Number(row.total_net).toLocaleString("en-IN")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

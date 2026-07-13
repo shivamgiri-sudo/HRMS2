@@ -198,6 +198,27 @@ router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "
 
 router.patch("/runs/:id/status", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateRunStatus));
 router.get("/runs/:id/lines", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listLines));
+
+// E1.1: Branch breakdown for payroll dashboard
+router.get("/runs/:id/branch-breakdown", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const runId = req.params.id;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(bm.branch_name, 'Unassigned') AS branch_name,
+       COUNT(DISTINCT spl.employee_id) AS employee_count,
+       COALESCE(SUM(spl.gross_salary), 0) AS total_gross,
+       COALESCE(SUM(spl.net_salary), 0) AS total_net
+     FROM salary_prep_line spl
+     LEFT JOIN employees e ON e.id = spl.employee_id
+     LEFT JOIN branch_master bm ON bm.id = e.branch_id
+     WHERE spl.run_id = ?
+     GROUP BY e.branch_id, bm.branch_name
+     ORDER BY bm.branch_name ASC`,
+    [runId]
+  );
+  return res.json({ success: true, data: rows ?? [] });
+}));
+
 router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
   try {
     await assertRunEditable(req.params.id);

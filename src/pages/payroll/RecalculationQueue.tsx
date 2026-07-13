@@ -52,6 +52,14 @@ export default function RecalculationQueue() {
   const [trigError, setTrigError] = useState<string | null>(null);
   const [trigSuccess, setTrigSuccess] = useState<string | null>(null);
 
+  // E1.8: Bulk recalculation state
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkRunId, setBulkRunId] = useState("");
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkSuccess, setBulkSuccess] = useState<string | null>(null);
+
   const fetchQueue = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -108,6 +116,29 @@ export default function RecalculationQueue() {
     }
   };
 
+  // E1.8: Submit bulk recalculation for entire run
+  const submitBulkRecalculation = async () => {
+    if (!bulkRunId) return;
+    setBulkSubmitting(true);
+    setBulkError(null);
+    setBulkSuccess(null);
+    try {
+      await hrmsApi.post("/api/payroll/recalculation-queue/bulk", {
+        run_id: bulkRunId,
+        reason: bulkReason || "Bulk recalculation request",
+      });
+      setBulkSuccess("Bulk recalculation queued for all employees in this run");
+      setBulkRunId("");
+      setBulkReason("");
+      setShowBulkModal(false);
+      fetchQueue();
+    } catch (e: any) {
+      setBulkError(e.message ?? "Failed to queue bulk recalculation");
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
   if (!ALLOWED_ROLES.some(r => roleKeys.includes(r))) {
     return (
       <DashboardLayout>
@@ -125,9 +156,14 @@ export default function RecalculationQueue() {
             <p className="text-sm text-muted-foreground mt-0.5">Monitor automatic recalculation events triggered by regularization, roster changes, or manual request.</p>
           </div>
           {canTrigger && (
-            <Button size="sm" variant="outline" onClick={() => setShowTrigger(p => !p)}>
-              {showTrigger ? "Hide Trigger" : "+ Trigger Recalculation"}
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setShowTrigger(p => !p)}>
+                {showTrigger ? "Hide Trigger" : "+ Trigger Recalculation"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowBulkModal(true)}>
+                Bulk Recalculate for Run
+              </Button>
+            </div>
           )}
         </div>
 
@@ -253,6 +289,64 @@ export default function RecalculationQueue() {
             </tbody>
           </table>
         </div>
+
+        {/* E1.8: Bulk Recalculation Modal */}
+        {showBulkModal && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+            <Card className="w-full max-w-md mx-4">
+              <CardHeader>
+                <CardTitle>Bulk Recalculate for Run</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {bulkSuccess && (
+                  <div className="p-3 bg-green-50 text-green-800 text-sm rounded border border-green-200">
+                    {bulkSuccess}
+                  </div>
+                )}
+                {bulkError && (
+                  <div className="p-3 bg-red-50 text-red-800 text-sm rounded border border-red-200">
+                    {bulkError}
+                  </div>
+                )}
+                <div>
+                  <label className="text-sm font-medium block mb-1">Run ID <span className="text-red-500">*</span></label>
+                  <Input
+                    placeholder="Enter payroll run ID"
+                    value={bulkRunId}
+                    onChange={(e) => setBulkRunId(e.target.value)}
+                    disabled={bulkSubmitting}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium block mb-1">Reason</label>
+                  <Input
+                    placeholder="Enter reason for recalculation"
+                    value={bulkReason}
+                    onChange={(e) => setBulkReason(e.target.value)}
+                    disabled={bulkSubmitting}
+                  />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowBulkModal(false)}
+                    disabled={bulkSubmitting}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={submitBulkRecalculation}
+                    disabled={bulkSubmitting || !bulkRunId}
+                  >
+                    {bulkSubmitting ? "Submitting..." : "Submit"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

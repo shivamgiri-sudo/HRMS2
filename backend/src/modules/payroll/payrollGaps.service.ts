@@ -129,35 +129,4 @@ export const payrollGapsService = {
     };
   },
 
-  /**
-   * Compute a basic projected TDS by delegating to the main engine's calculateTds().
-   * Loads statutory_config from DB and calls the unified slab computation.
-   */
-  async computeBasicTds(annualTaxable: number): Promise<TdsProjection> {
-    if (annualTaxable <= 0) {
-      return {
-        tds: 0,
-        status: "configured",
-        note: "Annual taxable income is zero or negative — no TDS applicable.",
-      };
-    }
-
-    const hasConfig = await checkTdsConfigExists();
-    if (!hasConfig) {
-      return {
-        tds: 0,
-        status: "pending_configuration",
-        note: "TDS projection requires approved tax slab configuration. No hardcoded defaults applied.",
-      };
-    }
-
-    const statConfig = await payrollService.getStatutoryConfig();
-    const result = calculateTds(annualTaxable, statConfig);
-
-    return {
-      tds: result.tds_annual,
-      status: "configured",
-      note: "Provisional projection from statutory_config via unified TDS engine.",
-    };
-  },
 };

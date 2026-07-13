@@ -228,6 +228,51 @@ payrollMoreRouter.post("/recalculation-queue", requireRole("admin", "super_admin
   return res.status(201).json({ success: true, data: rows[0] });
 }));
 
+// E1.8: Bulk recalculation for entire payroll run
+payrollMoreRouter.post("/recalculation-queue/bulk", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { run_id, reason } = req.body as { run_id: string; reason?: string };
+  if (!run_id) {
+    return res.status(400).json({ success: false, message: "run_id is required" });
+  }
+
+  // Get all employees in the run
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT spl.employee_id FROM salary_prep_line spl WHERE spl.run_id = ?`,
+    [run_id]
+  );
+  const employees = empRows as Array<{ employee_id: string }>;
+
+  // Get run month for month reference
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
+    [run_id]
+  );
+  const run = (runRows as any[])[0];
+  if (!run) {
+    return res.status(404).json({ success: false, message: "Run not found" });
+  }
+
+  const monthStart = `${run.run_month}-01`;
+  const { v4: uuidv4 } = await import("uuid");
+
+  // Create recalc queue entries for each employee
+  for (const emp of employees) {
+    const id = uuidv4();
+    await db.execute(
+      `INSERT INTO payroll_recalculation_queue
+         (id, employee_id, payroll_month, source_event_type, reason, status, requested_by, requested_at)
+       VALUES (?, ?, ?, 'bulk_run_recalc', ?, 'pending', ?, NOW())`,
+      [id, emp.employee_id, monthStart, reason ?? "Bulk run recalculation", req.authUser!.id]
+    );
+  }
+
+  return res.status(201).json({
+    success: true,
+    message: `Queued recalculation for ${employees.length} employees in run ${run_id}`,
+    count: employees.length,
+  });
+}));
+
 // ─── Holiday Master ───────────────────────────────────────────────────────────
 
 payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {

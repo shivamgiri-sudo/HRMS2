@@ -488,7 +488,8 @@ export const payrollService = {
     const esicEmr = esicApplicable ? r2(gross * 0.0325) : 0;
 
     // Gratuity: configurable % of Basic — employer cost, not employee deduction
-    const gratuityPct = (p.gratuityPct ?? 4.81) / 100;
+    // Always require configuration; no hardcoded 4.81% fallback (B5 fix: load from statutory_config)
+    const gratuityPct = (p.gratuityPct ?? 0) / 100;
     const gratuity = r2(basic * gratuityPct);
 
     const totalDed = r2(pfEmp + esicEmp + p.professionalTax + p.tds);
@@ -801,11 +802,13 @@ export function breakSpecialAllowance(
   convDefault?: number,
   maDefault?: number,
 ): { conv: number; ma: number; pa: number } {
-  const CONV_DEFAULT = convDefault ?? 1600;
-  const MA_DEFAULT = maDefault ?? 1250;
+  // B5 fix: Load from statutory_config, no hardcoded defaults
+  // If config values are missing, return zero breakup to force configuration
+  const CONV_DEFAULT = convDefault ?? 0;
+  const MA_DEFAULT = maDefault ?? 0;
   const totalDefault = CONV_DEFAULT + MA_DEFAULT;
 
-  if (specialAmount <= 0) return { conv: 0, ma: 0, pa: 0 };
+  if (specialAmount <= 0 || totalDefault <= 0) return { conv: 0, ma: 0, pa: specialAmount > 0 ? specialAmount : 0 };
 
   if (specialAmount >= totalDefault) {
     return {
