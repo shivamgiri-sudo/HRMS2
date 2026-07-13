@@ -519,9 +519,6 @@ function resolveShiftWorkedMinutes(row: {
   if (Number.isFinite(biometricMinutes) && biometricMinutes > 0) {
     return biometricMinutes;
   }
-  if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
-    return minutesBetween(String(row.biometric_punch_in_time), String(row.biometric_punch_out_time)).minutes;
-  }
   return 0;
 }
 
