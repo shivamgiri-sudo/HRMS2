@@ -774,7 +774,7 @@ async function sendBreakAlertIfNeeded(sessionId: string) {
         pm.process_name,
         dm.dept_name AS department_name,
         COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name,
-        COALESCE(NULLIF(TRIM(mgr.official_email), ''), NULLIF(TRIM(mgr.email), '')) AS manager_email
+        COALESCE(NULLIF(TRIM(mgr.email), ''), NULLIF(TRIM(mgr.email), '')) AS manager_email
        FROM break_sessions bs
        JOIN employees e ON e.id = bs.employee_id
        LEFT JOIN branch_master bm ON bm.id = bs.branch_id
@@ -1137,7 +1137,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
         dm.dept_name AS department_name,
         des.designation_name,
         COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS manager_name,
-        COALESCE(NULLIF(TRIM(mgr.official_email), ''), NULLIF(TRIM(mgr.email), '')) AS manager_email,
+        COALESCE(NULLIF(TRIM(mgr.email), ''), NULLIF(TRIM(mgr.email), '')) AS manager_email,
         COALESCE(ibd.first_punch, bal.first_punch_in) AS biometric_punch_in_time,
         COALESCE(ibd.last_punch, bal.last_punch_out) AS biometric_punch_out_time,
         COALESCE(ibd.biometric_minutes, bal.raw_minutes, 0) AS biometric_minutes,
@@ -2757,8 +2757,9 @@ export const breakManagementService = {
         br.branch_name,
         d.dept_name AS department_name,
         bds.shift_date,
-        e.shift_name AS shift_name,
+        sm.shift_name,
         CASE
+          WHEN sm.start_time IS NOT NULL AND sm.start_time >= '18:00:00' THEN 'Night'
           WHEN bds.biometric_punch_in_time IS NOT NULL AND HOUR(bds.biometric_punch_in_time) >= 18 THEN 'Night'
           WHEN bds.biometric_punch_in_time IS NOT NULL AND HOUR(bds.biometric_punch_in_time) < 6 THEN 'Night'
           ELSE 'Day'
@@ -2794,6 +2795,8 @@ export const breakManagementService = {
       LEFT JOIN process_master p ON p.id = bds.process_id
       LEFT JOIN branch_master br ON br.id = bds.branch_id
       LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = bds.employee_id AND ra.roster_date = bds.shift_date
+      LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
       ${where}
       ORDER BY bds.shift_date DESC, e.employee_code ASC
       LIMIT ?`,
