@@ -135,7 +135,8 @@ export const navGroups: NavGroup[] = [
       {
         label: "Lifecycle",    href: "/employee-lifecycle", icon: ic(Users), pageCode: "EMPLOYEE_LIFECYCLE", description: "Employee lifecycle",
         children: [
-          { label: "Employee Journey",   href: "/employee-stat-card",    icon: ic(Users),     description: "Journey" },
+          { label: "Employee Stat Card",      href: "/employee-stat-card",    icon: ic(Users),     description: "Employee metrics dashboard" },
+          { label: "Career Timeline",         href: "/employee-journey",      icon: ic(TrendingUp), description: "Career progression timeline" },
           { label: "Employee Lifecycle", href: "/employee-lifecycle",    icon: ic(Users),     pageCode: "EMPLOYEE_LIFECYCLE", roles: ["admin","hr"], description: "Lifecycle" },
           { label: "Career Planning",    href: "/career-planning",       icon: ic(TrendingUp),pageCode: "CAREER_PLANNING",   description: "Career paths" },
           { label: "Exit Command Center",  href: "/exit/command-center",     icon: ic(UserMinus), pageCode: "EXIT_COMMAND_CENTER",     description: "Exit ops" },
@@ -157,6 +158,7 @@ export const navGroups: NavGroup[] = [
           { label: "My Learning",    href: "/lms/my-learning",  icon: ic(GraduationCap), pageCode: "LMS_MY_LEARNING",  description: "LMS" },
           { label: "LMS Coordinator",href: "/lms/coordinator",  icon: ic(Users),         pageCode: "LMS_COORDINATOR",  description: "Training" },
           { label: "LMS Admin",      href: "/lms/admin",        icon: ic(GraduationCap), pageCode: "LMS_ADMIN",        description: "LMS admin" },
+          { label: "Progress Dashboard", href: "/lms/progress-dashboard", icon: ic(BarChart3), pageCode: "LMS_PROGRESS_DASHBOARD", roles: ["admin","hr","manager","super_admin"], description: "Training progress analytics" },
         ],
       },
       {
@@ -245,6 +247,7 @@ export const navGroups: NavGroup[] = [
           { label: "Statutory Filing",      href: "/payroll/statutory-filing",     icon: ic(FileCheck),  roles: ["super_admin","payroll_head","finance","admin"], description: "Statutory filing tracker" },
           { label: "Compliance",            href: "/compliance/statutory",         icon: ic(Landmark),   roles: ["admin","hr","finance"],                             description: "Compliance" },
           { label: "Labour Compliance",     href: "/compliance/labour",            icon: ic(Landmark),   pageCode: "LABOUR_COMPLIANCE", roles: ["admin","hr","finance"], description: "Labour" },
+          { label: "Compliance Audit Report", href: "/compliance/audit-report",  icon: ic(FileCheck),  roles: ["admin","hr","super_admin"], description: "Comprehensive compliance audit" },
           { label: "Holiday Master",         href: "/payroll/holiday-master",       icon: ic(CalendarDays), roles: ["admin","super_admin","payroll_head","payroll_branch"],  description: "Holidays & CC mapping" },
           { label: "Holiday Work Requests",  href: "/payroll/holiday-work-requests",icon: ic(ClipboardList), roles: ["admin","super_admin","wfm","payroll_head","payroll_branch"], description: "Raise holiday work requests" },
           { label: "Holiday Work Approvals", href: "/payroll/holiday-work-approvals",icon: ic(ShieldCheck), roles: ["admin","super_admin","payroll_head","payroll_branch","wfm"], description: "Approve holiday work" },
@@ -266,10 +269,11 @@ export const navGroups: NavGroup[] = [
         ],
       },
       {
-        label: "Finance",      href: "/finance/grn", icon: ic(DollarSign), roles: ["admin","finance","super_admin"], description: "Finance & procurement",
+        label: "Finance",      href: "/finance/process-pnl", icon: ic(DollarSign), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Finance & procurement",
         children: [
+          { label: "Process P&L",             href: "/finance/process-pnl",              icon: ic(BarChart3),    roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Profitability command centre" },
           { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin"], description: "Goods receipt notes" },
-          { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin"], description: "Vendor payment tracking" },
+          { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Vendor payment tracking" },
         ],
       },
       {
