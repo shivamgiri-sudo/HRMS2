@@ -4,6 +4,82 @@ import type { RowDataPacket } from "mysql2";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
+/**
+ * Parse timing strings like:
+ *   09:00am-06:00pm   09:00AM-06:00PM
+ *   09:00-18:00       21:00-06:00
+ *   09:00pm-06:00am
+ * Returns { startTime: "HH:MM:SS", endTime: "HH:MM:SS" } or null if unparseable.
+ */
+function parseShiftTiming(raw: string): { startTime: string; endTime: string } | null {
+  const s = raw.trim().toLowerCase().replace(/\s+/g, "");
+  const match = s.match(/^(\d{1,2}:\d{2}(?:am|pm)?)-(\d{1,2}:\d{2}(?:am|pm)?)$/);
+  if (!match) return null;
+
+  const to24 = (t: string): string | null => {
+    const m = t.match(/^(\d{1,2}):(\d{2})(am|pm)?$/);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const suffix = m[3];
+    if (suffix === "pm" && h !== 12) h += 12;
+    if (suffix === "am" && h === 12) h = 0;
+    if (h < 0 || h > 23) return null;
+    return `${String(h).padStart(2, "0")}:${min}:00`;
+  };
+
+  const startTime = to24(match[1]);
+  const endTime = to24(match[2]);
+  if (!startTime || !endTime) return null;
+  return { startTime, endTime };
+}
+
+/**
+ * Find existing shift template by start+end time, or auto-create one.
+ */
+async function resolveShiftTemplate(
+  startTime: string,
+  endTime: string,
+  rawCell: string,
+  userId: string
+): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM wfm_shift_template WHERE start_time = ? AND end_time = ? AND active_status = 1 LIMIT 1",
+    [startTime, endTime]
+  );
+  if ((rows as RowDataPacket[]).length) {
+    return (rows as RowDataPacket[])[0].id as string;
+  }
+
+  // Auto-create a shift template keyed by timing string
+  const shiftCode = rawCell.trim().toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^0-9:apm-]/g, "")
+    .slice(0, 50);
+
+  // Check if shift_code already exists (different start/end — shouldn't happen but guard it)
+  const [codeRows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM wfm_shift_template WHERE shift_code = ? AND active_status = 1 LIMIT 1",
+    [shiftCode]
+  );
+  if ((codeRows as RowDataPacket[]).length) {
+    return (codeRows as RowDataPacket[])[0].id as string;
+  }
+
+  // Determine if night shift (end_time < start_time)
+  const nightShift = endTime < startTime ? 1 : 0;
+
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO wfm_shift_template
+       (id, shift_code, shift_name, start_time, end_time, night_shift,
+        productive_minutes, grace_minutes, break_entitlement, effective_from, active_status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 480, 5, 30, CURDATE(), 1, ?)`,
+    [id, shiftCode, `Shift ${startTime.slice(0, 5)}-${endTime.slice(0, 5)}`, startTime, endTime, nightShift, userId]
+  );
+  return id;
+}
+
 export async function importShiftRosterBatch(
   batchId: string,
   userId: string
@@ -78,9 +154,7 @@ export async function importShiftRosterBatch(
     const weekEndStr = weekEnd.toISOString().slice(0, 10);
 
     const [cycleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM wfm_roster_cycle
-       WHERE cycle_start_date = ? AND cycle_end_date = ?
-       LIMIT 1`,
+      "SELECT id FROM wfm_roster_cycle WHERE cycle_start_date = ? AND cycle_end_date = ? LIMIT 1",
       [weekStartStr, weekEndStr]
     );
     let cycleId: string;
@@ -96,31 +170,36 @@ export async function importShiftRosterBatch(
       );
     }
 
-    // Insert one assignment per day
+    // Process each day
     let dayImported = 0;
     const rowErrors: string[] = [];
+
     for (let i = 0; i < DAYS.length; i++) {
       const dayKey = `${DAYS[i]}_shift`;
-      const shiftCode = (raw[dayKey] || "").trim().toUpperCase();
-      if (!shiftCode) continue;
+      const cellValue = (raw[dayKey] || "").trim();
+      if (!cellValue) continue;
+
+      const upper = cellValue.toUpperCase();
+      const isWeekOff = upper === "WO" || upper === "WEEKOFF" || upper === "OFF" || upper === "W/O";
 
       const rosterDate = new Date(startDate);
       rosterDate.setDate(rosterDate.getDate() + i);
       const rosterDateStr = rosterDate.toISOString().slice(0, 10);
 
-      const isWeekOff = shiftCode === "WO" || shiftCode === "WEEKOFF" || shiftCode === "OFF";
       let shiftTemplateId: string | null = null;
 
       if (!isWeekOff) {
-        const [shiftRows] = await db.execute<RowDataPacket[]>(
-          "SELECT id FROM wfm_shift_template WHERE shift_code = ? AND active_status = 1 LIMIT 1",
-          [shiftCode]
-        );
-        if (!(shiftRows as RowDataPacket[]).length) {
-          rowErrors.push(`${DAYS[i].toUpperCase()} shift_code '${shiftCode}' not found`);
+        const parsed = parseShiftTiming(cellValue);
+        if (!parsed) {
+          rowErrors.push(`${DAYS[i].toUpperCase()}: '${cellValue}' is not a valid timing (use 09:00am-06:00pm or 09:00-18:00) or WO`);
           continue;
         }
-        shiftTemplateId = (shiftRows as RowDataPacket[])[0].id as string;
+        try {
+          shiftTemplateId = await resolveShiftTemplate(parsed.startTime, parsed.endTime, cellValue, userId);
+        } catch (e) {
+          rowErrors.push(`${DAYS[i].toUpperCase()}: failed to resolve shift template — ${(e as Error).message}`);
+          continue;
+        }
       }
 
       await db.execute(

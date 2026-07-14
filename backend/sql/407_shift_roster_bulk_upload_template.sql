@@ -17,11 +17,11 @@ VALUES (
   JSON_OBJECT(
     'employee_code', 'MAS00001',
     'week_start_date', '2026-07-14',
-    'mon_shift', 'DAY',
-    'tue_shift', 'DAY',
-    'wed_shift', 'NIGHT',
-    'thu_shift', 'NIGHT',
-    'fri_shift', 'DAY',
+    'mon_shift', '09:00am-06:00pm',
+    'tue_shift', '09:00am-06:00pm',
+    'wed_shift', '09:00pm-06:00am',
+    'thu_shift', '09:00pm-06:00am',
+    'fri_shift', '09:00am-06:00pm',
     'sat_shift', 'WO',
     'sun_shift', 'WO',
     'notes', 'Standard week'
