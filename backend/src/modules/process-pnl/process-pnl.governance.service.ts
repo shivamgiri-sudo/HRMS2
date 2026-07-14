@@ -161,7 +161,7 @@ async function getReferenceData() {
           p.client_id,
           cm.client_name,
           p.branch_id,
-          COALESCE(bm.branch_name, bm.name) AS branch_name
+          bm.branch_name AS branch_name
         FROM process_master p
         LEFT JOIN client_master cm ON cm.id = p.client_id
         LEFT JOIN branch_master bm ON bm.id = p.branch_id
@@ -175,10 +175,10 @@ async function getReferenceData() {
         ORDER BY client_name`
     ).catch(() => []),
     queryRows<RowDataPacket>(
-      `SELECT id, COALESCE(branch_name, name) AS branch_name
+      `SELECT id, branch_name AS branch_name
          FROM branch_master
         WHERE COALESCE(active_status, 1) = 1
-        ORDER BY COALESCE(branch_name, name)`
+        ORDER BY branch_name`
     ).catch(() => []),
   ]);
 
@@ -215,7 +215,7 @@ export const processPnlGovernanceService = {
           ccm.*,
           cm.client_name,
           pm.process_name,
-          COALESCE(bm.branch_name, bm.name) AS branch_name
+          bm.branch_name AS branch_name
         FROM client_contract_master ccm
         LEFT JOIN client_master cm ON cm.id = ccm.client_id
         LEFT JOIN process_master pm ON pm.id = ccm.process_id
@@ -365,7 +365,7 @@ export const processPnlGovernanceService = {
           pmp.*,
           pm.process_name,
           cm.client_name,
-          COALESCE(bm.branch_name, bm.name) AS branch_name
+          bm.branch_name AS branch_name
         FROM process_monthly_plan pmp
         JOIN process_master pm ON pm.id = pmp.process_id
         LEFT JOIN client_master cm ON cm.id = pm.client_id

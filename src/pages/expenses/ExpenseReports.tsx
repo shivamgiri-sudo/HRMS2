@@ -1,5 +1,6 @@
 import { useExpenseSummary, useMonthlyTrends, useTopSpenders } from '../../integrations/expenses/hooks';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { TrendingUp, Users, Receipt, DollarSign } from 'lucide-react';
 
@@ -14,7 +15,8 @@ export default function ExpenseReports() {
   const spenders = spendersData?.spenders ?? [];
 
   return (
-    <div className="p-6 space-y-6">
+    <DashboardLayout>
+      <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Expense Reports</h1>
         <p className="text-muted-foreground">Analytics and insights for expense management</p>
@@ -139,6 +141,7 @@ export default function ExpenseReports() {
           )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

@@ -543,8 +543,8 @@ const App = () => (
               <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
               <Route path="/pip-management" element={<Navigate to="/dashboard" replace />} />
               <Route path="/erp" element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
-              <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute><NativeVendorPaymentTracking /></ProtectedRoute>} />
-              <Route path="/finance/grn" element={<ProtectedRoute><NativeGRNManagement /></ProtectedRoute>} />
+              <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeVendorPaymentTracking /></ProtectedRoute>} />
+              <Route path="/finance/grn" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeGRNManagement /></ProtectedRoute>} />
               <Route path="/finance/process-pnl" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/period-close" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><PnlPeriodClosePage /></ProtectedRoute>} />
@@ -642,8 +642,8 @@ const App = () => (
               <Route path="/expenses/new" element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
               <Route path="/expenses/new/:claimId" element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
               <Route path="/expenses/approvals" element={<ProtectedRoute><ExpenseApprovals /></ProtectedRoute>} />
-              <Route path="/expenses/finance" element={<ProtectedRoute><FinanceQueue /></ProtectedRoute>} />
-              <Route path="/expenses/reports" element={<ProtectedRoute><ExpenseReports /></ProtectedRoute>} />
+              <Route path="/expenses/finance" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head']}><FinanceQueue /></ProtectedRoute>} />
+              <Route path="/expenses/reports" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head']}><ExpenseReports /></ProtectedRoute>} />
               <Route path="/expenses/:claimId" element={<ProtectedRoute><NewExpenseClaim /></ProtectedRoute>} />
 
               {/* Role dashboards */}

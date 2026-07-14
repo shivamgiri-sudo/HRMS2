@@ -36,6 +36,8 @@ export interface ProcessPnlDetailBundle {
     period: string;
     summary: {
       directPeopleCost: number;
+      directExpenseCost: number;
+      directVendorCost: number;
       directNonPeopleCost: number;
       directCost: number;
     };

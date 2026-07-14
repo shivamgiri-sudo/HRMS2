@@ -35,6 +35,9 @@ router.get(
       financialYear: req.query.financialYear as string,
       month:         req.query.month as string,
       branchId:      req.query.branchId as string,
+      processId:     req.query.processId as string,
+      costCentreId:  req.query.costCentreId as string,
+      costClass:     req.query.costClass as string,
       head:          req.query.head as string,
       subHead:       req.query.subHead as string,
       vendorId:      req.query.vendorId as string,
@@ -162,6 +165,9 @@ router.get(
       financialYear: req.query.financialYear as string,
       month:         req.query.month as string,
       branchId:      req.query.branchId as string,
+      processId:     req.query.processId as string,
+      costCentreId:  req.query.costCentreId as string,
+      costClass:     req.query.costClass as string,
       head:          req.query.head as string,
       subHead:       req.query.subHead as string,
       vendorId:      req.query.vendorId as string,
@@ -173,7 +179,7 @@ router.get(
 
     // Build CSV
     const cols = [
-      "Sr No", "Branch", "GRN No", "Vendor", "Head", "Sub Head",
+      "Sr No", "Branch", "Process", "Cost Centre", "Cost Class", "GRN No", "Vendor", "Head", "Sub Head",
       "Due Amount", "Due Date", "Payment Mode", "Payment Date",
       "Bank Name", "Transaction ID", "Paid Amount", "Balance Amount",
       "Payment Status", "Remarks",
@@ -182,7 +188,8 @@ router.get(
     const csvRows = [
       cols.map(escape).join(","),
       ...(rows as any[]).map((r, i) => [
-        i + 1, r.branch_name ?? r.branch_id, r.grn_number,
+        i + 1, r.branch_name ?? r.branch_id, r.process_name ?? "", r.cost_centre_name ?? "", r.cost_class ?? "",
+        r.grn_number,
         r.vendor_name, r.head, r.sub_head,
         r.due_amount, r.due_date, r.payment_mode,
         r.payment_date, r.bank_name, r.transaction_id,

@@ -274,8 +274,10 @@ export const navGroups: NavGroup[] = [
           { label: "Process P&L",             href: "/finance/process-pnl",              icon: ic(BarChart3),    roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Profitability command centre" },
           { label: "P&L Configuration",       href: "/finance/process-pnl/configuration", icon: ic(Settings2),   roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Contracts, plans and rates" },
           { label: "P&L Period Close",        href: "/finance/process-pnl/period-close",  icon: ic(CheckCircle), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Signoff and lock" },
-          { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin"], description: "Goods receipt notes" },
-          { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Vendor payment tracking" },
+          { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Goods receipt notes" },
+          { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
+          { label: "Expense Finance Queue",   href: "/expenses/finance",                 icon: ic(Receipt),      roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense reimbursement control" },
+          { label: "Expense Reports",         href: "/expenses/reports",                 icon: ic(BarChart3),    roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense analytics" },
         ],
       },
       {
@@ -297,8 +299,8 @@ export const navGroups: NavGroup[] = [
       { label: "My Expenses",    href: "/expenses",           icon: ic(Receipt),      pageCode: "MY_EXPENSES", description: "My expense claims" },
       { label: "New Claim",      href: "/expenses/new",       icon: ic(Plus),         pageCode: "EXPENSE_CREATE", description: "New expense claim" },
       { label: "Approvals",      href: "/expenses/approvals", icon: ic(CheckCircle),  pageCode: "EXPENSE_APPROVALS", roles: ["manager", "admin"], description: "Approve team expenses" },
-      { label: "Finance Queue",  href: "/expenses/finance",   icon: ic(DollarSign),   pageCode: "EXPENSE_FINANCE", roles: ["finance", "admin"], description: "Finance approval queue" },
-      { label: "Reports",        href: "/expenses/reports",   icon: ic(BarChart3),    pageCode: "EXPENSE_REPORTS", roles: ["admin", "finance"], description: "Expense analytics" },
+      { label: "Finance Queue",  href: "/expenses/finance",   icon: ic(DollarSign),   pageCode: "EXPENSE_FINANCE", roles: ["finance", "admin", "super_admin", "finance_head", "accounts_head"], description: "Finance approval queue" },
+      { label: "Reports",        href: "/expenses/reports",   icon: ic(BarChart3),    pageCode: "EXPENSE_REPORTS", roles: ["admin", "finance", "super_admin", "finance_head", "accounts_head"], description: "Expense analytics" },
     ],
   },
 

@@ -71,6 +71,12 @@ interface ExpenseMeta {
   freshness: string | null;
 }
 
+interface VendorCostMeta {
+  approvedAmount: number;
+  itemCount: number;
+  freshness: string | null;
+}
+
 interface IndirectAllocationMeta {
   allocatedAmount: number;
   branchPoolAmount: number;
@@ -86,6 +92,7 @@ interface ProcessPnlComputationContext {
   invoices: Map<string, InvoiceMeta>;
   payroll: Map<string, PayrollMeta>;
   expenses: Map<string, ExpenseMeta>;
+  vendorDirectCosts: Map<string, VendorCostMeta>;
   indirectAllocations: Map<string, IndirectAllocationMeta>;
   generatedAt: string;
 }
@@ -168,6 +175,21 @@ async function listColumns(tableName: string): Promise<Set<string>> {
   return new Set(rows.map((row) => String(row.column_name)));
 }
 
+let costCentreProcessIdSupportPromise: Promise<boolean> | null = null;
+
+async function hasCostCentreProcessId(): Promise<boolean> {
+  if (!costCentreProcessIdSupportPromise) {
+    costCentreProcessIdSupportPromise = columnExists("cost_centre_master", "process_id").catch(() => false);
+  }
+  return costCentreProcessIdSupportPromise;
+}
+
+function effectiveProcessExpr(alias: string, costCentreProcessIdSupported: boolean): string {
+  return costCentreProcessIdSupported
+    ? `COALESCE(${alias}.process_id, ccm.process_id)`
+    : `${alias}.process_id`;
+}
+
 async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRow[]> {
   const conds = ["COALESCE(p.active_status, 1) = 1"];
   const params: unknown[] = [];
@@ -197,7 +219,7 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
         p.client_id,
         cm.client_name,
         p.branch_id,
-        COALESCE(bm.branch_name, bm.name) AS branch_name
+        bm.branch_name AS branch_name
       FROM process_master p
       LEFT JOIN client_master cm ON cm.id = p.client_id
       LEFT JOIN branch_master bm ON bm.id = p.branch_id
@@ -304,7 +326,7 @@ async function getActiveHeadcountMap(processIds: string[], end: string): Promise
       WHERE e.process_id IN (${placeholders(processIds)})
         AND COALESCE(e.active_status, 1) = 1
         AND (e.date_of_joining IS NULL OR e.date_of_joining <= ?)
-        AND (e.date_of_exit IS NULL OR e.date_of_exit = '' OR e.date_of_exit >= ?)
+        AND (e.date_of_exit IS NULL OR e.date_of_exit >= ?)
         AND LOWER(COALESCE(e.employment_status, 'active')) <> 'inactive'
       GROUP BY e.process_id`,
     [...processIds, end, end]
@@ -527,6 +549,75 @@ async function getExpenseMap(processIds: string[], start: string, end: string): 
   return map;
 }
 
+function directCostClassExpr(alias: string, effectiveProcessExpr: string) {
+  return `COALESCE(${alias}.cost_class, CASE WHEN ${effectiveProcessExpr} IS NOT NULL THEN 'direct' ELSE 'indirect' END)`;
+}
+
+async function getVendorDirectCostMap(processIds: string[], start: string, end: string): Promise<Map<string, VendorCostMeta>> {
+  const map = new Map<string, VendorCostMeta>();
+  if (processIds.length === 0) return map;
+  const costCentreProcessIdSupported = await hasCostCentreProcessId();
+
+  if (await tableExists("vendor_payment_tracking")) {
+    const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          ${resolvedProcessExpr} AS process_id,
+          SUM(COALESCE(vpt.due_amount, 0)) AS approved_amount,
+          COUNT(vpt.id) AS item_count,
+          MAX(COALESCE(vpt.payment_date, vpt.due_date, vpt.updated_at, vpt.created_at)) AS freshness
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+        WHERE ${resolvedProcessExpr} IN (${placeholders(processIds)})
+          AND ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'direct'
+          AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
+        GROUP BY ${resolvedProcessExpr}`,
+      [...processIds, start, end]
+    ).catch(() => []);
+
+    for (const row of rows) {
+      map.set(String(row.process_id), {
+        approvedAmount: toNumber(row.approved_amount),
+        itemCount: toNumber(row.item_count),
+        freshness: (row.freshness as string | null) ?? null,
+      });
+    }
+  }
+
+  if (await tableExists("grn_request")) {
+    const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          ${resolvedProcessExpr} AS process_id,
+          SUM(COALESCE(g.amount, 0)) AS approved_amount,
+          COUNT(g.id) AS item_count,
+          MAX(COALESCE(g.reviewed_at, g.due_date, g.bill_date, g.updated_at, g.created_at)) AS freshness
+         FROM grn_request g
+         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+         LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
+        WHERE ${resolvedProcessExpr} IN (${placeholders(processIds)})
+          AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'direct'
+          AND g.status = 'approved'
+          AND vpt.id IS NULL
+          AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+        GROUP BY ${resolvedProcessExpr}`,
+      [...processIds, start, end]
+    ).catch(() => []);
+
+    for (const row of rows) {
+      const processId = String(row.process_id);
+      const existing = map.get(processId);
+      map.set(processId, {
+        approvedAmount: (existing?.approvedAmount ?? 0) + toNumber(row.approved_amount),
+        itemCount: (existing?.itemCount ?? 0) + toNumber(row.item_count),
+        freshness: maxDate(existing?.freshness ?? null, (row.freshness as string | null) ?? null),
+      });
+    }
+  }
+
+  return map;
+}
+
 async function getIndirectAllocationMap(
   processes: ProcessBaseRow[],
   activeHeadcount: NumericMap,
@@ -535,6 +626,7 @@ async function getIndirectAllocationMap(
 ): Promise<Map<string, IndirectAllocationMeta>> {
   const map = new Map<string, IndirectAllocationMeta>();
   if (processes.length === 0) return map;
+  const costCentreProcessIdSupported = await hasCostCentreProcessId();
 
   const branchProcessMap = new Map<string, ProcessBaseRow[]>();
   const branchHeadcount = new Map<string, number>();
@@ -550,25 +642,31 @@ async function getIndirectAllocationMap(
   const poolByBranch = new Map<string, number>();
 
   if (branchIds.length > 0 && await tableExists("vendor_payment_tracking")) {
+    const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
-      `SELECT branch_id, SUM(COALESCE(due_amount, 0)) AS pool_amount
-         FROM vendor_payment_tracking
-        WHERE branch_id IN (${placeholders(branchIds)})
-          AND due_date BETWEEN ? AND ?
-        GROUP BY branch_id`,
+      `SELECT vpt.branch_id, SUM(COALESCE(vpt.due_amount, 0)) AS pool_amount
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+        WHERE vpt.branch_id IN (${placeholders(branchIds)})
+          AND ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
+          AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
+        GROUP BY vpt.branch_id`,
       [...branchIds, start, end]
     );
     for (const row of rows) {
       poolByBranch.set(String(row.branch_id), toNumber(row.pool_amount));
     }
   } else if (branchIds.length > 0 && await tableExists("grn_request")) {
+    const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
-      `SELECT branch_id, SUM(COALESCE(amount, 0)) AS pool_amount
-         FROM grn_request
-        WHERE branch_id IN (${placeholders(branchIds)})
-          AND status = 'approved'
-          AND COALESCE(due_date, bill_date, created_at) BETWEEN ? AND ?
-        GROUP BY branch_id`,
+      `SELECT g.branch_id, SUM(COALESCE(g.amount, 0)) AS pool_amount
+         FROM grn_request g
+         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+        WHERE g.branch_id IN (${placeholders(branchIds)})
+          AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
+          AND g.status = 'approved'
+          AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+        GROUP BY g.branch_id`,
       [...branchIds, start, end]
     );
     for (const row of rows) {
@@ -603,6 +701,7 @@ function buildRecord(
   invoices: Map<string, InvoiceMeta>,
   payroll: Map<string, PayrollMeta>,
   expenses: Map<string, ExpenseMeta>,
+  vendorDirectCosts: Map<string, VendorCostMeta>,
   indirectAllocations: Map<string, IndirectAllocationMeta>
 ): ProcessPnlRecord {
   const contract = contracts.get(process.process_id);
@@ -611,6 +710,7 @@ function buildRecord(
   const invoice = invoices.get(process.process_id);
   const payrollMeta = payroll.get(process.process_id);
   const expense = expenses.get(process.process_id);
+  const vendorDirectCost = vendorDirectCosts.get(process.process_id);
   const indirect = indirectAllocations.get(process.process_id);
 
   const activeHc = activeHeadcount.get(process.process_id) ?? 0;
@@ -629,7 +729,7 @@ function buildRecord(
   );
   const salaryMtd = payrollMeta?.gross ?? 0;
   const directPeopleCost = payrollMeta?.total ?? 0;
-  const directNonPeopleCost = expense?.approvedAmount ?? 0;
+  const directNonPeopleCost = (expense?.approvedAmount ?? 0) + (vendorDirectCost?.approvedAmount ?? 0);
   const directCost = directPeopleCost + directNonPeopleCost;
   const indirectCost = indirect?.allocatedAmount ?? 0;
   const totalCost = directCost + indirectCost;
@@ -689,7 +789,8 @@ function buildRecord(
       revenue?.freshness,
       invoice?.freshness,
       payrollMeta?.freshness,
-      expense?.freshness
+      expense?.freshness,
+      vendorDirectCost?.freshness
     ),
   };
 }
@@ -714,6 +815,7 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     invoices,
     payroll,
     expenses,
+    vendorDirectCosts,
   ] = await Promise.all([
     getContractMap(processIds, normalizedFilters.period),
     getWorkforceMap(processIds, start, end),
@@ -722,6 +824,7 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     getInvoiceMap(processIds, start, end),
     getPayrollMap(processIds, normalizedFilters.period, end),
     getExpenseMap(processIds, start, end),
+    getVendorDirectCostMap(processIds, start, end),
   ]);
 
   const indirectAllocations = await getIndirectAllocationMap(processes, activeHeadcount, start, end);
@@ -736,6 +839,7 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     invoices,
     payroll,
     expenses,
+    vendorDirectCosts,
     indirectAllocations,
     generatedAt: new Date().toISOString(),
   };
@@ -797,20 +901,27 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     ).catch(() => [{ total: 0 } as RowDataPacket]);
 
     let indirectTotal = 0;
+    const costCentreProcessIdSupported = await hasCostCentreProcessId();
     if (await tableExists("vendor_payment_tracking")) {
+      const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
-        `SELECT SUM(COALESCE(due_amount, 0)) AS total
-           FROM vendor_payment_tracking
-          WHERE due_date BETWEEN ? AND ?`,
+        `SELECT SUM(COALESCE(vpt.due_amount, 0)) AS total
+           FROM vendor_payment_tracking vpt
+           LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+          WHERE ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
+            AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?`,
         [start, end]
       );
       indirectTotal = toNumber(indirectRows[0]?.total);
     } else if (await tableExists("grn_request")) {
+      const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
-        `SELECT SUM(COALESCE(amount, 0)) AS total
-           FROM grn_request
-          WHERE status = 'approved'
-            AND COALESCE(due_date, bill_date, created_at) BETWEEN ? AND ?`,
+        `SELECT SUM(COALESCE(g.amount, 0)) AS total
+           FROM grn_request g
+           LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+          WHERE ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
+            AND g.status = 'approved'
+            AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?`,
         [start, end]
       );
       indirectTotal = toNumber(indirectRows[0]?.total);
@@ -829,6 +940,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
             monthlyContext.invoices,
             monthlyContext.payroll,
             monthlyContext.expenses,
+            monthlyContext.vendorDirectCosts,
             monthlyContext.indirectAllocations
           )
         )
@@ -845,14 +957,33 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
       continue;
     }
 
-    const directCost = toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total);
-    const revenue = toNumber(revenueRows[0]?.total);
+    const monthlyContext = await buildComputationContext({ ...filters, period: month });
+    const monthlyRecords = monthlyContext.processes.map((process) =>
+      buildRecord(
+        process,
+        monthlyContext.contracts,
+        monthlyContext.workforce,
+        monthlyContext.activeHeadcount,
+        monthlyContext.revenueDaily,
+        monthlyContext.invoices,
+        monthlyContext.payroll,
+        monthlyContext.expenses,
+        monthlyContext.vendorDirectCosts,
+        monthlyContext.indirectAllocations
+      )
+    );
+
+    const revenue = monthlyRecords.reduce((sum, record) => sum + record.revenueMtd, 0) || toNumber(revenueRows[0]?.total);
+    const directCost = monthlyRecords.reduce((sum, record) => sum + record.directCost, 0)
+      || (toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total));
+    const indirectCost = monthlyRecords.reduce((sum, record) => sum + record.indirectCost, 0) || indirectTotal;
+
     series.push({
       month,
       revenue,
       directCost,
-      indirectCost: indirectTotal,
-      operatingProfit: revenue - directCost - indirectTotal,
+      indirectCost,
+      operatingProfit: revenue - directCost - indirectCost,
     });
   }
 
@@ -914,6 +1045,7 @@ async function buildRecords(filters: Partial<PnlQueryFilters>): Promise<{
       context.invoices,
       context.payroll,
       context.expenses,
+      context.vendorDirectCosts,
       context.indirectAllocations
     )
   );
@@ -929,6 +1061,30 @@ async function getProcessRecord(processId: string, filters: Partial<PnlQueryFilt
     throw Object.assign(new Error("Process P&L record not found"), { statusCode: 404 });
   }
   return { context, record };
+}
+
+interface ProcessDetailContext {
+  context: ProcessPnlComputationContext;
+  record: ProcessPnlRecord;
+  start: string;
+  end: string;
+  costCentreProcessIdSupported: boolean;
+}
+
+async function getProcessDetailContext(
+  processId: string,
+  filters: Partial<PnlQueryFilters>
+): Promise<ProcessDetailContext> {
+  const { context, record } = await getProcessRecord(processId, filters);
+  const { start, end } = monthRange(context.filters.period);
+
+  return {
+    context,
+    record,
+    start,
+    end,
+    costCentreProcessIdSupported: await hasCostCentreProcessId(),
+  };
 }
 
 export const processPnlService = {
@@ -975,8 +1131,8 @@ export const processPnlService = {
     return records;
   },
 
-  async getOverview(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
+  async getOverview(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const { context, record } = detailContext ?? await getProcessDetailContext(processId, filters);
     const topPositiveContributors = [
       { label: "Recognized revenue", value: record.revenueMtd },
       { label: "Collected revenue", value: record.collectedRevenueMtd },
@@ -1001,9 +1157,8 @@ export const processPnlService = {
     };
   },
 
-  async getRevenue(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
-    const { start, end } = monthRange(context.filters.period);
+  async getRevenue(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const { context, record, start, end } = detailContext ?? await getProcessDetailContext(processId, filters);
 
     const invoices = await queryRows<RowDataPacket>(
       await tableExists("billing_invoice")
@@ -1068,8 +1223,8 @@ export const processPnlService = {
     };
   },
 
-  async getWorkforce(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
+  async getWorkforce(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const { context, record } = detailContext ?? await getProcessDetailContext(processId, filters);
 
     const employees = await queryRows<RowDataPacket>(
       `SELECT
@@ -1104,8 +1259,8 @@ export const processPnlService = {
     };
   },
 
-  async getPeopleCost(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
+  async getPeopleCost(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const { context, record } = detailContext ?? await getProcessDetailContext(processId, filters);
 
     const hasRuns = await tableExists("salary_prep_run") && await tableExists("salary_prep_line");
     const columns = hasRuns ? await listColumns("salary_prep_line") : new Set<string>();
@@ -1201,21 +1356,31 @@ export const processPnlService = {
     };
   },
 
-  async getDirectCost(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
-    const { start, end } = monthRange(context.filters.period);
+  async getDirectCost(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const {
+      context,
+      record,
+      start,
+      end,
+      costCentreProcessIdSupported,
+    } = detailContext ?? await getProcessDetailContext(processId, filters);
+    const expenseAmount = context.expenses.get(processId)?.approvedAmount ?? 0;
+    const vendorAmount = context.vendorDirectCosts.get(processId)?.approvedAmount ?? 0;
 
-    const expenses = await queryRows<RowDataPacket>(
+    const expenseRows = await queryRows<RowDataPacket>(
       await tableExists("expense_claims") && await tableExists("expense_items")
         ? `SELECT
             ei.id,
-            ei.expense_date,
+            'expense_claim' AS source_type,
+            ec.claim_number AS reference,
+            ei.expense_date AS entry_date,
             ei.amount,
             ei.description,
             ei.vendor_name,
-            ec.claim_number,
             ec.status,
-            cat.name AS category_name
+            cat.name AS category_name,
+            NULL AS sub_category,
+            'direct' AS cost_class
            FROM expense_claims ec
            JOIN expense_items ei ON ei.expense_claim_id = ec.id
            LEFT JOIN expense_categories cat ON cat.id = ei.category_id
@@ -1223,16 +1388,93 @@ export const processPnlService = {
             AND ei.expense_date BETWEEN ? AND ?
           ORDER BY ei.expense_date DESC
           LIMIT 250`
-        : `SELECT NULL AS id, NULL AS expense_date, 0 AS amount, NULL AS description,
-                  NULL AS vendor_name, NULL AS claim_number, NULL AS status, NULL AS category_name
+        : `SELECT NULL AS id, NULL AS source_type, NULL AS reference, NULL AS entry_date, 0 AS amount, NULL AS description,
+                  NULL AS vendor_name, NULL AS status, NULL AS category_name, NULL AS sub_category, NULL AS cost_class
            WHERE 1 = 0`,
       [processId, start, end]
     ).catch(() => []);
+
+    const vendorRows = await queryRows<RowDataPacket>(
+      await tableExists("vendor_payment_tracking")
+        ? `SELECT
+            vpt.id,
+            CASE WHEN grn.grn_type = 'imprest' THEN 'imprest_grn' ELSE 'vendor_grn' END AS source_type,
+            COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
+            COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
+            vpt.due_amount AS amount,
+            NULL AS description,
+            vpt.vendor_name,
+           vpt.payment_status AS status,
+           vpt.head AS category_name,
+           vpt.sub_head AS sub_category,
+           vpt.cost_class
+           FROM vendor_payment_tracking vpt
+           LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
+           LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+          WHERE ${effectiveProcessExpr("vpt", costCentreProcessIdSupported)} = ?
+            AND ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'direct'
+            AND COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) BETWEEN ? AND ?
+          ORDER BY entry_date DESC
+          LIMIT 250`
+        : `SELECT NULL AS id, NULL AS source_type, NULL AS reference, NULL AS entry_date, 0 AS amount, NULL AS description,
+                  NULL AS vendor_name, NULL AS status, NULL AS category_name, NULL AS sub_category, NULL AS cost_class
+           WHERE 1 = 0`,
+      [processId, start, end]
+    ).catch(() => []);
+
+    const grnRows = await queryRows<RowDataPacket>(
+      await tableExists("grn_request")
+        ? `SELECT
+            g.id,
+            CASE WHEN g.grn_type = 'imprest' THEN 'imprest_grn' ELSE 'vendor_grn' END AS source_type,
+            COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
+            COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
+            g.amount,
+            g.remarks AS description,
+            g.vendor_name,
+            g.status,
+            g.head AS category_name,
+            g.sub_head AS sub_category,
+           g.cost_class
+           FROM grn_request g
+           LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+           LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
+          WHERE ${effectiveProcessExpr("g", costCentreProcessIdSupported)} = ?
+            AND ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'direct'
+            AND g.status = 'approved'
+            AND vpt.id IS NULL
+            AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+          ORDER BY entry_date DESC
+          LIMIT 250`
+        : `SELECT NULL AS id, NULL AS source_type, NULL AS reference, NULL AS entry_date, 0 AS amount, NULL AS description,
+                  NULL AS vendor_name, NULL AS status, NULL AS category_name, NULL AS sub_category, NULL AS cost_class
+           WHERE 1 = 0`,
+      [processId, start, end]
+    ).catch(() => []);
+
+    const expenses = [...expenseRows, ...vendorRows, ...grnRows]
+      .sort((left, right) => String(right.entry_date ?? "").localeCompare(String(left.entry_date ?? "")))
+      .slice(0, 250)
+      .map((row) => ({
+        id: row.id,
+        sourceType: row.source_type,
+        reference: row.reference,
+        entryDate: row.entry_date,
+        category: row.category_name,
+        subCategory: row.sub_category,
+        vendorName: row.vendor_name,
+        description: row.description,
+        amount: toNumber(row.amount),
+        status: row.status,
+        costClass: row.cost_class ?? "direct",
+      }));
 
     return {
       period: context.filters.period,
       summary: {
         directPeopleCost: record.directPeopleCost,
+        directExpenseCost: expenseAmount,
+        directVendorCost: vendorAmount,
         directNonPeopleCost: record.directNonPeopleCost,
         directCost: record.directCost,
       },
@@ -1240,35 +1482,44 @@ export const processPnlService = {
     };
   },
 
-  async getIndirectAllocation(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
-    const { start, end } = monthRange(context.filters.period);
+  async getIndirectAllocation(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const {
+      context,
+      record,
+      start,
+      end,
+      costCentreProcessIdSupported,
+    } = detailContext ?? await getProcessDetailContext(processId, filters);
     const branchId = record.branchId;
 
     const rows = branchId && await tableExists("vendor_payment_tracking")
       ? await queryRows<RowDataPacket>(
           `SELECT
-              head,
-              sub_head,
-              SUM(COALESCE(due_amount, 0)) AS branch_pool_amount
-            FROM vendor_payment_tracking
-           WHERE branch_id = ?
-             AND due_date BETWEEN ? AND ?
-           GROUP BY head, sub_head
+              vpt.head,
+              vpt.sub_head,
+              SUM(COALESCE(vpt.due_amount, 0)) AS branch_pool_amount
+            FROM vendor_payment_tracking vpt
+            LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+           WHERE vpt.branch_id = ?
+             AND ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'indirect'
+             AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
+           GROUP BY vpt.head, vpt.sub_head
            ORDER BY branch_pool_amount DESC`,
           [branchId, start, end]
         ).catch(() => [])
       : branchId && await tableExists("grn_request")
       ? await queryRows<RowDataPacket>(
           `SELECT
-              head,
-              sub_head,
-              SUM(COALESCE(amount, 0)) AS branch_pool_amount
-            FROM grn_request
-           WHERE branch_id = ?
-             AND status = 'approved'
-             AND COALESCE(due_date, bill_date, created_at) BETWEEN ? AND ?
-           GROUP BY head, sub_head
+              g.head,
+              g.sub_head,
+              SUM(COALESCE(g.amount, 0)) AS branch_pool_amount
+            FROM grn_request g
+            LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+           WHERE g.branch_id = ?
+             AND ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'indirect'
+             AND g.status = 'approved'
+             AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
+           GROUP BY g.head, g.sub_head
            ORDER BY branch_pool_amount DESC`,
           [branchId, start, end]
         ).catch(() => [])
@@ -1300,14 +1551,14 @@ export const processPnlService = {
     };
   },
 
-  async getTrend(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context } = await getProcessRecord(processId, filters);
+  async getTrend(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const { context } = detailContext ?? await getProcessDetailContext(processId, filters);
     const trend = await buildTrend(processId, context.filters);
     return { period: context.filters.period, trend };
   },
 
-  async getReconciliation(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
+  async getReconciliation(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const { context, record } = detailContext ?? await getProcessDetailContext(processId, filters);
     const issues: Array<{ severity: string; code: string; message: string }> = [];
 
     if (!context.contracts.has(processId)) {
@@ -1347,9 +1598,14 @@ export const processPnlService = {
     };
   },
 
-  async getLedger(processId: string, filters: Partial<PnlQueryFilters>) {
-    const { context, record } = await getProcessRecord(processId, filters);
-    const { start, end } = monthRange(context.filters.period);
+  async getLedger(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
+    const {
+      context,
+      record,
+      start,
+      end,
+      costCentreProcessIdSupported,
+    } = detailContext ?? await getProcessDetailContext(processId, filters);
     const entries: Array<Record<string, unknown>> = [];
 
     if (await tableExists("billing_invoice")) {
@@ -1394,6 +1650,64 @@ export const processPnlService = {
       }
     }
 
+    if (await tableExists("vendor_payment_tracking")) {
+      const resolvedVendorProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
+      const vendorRows = await queryRows<RowDataPacket>(
+        `SELECT
+            COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
+            COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
+            vpt.due_amount AS amount,
+            vpt.payment_status AS status
+           FROM vendor_payment_tracking vpt
+           LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
+           LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+          WHERE ${resolvedVendorProcessExpr} = ?
+            AND ${directCostClassExpr("vpt", resolvedVendorProcessExpr)} = 'direct'
+            AND COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) BETWEEN ? AND ?`,
+        [processId, start, end]
+      ).catch(() => []);
+
+      for (const row of vendorRows) {
+        entries.push({
+          entryType: "vendor_cost",
+          reference: row.reference,
+          entryDate: row.entry_date,
+          amount: toNumber(row.amount),
+          status: row.status,
+        });
+      }
+    }
+
+    if (await tableExists("grn_request")) {
+      const resolvedGrnProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
+      const grnRows = await queryRows<RowDataPacket>(
+        `SELECT
+            COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
+            COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
+            g.amount,
+            g.status
+           FROM grn_request g
+           LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+           LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
+          WHERE ${resolvedGrnProcessExpr} = ?
+            AND ${directCostClassExpr("g", resolvedGrnProcessExpr)} = 'direct'
+            AND g.status = 'approved'
+            AND vpt.id IS NULL
+            AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?`,
+        [processId, start, end]
+      ).catch(() => []);
+
+      for (const row of grnRows) {
+        entries.push({
+          entryType: "grn_cost",
+          reference: row.reference,
+          entryDate: row.entry_date,
+          amount: toNumber(row.amount),
+          status: row.status,
+        });
+      }
+    }
+
     entries.push({
       entryType: "indirect_allocation",
       reference: `${record.branchName ?? "Branch"} shared overhead`,
@@ -1417,21 +1731,22 @@ export const processPnlService = {
   },
 
   async getDetailBundle(processId: string, filters: Partial<PnlQueryFilters>): Promise<ProcessPnlDetailBundle> {
+    const detailContext = await getProcessDetailContext(processId, filters);
     const [overview, revenue, workforce, peopleCost, directCost, indirectAllocation, trend, reconciliation, ledger] =
       await Promise.all([
-        this.getOverview(processId, filters),
-        this.getRevenue(processId, filters),
-        this.getWorkforce(processId, filters),
-        this.getPeopleCost(processId, filters),
-        this.getDirectCost(processId, filters),
-        this.getIndirectAllocation(processId, filters),
-        this.getTrend(processId, filters),
-        this.getReconciliation(processId, filters),
-        this.getLedger(processId, filters),
+        this.getOverview(processId, filters, detailContext),
+        this.getRevenue(processId, filters, detailContext),
+        this.getWorkforce(processId, filters, detailContext),
+        this.getPeopleCost(processId, filters, detailContext),
+        this.getDirectCost(processId, filters, detailContext),
+        this.getIndirectAllocation(processId, filters, detailContext),
+        this.getTrend(processId, filters, detailContext),
+        this.getReconciliation(processId, filters, detailContext),
+        this.getLedger(processId, filters, detailContext),
       ]);
 
     return {
-      record: overview as ProcessPnlRecord,
+      record: detailContext.record,
       overview,
       revenue,
       workforce,

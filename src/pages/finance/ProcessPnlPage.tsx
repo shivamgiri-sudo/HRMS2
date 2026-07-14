@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useProcessPnl, processPnlExportUrl } from "@/hooks/useProcessPnl";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { ProcessProfitabilityTable } from "@/components/finance/pnl/ProcessProfitabilityTable";
@@ -101,8 +102,9 @@ export default function ProcessPnlPage() {
     : [];
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_28%),linear-gradient(180deg,_#f6f8f7_0%,_#ffffff_42%,_#f4f7fb_100%)]">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <DashboardLayout>
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_28%),linear-gradient(180deg,_#f6f8f7_0%,_#ffffff_42%,_#f4f7fb_100%)]">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 text-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]">
           <div className="grid gap-8 p-6 lg:grid-cols-[1.6fr_0.9fr] lg:p-8">
             <div className="space-y-4">
@@ -252,7 +254,8 @@ export default function ProcessPnlPage() {
         ) : (
           <ProcessProfitabilityTable rows={processes} period={period} />
         )}
+        </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

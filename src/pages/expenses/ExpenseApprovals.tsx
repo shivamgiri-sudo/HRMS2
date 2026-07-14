@@ -4,6 +4,7 @@ import { ExpenseStatusBadge } from '../../components/expenses/ExpenseStatusBadge
 import { ExpenseApprovalActions } from '../../components/expenses/ExpenseApprovalActions';
 import { ExpenseItemsList } from '../../components/expenses/ExpenseItemsList';
 import { usePendingApprovals, useClaimDetails, useManagerApprove, useRejectClaim } from '../../integrations/expenses/hooks';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatISTDate } from "@/lib/utils";
@@ -41,10 +42,17 @@ export default function ExpenseApprovals() {
   const { mutate: approve, isPending: approving } = useManagerApprove();
   const { mutate: reject, isPending: rejecting } = useRejectClaim();
 
-  if (isLoading) return <div className="p-6 text-center text-muted-foreground">Loading approvals...</div>;
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 text-center text-muted-foreground">Loading approvals...</div>
+      </DashboardLayout>
+    );
+  }
 
   return (
-    <div className="p-6 space-y-6">
+    <DashboardLayout>
+      <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Expense Approvals</h1>
         <p className="text-muted-foreground">
@@ -120,6 +128,7 @@ export default function ExpenseApprovals() {
           )}
         </div>
       )}
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

@@ -47,6 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -290,6 +291,9 @@ function Field({
 interface GrnFormState {
   grnType: "vendor" | "imprest";
   branchId: string;
+  processId: string;
+  costCentreId: string;
+  costClass: "direct" | "indirect";
   vendorId: string;
   vendorName: string;
   head: string;
@@ -304,6 +308,9 @@ interface GrnFormState {
 const EMPTY_FORM: GrnFormState = {
   grnType: "vendor",
   branchId: "",
+  processId: "",
+  costCentreId: "",
+  costClass: "indirect",
   vendorId: "",
   vendorName: "",
   head: "",
@@ -335,6 +342,21 @@ function CreateGrnTab() {
   });
   const vendors: any[] = vendorData?.data ?? vendorData ?? [];
 
+  const { data: processData } = useQuery({
+    queryKey: ["processes-list"],
+    queryFn: () => hrmsApi.get<any>("/api/org/processes?limit=500"),
+  });
+  const processes: any[] = processData?.data ?? processData ?? [];
+
+  const { data: costCentreData } = useQuery({
+    queryKey: ["cost-centres-list"],
+    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?limit=500"),
+  });
+  const costCentres: any[] = costCentreData?.data ?? costCentreData ?? [];
+
+  const availableProcesses = processes.filter((process: any) => !form.branchId || process.branch_id === form.branchId);
+  const availableCostCentres = costCentres.filter((costCentre: any) => !form.branchId || costCentre.branch_id === form.branchId);
+
   const set = (k: keyof GrnFormState) => (v: string) =>
     setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -348,6 +370,9 @@ function CreateGrnTab() {
       const payload = {
         grnType: form.grnType,
         branchId: form.branchId,
+        processId: form.processId || undefined,
+        costCentreId: form.costCentreId || undefined,
+        costClass: form.costClass,
         vendorId: form.vendorId || undefined,
         vendorName: form.vendorName || undefined,
         head: form.head,
@@ -481,7 +506,25 @@ function CreateGrnTab() {
             <SectionLabel>Party Details</SectionLabel>
 
             <Field label="Branch" required>
-              <Select value={form.branchId} onValueChange={set("branchId")}>
+              <Select
+                value={form.branchId}
+                onValueChange={(value) => {
+                  const nextCostCentreId = form.costCentreId
+                    && costCentres.some((item: any) => item.id === form.costCentreId && item.branch_id === value)
+                    ? form.costCentreId
+                    : "";
+                  const nextProcessId = form.processId
+                    && processes.some((item: any) => item.id === form.processId && item.branch_id === value)
+                    ? form.processId
+                    : "";
+                  setForm((current) => ({
+                    ...current,
+                    branchId: value,
+                    costCentreId: nextCostCentreId,
+                    processId: nextProcessId,
+                  }));
+                }}
+              >
                 <SelectTrigger className="h-9 text-sm mt-1">
                   <SelectValue placeholder="Select branch" />
                 </SelectTrigger>
@@ -576,6 +619,81 @@ function CreateGrnTab() {
                 value={form.subHead}
                 onChange={set("subHead")}
               />
+            </Field>
+
+            <Field label="Cost treatment" required>
+              <Select
+                value={form.costClass}
+                onValueChange={(value: "direct" | "indirect") => {
+                  setForm((current) => ({
+                    ...current,
+                    costClass: value,
+                    processId: value === "indirect" ? "" : current.processId,
+                    costCentreId: value === "indirect"
+                      ? (availableCostCentres.find((item: any) => item.id === current.costCentreId)?.process_id ? "" : current.costCentreId)
+                      : current.costCentreId,
+                  }));
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="indirect">Indirect / shared overhead</SelectItem>
+                  <SelectItem value="direct">Direct to process P&amp;L</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field label="Process">
+              <Select
+                value={form.processId || "_none"}
+                onValueChange={(value) => {
+                  set("processId")(value === "_none" ? "" : value);
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm mt-1">
+                  <SelectValue placeholder="Select process" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">- Select process -</SelectItem>
+                  {availableProcesses.map((process: any) => (
+                    <SelectItem key={process.id} value={process.id}>
+                      {process.process_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field label="Cost Centre">
+              <Select
+                value={form.costCentreId || "_none"}
+                onValueChange={(value) => {
+                  if (value === "_none") {
+                    set("costCentreId")("");
+                    return;
+                  }
+                  const selected = availableCostCentres.find((item: any) => item.id === value);
+                  setForm((current) => ({
+                    ...current,
+                    costCentreId: value,
+                    processId: current.processId || selected?.process_id || "",
+                  }));
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm mt-1">
+                  <SelectValue placeholder="Select cost centre" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">- Select cost centre -</SelectItem>
+                  {availableCostCentres.map((costCentre: any) => (
+                    <SelectItem key={costCentre.id} value={costCentre.id}>
+                      {costCentre.cost_centre_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
 
             {/* ── Section: Amount & Dates ── */}
@@ -1170,69 +1288,71 @@ function ApprovalQueueTab() {
 
 export default function NativeGRNManagement() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Page header */}
-      <div className="relative overflow-hidden border-b border-slate-200 bg-white shadow-sm">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage:
-              "repeating-linear-gradient(45deg, #073f78 0, #073f78 1px, transparent 0, transparent 50%)",
-            backgroundSize: "8px 8px",
-          }}
-        />
-        <div className="relative px-6 py-5">
-          {/* Breadcrumb */}
-          <nav className="mb-2 flex items-center gap-1 text-[11px] text-slate-400">
-            <span>Finance</span>
-            <ChevronRight className="size-3" />
-            <span className="text-[#073f78] font-medium">GRN Management</span>
-          </nav>
-          <div className="flex items-center gap-4">
-            <div className="flex size-11 items-center justify-center rounded-xl bg-[#073f78] shadow-md shadow-[#073f78]/20">
-              <FilePlus className="size-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold text-slate-900 leading-tight">
-                GRN Management
-              </h1>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Create, submit and approve Goods Receipt Notes for vendor and
-                imprest transactions
-              </p>
+    <DashboardLayout>
+      <div className="min-h-screen bg-slate-50">
+        {/* Page header */}
+        <div className="relative overflow-hidden border-b border-slate-200 bg-white shadow-sm">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.04]"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(45deg, #073f78 0, #073f78 1px, transparent 0, transparent 50%)",
+              backgroundSize: "8px 8px",
+            }}
+          />
+          <div className="relative px-6 py-5">
+            {/* Breadcrumb */}
+            <nav className="mb-2 flex items-center gap-1 text-[11px] text-slate-400">
+              <span>Finance</span>
+              <ChevronRight className="size-3" />
+              <span className="text-[#073f78] font-medium">GRN Management</span>
+            </nav>
+            <div className="flex items-center gap-4">
+              <div className="flex size-11 items-center justify-center rounded-xl bg-[#073f78] shadow-md shadow-[#073f78]/20">
+                <FilePlus className="size-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-slate-900 leading-tight">
+                  GRN Management
+                </h1>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Create, submit and approve Goods Receipt Notes for vendor and
+                  imprest transactions
+                </p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="px-6 py-6">
-        <Tabs defaultValue="create">
-          <TabsList className="mb-6 h-auto bg-white border border-slate-200 rounded-xl p-1 gap-1 w-fit shadow-sm">
-            <TabsTrigger
-              value="create"
-              className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
-            >
-              <FilePlus className="size-3.5" /> Create GRN
-            </TabsTrigger>
-            <TabsTrigger
-              value="queue"
-              className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
-            >
-              <ClipboardList className="size-3.5" /> Approval Queue
-            </TabsTrigger>
-          </TabsList>
+        {/* Content */}
+        <div className="px-6 py-6">
+          <Tabs defaultValue="create">
+            <TabsList className="mb-6 h-auto bg-white border border-slate-200 rounded-xl p-1 gap-1 w-fit shadow-sm">
+              <TabsTrigger
+                value="create"
+                className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+              >
+                <FilePlus className="size-3.5" /> Create GRN
+              </TabsTrigger>
+              <TabsTrigger
+                value="queue"
+                className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
+              >
+                <ClipboardList className="size-3.5" /> Approval Queue
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="create">
-            <CreateGrnTab />
-          </TabsContent>
-          <TabsContent value="queue">
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
-              <ApprovalQueueTab />
-            </div>
-          </TabsContent>
-        </Tabs>
+            <TabsContent value="create">
+              <CreateGrnTab />
+            </TabsContent>
+            <TabsContent value="queue">
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
+                <ApprovalQueueTab />
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

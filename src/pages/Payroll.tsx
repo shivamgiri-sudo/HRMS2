@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CreditCard,
@@ -849,7 +849,7 @@ const Payroll = () => {
           }
         />
 
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="w-full">
           <KpiCardGrid>
             {payrollStats.map((stat) => (
               <KpiCard
@@ -863,16 +863,18 @@ const Payroll = () => {
             ))}
           </KpiCardGrid>
           {currentMonthRun && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setBranchBreakdownRunId(currentMonthRun.id);
-                setBranchBreakdownOpen(true);
-              }}
-            >
-              Branch Breakdown
-            </Button>
+            <div className="mt-2 flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setBranchBreakdownRunId(currentMonthRun.id);
+                  setBranchBreakdownOpen(true);
+                }}
+              >
+                Branch Breakdown
+              </Button>
+            </div>
           )}
         </div>
 
@@ -927,7 +929,7 @@ const Payroll = () => {
                 </p>
               </div>
 
-              <TabsList className="grid w-full grid-cols-4 lg:w-[640px]">
+              <TabsList className="grid w-full grid-cols-5 lg:w-auto">
                 <TabsTrigger value="current">Current Payroll</TabsTrigger>
                 <TabsTrigger value="history">Payroll History</TabsTrigger>
                 <TabsTrigger value="analytics">Analytics</TabsTrigger>
@@ -1257,7 +1259,8 @@ const Payroll = () => {
 // ── Run Lifecycle Board ──────────────────────────────────────────────────────
 
 function LifecyclePipelineCard() {
-  const { roleKeys } = useUserRole();
+  const { data: roleData } = useUserRole();
+  const roleKeys = roleData?.roleKeys ?? [];
   const isPayrollRoleOK = roleKeys.some((r) => ["payroll", "payroll_head", "admin", "super_admin"].includes(r));
 
   const { data: runsRaw } = useQuery({
@@ -1329,25 +1332,23 @@ function LifecyclePipelineCard() {
 
 // ── Finance Approval Queue ───────────────────────────────────────────────────
 
+const fmtCurrency = (v: number | string | null | undefined) =>
+  new Intl.NumberFormat("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(v ?? 0));
+const fmtDateTime = (v: string | null | undefined) =>
+  v ? new Date(v).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—";
+
 function FinanceApprovalQueue() {
-  const { roleKeys } = useUserRole();
+  const { data: roleData } = useUserRole();
+  const roleKeys = roleData?.roleKeys ?? [];
   const isFinance = roleKeys.some((r) => ["finance", "admin", "super_admin"].includes(r));
-  const qc = useQueryClient();
   const { toast } = useToast();
   const [approvalModal, setApprovalModal] = useState<{ runId: string; runMonth: string } | null>(null);
   const [confirmChecked, setConfirmChecked] = useState(false);
 
-  if (!isFinance) {
-    return (
-      <div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-        Finance role required to view this queue
-      </div>
-    );
-  }
-
   const { data: runsRaw, refetch: refetchRuns } = useQuery({
     queryKey: ["payroll-runs-locked"],
     queryFn: () => hrmsApi.get("/api/payroll/runs?status=locked").then((r) => r.data),
+    enabled: isFinance,
   });
   const runs = (runsRaw as any[]) ?? [];
 
@@ -1363,6 +1364,14 @@ function FinanceApprovalQueue() {
     onError: (e: any) =>
       toast({ title: "Error", description: e?.response?.data?.message ?? "Approval failed", variant: "destructive" }),
   });
+
+  if (!isFinance) {
+    return (
+      <div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
+        Finance role required to view this queue
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 mt-0">
@@ -1391,8 +1400,8 @@ function FinanceApprovalQueue() {
                   <tr key={run.id} className="border-t">
                     <td className="px-3 py-2 font-medium">{run.run_month}</td>
                     <td className="px-3 py-2 text-right">{run.employee_count ?? 0}</td>
-                    <td className="px-3 py-2 text-right">₹{fmt(run.total_gross)}</td>
-                    <td className="px-3 py-2 text-sm">{fmtDate(run.updated_at)}</td>
+                    <td className="px-3 py-2 text-right">₹{fmtCurrency(run.total_gross)}</td>
+                    <td className="px-3 py-2 text-sm">{fmtDateTime(run.updated_at)}</td>
                     <td className="px-3 py-2">
                       <Button
                         size="sm"
@@ -1456,13 +1465,6 @@ function FinanceApprovalQueue() {
           </DialogContent>
         </Dialog>
       )}
-
-      {/* E1.1: Branch Breakdown Modal */}
-      <BranchBreakdownDialog
-        open={branchBreakdownOpen}
-        onOpenChange={setBranchBreakdownOpen}
-        runId={branchBreakdownRunId}
-      />
     </div>
   );
 }

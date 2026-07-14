@@ -4,8 +4,6 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { inboxService } from "../inbox/inbox.service.js";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface VendorPaymentFilters {
   financialYear?: string;
   month?: string;
@@ -39,8 +37,6 @@ export interface UpdatePaymentPayload {
 
 const BANK_MODES = ["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Bank Transfer"];
 
-// ── Audit helper ──────────────────────────────────────────────────────────────
-
 async function writeFinanceAudit(
   actionType: string,
   entityId: string,
@@ -57,10 +53,53 @@ async function writeFinanceAudit(
   );
 }
 
-// ── Service ───────────────────────────────────────────────────────────────────
+async function resolveFinanceAttribution(
+  processId: string | null,
+  costCentreId: string | null,
+  costClassInput: "direct" | "indirect" | undefined
+) {
+  let resolvedProcessId = processId?.trim() || null;
+  const resolvedCostCentreId = costCentreId?.trim() || null;
+  let mappedProcessId: string | null = null;
+
+  if (resolvedCostCentreId) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, process_id
+         FROM cost_centre_master
+        WHERE id = ?
+        LIMIT 1`,
+      [resolvedCostCentreId]
+    );
+    const costCentre = rows[0] as RowDataPacket | undefined;
+    if (!costCentre) {
+      throw new Error("Selected cost centre was not found");
+    }
+    mappedProcessId = costCentre.process_id ? String(costCentre.process_id) : null;
+    if (resolvedProcessId && mappedProcessId && resolvedProcessId !== mappedProcessId) {
+      throw new Error("Selected cost centre is mapped to a different process");
+    }
+    resolvedProcessId = resolvedProcessId ?? mappedProcessId;
+  }
+
+  const normalizedCostClass = costClassInput
+    ?? (resolvedProcessId || resolvedCostCentreId ? "direct" : "indirect");
+
+  if (normalizedCostClass === "direct" && !resolvedProcessId) {
+    throw new Error("Direct vendor cost must be tagged to a process or a process-mapped cost centre");
+  }
+
+  if (normalizedCostClass === "indirect" && resolvedProcessId) {
+    throw new Error("Indirect vendor cost cannot carry a direct process mapping");
+  }
+
+  return {
+    processId: normalizedCostClass === "direct" ? resolvedProcessId : null,
+    costCentreId: resolvedCostCentreId,
+    costClass: normalizedCostClass,
+  };
+}
 
 export const vendorPaymentService = {
-
   async listBanks() {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, bank_name, bank_code, ifsc_prefix FROM bank_master WHERE active_status = 1 ORDER BY bank_name"
@@ -77,26 +116,27 @@ export const vendorPaymentService = {
       conds.push("DATE_FORMAT(vpt.due_date, '%Y-%m') = ?");
       params.push(filters.month);
     }
-    if (filters.branchId)     { conds.push("vpt.branch_id = ?");    params.push(filters.branchId); }
-    if (filters.processId)    { conds.push("vpt.process_id = ?");   params.push(filters.processId); }
+    if (filters.branchId) { conds.push("vpt.branch_id = ?"); params.push(filters.branchId); }
+    if (filters.processId) { conds.push("vpt.process_id = ?"); params.push(filters.processId); }
     if (filters.costCentreId) { conds.push("vpt.cost_centre_id = ?"); params.push(filters.costCentreId); }
-    if (filters.costClass)    { conds.push("vpt.cost_class = ?");   params.push(filters.costClass); }
-    if (filters.head)         { conds.push("vpt.head = ?");         params.push(filters.head); }
-    if (filters.subHead)      { conds.push("vpt.sub_head = ?");     params.push(filters.subHead); }
-    if (filters.vendorId)     { conds.push("vpt.vendor_id = ?");    params.push(filters.vendorId); }
-    if (filters.paymentStatus){ conds.push("vpt.payment_status = ?"); params.push(filters.paymentStatus); }
-    if (filters.dueDateFrom)  { conds.push("vpt.due_date >= ?");    params.push(filters.dueDateFrom); }
-    if (filters.dueDateTo)    { conds.push("vpt.due_date <= ?");    params.push(filters.dueDateTo); }
+    if (filters.costClass) { conds.push("vpt.cost_class = ?"); params.push(filters.costClass); }
+    if (filters.head) { conds.push("vpt.head = ?"); params.push(filters.head); }
+    if (filters.subHead) { conds.push("vpt.sub_head = ?"); params.push(filters.subHead); }
+    if (filters.vendorId) { conds.push("vpt.vendor_id = ?"); params.push(filters.vendorId); }
+    if (filters.paymentStatus) { conds.push("vpt.payment_status = ?"); params.push(filters.paymentStatus); }
+    if (filters.dueDateFrom) { conds.push("vpt.due_date >= ?"); params.push(filters.dueDateFrom); }
+    if (filters.dueDateTo) { conds.push("vpt.due_date <= ?"); params.push(filters.dueDateTo); }
     if (filters.search) {
       conds.push("(vpt.grn_number LIKE ? OR vpt.vendor_name LIKE ?)");
       const like = `%${filters.search}%`;
       params.push(like, like);
     }
 
-    const page  = Math.max(1, filters.page ?? 1);
+    const page = Math.max(1, filters.page ?? 1);
     const limit = Math.min(200, Math.max(1, filters.limit ?? 50));
     const offset = (page - 1) * limit;
-
+    const safeLimit = Math.min(Math.max(1, limit), 200);
+    const safeOffset = Math.max(0, offset);
     const where = `WHERE ${conds.join(" AND ")}`;
 
     const [countRows] = await db.execute<RowDataPacket[]>(
@@ -107,44 +147,48 @@ export const vendorPaymentService = {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.*,
-              bm.bank_name    AS bank_master_name,
+              bm.bank_name AS bank_master_name,
               bm.ifsc_prefix,
-              b.branch_name,
+              b.branch_name AS branch_name,
               b.branch_code,
               pm.process_name,
               ccm.cost_centre_name,
               vm.vendor_type,
-              vm.gst_number   AS vendor_gst
-       FROM vendor_payment_tracking vpt
-       LEFT JOIN bank_master  bm ON bm.id = vpt.bank_id
-       LEFT JOIN branch_master b  ON b.id  = vpt.branch_id
-       LEFT JOIN process_master pm ON pm.id = vpt.process_id
-       LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
-       LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
-       ${where}
-       ORDER BY vpt.due_date ASC, vpt.created_at ASC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+              vm.gst_number AS vendor_gst
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+         LEFT JOIN process_master pm ON pm.id = vpt.process_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         ${where}
+        ORDER BY vpt.due_date ASC, vpt.created_at ASC
+        LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
     );
 
-    return { rows, total, page, limit };
+    return { rows, total, page, limit: safeLimit };
   },
 
   async getPayment(id: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.*,
-              bm.bank_name  AS bank_master_name,
-              b.branch_name, b.branch_code,
+              bm.bank_name AS bank_master_name,
+              b.branch_name AS branch_name,
+              b.branch_code,
               pm.process_name,
               ccm.cost_centre_name,
-              vm.vendor_type, vm.contact_email, vm.contact_phone
-       FROM vendor_payment_tracking vpt
-       LEFT JOIN bank_master  bm ON bm.id = vpt.bank_id
-       LEFT JOIN branch_master b  ON b.id  = vpt.branch_id
-       LEFT JOIN process_master pm ON pm.id = vpt.process_id
-       LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
-       LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
-       WHERE vpt.id = ? LIMIT 1`,
+              vm.vendor_type,
+              vm.contact_email,
+              vm.contact_phone
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
+         LEFT JOIN branch_master b ON b.id = vpt.branch_id
+         LEFT JOIN process_master pm ON pm.id = vpt.process_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+        WHERE vpt.id = ?
+        LIMIT 1`,
       [id]
     );
     return (rows[0] as any) ?? null;
@@ -159,9 +203,14 @@ export const vendorPaymentService = {
     const existing = await this.getPayment(id);
     if (!existing) throw new Error("Vendor payment record not found");
 
-    // ── Validation ─────────────────────────────────────────────────────────────
+    const attribution = await resolveFinanceAttribution(
+      payload.processId ?? existing.process_id ?? null,
+      payload.costCentreId ?? existing.cost_centre_id ?? null,
+      payload.costClass ?? existing.cost_class
+    );
+
     const paidAmount = payload.paidAmount ?? existing.paid_amount;
-    const dueAmount  = Number(existing.due_amount);
+    const dueAmount = Number(existing.due_amount);
 
     if (paidAmount > dueAmount) {
       throw new Error(`Paid amount (${paidAmount}) cannot exceed due amount (${dueAmount})`);
@@ -178,7 +227,6 @@ export const vendorPaymentService = {
       throw new Error("Payment Date is required when paid amount is entered");
     }
 
-    // ── Compute derived fields ─────────────────────────────────────────────────
     const balanceAmount = dueAmount - paidAmount;
     let paymentStatus = payload.paymentStatus ?? existing.payment_status;
     if (!payload.paymentStatus) {
@@ -187,31 +235,36 @@ export const vendorPaymentService = {
       else paymentStatus = "Paid";
     }
 
-    // Resolve bank name if bankId supplied
     let bankName = existing.bank_name;
     if (payload.bankId) {
-      const [bRows] = await db.execute<RowDataPacket[]>(
+      const [bankRows] = await db.execute<RowDataPacket[]>(
         "SELECT bank_name FROM bank_master WHERE id = ? LIMIT 1",
         [payload.bankId]
       );
-      bankName = (bRows[0] as any)?.bank_name ?? bankName;
+      bankName = (bankRows[0] as any)?.bank_name ?? bankName;
     }
 
     await db.execute(
       `UPDATE vendor_payment_tracking SET
-         payment_mode   = COALESCE(?, payment_mode),
-         payment_date   = COALESCE(?, payment_date),
-         bank_id        = COALESCE(?, bank_id),
-         bank_name      = ?,
+         process_id = ?,
+         cost_centre_id = ?,
+         cost_class = ?,
+         payment_mode = COALESCE(?, payment_mode),
+         payment_date = COALESCE(?, payment_date),
+         bank_id = COALESCE(?, bank_id),
+         bank_name = ?,
          transaction_id = COALESCE(?, transaction_id),
-         paid_amount    = ?,
+         paid_amount = ?,
          balance_amount = ?,
          payment_status = ?,
-         remarks        = COALESCE(?, remarks),
-         updated_by     = ?,
-         updated_at     = NOW()
+         remarks = COALESCE(?, remarks),
+         updated_by = ?,
+         updated_at = NOW()
        WHERE id = ?`,
       [
+        attribution.processId,
+        attribution.costCentreId,
+        attribution.costClass,
         payload.paymentMode ?? null,
         payload.paymentDate ?? null,
         payload.bankId ?? null,
@@ -226,26 +279,43 @@ export const vendorPaymentService = {
       ]
     );
 
+    if (existing.grn_request_id) {
+      await db.execute(
+        `UPDATE grn_request
+            SET process_id = ?,
+                cost_centre_id = ?,
+                cost_class = ?
+          WHERE id = ?`,
+        [attribution.processId, attribution.costCentreId, attribution.costClass, existing.grn_request_id]
+      ).catch(() => undefined);
+    }
+
     await writeFinanceAudit("VENDOR_PAYMENT_UPDATED", id, actorUserId, actorRole, {
       before: {
-        payment_mode:   existing.payment_mode,
-        payment_date:   existing.payment_date,
-        bank_id:        existing.bank_id,
+        process_id: existing.process_id,
+        cost_centre_id: existing.cost_centre_id,
+        cost_class: existing.cost_class,
+        payment_mode: existing.payment_mode,
+        payment_date: existing.payment_date,
+        bank_id: existing.bank_id,
         transaction_id: existing.transaction_id,
-        paid_amount:    existing.paid_amount,
+        paid_amount: existing.paid_amount,
         balance_amount: existing.balance_amount,
         payment_status: existing.payment_status,
-        remarks:        existing.remarks,
+        remarks: existing.remarks,
       },
       after: {
-        payment_mode:   payload.paymentMode ?? existing.payment_mode,
-        payment_date:   payload.paymentDate ?? existing.payment_date,
-        bank_id:        payload.bankId ?? existing.bank_id,
+        process_id: attribution.processId,
+        cost_centre_id: attribution.costCentreId,
+        cost_class: attribution.costClass,
+        payment_mode: payload.paymentMode ?? existing.payment_mode,
+        payment_date: payload.paymentDate ?? existing.payment_date,
+        bank_id: payload.bankId ?? existing.bank_id,
         transaction_id: payload.transactionId ?? existing.transaction_id,
-        paid_amount:    paidAmount,
+        paid_amount: paidAmount,
         balance_amount: balanceAmount,
         payment_status: paymentStatus,
-        remarks:        payload.remarks ?? existing.remarks,
+        remarks: payload.remarks ?? existing.remarks,
       },
     });
 
@@ -256,7 +326,14 @@ export const vendorPaymentService = {
       module_key: "FINANCE",
       entity_type: "vendor_payment_tracking",
       entity_id: id,
-      change_summary: { grn_number: existing.grn_number, payment_status: paymentStatus, paid_amount: paidAmount },
+      change_summary: {
+        grn_number: existing.grn_number,
+        process_id: attribution.processId,
+        cost_centre_id: attribution.costCentreId,
+        cost_class: attribution.costClass,
+        payment_status: paymentStatus,
+        paid_amount: paidAmount,
+      },
     });
 
     return this.getPayment(id);
@@ -292,12 +369,14 @@ export const vendorPaymentService = {
          payment_proof_file_name = ?,
          payment_proof_file_path = ?,
          payment_proof_file_mime = ?,
-         updated_by = ?, updated_at = NOW()
+         updated_by = ?,
+         updated_at = NOW()
        WHERE id = ?`,
       [fileName, filePath, fileMime, actorUserId, id]
     );
     await writeFinanceAudit("VENDOR_PAYMENT_PROOF_UPLOADED", id, actorUserId, undefined, {
-      file_name: fileName, file_mime: fileMime,
+      file_name: fileName,
+      file_mime: fileMime,
     });
   },
 
@@ -306,23 +385,25 @@ export const vendorPaymentService = {
     return rows;
   },
 
-  // Called when a vendor GRN is approved and GRN number is generated
   async createFromGrn(grnId: string, actorUserId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT g.*, b.branch_name FROM grn_request g
-       LEFT JOIN branch_master b ON b.id = g.branch_id
-       WHERE g.id = ? AND g.grn_type = 'vendor' AND g.status = 'approved' LIMIT 1`,
+      `SELECT g.*, b.branch_name AS branch_name
+         FROM grn_request g
+         LEFT JOIN branch_master b ON b.id = g.branch_id
+        WHERE g.id = ?
+          AND g.grn_type = 'vendor'
+          AND g.status = 'approved'
+        LIMIT 1`,
       [grnId]
     );
-    const grn = (rows[0] as any);
+    const grn = rows[0] as any;
     if (!grn) throw new Error("Approved vendor GRN not found");
 
-    // Idempotent — skip if row already exists
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM vendor_payment_tracking WHERE grn_request_id = ? LIMIT 1",
       [grnId]
     );
-    if ((existing as RowDataPacket[]).length > 0) return null;
+    if (existing.length > 0) return null;
 
     const id = randomUUID();
     const dueDate = grn.due_date ?? grn.bill_date ?? null;
@@ -330,45 +411,65 @@ export const vendorPaymentService = {
 
     await db.execute(
       `INSERT INTO vendor_payment_tracking
-         (id, grn_request_id, grn_number, branch_id, vendor_id, vendor_name,
-          head, sub_head, due_amount, due_date, grn_file_name, grn_file_path,
-          grn_file_mime, paid_amount, balance_amount, payment_status, financial_year)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'Payment Pending', ?)`,
+         (id, grn_request_id, grn_number, branch_id, process_id, cost_centre_id, cost_class, vendor_id, vendor_name,
+          head, sub_head, due_amount, due_date, grn_file_name, grn_file_path, grn_file_mime,
+          paid_amount, balance_amount, payment_status, financial_year)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'Payment Pending', ?)`,
       [
-        id, grnId, grn.grn_number, grn.branch_id, grn.vendor_id ?? null,
-        grn.vendor_name ?? null, grn.head, grn.sub_head,
-        grn.amount, dueDate, grn.attachment_file_name ?? null,
-        grn.attachment_file_path ?? null, grn.attachment_file_mime ?? null,
-        grn.amount, fy,
+        id,
+        grnId,
+        grn.grn_number,
+        grn.branch_id,
+        grn.process_id ?? null,
+        grn.cost_centre_id ?? null,
+        grn.cost_class ?? "indirect",
+        grn.vendor_id ?? null,
+        grn.vendor_name ?? null,
+        grn.head,
+        grn.sub_head,
+        grn.amount,
+        dueDate,
+        grn.attachment_original_name ?? grn.attachment_file_name ?? null,
+        grn.attachment_path ?? grn.attachment_file_path ?? null,
+        grn.attachment_mime ?? grn.attachment_file_mime ?? null,
+        grn.amount,
+        fy,
       ]
     );
 
-    // Create work inbox task for accounts_head role users
     const [accountsUsers] = await db.execute<RowDataPacket[]>(
-      `SELECT u.id FROM auth_user u
-       JOIN user_role_assignment ura ON ura.user_id = u.id
-       WHERE ura.role_name IN ('accounts_head','finance_head') AND u.active_status = 1
-       LIMIT 20`
+      `SELECT u.id
+         FROM auth_user u
+         JOIN user_role_assignment ura ON ura.user_id = u.id
+        WHERE ura.role_name IN ('accounts_head','finance_head')
+          AND u.active_status = 1
+        LIMIT 20`
     );
+
     for (const user of accountsUsers as RowDataPacket[]) {
       try {
         await inboxService.createItem({
           user_id: (user as any).id,
           type: "VENDOR_PAYMENT_PENDING",
-          title: `Vendor Payment Pending — GRN ${grn.grn_number ?? grnId}`,
-          description: `Branch: ${grn.branch_name ?? grn.branch_id} | Vendor: ${grn.vendor_name ?? "N/A"} | Due: ₹${Number(grn.amount).toLocaleString("en-IN")} | Due Date: ${dueDate ?? "TBD"}`,
+          title: `Vendor Payment Pending - GRN ${grn.grn_number ?? grnId}`,
+          description: `Branch: ${grn.branch_name ?? grn.branch_id} | Vendor: ${grn.vendor_name ?? "N/A"} | Due: Rs ${Number(grn.amount).toLocaleString("en-IN")} | Due Date: ${dueDate ?? "TBD"}`,
           entity_type: "vendor_payment_tracking",
           entity_id: id,
-          action_url: `/finance/vendor-payment-tracking`,
+          action_url: "/finance/vendor-payment-tracking",
           priority: "high",
         });
       } catch {
-        // Non-critical — don't fail GRN approval if inbox fails
+        // Non-critical.
       }
     }
 
     await writeFinanceAudit("VENDOR_PAYMENT_ROW_CREATED", id, actorUserId, undefined, {
-      grn_id: grnId, grn_number: grn.grn_number, due_amount: grn.amount,
+      grn_id: grnId,
+      grn_number: grn.grn_number,
+      due_amount: grn.amount,
+      process_id: grn.process_id ?? null,
+      cost_centre_id: grn.cost_centre_id ?? null,
+      cost_class: grn.cost_class ?? "indirect",
     });
 
     return id;

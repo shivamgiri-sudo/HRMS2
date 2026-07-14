@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const ALLOWED_ROLES = ["payroll_head", "payroll_branch", "admin", "super_admin", "wfm", "employee"];
 
-interface Employee { id: string; employee_code: string; name: string; }
+interface Employee { id: string; employee_code: string; name?: string; full_name?: string; first_name?: string; last_name?: string; }
 
 interface Summary {
   earned_payable_days: number;
@@ -81,9 +81,12 @@ export default function RunningPayrollBreakdown() {
       .finally(() => setLoading(false));
   };
 
+  const getEmpName = (emp: Employee) =>
+    emp.full_name ?? emp.name ?? (`${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim() || emp.employee_code);
+
   const selectEmployee = (emp: Employee) => {
     setSelectedEmployee(emp);
-    setSearch(`${emp.name} (${emp.employee_code})`);
+    setSearch(`${getEmpName(emp)} (${emp.employee_code})`);
     setSuggestions([]);
   };
 
@@ -122,7 +125,7 @@ export default function RunningPayrollBreakdown() {
                       className="px-3 py-2 text-sm cursor-pointer hover:bg-muted"
                       onClick={() => selectEmployee(emp)}
                     >
-                      {emp.name} <span className="text-muted-foreground text-xs">({emp.employee_code})</span>
+                      {getEmpName(emp)} <span className="text-muted-foreground text-xs">({emp.employee_code})</span>
                     </div>
                   ))}
                 </div>

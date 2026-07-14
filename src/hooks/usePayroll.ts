@@ -120,14 +120,7 @@ export async function fetchPayrollRecordPage(
 export function usePayrollRecords(filters: PayrollRecordFilters = {}) {
   return useQuery({
     queryKey: ["payroll-records", filters],
-    queryFn: async () => {
-      try {
-        return fetchPayrollRecordPage(filters);
-      } catch {
-        console.warn("Payroll records fetch failed");
-        return { records: [] as PayrollRecord[], total: 0, page: 1, limit: 50 };
-      }
-    },
+    queryFn: () => fetchPayrollRecordPage(filters),
     placeholderData: (prev) => prev,
   });
 }

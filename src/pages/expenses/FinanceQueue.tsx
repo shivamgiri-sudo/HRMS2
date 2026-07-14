@@ -11,6 +11,7 @@ import { ExpenseItemsList } from '../../components/expenses/ExpenseItemsList';
 import { useFinanceQueue, useClaimDetails, useFinanceApprove, useRejectClaim, useMarkAsPaid } from '../../integrations/expenses/hooks';
 import { ExpenseStatus } from '../../integrations/expenses/types';
 import type { ExpenseClaim } from '../../integrations/expenses/types';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { expenseApi } from '../../integrations/expenses/api';
@@ -84,7 +85,8 @@ export default function FinanceQueue() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <DashboardLayout>
+      <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Finance Queue</h1>
@@ -233,6 +235,7 @@ export default function FinanceQueue() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

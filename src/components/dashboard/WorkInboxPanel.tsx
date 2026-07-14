@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -63,16 +64,12 @@ export function WorkInboxPanel({ maxItems = 5 }: WorkInboxPanelProps) {
     let cancelled = false;
     setLoading(true);
 
-    fetch("/api/work-inbox/my")
-      .then((res) => {
-        if (!res.ok) throw new Error(`Error ${res.status}`);
-        return res.json();
-      })
+    hrmsApi.get<{ success: boolean; data?: WorkInboxItem[]; items?: WorkInboxItem[] } | WorkInboxItem[]>("/api/work-inbox/my")
       .then((json) => {
         if (!cancelled) {
           const list: WorkInboxItem[] = Array.isArray(json)
             ? json
-            : json.items ?? json.data ?? [];
+            : (json as any).items ?? (json as any).data ?? [];
           setItems(list);
         }
       })

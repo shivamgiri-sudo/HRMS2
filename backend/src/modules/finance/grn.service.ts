@@ -215,7 +215,7 @@ export const grnService = {
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT g.*,
-              COALESCE(bm.branch_name, bm.name) AS branch_name,
+              bm.branch_name AS branch_name,
               pm.process_name,
               ccm.cost_centre_name,
               CONCAT(cb.first_name,' ',cb.last_name) AS created_by_name,

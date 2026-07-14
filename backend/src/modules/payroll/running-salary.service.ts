@@ -220,9 +220,9 @@ export async function computeRunningSalary(
   const [incentiveRows] = await db.execute<RowDataPacket[]>(
     `SELECT SUM(COALESCE(iul.amount, 0)) AS total_incentives
        FROM incentive_upload_line iul
-       JOIN incentive_batch_upload ibu ON ibu.id = iul.batch_id
+       JOIN incentive_upload_batch ibu ON ibu.id = iul.batch_id
       WHERE iul.employee_id = ?
-        AND ibu.month = ?
+        AND ibu.pay_month = ?
         AND ibu.status = 'approved'`,
     [employeeId, runMonth.slice(0, 7)]
   );

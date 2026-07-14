@@ -10,6 +10,7 @@ import { ExpenseStatusBadge } from '../../components/expenses/ExpenseStatusBadge
 import { useCreateClaim, useAddClaimItem, useClaimDetails, useSubmitClaim } from '../../integrations/expenses/hooks';
 import { ExpenseStatus } from '../../integrations/expenses/types';
 import type { AddExpenseItemDto } from '../../integrations/expenses/types';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { ArrowLeft, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -63,7 +64,8 @@ export default function NewExpenseClaim() {
 
   if (!activeClaim) {
     return (
-      <div className="p-6 max-w-2xl mx-auto space-y-6">
+      <DashboardLayout>
+        <div className="p-6 max-w-2xl mx-auto space-y-6">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate('/expenses')}>
             <ArrowLeft className="h-4 w-4" />
@@ -78,12 +80,14 @@ export default function NewExpenseClaim() {
             </Button>
           </CardContent>
         </Card>
-      </div>
+        </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
+    <DashboardLayout>
+      <div className="p-6 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate('/expenses')}>
           <ArrowLeft className="h-4 w-4" />
@@ -127,6 +131,7 @@ export default function NewExpenseClaim() {
           )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

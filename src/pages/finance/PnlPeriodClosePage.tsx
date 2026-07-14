@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { IndirectAllocationPanel } from "@/components/finance/pnl/IndirectAllocationPanel";
 import { ProcessCostLedger } from "@/components/finance/pnl/ProcessCostLedger";
 import { RevenueReconciliationPanel } from "@/components/finance/pnl/RevenueReconciliationPanel";
@@ -71,17 +72,20 @@ export default function PnlPeriodClosePage() {
 
   if (periodCloseQuery.isLoading) {
     return (
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <Skeleton className="h-52 rounded-3xl" />
-        <Skeleton className="h-28 rounded-3xl" />
-        <Skeleton className="h-[520px] rounded-3xl" />
-      </div>
+      <DashboardLayout>
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+          <Skeleton className="h-52 rounded-3xl" />
+          <Skeleton className="h-28 rounded-3xl" />
+          <Skeleton className="h-[520px] rounded-3xl" />
+        </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.14),_transparent_20%),linear-gradient(180deg,_#fffdf6_0%,_#ffffff_36%,_#f7fafc_100%)]">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <DashboardLayout>
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.14),_transparent_20%),linear-gradient(180deg,_#fffdf6_0%,_#ffffff_36%,_#f7fafc_100%)]">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 text-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]">
           <div className="grid gap-8 p-6 lg:grid-cols-[1.3fr_0.7fr] lg:p-8">
             <div className="space-y-4">
@@ -247,7 +251,8 @@ export default function PnlPeriodClosePage() {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

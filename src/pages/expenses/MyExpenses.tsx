@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { ExpenseClaimCard } from '../../components/expenses/ExpenseClaimCard';
 import { useMyClaims, useCreateClaim } from '../../integrations/expenses/hooks';
 import { ExpenseStatus } from '../../integrations/expenses/types';
+import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Plus, Receipt } from 'lucide-react';
 
 export default function MyExpenses() {
@@ -17,10 +18,17 @@ export default function MyExpenses() {
     navigate('/expenses/new');
   };
 
-  if (isLoading) return <div className="p-6 text-center text-muted-foreground">Loading expenses...</div>;
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 text-center text-muted-foreground">Loading expenses...</div>
+      </DashboardLayout>
+    );
+  }
 
   return (
-    <div className="p-6 space-y-6">
+    <DashboardLayout>
+      <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">My Expenses</h1>
@@ -60,6 +68,7 @@ export default function MyExpenses() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

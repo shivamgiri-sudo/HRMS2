@@ -3,6 +3,7 @@ import { ArrowLeft, FileText, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useProcessPnlDetail } from "@/hooks/useProcessPnlDetail";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { MarginBridgeChart } from "@/components/finance/pnl/MarginBridgeChart";
@@ -87,25 +88,29 @@ export default function ProcessPnlDetailPage() {
 
   if (detailQuery.isLoading) {
     return (
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <Skeleton className="h-52 rounded-3xl" />
-        <Skeleton className="h-28 rounded-3xl" />
-        <Skeleton className="h-[520px] rounded-3xl" />
-      </div>
+      <DashboardLayout>
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+          <Skeleton className="h-52 rounded-3xl" />
+          <Skeleton className="h-28 rounded-3xl" />
+          <Skeleton className="h-[520px] rounded-3xl" />
+        </div>
+      </DashboardLayout>
     );
   }
 
   const detail = detailQuery.data;
   if (!detail) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-10">
-        <Card className="rounded-3xl border-slate-200 shadow-sm">
-          <CardContent className="flex items-center gap-3 p-6 text-slate-600">
-            <ShieldAlert className="h-5 w-5 text-rose-600" />
-            This process does not have a usable P&L detail bundle for the selected period.
-          </CardContent>
-        </Card>
-      </div>
+      <DashboardLayout>
+        <div className="mx-auto max-w-4xl px-4 py-10">
+          <Card className="rounded-3xl border-slate-200 shadow-sm">
+            <CardContent className="flex items-center gap-3 p-6 text-slate-600">
+              <ShieldAlert className="h-5 w-5 text-rose-600" />
+              This process does not have a usable P&L detail bundle for the selected period.
+            </CardContent>
+          </Card>
+        </div>
+      </DashboardLayout>
     );
   }
 
@@ -129,8 +134,9 @@ export default function ProcessPnlDetailPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,_#eff6f2_0%,_#ffffff_34%,_#f8fafc_100%)]">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <DashboardLayout>
+      <div className="min-h-screen bg-[linear-gradient(180deg,_#eff6f2_0%,_#ffffff_34%,_#f8fafc_100%)]">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
           <div className="grid gap-6 p-6 lg:grid-cols-[1.4fr_0.8fr]">
             <div className="space-y-4">
@@ -342,29 +348,42 @@ export default function ProcessPnlDetailPage() {
               <CardHeader>
                 <CardTitle className="text-base font-semibold text-slate-950">Direct non-people cost</CardTitle>
               </CardHeader>
-              <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
+              <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">People cost</p>
                   <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directPeopleCost)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Expense claims</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directExpenseCost)}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Vendor and GRN cost</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directVendorCost)}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Non-people cost</p>
                   <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directNonPeopleCost)}</p>
                 </div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Total direct cost</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directCost)}</p>
-                </div>
+              </CardContent>
+            </Card>
+            <Card className="rounded-3xl border-slate-200 shadow-sm">
+              <CardContent className="flex items-center justify-between p-4 text-sm text-slate-700">
+                <span>Total direct cost</span>
+                <span className="text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directCost)}</span>
               </CardContent>
             </Card>
             <DataTable
               columns={[
-                { key: "claim_number", label: "Claim" },
-                { key: "expense_date", label: "Expense date" },
-                { key: "category_name", label: "Category" },
-                { key: "vendor_name", label: "Vendor" },
+                { key: "sourceType", label: "Source" },
+                { key: "reference", label: "Reference" },
+                { key: "entryDate", label: "Entry date" },
+                { key: "category", label: "Category" },
+                { key: "subCategory", label: "Sub-category" },
+                { key: "vendorName", label: "Vendor" },
                 { key: "amount", label: "Amount", align: "right" },
                 { key: "status", label: "Status" },
+                { key: "costClass", label: "Class" },
               ]}
               rows={detail.directCost.expenses}
             />
@@ -458,7 +477,8 @@ export default function ProcessPnlDetailPage() {
             />
           </TabsContent>
         </Tabs>
+        </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

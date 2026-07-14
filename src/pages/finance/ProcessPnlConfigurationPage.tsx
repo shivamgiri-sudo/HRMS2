@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PnlAdjustmentDrawer } from "@/components/finance/pnl/PnlAdjustmentDrawer";
 import {
@@ -130,8 +131,9 @@ export default function ProcessPnlConfigurationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_22%),linear-gradient(180deg,_#f7fbff_0%,_#ffffff_40%,_#f4f7f6_100%)]">
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    <DashboardLayout>
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_22%),linear-gradient(180deg,_#f7fbff_0%,_#ffffff_40%,_#f4f7f6_100%)]">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 text-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]">
           <div className="grid gap-8 p-6 lg:grid-cols-[1.35fr_0.65fr] lg:p-8">
             <div className="space-y-4">
@@ -666,7 +668,8 @@ export default function ProcessPnlConfigurationPage() {
             </CardContent>
           </Card>
         </section>
+        </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }
