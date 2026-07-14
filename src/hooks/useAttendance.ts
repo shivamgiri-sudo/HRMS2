@@ -127,7 +127,6 @@ export function useAttendance(month?: Date, employeeId?: string) {
 
 export function useTodayAttendance(employeeId?: string) {
   const today = format(new Date(), "yyyy-MM-dd");
-  const yesterday = format(new Date(Date.now() - 86400000), "yyyy-MM-dd");
 
   return useQuery({
     queryKey: ["attendance-today", today, employeeId],
@@ -149,15 +148,6 @@ export function useTodayAttendance(employeeId?: string) {
 
       const todayRecord = await getRecordForDate(today);
       if (todayRecord) return todayRecord;
-
-      const yesterdayRecord = await getRecordForDate(yesterday);
-      if (
-        yesterdayRecord &&
-        !yesterdayRecord.clock_out_time &&
-        !yesterdayRecord.clock_out
-      ) {
-        return yesterdayRecord;
-      }
 
       return null;
     },
