@@ -113,9 +113,10 @@ export async function calculateWeekoffEligibility(
 ): Promise<number> {
   const actualCount = await resolveActualWeekoffCount(employeeId, runMonth);
 
-  // Calculate available working days (total - actual weekoffs)
   const [year, month] = runMonth.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
+
+  // Calculate available working days (calendar days minus actual weekoffs)
   const availableWorkingDays = daysInMonth - actualCount;
 
   // If employee worked all available working days, they get all weekoffs
