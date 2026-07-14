@@ -13,7 +13,7 @@ export function getSlabMaxWeekoffs(paidBase: number): number {
   if (paidBase < 18) return 2;
   if (paidBase < 24) return 3;
   if (paidBase < 26) return 4;
-  return Infinity; // paidBase >= 26
+  return Infinity; // paidBase >= 26 — no cap, use actual weekoff count
 }
 
 // ─── Last day of month ────────────────────────────────────────────────────────
