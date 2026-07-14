@@ -160,9 +160,11 @@ function resolveShiftDate(explicitDate?: string | null) {
 const shiftLookupCache = new Map<string, { start_time: string; end_time: string; duration_minutes: number } | null>();
 const SHIFT_CACHE_TTL_MS = 5 * 60_000;
 let shiftCacheLastClear = Date.now();
+let shiftTableAvailable = true;
 
 async function resolveShiftDateSmart(employeeId: string, explicitDate?: string | null): Promise<string> {
   if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) return explicitDate;
+  if (!shiftTableAvailable) return resolveShiftDate(explicitDate);
 
   if (Date.now() - shiftCacheLastClear > SHIFT_CACHE_TTL_MS) {
     shiftLookupCache.clear();
@@ -183,7 +185,10 @@ async function resolveShiftDateSmart(employeeId: string, explicitDate?: string |
         [employeeId],
       );
       shift = (rows as any[])[0] ?? null;
-    } catch {
+    } catch (err: any) {
+      if (err?.code === "ER_NO_SUCH_TABLE" || String(err?.message ?? "").includes("doesn't exist")) {
+        shiftTableAvailable = false;
+      }
       shift = null;
     }
     shiftLookupCache.set(employeeId, shift);
