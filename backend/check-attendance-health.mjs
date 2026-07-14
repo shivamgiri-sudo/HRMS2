@@ -118,7 +118,7 @@ const [daily] = await db.execute(
      SUM(CASE WHEN attendance_status='present'  THEN 1 ELSE 0 END) as present,
      SUM(CASE WHEN attendance_status='absent'   THEN 1 ELSE 0 END) as absent,
      SUM(CASE WHEN attendance_status='week_off' THEN 1 ELSE 0 END) as weekoff,
-     SUM(CASE WHEN attendance_status='leave_approved' THEN 1 ELSE 0 END) as leave
+     SUM(CASE WHEN attendance_status='leave_approved' THEN 1 ELSE 0 END) as leave_cnt
    FROM attendance_daily_record
    WHERE record_date >= ? AND record_date <= ?
    GROUP BY record_date ORDER BY record_date`, [FROM, TO]
@@ -130,7 +130,7 @@ for (const d of daily) {
     ? d.record_date.toISOString().slice(0, 10)
     : String(d.record_date).slice(0, 10);
   console.log(
-    `  ${dt}   ${String(d.total).padStart(5)}  ${String(d.present).padStart(7)}  ${String(d.absent).padStart(6)}  ${String(d.weekoff).padStart(7)}  ${String(d.leave).padStart(5)}`
+    `  ${dt}   ${String(d.total).padStart(5)}  ${String(d.present).padStart(7)}  ${String(d.absent).padStart(6)}  ${String(d.weekoff).padStart(7)}  ${String(d.leave_cnt).padStart(5)}`
   );
 }
 
