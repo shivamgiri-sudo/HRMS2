@@ -36,7 +36,42 @@ async function clearLegacyServiceWorkers() {
   sessionStorage.removeItem(reloadKey);
 }
 
+function installChunkLoadRecovery() {
+  const reloadKey = "hrms-chunk-reload";
+
+  const shouldRecover = (message: string) =>
+    /Failed to fetch dynamically imported module/i.test(message)
+    || /Importing a module script failed/i.test(message)
+    || /error loading dynamically imported module/i.test(message);
+
+  const recover = (message: string) => {
+    if (!shouldRecover(message)) return;
+    if (sessionStorage.getItem(reloadKey) === "1") return;
+    sessionStorage.setItem(reloadKey, "1");
+    window.location.reload();
+  };
+
+  window.addEventListener("error", (event) => {
+    recover(event.message ?? "");
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    const message = reason instanceof Error
+      ? reason.message
+      : typeof reason === "string"
+        ? reason
+        : "";
+    recover(message);
+  });
+
+  window.addEventListener("load", () => {
+    sessionStorage.removeItem(reloadKey);
+  }, { once: true });
+}
+
 void clearLegacyServiceWorkers();
+installChunkLoadRecovery();
 
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} forcedTheme="light">
