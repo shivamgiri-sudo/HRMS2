@@ -2785,9 +2785,9 @@ export const breakManagementService = {
         bds.final_status
       FROM break_daily_summary bds
       JOIN employees e ON e.id = bds.employee_id
-      LEFT JOIN processes p ON p.id = bds.process_id
-      LEFT JOIN branches br ON br.id = bds.branch_id
-      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN process_master p ON p.id = bds.process_id
+      LEFT JOIN branch_master br ON br.id = bds.branch_id
+      LEFT JOIN department_master d ON d.id = e.department_id
       ${where}
       ORDER BY bds.shift_date DESC, e.employee_code ASC
       LIMIT ?`,
