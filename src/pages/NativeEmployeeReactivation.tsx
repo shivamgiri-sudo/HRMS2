@@ -158,8 +158,9 @@ function InitiateDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
     setStep("form");
     setEarliestEligible(null);
     setSubmitError(null);
+    // Default to 1 day after exit (same-day not allowed)
     if (emp.date_of_exit) {
-      setJoiningDate(addDays(emp.date_of_exit, 31));
+      setJoiningDate(addDays(emp.date_of_exit, 1));
     }
   }
 
@@ -176,9 +177,6 @@ function InitiateDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
         employee_id: selected.id,
         proposed_joining_date: joiningDate,
         reinstatement_reason: reason.trim(),
-        new_branch_id: newBranch || null,
-        new_process_id: newProcess || null,
-        new_cost_centre_id: newCostCentre || null,
       });
       onSuccess();
     } catch (err: any) {
@@ -311,14 +309,14 @@ function InitiateDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
                 </div>
               </div>
 
-              {/* 31-day gap notice */}
-              <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
-                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                <div className="text-xs text-amber-700">
-                  <strong>31-day minimum gap required</strong> between exit date and proposed joining date.
+              {/* 30-day maximum notice */}
+              <div className="flex items-start gap-2.5 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
+                <AlertTriangle className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                <div className="text-xs text-blue-700">
+                  <strong>Reactivation only within 30 days</strong> from exit date. Beyond 30 days, employee must complete fresh onboarding through ATS.
                   {selected.date_of_exit && (
                     <span className="block mt-0.5">
-                      Earliest eligible: <strong>{fmtDate(addDays(selected.date_of_exit, 31))}</strong>
+                      Latest eligible: <strong>{fmtDate(addDays(selected.date_of_exit, 30))}</strong>
                     </span>
                   )}
                 </div>
@@ -360,40 +358,20 @@ function InitiateDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess
                 <p className="text-xs text-slate-400 text-right">{reason.length} chars</p>
               </div>
 
-              {/* Advanced overrides (collapsible) */}
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <button
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                    Override Branch / Process / Cost Centre (optional)
-                  </span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
-                </button>
-                {showAdvanced && (
-                  <div className="px-4 pb-4 pt-1 space-y-2.5 border-t border-slate-100">
-                    {[
-                      { label: "New Branch ID", value: newBranch, setter: setNewBranch, icon: Building2 },
-                      { label: "New Process ID", value: newProcess, setter: setNewProcess, icon: Briefcase },
-                      { label: "New Cost Centre ID", value: newCostCentre, setter: setNewCostCentre, icon: TrendingUp },
-                    ].map(({ label, value, setter, icon: Icon }) => (
-                      <div key={label} className="space-y-1">
-                        <label className="block text-xs text-slate-500">{label}</label>
-                        <div className="relative">
-                          <Icon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300" />
-                          <input
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-8 pr-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="Leave blank to keep current"
-                            value={value}
-                            onChange={e => setter(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    ))}
+              {/* Reactivation rules notice */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                  <div className="text-xs text-slate-600">
+                    <strong>Reactivation Policy:</strong>
+                    <ul className="mt-1.5 space-y-1 list-disc list-inside">
+                      <li>Must rejoin same branch, process, and cost centre</li>
+                      <li>Same employee code will be reactivated</li>
+                      <li>Existing documents retained (no re-upload needed)</li>
+                      <li>Requires Branch Head and HR approval</li>
+                    </ul>
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Error */}
