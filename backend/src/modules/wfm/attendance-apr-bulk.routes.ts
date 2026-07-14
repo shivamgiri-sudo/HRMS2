@@ -68,9 +68,16 @@ function parseCsv(content: string): { rows: CsvRow[]; errors: RowError[] } {
     const rowNum = i + 1;
 
     if (!employee_code) { errors.push({ row: rowNum, employee_code, reason: 'employee_code is required' }); continue; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendance_date)) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date must be YYYY-MM-DD' }); continue; }
+    // Accept DD-MM-YYYY and convert to YYYY-MM-DD
+    let normalised_date = attendance_date;
+    if (/^\d{2}-\d{2}-\d{4}$/.test(attendance_date)) {
+      const [d, m, y] = attendance_date.split('-');
+      normalised_date = `${y}-${m}-${d}`;
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(attendance_date)) {
+      errors.push({ row: rowNum, employee_code, reason: 'attendance_date must be DD-MM-YYYY (e.g. 14-07-2026)' }); continue;
+    }
 
-    const dateVal = new Date(attendance_date);
+    const dateVal = new Date(normalised_date);
     if (isNaN(dateVal.getTime())) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date is invalid' }); continue; }
     if (dateVal > today) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date cannot be in the future' }); continue; }
     if (dateVal < ninetyDaysAgo) { errors.push({ row: rowNum, employee_code, reason: 'attendance_date is older than 90 days' }); continue; }
@@ -80,7 +87,7 @@ function parseCsv(content: string): { rows: CsvRow[]; errors: RowError[] } {
       errors.push({ row: rowNum, employee_code, reason: 'net_login_minutes must be an integer 0–600' }); continue;
     }
 
-    rows.push({ rowNum, employee_code, attendance_date, net_login_minutes });
+    rows.push({ rowNum, employee_code, attendance_date: normalised_date, net_login_minutes });
   }
 
   return { rows, errors };

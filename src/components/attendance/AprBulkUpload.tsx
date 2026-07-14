@@ -11,9 +11,9 @@ interface UploadResult {
 }
 
 const SAMPLE_CSV = `employee_code,attendance_date,net_login_minutes
-MAS001,2026-06-01,490
-MAS002,2026-06-01,250
-MAS003,2026-06-01,0`;
+MAS001,01-06-2026,490
+MAS002,01-06-2026,250
+MAS003,01-06-2026,0`;
 
 export function AprBulkUpload() {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -70,7 +70,7 @@ export function AprBulkUpload() {
 
       <p className="text-xs text-slate-500">
         Use this to manually upload dialler login data for Operations Executive employees when APR auto-sync is missing.
-        Same classification rules apply: ≥480 min = Present, &gt;240 min = Half-Day, ≤240 min = Absent.
+        Date format: <strong>DD-MM-YYYY</strong> (e.g. 14-07-2026). Same classification rules apply: ≥480 min = Present, &gt;240 min = Half-Day, ≤240 min = Absent.
         Locked records are automatically skipped.
       </p>
 
