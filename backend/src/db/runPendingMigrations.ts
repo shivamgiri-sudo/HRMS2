@@ -267,6 +267,7 @@ const MIGRATION_MANIFEST: string[] = [
   "374_employees_missing_indexes.sql",
   "375_salary_prep_line_attendance_source.sql",
   "376_break_management_module.sql",
+  "377_process_pnl_governance.sql",
   "391_payroll_validation_freeze_columns.sql",
   "393_break_kiosk_allowed_processes.sql",
   "394_auto_roster_synced_tables.sql",

@@ -177,6 +177,7 @@ import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js"
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
+import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
 import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
@@ -360,6 +361,7 @@ app.use("/api/career", careerRouter);
 app.use("/api/erp", erpRouter);
 app.use("/api/finance", vendorPaymentRouter);
 app.use("/api/finance", grnRouter);
+app.use("/api/finance", processPnlRouter);
 app.use("/api/inbox", inboxRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);

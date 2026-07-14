@@ -48,6 +48,9 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  worker: {
+    format: 'es',
+  },
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
@@ -57,6 +60,7 @@ export default defineConfig(({ mode }) => ({
           if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom)[\\/]/.test(id)) return "vendor-react";
           if (id.includes("@tanstack/react-query")) return "vendor-query";
           if (id.includes("@radix-ui/")) return "vendor-ui";
+          if (id.includes("@tanstack/react-virtual")) return "vendor-virtual";
           if (/[\\/]node_modules[\\/](date-fns|clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return "vendor-utils";
           if (id.includes("recharts")) return "vendor-charts";
           if (/[\\/]node_modules[\\/](jspdf|jspdf-autotable)[\\/]/.test(id)) return "vendor-pdf";

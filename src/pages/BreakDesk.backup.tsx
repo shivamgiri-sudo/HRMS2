@@ -1,13 +1,10 @@
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Coffee, Filter, LogIn, LogOut, RefreshCw, Search, ShieldCheck, TimerReset, UserRound, WifiOff, ChevronDown, ChevronUp, CheckCircle, X, Loader2 } from "lucide-react";
+import { Coffee, Filter, LogIn, LogOut, RefreshCw, Search, ShieldCheck, TimerReset, UserRound } from "lucide-react";
 import mcnLogo from "@/assets/brand/mcn-logo.png";
 import { apiUrl } from "@/lib/apiBase";
 import { cn } from "@/lib/utils";
-import { EmployeeRow } from "@/components/BreakDeskEmployeeRow";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
 
 type Option = { value: string; label: string };
 
@@ -223,6 +220,52 @@ function buildQuery(access: { kiosk: string; token: string }) {
   return params.toString();
 }
 
+function filterDeskEmployees(employees: DeskEmployee[], filters: FiltersState, searchText: string) {
+  const normalizedSearch = searchText.trim().toLocaleLowerCase();
+  return employees.filter((employee) => {
+    if (filters.branch_id && employee.branch_id !== filters.branch_id) {
+      return false;
+    }
+    if (filters.process_id && employee.process_id !== filters.process_id) {
+      return false;
+    }
+    if (filters.department_id && employee.department_id !== filters.department_id) {
+      return false;
+    }
+    if (filters.designation_id && employee.designation_id !== filters.designation_id) {
+      return false;
+    }
+    if (filters.manager_id && employee.manager_id !== filters.manager_id) {
+      return false;
+    }
+    if (filters.shift && employee.shift_name !== filters.shift) {
+      return false;
+    }
+    if (filters.status && employee.current_status !== filters.status) {
+      return false;
+    }
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    const haystack = [
+      employee.employee_name,
+      employee.employee_code,
+      employee.biometric_id,
+      employee.process_name,
+      employee.department_name,
+      employee.branch_name,
+      employee.manager_name,
+      employee.designation_name,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase();
+
+    return haystack.includes(normalizedSearch);
+  });
+}
+
 function buildCounters(employees: DeskEmployee[]) {
   return {
     entered: employees.filter((row) => Boolean(row.biometric_punch_in_time)).length,
@@ -256,14 +299,6 @@ function mergeDeskEmployee(current: DeskEmployeesResponse | null, employee: Desk
     employees: nextEmployees,
     counters: buildCounters(nextEmployees),
   };
-}
-
-// Adaptive polling interval based on activity
-function getPollingInterval(employees: DeskEmployee[]) {
-  const onBreakCount = employees.filter((e) => e.current_status === 'On Break').length;
-  if (onBreakCount > 10) return 10_000; // High activity: 10s
-  if (onBreakCount > 0) return 20_000; // Some activity: 20s
-  return 30_000; // Low activity: 30s
 }
 
 function Modal({
@@ -301,10 +336,6 @@ function Modal({
 export default function BreakDesk() {
   const [searchParams] = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const filterWorkerRef = useRef<Worker | null>(null);
-  const [selectedEmployees, setSelectedEmployees] = useState<Set<string>>(new Set());
-  const [bulkActionInProgress, setBulkActionInProgress] = useState(false);
-
   const savedAccess = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem(ACCESS_KEY) ?? "null") as { kiosk?: string; token?: string } | null;
@@ -321,102 +352,15 @@ export default function BreakDesk() {
   const [bootstrap, setBootstrap] = useState<BreakDeskBootstrap | null>(null);
   const [deskData, setDeskData] = useState<DeskEmployeesResponse | null>(null);
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [actingRowId, setActingRowId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clock, setClock] = useState(new Date());
   const [selectedEmployee, setSelectedEmployee] = useState<DeskEmployee | null>(null);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [filteredEmployees, setFilteredEmployees] = useState<DeskEmployee[]>([]);
   const requestSequenceRef = useRef(0);
 
   const deferredSearch = useDeferredValue(filters.search);
-
-  // Register Service Worker for offline support
-  useEffect(() => {
-    if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
-      navigator.serviceWorker
-        .register('/break-desk-sw.js', { scope: '/break-desk' })
-        .then((registration) => {
-          console.log('[BreakDesk] Service Worker registered:', registration.scope);
-
-          // Listen for sync events
-          if ('sync' in registration) {
-            registration.sync.register('sync-break-desk-queue').catch((err) => {
-              console.warn('[BreakDesk] Background sync registration failed:', err);
-            });
-          }
-        })
-        .catch((err) => {
-          console.error('[BreakDesk] Service Worker registration failed:', err);
-        });
-    }
-  }, []);
-
-  // Online/Offline detection
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      toast.success('Back online! Syncing queued actions...');
-
-      // Trigger manual sync
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'SYNC_QUEUE' });
-      }
-    };
-
-    const handleOffline = () => {
-      setIsOnline(false);
-      toast.warning('You are offline. Actions will be queued.', { duration: 5000 });
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  // Initialize Web Worker for filtering
-  useEffect(() => {
-    filterWorkerRef.current = new Worker(
-      new URL('../workers/breakDeskFilter.worker.ts', import.meta.url),
-      { type: 'module' }
-    );
-
-    filterWorkerRef.current.onmessage = (e: MessageEvent) => {
-      setFilteredEmployees(e.data);
-    };
-
-    filterWorkerRef.current.onerror = (error) => {
-      console.error('[BreakDesk] Filter worker error:', error);
-      // Fallback to main thread filtering
-      setFilteredEmployees(deskData?.employees ?? []);
-    };
-
-    return () => {
-      filterWorkerRef.current?.terminate();
-    };
-  }, []);
-
-  // Send filtering work to Web Worker
-  useEffect(() => {
-    const allEmployees = deskData?.employees ?? [];
-
-    if (filterWorkerRef.current && allEmployees.length > 0) {
-      filterWorkerRef.current.postMessage({
-        employees: allEmployees,
-        filters,
-        searchQuery: deferredSearch,
-      });
-    } else {
-      setFilteredEmployees(allEmployees);
-    }
-  }, [deskData?.employees, filters, deferredSearch]);
 
   const fetchBootstrap = useCallback(async (nextAccess: { kiosk: string; token: string }) => {
     if (!nextAccess.kiosk || !nextAccess.token) return;
@@ -449,13 +393,6 @@ export default function BreakDesk() {
       const endpoint = live ? "/api/break-desk/live-status" : "/api/break-desk/employees";
       const response = await fetch(apiUrl(`${endpoint}?${query}`));
       const payload = await response.json();
-
-      // Handle offline queue response
-      if (payload.offline && payload.queued) {
-        toast.warning(payload.message || 'Action queued for sync', { duration: 5000 });
-        return;
-      }
-
       if (!response.ok || !payload?.success) throw new Error(payload?.message || payload?.error || "Failed to load break desk");
       if (requestId !== requestSequenceRef.current) return;
       setDeskData(payload.data);
@@ -486,16 +423,11 @@ export default function BreakDesk() {
     if (bootstrap) void fetchEmployees(false);
   }, [bootstrap, fetchEmployees]);
 
-  // Adaptive polling based on activity
   useEffect(() => {
     if (!bootstrap) return;
-
-    const allEmployees = deskData?.employees ?? [];
-    const interval = getPollingInterval(allEmployees);
-
-    const timer = window.setInterval(() => void fetchEmployees(true), interval);
+    const timer = window.setInterval(() => void fetchEmployees(true), 15000);
     return () => window.clearInterval(timer);
-  }, [bootstrap, deskData?.employees, fetchEmployees]);
+  }, [bootstrap, fetchEmployees]);
 
   useEffect(() => {
     if (!bootstrap) return;
@@ -503,15 +435,16 @@ export default function BreakDesk() {
   }, [bootstrap]);
 
   const allEmployees = deskData?.employees ?? [];
-  const employees = filteredEmployees;
-
+  const employees = useMemo(
+    () => filterDeskEmployees(allEmployees, filters, deferredSearch),
+    [allEmployees, deferredSearch, filters],
+  );
   const counters = useMemo(
     () => (employees.length > 0 || filters.status || deferredSearch.trim() || filters.branch_id || filters.process_id || filters.department_id || filters.designation_id || filters.manager_id || filters.shift
       ? buildCounters(employees)
       : (deskData?.counters ?? bootstrap?.counters ?? {})),
     [bootstrap?.counters, deferredSearch, deskData?.counters, employees, filters],
   );
-
   const statusMetrics = [
     { label: "Entered", value: counters.entered ?? 0, icon: LogIn },
     { label: "On Duty", value: counters.onDuty ?? 0, icon: ShieldCheck },
@@ -519,7 +452,6 @@ export default function BreakDesk() {
     { label: "Exceeded", value: counters.breakExceeded ?? 0, icon: TimerReset },
     { label: "No Punch", value: counters.noPunchFound ?? 0, icon: UserRound },
   ];
-
   const summaryMetrics = [
     { label: "Total Breaks", value: String(counters.totalBreaksToday ?? 0) },
     { label: "Mini", value: String(counters.miniBreaksToday ?? 0) },
@@ -554,51 +486,6 @@ export default function BreakDesk() {
 
   const runAction = useCallback(async (employee: DeskEmployee, endpoint: string, successMessage: string, extraBody?: Record<string, unknown>) => {
     setActingRowId(employee.employee_id);
-
-    // OPTIMISTIC UPDATE: Immediately predict the new state
-    const optimisticEmployee: Partial<DeskEmployee> = { ...employee };
-
-    if (endpoint.includes('punch-in')) {
-      optimisticEmployee.biometric_punch_in_time = new Date().toISOString();
-      optimisticEmployee.current_status = 'On Duty';
-      optimisticEmployee.safe_actions = {
-        ...employee.safe_actions,
-        can_punch_in: false,
-        can_punch_out: true,
-        can_start_break: true,
-      };
-    } else if (endpoint.includes('punch-out')) {
-      optimisticEmployee.biometric_punch_out_time = new Date().toISOString();
-      optimisticEmployee.current_status = 'Shift Completed';
-      optimisticEmployee.safe_actions = {
-        ...employee.safe_actions,
-        can_punch_out: false,
-        can_start_break: false,
-        can_end_break: false,
-      };
-    } else if (endpoint.includes('start-break')) {
-      optimisticEmployee.active_break_id = 'optimistic_' + Date.now();
-      optimisticEmployee.active_break_start_time = new Date().toISOString();
-      optimisticEmployee.current_status = 'On Break';
-      optimisticEmployee.safe_actions = {
-        ...employee.safe_actions,
-        can_start_break: false,
-        can_end_break: true,
-      };
-    } else if (endpoint.includes('end-break')) {
-      optimisticEmployee.active_break_id = null;
-      optimisticEmployee.active_break_start_time = null;
-      optimisticEmployee.current_status = 'On Duty';
-      optimisticEmployee.safe_actions = {
-        ...employee.safe_actions,
-        can_start_break: true,
-        can_end_break: false,
-      };
-    }
-
-    // Apply optimistic update immediately
-    setDeskData((current) => mergeDeskEmployee(current, optimisticEmployee as DeskEmployee));
-
     try {
       const response = await fetch(apiUrl(endpoint), {
         method: "POST",
@@ -611,23 +498,7 @@ export default function BreakDesk() {
         }),
       });
       const payload = await response.json();
-
-      // Handle offline queue response
-      if (payload.offline && payload.queued) {
-        toast.warning(payload.message || 'Action queued. Will sync when back online.', {
-          icon: '📡',
-          duration: 5000,
-        });
-        return;
-      }
-
-      if (!response.ok || !payload?.success) {
-        // Rollback optimistic update on error
-        setDeskData((current) => mergeDeskEmployee(current, employee));
-        throw new Error(payload?.message || payload?.error || "Action failed");
-      }
-
-      // Confirm with real server data
+      if (!response.ok || !payload?.success) throw new Error(payload?.message || payload?.error || "Action failed");
       const nextEmployee = (payload?.data as DeskActionResponse | undefined)?.employee ?? null;
       requestSequenceRef.current += 1;
       if (nextEmployee) {
@@ -635,32 +506,13 @@ export default function BreakDesk() {
       }
       setError(null);
       toast.success(successMessage);
-
-      // REMOVED: void fetchEmployees(true);
-      // No longer needed! The API response already contains the updated employee
+      void fetchEmployees(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
       setActingRowId(null);
     }
-  }, [access.kiosk, access.token]);
-
-  // Action handlers for EmployeeRow component
-  const handlePunchAction = useCallback((employee: DeskEmployee) => {
-    if (employee.safe_actions.can_punch_in) {
-      void runAction(employee, "/api/break-desk/punch-in", "Punch in captured");
-    } else if (employee.safe_actions.can_punch_out) {
-      void runAction(employee, "/api/break-desk/punch-out", "Punch out captured");
-    }
-  }, [runAction]);
-
-  const handleBreakAction = useCallback((employee: DeskEmployee) => {
-    if (employee.safe_actions.can_end_break) {
-      void runAction(employee, "/api/break-desk/end-break", "Break out captured", { break_session_id: employee.active_break_id });
-    } else if (employee.safe_actions.can_start_break) {
-      void runAction(employee, "/api/break-desk/start-break", "Break in captured", { break_reason: "Security Desk Break" });
-    }
-  }, [runAction]);
+  }, [access.kiosk, access.token, fetchEmployees]);
 
   const kioskProcessLocked = Boolean(bootstrap?.kiosk.process_name);
   const kioskBranchLocked = Boolean(bootstrap?.kiosk.branch_name);
@@ -688,117 +540,6 @@ export default function BreakDesk() {
     () => bootstrap?.filters.shifts.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
     [bootstrap?.filters.shifts],
   );
-
-  // Bulk action handlers
-  const toggleSelectEmployee = useCallback((employeeId: string) => {
-    setSelectedEmployees(prev => {
-      const next = new Set(prev);
-      if (next.has(employeeId)) {
-        next.delete(employeeId);
-      } else {
-        next.add(employeeId);
-      }
-      return next;
-    });
-  }, []);
-
-  const selectAll = useCallback(() => {
-    setSelectedEmployees(new Set(employees.map(e => e.employee_id)));
-  }, [employees]);
-
-  const clearSelection = useCallback(() => {
-    setSelectedEmployees(new Set());
-  }, []);
-
-  // Bulk action: Break In for multiple employees
-  const handleBulkBreakIn = useCallback(async () => {
-    const selectedList = Array.from(selectedEmployees)
-      .map(id => employees.find(e => e.employee_id === id))
-      .filter((e): e is DeskEmployee => !!e && e.safe_actions.can_start_break);
-
-    if (selectedList.length === 0) {
-      toast.error('No employees can start break');
-      return;
-    }
-
-    setBulkActionInProgress(true);
-
-    // OPTIMISTIC UPDATES (INSTANT UI)
-    const optimisticUpdates = selectedList.map(emp => ({
-      ...emp,
-      active_break_id: 'optimistic_' + Date.now(),
-      active_break_start_time: new Date().toISOString(),
-      current_status: 'On Break' as const,
-      safe_actions: {
-        ...emp.safe_actions,
-        can_start_break: false,
-        can_end_break: true,
-      },
-    }));
-
-    // Apply all updates instantly
-    setDeskData(current => {
-      let updated = current;
-      optimisticUpdates.forEach(emp => {
-        updated = mergeDeskEmployee(updated, emp);
-      });
-      return updated;
-    });
-
-    toast.success(`Breaking in ${selectedList.length} employees...`);
-    setSelectedEmployees(new Set()); // Clear selection
-
-    // BACKGROUND: Batch API call
-    try {
-      const response = await fetch(apiUrl('/api/break-desk/bulk-start-break'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kiosk: access.kiosk,
-          token: access.token,
-          employee_ids: selectedList.map(e => e.employee_id),
-          break_reason: 'Security Desk Break',
-        }),
-      });
-
-      const payload = await response.json();
-
-      if (!response.ok || !payload?.success) {
-        // ROLLBACK on error
-        setDeskData(current => {
-          let reverted = current;
-          selectedList.forEach(emp => {
-            reverted = mergeDeskEmployee(reverted, emp);
-          });
-          return reverted;
-        });
-        throw new Error(payload?.message || 'Bulk action failed');
-      }
-
-      // CONFIRM with real data
-      const updatedEmployees = payload.data?.employees ?? [];
-      setDeskData(current => {
-        let confirmed = current;
-        updatedEmployees.forEach((emp: DeskEmployee) => {
-          confirmed = mergeDeskEmployee(confirmed, emp);
-        });
-        return confirmed;
-      });
-
-      toast.success(`✓ ${selectedList.length} employees on break`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Bulk action failed');
-    } finally {
-      setBulkActionInProgress(false);
-    }
-  }, [selectedEmployees, employees, access, setDeskData]);
-
-  // Compute bulk action availability
-  const selectedList = Array.from(selectedEmployees)
-    .map(id => employees.find(e => e.employee_id === id))
-    .filter((e): e is DeskEmployee => !!e);
-
-  const canBulkBreakIn = selectedList.filter(e => e.safe_actions.can_start_break).length;
 
   return (
     <>
@@ -871,15 +612,6 @@ export default function BreakDesk() {
                       <div className="text-[10px] uppercase tracking-[0.18em] text-white/62">Last Sync</div>
                       <div className="text-sm font-semibold">{formatStamp(deskData?.last_sync_time ?? bootstrap.last_sync_time)}</div>
                     </div>
-
-                    {/* Offline indicator */}
-                    {!isOnline && (
-                      <div className="flex items-center gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/20 px-3 py-2 backdrop-blur-sm">
-                        <WifiOff className="h-4 w-4 text-amber-100" />
-                        <span className="text-xs font-semibold text-amber-50">Offline Mode</span>
-                      </div>
-                    )}
-
                     <button onClick={() => void fetchEmployees(true)} className="flex h-11 items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/16">
                       <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
                       Refresh
@@ -918,129 +650,36 @@ export default function BreakDesk() {
                   </div>
                 </div>
 
-                {/* Simplified Filters */}
                 <div className="rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-                  {/* Primary filters */}
-                  <div className="flex flex-wrap gap-2">
-                    <label className="flex h-12 flex-1 min-w-[250px] items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
+                  <div className="grid gap-2 xl:grid-cols-[1.35fr_repeat(6,minmax(0,1fr))]">
+                    <label className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
                       <Search className="h-4 w-4 text-slate-400" />
-                      <input
-                        ref={searchInputRef}
-                        value={filters.search}
-                        onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
-                        placeholder="Search employee name or code..."
-                        className="h-full w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
-                      />
+                      <input ref={searchInputRef} value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search name, code, biometric ID" className="h-full w-full bg-transparent text-sm outline-none placeholder:text-slate-400" />
                     </label>
-
-                    {/* Status pills */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {[{ label: "All", value: "" }, ...(bootstrap?.filters.statuses.slice(0, 3) ?? []).map((item) => ({ label: item.label, value: item.value }))].map((item) => (
-                        <button
-                          key={item.label}
-                          onClick={() => setFilters((current) => ({ ...current, status: item.value }))}
-                          className={cn(
-                            "rounded-full border px-4 py-2.5 text-xs font-semibold transition h-12",
-                            filters.status === item.value
-                              ? "border-[#145da0] bg-[#145da0] text-white shadow-[0_10px_18px_rgba(20,93,160,0.18)]"
-                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                          )}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Advanced filters toggle */}
-                    <button
-                      onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                      className="flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      <Filter className="h-4 w-4" />
-                      More Filters
-                      {showAdvancedFilters ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </button>
+                    <SelectBox label="Branch" value={filters.branch_id} options={branchOptions} onChange={(value) => setFilters((current) => ({ ...current, branch_id: value }))} disabled={kioskBranchLocked} />
+                    <SelectBox label="Process" value={filters.process_id} options={processOptions} onChange={(value) => setFilters((current) => ({ ...current, process_id: value }))} disabled={kioskProcessLocked} />
+                    <SelectBox label="Department" value={filters.department_id} options={departmentOptions} onChange={(value) => setFilters((current) => ({ ...current, department_id: value }))} />
+                    <SelectBox label="Designation" value={filters.designation_id} options={designationOptions} onChange={(value) => setFilters((current) => ({ ...current, designation_id: value }))} />
+                    <SelectBox label="Manager" value={filters.manager_id} options={managerOptions} onChange={(value) => setFilters((current) => ({ ...current, manager_id: value }))} />
+                    <SelectBox label="Shift" value={filters.shift} options={shiftOptions} onChange={(value) => setFilters((current) => ({ ...current, shift: value }))} />
                   </div>
-
-                  {/* Advanced filters (collapsible) */}
-                  {showAdvancedFilters && (
-                    <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="grid gap-2 xl:grid-cols-3">
-                        <SelectBox label="Branch" value={filters.branch_id} options={branchOptions} onChange={(value) => setFilters((current) => ({ ...current, branch_id: value }))} disabled={kioskBranchLocked} />
-                        <SelectBox label="Process" value={filters.process_id} options={processOptions} onChange={(value) => setFilters((current) => ({ ...current, process_id: value }))} disabled={kioskProcessLocked} />
-                        <SelectBox label="Department" value={filters.department_id} options={departmentOptions} onChange={(value) => setFilters((current) => ({ ...current, department_id: value }))} />
-                      </div>
-                      <div className="grid gap-2 xl:grid-cols-3">
-                        <SelectBox label="Designation" value={filters.designation_id} options={designationOptions} onChange={(value) => setFilters((current) => ({ ...current, designation_id: value }))} />
-                        <SelectBox label="Manager" value={filters.manager_id} options={managerOptions} onChange={(value) => setFilters((current) => ({ ...current, manager_id: value }))} />
-                        <SelectBox label="Shift" value={filters.shift} options={shiftOptions} onChange={(value) => setFilters((current) => ({ ...current, shift: value }))} />
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => {
-                            setFilters(DEFAULT_FILTERS);
-                            setShowAdvancedFilters(false);
-                          }}
-                          className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Clear All
-                        </button>
-                        <button
-                          onClick={() => setShowAdvancedFilters(false)}
-                          className="rounded-2xl bg-[#145da0] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#1b6ab5]"
-                        >
-                          Apply
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500"><Filter className="h-3.5 w-3.5" />Status</div>
+                    {[{ label: "All", value: "" }, ...bootstrap.filters.statuses.map((item) => ({ label: item.label, value: item.value }))].map((item) => (
+                      <button key={item.label} onClick={() => setFilters((current) => ({ ...current, status: item.value }))} className={cn("rounded-full border px-3 py-1.5 text-xs font-semibold transition", filters.status === item.value ? "border-[#145da0] bg-[#145da0] text-white shadow-[0_10px_18px_rgba(20,93,160,0.18)]" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {error ? <div className="rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
-                {/* Bulk Action Bar (Sticky) */}
-                {selectedEmployees.size > 0 && (
-                  <div className="sticky top-0 z-20 flex items-center justify-between gap-3 rounded-2xl border-2 border-blue-500 bg-blue-50 px-4 py-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="flex items-center gap-3">
-                      <Checkbox
-                        checked={selectedEmployees.size === employees.length}
-                        onCheckedChange={(checked) => checked ? selectAll() : clearSelection()}
-                        className="h-6 w-6"
-                      />
-                      <span className="font-semibold text-blue-900">
-                        {selectedEmployees.size} employee{selectedEmployees.size !== 1 ? 's' : ''} selected
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {canBulkBreakIn > 0 && (
-                        <Button onClick={handleBulkBreakIn} size="lg" className="h-12 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-lg">
-                          <Coffee className="mr-2 h-5 w-5" />
-                          Break In ({canBulkBreakIn})
-                        </Button>
-                      )}
-
-                      <Button onClick={clearSelection} variant="ghost" size="lg" className="h-12">
-                        <X className="mr-2 h-4 w-4" />
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Full-Screen Table (No Virtual Scrolling) */}
                 <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-                  <div className="max-h-[calc(100vh-200px)] overflow-auto">
+                  <div className="overflow-auto">
                     <table className="min-w-[1480px] w-full text-sm">
                       <thead className="sticky top-0 z-10 bg-slate-50">
                         <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          <th className="px-3 py-3 w-12">
-                            <Checkbox
-                              checked={employees.length > 0 && selectedEmployees.size === employees.length}
-                              onCheckedChange={(checked) => checked ? selectAll() : clearSelection()}
-                              className="h-5 w-5"
-                            />
-                          </th>
                           <th className="px-3 py-3">Employee</th>
                           <th className="px-3 py-3">Team</th>
                           <th className="px-3 py-3">Shift / Punch</th>
@@ -1056,38 +695,126 @@ export default function BreakDesk() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {employees.map((employee) => (
-                          <EmployeeRow
-                            key={employee.employee_id}
-                            employee={employee}
-                            isActing={actingRowId === employee.employee_id}
-                            isSelected={selectedEmployees.has(employee.employee_id)}
-                            onToggleSelect={toggleSelectEmployee}
-                            onPunchAction={handlePunchAction}
-                            onBreakAction={handleBreakAction}
-                            onShowDetails={setSelectedEmployee}
-                            statusTone={statusTone}
-                            shiftLabelForDisplay={shiftLabelForDisplay}
-                            formatStamp={formatStamp}
-                            formatLiveDuration={formatLiveDuration}
-                            formatMinutes={formatMinutes}
-                            totalBreakMinutesForDisplay={totalBreakMinutesForDisplay}
-                          />
-                        ))}
+                        {employees.map((employee) => {
+                          const acting = actingRowId === employee.employee_id;
+                          const punchLabel = employee.safe_actions.can_punch_in
+                            ? "Punch In"
+                            : employee.safe_actions.can_punch_out
+                              ? "Punch Out"
+                              : "Completed";
+                          const breakLabel = employee.safe_actions.can_end_break ? "Break Out" : "Break In";
+                          const canBreak = employee.safe_actions.can_start_break || employee.safe_actions.can_end_break;
+                          return (
+                            <tr key={employee.employee_id} className="align-top transition hover:bg-slate-50/70">
+                              <td className="px-3 py-3">
+                                <div className="flex items-start gap-3">
+                                  <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-[16px] bg-[linear-gradient(145deg,rgba(20,93,160,0.12),rgba(67,160,71,0.14))] text-sm font-bold text-[#145da0]">
+                                    {employee.avatar_url ? <img src={employee.avatar_url} alt={employee.employee_name} className="h-full w-full object-cover" /> : employee.employee_name.slice(0, 1).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <div className="truncate text-[15px] font-bold tracking-[-0.03em] text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{employee.employee_name}</div>
+                                      <span className={cn("inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ring-1", statusTone(employee.current_status))}>{employee.current_status}</span>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-slate-500">
+                                      <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">{employee.employee_code}</span>
+                                      {employee.designation_name ? <span>{employee.designation_name}</span> : null}
+                                      <span>ID {employee.biometric_id}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="space-y-1 text-xs text-slate-600">
+                                  <div className="font-semibold text-slate-800">{employee.process_name ?? "-"}</div>
+                                  <div>{employee.department_name ?? "-"}</div>
+                                  <div>{employee.branch_name ?? "-"}</div>
+                                  <div className="truncate text-slate-500">RM: {employee.manager_name ?? "Not mapped"}</div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="space-y-1 text-xs text-slate-600">
+                                  <div className="font-semibold text-slate-800">{shiftLabelForDisplay(employee)}</div>
+                                  <div>In: {formatStamp(employee.biometric_punch_in_time)}</div>
+                                  <div>Out: {formatStamp(employee.biometric_punch_out_time)}</div>
+                                  <div className="text-slate-500">Source: {employee.attendance_source_system ?? "biometric / sync"}</div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="space-y-1 text-xs text-slate-600">
+                                  <div className="font-semibold text-slate-800">{employee.active_break_id ? `Active ${formatLiveDuration(employee.active_break_start_time, null, employee.active_break_minutes)}` : "No active break"}</div>
+                                  <div>Last: {employee.last_break_reason ?? "-"}</div>
+                                  <div>{employee.exceeded_minutes > 0 ? `Exceeded by ${employee.exceeded_minutes} min` : Number(employee.remaining_daily_break_minutes ?? 1) <= 0 ? "Daily break limit reached" : `Remaining today ${formatMinutes(Number(employee.remaining_daily_break_minutes ?? 0))}`}</div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-center font-semibold text-slate-800">{employee.total_break_count}</td>
+                              <td className="px-3 py-3 text-center font-semibold text-sky-700">{employee.mini_break_count}</td>
+                              <td className="px-3 py-3 text-center font-semibold text-violet-700">{employee.long_break_count}</td>
+                              <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatMinutes(totalBreakMinutesForDisplay(employee))}</td>
+                              <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatMinutes(employee.shift_duration_minutes)}</td>
+                              <td className="px-3 py-3">
+                                <button
+                                  onClick={() => {
+                                    if (employee.safe_actions.can_punch_in) {
+                                      void runAction(employee, "/api/break-desk/punch-in", "Punch in captured");
+                                      return;
+                                    }
+                                    if (employee.safe_actions.can_punch_out) {
+                                      void runAction(employee, "/api/break-desk/punch-out", "Punch out captured");
+                                    }
+                                  }}
+                                  disabled={acting || (!employee.safe_actions.can_punch_in && !employee.safe_actions.can_punch_out)}
+                                  className={cn(
+                                    "inline-flex h-10 min-w-[112px] items-center justify-center rounded-2xl px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-55",
+                                    employee.safe_actions.can_punch_in
+                                      ? "bg-[linear-gradient(120deg,#145da0,#1b6ab5)] text-white shadow-[0_12px_24px_rgba(20,93,160,0.18)]"
+                                      : employee.safe_actions.can_punch_out
+                                        ? "bg-[linear-gradient(120deg,#e75149,#ef5350)] text-white shadow-[0_12px_24px_rgba(239,83,80,0.18)]"
+                                        : "border border-slate-200 bg-slate-100 text-slate-400",
+                                  )}
+                                >
+                                  {acting && (employee.safe_actions.can_punch_in || employee.safe_actions.can_punch_out) ? "Saving..." : punchLabel}
+                                </button>
+                              </td>
+                              <td className="px-3 py-3">
+                                <button
+                                  onClick={() => {
+                                    if (employee.safe_actions.can_end_break) {
+                                      void runAction(employee, "/api/break-desk/end-break", "Break out captured", { break_session_id: employee.active_break_id });
+                                      return;
+                                    }
+                                    if (employee.safe_actions.can_start_break) {
+                                      void runAction(employee, "/api/break-desk/start-break", "Break in captured", { break_reason: "Security Desk Break" });
+                                    }
+                                  }}
+                                  disabled={acting || !canBreak}
+                                  className={cn(
+                                    "inline-flex h-10 min-w-[112px] items-center justify-center rounded-2xl px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-55",
+                                    employee.safe_actions.can_end_break
+                                      ? "bg-[linear-gradient(120deg,#ef8f2f,#f59e0b)] text-white shadow-[0_12px_24px_rgba(245,158,11,0.2)]"
+                                      : employee.safe_actions.can_start_break
+                                        ? "bg-[linear-gradient(120deg,#2a8f4d,#43a047)] text-white shadow-[0_12px_24px_rgba(67,160,71,0.2)]"
+                                        : "border border-slate-200 bg-slate-100 text-slate-400",
+                                  )}
+                                >
+                                  {acting && canBreak ? "Saving..." : breakLabel}
+                                </button>
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="flex flex-col gap-2">
+                                  <button onClick={() => setSelectedEmployee(employee)} className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+                                    Today Details
+                                  </button>
+                                  {employee.attendance_source_system === "manual_kiosk" ? <span className="rounded-full bg-amber-50 px-2.5 py-1 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">Manual Override</span> : null}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 </div>
-
-                {/* Bulk Action Progress Overlay */}
-                {bulkActionInProgress && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="rounded-2xl bg-white p-6 shadow-2xl">
-                      <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto" />
-                      <p className="mt-3 text-lg font-semibold">Processing {selectedEmployees.size} employees...</p>
-                    </div>
-                  </div>
-                )}
 
                 {!loading && employees.length === 0 ? (
                   <div className="rounded-[24px] border border-dashed border-slate-300 bg-white/70 px-4 py-10 text-center">
@@ -1169,7 +896,7 @@ function SelectBox({
   disabled?: boolean;
 }) {
   return (
-    <label className={cn("rounded-2xl border border-slate-200 bg-white px-3 py-1.5", disabled && "opacity-70")}>
+    <label className={cn("rounded-2xl border border-slate-200 bg-slate-50 px-3 py-1.5", disabled && "opacity-70")}>
       <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="h-7 w-full bg-transparent text-sm font-medium text-slate-700 outline-none disabled:cursor-not-allowed">
         <option value="">All</option>

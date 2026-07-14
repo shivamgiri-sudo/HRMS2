@@ -97,3 +97,69 @@ breakDeskRouter.post("/end-break", h(async (req, res) => {
   const data = await breakManagementService.endBreak(body.kiosk, body.token, req, body);
   return res.json({ success: true, data, message: "Break ended" });
 }));
+
+// Bulk action endpoints
+breakDeskRouter.post("/bulk-start-break", h(async (req, res) => {
+  const body = z.object({
+    kiosk: z.string().min(1),
+    token: z.string().min(1),
+    employee_ids: z.array(z.string().min(1)).min(1).max(100),
+    break_reason: z.string().min(1),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).parse(req.body);
+
+  const data = await breakManagementService.bulkStartBreak(body.kiosk, body.token, req, body);
+  return res.status(201).json({
+    success: true,
+    data,
+    message: `Started breaks for ${data.count} employee(s)`
+  });
+}));
+
+breakDeskRouter.post("/bulk-end-break", h(async (req, res) => {
+  const body = z.object({
+    kiosk: z.string().min(1),
+    token: z.string().min(1),
+    employee_ids: z.array(z.string().min(1)).min(1).max(100),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).parse(req.body);
+
+  const data = await breakManagementService.bulkEndBreak(body.kiosk, body.token, req, body);
+  return res.json({
+    success: true,
+    data,
+    message: `Ended breaks for ${data.count} employee(s)`
+  });
+}));
+
+breakDeskRouter.post("/bulk-punch-in", h(async (req, res) => {
+  const body = z.object({
+    kiosk: z.string().min(1),
+    token: z.string().min(1),
+    employee_ids: z.array(z.string().min(1)).min(1).max(100),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).parse(req.body);
+
+  const data = await breakManagementService.bulkPunchIn(body.kiosk, body.token, req, body);
+  return res.status(201).json({
+    success: true,
+    data,
+    message: `Punched in ${data.count} employee(s)`
+  });
+}));
+
+breakDeskRouter.post("/bulk-punch-out", h(async (req, res) => {
+  const body = z.object({
+    kiosk: z.string().min(1),
+    token: z.string().min(1),
+    employee_ids: z.array(z.string().min(1)).min(1).max(100),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).parse(req.body);
+
+  const data = await breakManagementService.bulkPunchOut(body.kiosk, body.token, req, body);
+  return res.json({
+    success: true,
+    data,
+    message: `Punched out ${data.count} employee(s)`
+  });
+}));

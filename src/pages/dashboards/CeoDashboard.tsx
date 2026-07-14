@@ -43,6 +43,20 @@ interface InsightApiResponse {
   bad: { count: number; items: InsightItem[] };
 }
 
+interface PnlSummaryResponse {
+  kpis?: {
+    organisationRevenue?: number;
+    totalDirectCost?: number;
+    totalIndirectCost?: number;
+    operatingProfit?: number;
+    operatingMarginPct?: number | null;
+    mostProfitableProcess?: { processId: string; processName: string; value: number } | null;
+    lossMakingProcesses?: number;
+    revenueAtRisk?: number;
+    monthEndProjectedProfit?: number;
+  };
+}
+
 interface DrilldownState {
   open: boolean;
   metricCode: string;
@@ -83,6 +97,7 @@ export default function CeoDashboard() {
   const [opsPulse, setOpsPulse] = useState<any | null>(null);
   const [revenueRisk, setRevenueRisk] = useState<any | null>(null);
   const [trainingPulse, setTrainingPulse] = useState<any | null>(null);
+  const [pnlSummary, setPnlSummary] = useState<PnlSummaryResponse | null>(null);
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -125,6 +140,14 @@ export default function CeoDashboard() {
       })
       .finally(() => {
         if (!cancelled) setInsightsLoading(false);
+      });
+
+    hrmsApi.get(`/api/finance/pnl/summary${qs}`)
+      .then((json: any) => {
+        if (!cancelled) setPnlSummary(json?.data ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setPnlSummary(null);
       });
 
     return () => {
@@ -389,6 +412,53 @@ export default function CeoDashboard() {
 
         {/* KPI Metrics */}
         <KpiMetricGrid metrics={metrics} columns={3} loading={summaryLoading} />
+
+        {pnlSummary?.kpis && (
+          <DashboardCard title="Process P&L Snapshot">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.25fr_0.75fr]">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Revenue</p>
+                  <p className="mt-2 text-xl font-bold text-emerald-950">{formatInr(pnlSummary.kpis.organisationRevenue)}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Direct cost</p>
+                  <p className="mt-2 text-xl font-bold text-slate-950">{formatInr(pnlSummary.kpis.totalDirectCost)}</p>
+                </div>
+                <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Revenue at risk</p>
+                  <p className="mt-2 text-xl font-bold text-amber-950">{formatInr(pnlSummary.kpis.revenueAtRisk)}</p>
+                </div>
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Projected profit</p>
+                  <p className="mt-2 text-xl font-bold text-blue-950">{formatInr(pnlSummary.kpis.monthEndProjectedProfit)}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Most profitable process</p>
+                  <p className="mt-2 text-lg font-bold text-slate-950">
+                    {pnlSummary.kpis.mostProfitableProcess?.processName ?? "No process financial data"}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Operating profit {formatInr(pnlSummary.kpis.mostProfitableProcess?.value)}
+                  </p>
+                  <p className="mt-3 text-sm text-slate-600">
+                    Loss-making processes: <span className="font-semibold">{pnlSummary.kpis.lossMakingProcesses ?? 0}</span>
+                    {" · "}
+                    Margin: <span className="font-semibold">{pnlSummary.kpis.operatingMarginPct?.toFixed(1) ?? "0.0"}%</span>
+                  </p>
+                </div>
+                <div className="mt-4">
+                  <Button asChild variant="outline">
+                    <Link to="/finance/process-pnl">Open full Process P&L Command Centre</Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </DashboardCard>
+        )}
 
         <DashboardCard title="Executive AI Briefing">
           <AIInsightPanel

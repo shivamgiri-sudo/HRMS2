@@ -27,7 +27,8 @@ import {
 export const recruiterHiringRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-const authRoles = requireRole("admin", "hr", "super_admin", "recruiter", "manager");
+// Allow HR domain roles (hr, branch_head), admin roles, and recruiters
+const authRoles = requireRole("admin", "hr", "super_admin", "recruiter", "branch_head");
 
 recruiterHiringRouter.use(requireAuth);
 recruiterHiringRouter.use(authRoles);
@@ -67,7 +68,7 @@ function getRequester(req: AuthenticatedRequest) {
 
 async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const { role, id: userId } = getRequester(req);
-  const privileged = ["admin", "hr", "super_admin", "branch_hr", "branch_head", "ho_hr"].includes(role);
+  const privileged = ["admin", "hr", "super_admin", "branch_head"].includes(role);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, created_by, recruiter_id, branch_name FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
     [id]
@@ -75,7 +76,8 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const row = rows[0];
   if (!row) return { allowed: false, row: null };
   if (privileged || row.created_by === userId || row.recruiter_id === userId) return { allowed: true, row };
-  // Branch-scoped access: same branch as the actor (recruiters, managers, etc.)
+
+  // Branch-scoped access: recruiters in same branch
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(bm.branch_name, bm.branch_code) AS branch_name
        FROM employees e LEFT JOIN branch_master bm ON bm.id = e.branch_id

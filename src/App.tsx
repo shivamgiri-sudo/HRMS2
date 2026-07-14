@@ -13,6 +13,7 @@ import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 import ScrollToTop from "@/components/layout/ScrollToTop";
 import { PortalRoute } from "./components/portal/PortalRoute";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { BreakDeskErrorBoundary } from "@/components/BreakDeskErrorBoundary";
 
 import Auth from "./pages/AuthClean";
 import ResetPassword from "./pages/ResetPassword";
@@ -199,6 +200,8 @@ const NativeBenefitsClaims          = lazy(() => import("./pages/NativeBenefitsC
 const NativeCareerPlanning          = lazy(() => import("./pages/NativeCareerPlanning"));
 const NativeERP                     = lazy(() => import("./pages/NativeERP"));
 const NativeVendorPaymentTracking   = lazy(() => import("./pages/NativeVendorPaymentTracking"));
+const ProcessPnlPage                = lazy(() => import("./pages/finance/ProcessPnlPage"));
+const ProcessPnlDetailPage          = lazy(() => import("./pages/finance/ProcessPnlDetailPage"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
 const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
@@ -540,6 +543,8 @@ const App = () => (
               <Route path="/erp" element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
               <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute><NativeVendorPaymentTracking /></ProtectedRoute>} />
               <Route path="/finance/grn" element={<ProtectedRoute><NativeGRNManagement /></ProtectedRoute>} />
+              <Route path="/finance/process-pnl" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlPage /></ProtectedRoute>} />
+              <Route path="/finance/process-pnl/:processId" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlDetailPage /></ProtectedRoute>} />
               <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
               <Route path="/settings/ai-providers" element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
@@ -669,7 +674,7 @@ const App = () => (
               {/* Public kiosk display — no auth required */}
               <Route path="/break-management/devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
               <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
-              <Route path="/break-desk" element={<BreakDesk />} />
+              <Route path="/break-desk" element={<BreakDeskErrorBoundary><BreakDesk /></BreakDeskErrorBoundary>} />
               <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
 
               <Route path="*" element={<NotFound />} />

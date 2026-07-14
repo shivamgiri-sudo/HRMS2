@@ -2504,4 +2504,151 @@ export const breakManagementService = {
       snapshot: (rows as any[])[0] ?? {},
     };
   },
+
+  // Bulk action: Start breaks for multiple employees
+  async bulkStartBreak(kiosk: string, token: string, req: any, body: { employee_ids: string[]; break_reason: string; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const results = [];
+
+      for (const employeeId of body.employee_ids) {
+        try {
+          // Use existing startBreak logic for each employee
+          const data = await this.startBreak(kiosk, token, req, {
+            employee_id: employeeId,
+            break_reason: body.break_reason,
+            date: body.date,
+          });
+          results.push(data.employee);
+        } catch (err) {
+          // Continue with other employees if one fails
+          console.error(`Failed to start break for employee ${employeeId}:`, err);
+        }
+      }
+
+      await connection.commit();
+
+      return {
+        employees: results,
+        count: results.length,
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  // Bulk action: End breaks for multiple employees
+  async bulkEndBreak(kiosk: string, token: string, req: any, body: { employee_ids: string[]; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const results = [];
+
+      for (const employeeId of body.employee_ids) {
+        try {
+          const data = await this.endBreak(kiosk, token, req, {
+            employee_id: employeeId,
+            date: body.date,
+          });
+          results.push(data.employee);
+        } catch (err) {
+          console.error(`Failed to end break for employee ${employeeId}:`, err);
+        }
+      }
+
+      await connection.commit();
+
+      return {
+        employees: results,
+        count: results.length,
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  // Bulk action: Punch in multiple employees
+  async bulkPunchIn(kiosk: string, token: string, req: any, body: { employee_ids: string[]; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const results = [];
+
+      for (const employeeId of body.employee_ids) {
+        try {
+          const data = await this.punchIn(kiosk, token, req, {
+            employee_id: employeeId,
+            date: body.date,
+          });
+          results.push(data.employee);
+        } catch (err) {
+          console.error(`Failed to punch in employee ${employeeId}:`, err);
+        }
+      }
+
+      await connection.commit();
+
+      return {
+        employees: results,
+        count: results.length,
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  // Bulk action: Punch out multiple employees
+  async bulkPunchOut(kiosk: string, token: string, req: any, body: { employee_ids: string[]; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const results = [];
+
+      for (const employeeId of body.employee_ids) {
+        try {
+          const data = await this.punchOut(kiosk, token, req, {
+            employee_id: employeeId,
+            date: body.date,
+          });
+          results.push(data.employee);
+        } catch (err) {
+          console.error(`Failed to punch out employee ${employeeId}:`, err);
+        }
+      }
+
+      await connection.commit();
+
+      return {
+        employees: results,
+        count: results.length,
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
 };
