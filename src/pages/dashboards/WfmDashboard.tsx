@@ -28,11 +28,6 @@ interface WfmSummary {
   availableHc?: number | null;
   attendanceRate?: number | null;
   missingPunch?: number | null;
-  attendanceVarianceBuckets?: Array<{
-    label: string;
-    count: number;
-    color?: string;
-  }>;
 }
 
 interface DrilldownState {
@@ -216,7 +211,6 @@ export default function WfmDashboard() {
     },
   ].filter((metric) => hasValue(metric.value));
 
-  const varianceBuckets = summary?.attendanceVarianceBuckets ?? [];
   const loading = summaryLoading || roleLoading;
 
   return (
@@ -318,29 +312,11 @@ export default function WfmDashboard() {
               hc_gap: hcGap,
               attendance_rate_pct: summary?.attendanceRate,
               missing_punch: summary?.missingPunch,
-              attendance_variance_buckets: varianceBuckets,
             }}
           />
         </DashboardCard>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {varianceBuckets.length > 0 && (
-            <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-semibold text-slate-800 mb-3">Attendance Variance Buckets</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {varianceBuckets.map((bucket) => (
-                  <div key={bucket.label} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                    <p className="text-xs font-medium text-slate-500">{bucket.label}</p>
-                    <p className="mt-1 text-2xl font-bold text-slate-900">{bucket.count}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className={varianceBuckets.length > 0 ? "lg:col-span-1" : "lg:col-span-3"}>
-            <WorkInboxPanel maxItems={8} />
-          </div>
-        </div>
+        <WorkInboxPanel maxItems={8} />
       </div>
 
       <DashboardDrilldownDrawer
