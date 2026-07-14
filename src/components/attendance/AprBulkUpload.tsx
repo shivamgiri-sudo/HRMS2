@@ -45,7 +45,7 @@ export function AprBulkUpload() {
       const res = await fetch("/api/wfm/attendance/apr-bulk-upload", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("token") ?? ""}`,
+          Authorization: `Bearer ${localStorage.getItem("hrms_access_token") ?? ""}`,
         },
         body: formData,
       });
