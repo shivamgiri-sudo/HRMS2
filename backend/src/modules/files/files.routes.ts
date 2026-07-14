@@ -190,7 +190,7 @@ router.get(
 router.post(
   "/upload",
   requireAuth,
-  requireRole("admin", "hr"),
+  requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"),
   (req: any, res: any, next: any) => {
     upload.single("file")(req, res, (err) => {
       if (err instanceof multer.MulterError) {

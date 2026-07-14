@@ -141,7 +141,11 @@ router.get("/pnl/config/adjustments", h(async (req, res) => {
 }));
 
 router.get("/pnl/period-close", h(async (req, res) => {
-  const data = await processPnlGovernanceService.getPeriodClose(req.query.period ? String(req.query.period) : undefined);
+  const data = await processPnlGovernanceService.getPeriodClose(
+    req.query.period ? String(req.query.period) : undefined,
+    req.userRoles,
+    req.authUser.role
+  );
   res.json({ success: true, data });
 }));
 
@@ -172,6 +176,29 @@ router.post("/pnl/adjustments", requireWriteAccess, requireRole(...PNL_WRITE_ROL
   res.status(201).json({ success: true, data });
 }));
 
+router.post("/pnl/adjustments/:adjustmentId/approve", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
+  const data = await processPnlGovernanceService.approveAdjustment(req.params.adjustmentId, req.authUser.id);
+  res.json({ success: true, data });
+}));
+
+router.post("/pnl/adjustments/:adjustmentId/reject", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
+  const data = await processPnlGovernanceService.rejectAdjustment(
+    req.params.adjustmentId,
+    req.authUser.id,
+    req.body?.reason ? String(req.body.reason) : null
+  );
+  res.json({ success: true, data });
+}));
+
+router.post("/pnl/adjustments/:adjustmentId/reverse", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
+  const data = await processPnlGovernanceService.reverseAdjustment(
+    req.params.adjustmentId,
+    req.authUser.id,
+    req.body?.reason ? String(req.body.reason) : null
+  );
+  res.json({ success: true, data });
+}));
+
 router.post("/pnl/recalculate", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
   const data = await processPnlGovernanceService.recalculate(req.body?.period ? String(req.body.period) : undefined);
   res.json({ success: true, data });
@@ -180,9 +207,10 @@ router.post("/pnl/recalculate", requireWriteAccess, requireRole(...PNL_WRITE_ROL
 router.post("/pnl/period/:periodId/signoff", requireWriteAccess, requireRole(...PNL_SIGNOFF_ROLES), h(async (req, res) => {
   const data = await processPnlGovernanceService.signoffPeriod(
     req.params.periodId,
-    String(req.body?.signoffRole ?? "") as "finance_preparer" | "finance_head" | "accounts_head" | "ceo",
     req.body?.note ? String(req.body.note) : null,
-    req.authUser.id
+    req.authUser.id,
+    req.userRoles,
+    req.authUser.role
   );
   res.json({ success: true, data });
 }));

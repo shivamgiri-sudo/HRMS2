@@ -19,6 +19,18 @@ function currentPeriod() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+const ADJUSTMENT_OPTIONS = [
+  { value: "recognized_revenue", label: "Recognized revenue" },
+  { value: "variable_billing", label: "Variable billing" },
+  { value: "reward", label: "Reward" },
+  { value: "penalty", label: "Penalty" },
+  { value: "credit_note", label: "Credit note" },
+  { value: "direct_people_cost", label: "Direct people cost" },
+  { value: "direct_non_people_cost", label: "Direct non-people cost" },
+  { value: "indirect_cost", label: "Indirect cost" },
+  { value: "other_operating_adjustment", label: "Other operating adjustment" },
+] as const;
+
 export function PnlAdjustmentDrawer({
   referenceData,
   defaultPeriod,
@@ -34,7 +46,7 @@ export function PnlAdjustmentDrawer({
   const [form, setForm] = useState<CreateAdjustmentPayload>({
     process_id: "",
     period_code: defaultPeriod || currentPeriod(),
-    metric_key: "operating_profit",
+    metric_key: "recognized_revenue",
     previous_value: 0,
     adjustment_amount: 0,
     reason: "",
@@ -48,7 +60,7 @@ export function PnlAdjustmentDrawer({
       setForm({
         process_id: "",
         period_code: defaultPeriod || currentPeriod(),
-        metric_key: "operating_profit",
+        metric_key: "recognized_revenue",
         previous_value: 0,
         adjustment_amount: 0,
         reason: "",
@@ -102,12 +114,18 @@ export function PnlAdjustmentDrawer({
 
           <div className="space-y-2">
             <Label htmlFor="adjustment-metric">Metric key</Label>
-            <Input
+            <select
               id="adjustment-metric"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               value={form.metric_key}
               onChange={(event) => setForm((current) => ({ ...current, metric_key: event.target.value }))}
-              placeholder="operating_profit"
-            />
+            >
+              {ADJUSTMENT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">

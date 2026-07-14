@@ -22,8 +22,15 @@ interface ProcessBaseRow {
 
 interface ContractMeta {
   billingModel: string | null;
-  billingRate: number;
+  billingRate: number | null;
   contractedSeats: number | null;
+  rateSource: "process_billing_rate" | "client_contract_master" | "billing_unit" | "missing" | "overlap_exception";
+  rateType: string | null;
+  unit: string | null;
+  effectiveFrom: string | null;
+  approvalReference: string | null;
+  configurationStatus: "approved" | "fallback" | "missing" | "overlap_exception";
+  overlapException: boolean;
 }
 
 interface WorkforceMeta {
@@ -32,11 +39,23 @@ interface WorkforceMeta {
   bufferPct: number | null;
 }
 
+interface MonthlyPlanMeta {
+  contractedSeats: number | null;
+  requiredProductiveHc: number | null;
+  requiredRosterHc: number | null;
+  bufferTargetPct: number | null;
+  revenueBudget: number | null;
+  directCostBudget: number | null;
+  indirectCostBudget: number | null;
+  profitBudget: number | null;
+  status: string | null;
+}
+
 interface RevenueSnapshot {
   revenue: number;
   forecast: number;
   revenueAtRisk: number;
-  billableHc: number;
+  billableHc: number | null;
   requiredHc: number;
   availableHc: number;
   freshness: string | null;
@@ -82,11 +101,20 @@ interface IndirectAllocationMeta {
   branchPoolAmount: number;
 }
 
+interface AdjustmentMeta {
+  revenue: number;
+  directPeopleCost: number;
+  directNonPeopleCost: number;
+  indirectCost: number;
+  operatingProfit: number;
+}
+
 interface ProcessPnlComputationContext {
   filters: PnlQueryFilters;
   processes: ProcessBaseRow[];
   contracts: Map<string, ContractMeta>;
   workforce: Map<string, WorkforceMeta>;
+  monthlyPlans: Map<string, MonthlyPlanMeta>;
   activeHeadcount: NumericMap;
   revenueDaily: Map<string, RevenueSnapshot>;
   invoices: Map<string, InvoiceMeta>;
@@ -94,6 +122,7 @@ interface ProcessPnlComputationContext {
   expenses: Map<string, ExpenseMeta>;
   vendorDirectCosts: Map<string, VendorCostMeta>;
   indirectAllocations: Map<string, IndirectAllocationMeta>;
+  approvedAdjustments: Map<string, AdjustmentMeta>;
   generatedAt: string;
 }
 
@@ -122,6 +151,21 @@ function shiftMonth(period: string, delta: number): string {
   const [year, month] = period.split("-").map(Number);
   const date = new Date(year, month - 1 + delta, 1);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function buildMonthSeries(months: string[]) {
+  return months.map((month) => {
+    const { start, end } = monthRange(month);
+    return { month, start, end };
+  });
+}
+
+function monthSeriesSql(months: string[]) {
+  return months.map(() => "SELECT ? AS month_key, ? AS start_date, ? AS end_date").join(" UNION ALL ");
+}
+
+function monthSeriesParams(months: string[]) {
+  return buildMonthSeries(months).flatMap((month) => [month.month, month.start, month.end]);
 }
 
 function placeholders(items: unknown[]): string {
@@ -160,35 +204,46 @@ function reconciliationStatus(record: {
 }
 
 async function columnExists(tableName: string, columnName: string): Promise<boolean> {
-  const rows = await queryRows<RowDataPacket>(
-    `SELECT 1
-       FROM information_schema.columns
-      WHERE table_schema = DATABASE()
-        AND table_name = ?
-        AND column_name = ?
-      LIMIT 1`,
-    [tableName, columnName]
-  );
-  return rows.length > 0;
+  const columns = await listColumns(tableName);
+  return columns.has(columnName);
 }
 
+const columnListCache = new Map<string, Promise<Set<string>>>();
+
 async function listColumns(tableName: string): Promise<Set<string>> {
-  const rows = await queryRows<RowDataPacket>(
-    `SELECT column_name
-       FROM information_schema.columns
-      WHERE table_schema = DATABASE()
-        AND table_name = ?`,
-    [tableName]
-  );
-  return new Set(rows.map((row) => String(row.column_name)));
+  if (!columnListCache.has(tableName)) {
+    columnListCache.set(
+      tableName,
+      queryRows<RowDataPacket>(
+        `SELECT column_name
+           FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = ?`,
+        [tableName]
+      )
+        .then((rows) => new Set(rows.map((row) => String(row.column_name))))
+        .catch((error) => {
+          columnListCache.delete(tableName);
+          throw error;
+        })
+    );
+  }
+  return columnListCache.get(tableName)!;
 }
 
 let costCentreProcessIdSupportPromise: Promise<boolean> | null = null;
 const TREND_CACHE_TTL_MS = 60_000;
+const COMPUTATION_CACHE_TTL_MS = 60_000;
+const DEBUG_PROCESS_PNL_TIMINGS = process.env.DEBUG_PROCESS_PNL_TIMINGS === "true";
 const trendCache = new Map<string, {
   expiresAt: number;
   value?: TrendPoint[];
   promise?: Promise<TrendPoint[]>;
+}>();
+const computationCache = new Map<string, {
+  expiresAt: number;
+  value?: ProcessPnlComputationContext;
+  promise?: Promise<ProcessPnlComputationContext>;
 }>();
 
 async function hasCostCentreProcessId(): Promise<boolean> {
@@ -207,6 +262,29 @@ function trendCacheKey(processId: string | null, filters: PnlQueryFilters): stri
     filters.clientId ?? "",
     filters.search?.trim() ?? "",
   ].join("|");
+}
+
+function computationCacheKey(filters: PnlQueryFilters): string {
+  return [
+    filters.period,
+    filters.branchId ?? "",
+    filters.processId ?? "",
+    filters.clientId ?? "",
+    filters.search?.trim() ?? "",
+  ].join("|");
+}
+
+async function measurePnlStep<T>(label: string, task: () => Promise<T>): Promise<T> {
+  if (!DEBUG_PROCESS_PNL_TIMINGS) {
+    return task();
+  }
+
+  const startedAt = Date.now();
+  try {
+    return await task();
+  } finally {
+    console.info(`[process-pnl] ${label} ${Date.now() - startedAt}ms`);
+  }
 }
 
 function effectiveProcessExpr(alias: string, costCentreProcessIdSupported: boolean): string {
@@ -257,17 +335,83 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
 async function getContractMap(processIds: string[], period: string): Promise<Map<string, ContractMeta>> {
   const map = new Map<string, ContractMeta>();
   if (processIds.length === 0) return map;
+  const periodEnd = `${period}-28`;
+  const periodStart = `${period}-01`;
+
+  const setMissing = (processId: string) => {
+    if (map.has(processId)) return;
+    map.set(processId, {
+      billingModel: null,
+      billingRate: null,
+      contractedSeats: null,
+      rateSource: "missing",
+      rateType: null,
+      unit: null,
+      effectiveFrom: null,
+      approvalReference: null,
+      configurationStatus: "missing",
+      overlapException: false,
+    });
+  };
+
+  if (await tableExists("process_billing_rate")) {
+    const rows = await queryRows<RowDataPacket>(
+      `SELECT
+          pbr.process_id,
+          pbr.rate_type,
+          pbr.rate_amount,
+          pbr.unit,
+          pbr.effective_from,
+          pbr.effective_to,
+          pbr.approval_reference,
+          COALESCE(ccm.billing_type, 'per_seat') AS billing_type
+         FROM process_billing_rate pbr
+         LEFT JOIN client_contract_master ccm ON ccm.id = pbr.contract_id
+        WHERE pbr.process_id IN (${placeholders(processIds)})
+          AND pbr.effective_from <= ?
+          AND (pbr.effective_to IS NULL OR pbr.effective_to >= ?)
+          AND (pbr.approved_by IS NOT NULL OR COALESCE(pbr.approval_reference, '') <> '')
+        ORDER BY pbr.process_id, pbr.effective_from DESC, pbr.created_at DESC`,
+      [...processIds, periodEnd, periodStart]
+    );
+
+    const grouped = new Map<string, RowDataPacket[]>();
+    for (const row of rows) {
+      const key = String(row.process_id);
+      const existing = grouped.get(key) ?? [];
+      existing.push(row);
+      grouped.set(key, existing);
+    }
+
+    for (const processId of processIds) {
+      const candidates = grouped.get(processId) ?? [];
+      if (candidates.length === 0) continue;
+      const primary = candidates[0];
+      map.set(processId, {
+        billingModel: (primary.billing_type as string | null) ?? null,
+        billingRate: toNumber(primary.rate_amount),
+        contractedSeats: null,
+        rateSource: candidates.length > 1 ? "overlap_exception" : "process_billing_rate",
+        rateType: (primary.rate_type as string | null) ?? null,
+        unit: (primary.unit as string | null) ?? null,
+        effectiveFrom: (primary.effective_from as string | null) ?? null,
+        approvalReference: (primary.approval_reference as string | null) ?? null,
+        configurationStatus: candidates.length > 1 ? "overlap_exception" : "approved",
+        overlapException: candidates.length > 1,
+      });
+    }
+  }
 
   if (await tableExists("client_contract_master")) {
     const rows = await queryRows<RowDataPacket>(
-      `SELECT process_id, billing_type, billing_rate, monthly_minimum_commitment
+      `SELECT process_id, billing_type, billing_rate, monthly_minimum_commitment, effective_from
          FROM client_contract_master
         WHERE status = 'active'
           AND process_id IN (${placeholders(processIds)})
           AND effective_from <= ?
           AND (effective_to IS NULL OR effective_to >= ?)
         ORDER BY effective_from DESC`,
-      [...processIds, `${period}-28`, `${period}-01`]
+      [...processIds, periodEnd, periodStart]
     );
 
     for (const row of rows) {
@@ -275,17 +419,34 @@ async function getContractMap(processIds: string[], period: string): Promise<Map
       if (map.has(processId)) continue;
       map.set(processId, {
         billingModel: (row.billing_type as string | null) ?? null,
-        billingRate: toNumber(row.billing_rate),
-        contractedSeats: row.monthly_minimum_commitment != null
-          ? Math.max(0, Math.round(toNumber(row.monthly_minimum_commitment) / Math.max(toNumber(row.billing_rate, 1), 1)))
-          : null,
+        billingRate: row.billing_rate != null ? toNumber(row.billing_rate) : null,
+        contractedSeats: null,
+        rateSource: "client_contract_master",
+        rateType: row.billing_type === "per_hour"
+          ? "hour_rate"
+          : row.billing_type === "per_transaction"
+          ? "transaction_rate"
+          : row.billing_type === "fixed_monthly"
+          ? "fixed_fee"
+          : "seat_rate",
+        unit: row.billing_type === "per_hour"
+          ? "hour"
+          : row.billing_type === "per_transaction"
+          ? "transaction"
+          : row.billing_type === "fixed_monthly"
+          ? "month"
+          : "seat",
+        effectiveFrom: (row.effective_from as string | null) ?? null,
+        approvalReference: null,
+        configurationStatus: "fallback",
+        overlapException: false,
       });
     }
   }
 
   if (await tableExists("billing_unit")) {
     const rows = await queryRows<RowDataPacket>(
-      `SELECT process_id, billing_type, rate
+      `SELECT process_id, billing_type, rate, effective_from
          FROM billing_unit
         WHERE is_active = 1
           AND process_id IN (${placeholders(processIds)})
@@ -300,10 +461,75 @@ async function getContractMap(processIds: string[], period: string): Promise<Map
       if (map.has(processId)) continue;
       map.set(processId, {
         billingModel: (row.billing_type as string | null) ?? null,
-        billingRate: toNumber(row.rate),
+        billingRate: row.rate != null ? toNumber(row.rate) : null,
         contractedSeats: null,
+        rateSource: "billing_unit",
+        rateType: row.billing_type === "per_hour"
+          ? "hour_rate"
+          : row.billing_type === "per_transaction"
+          ? "transaction_rate"
+          : row.billing_type === "fixed_monthly"
+          ? "fixed_fee"
+          : "seat_rate",
+        unit: row.billing_type === "per_hour"
+          ? "hour"
+          : row.billing_type === "per_transaction"
+          ? "transaction"
+          : row.billing_type === "fixed_monthly"
+          ? "month"
+          : "seat",
+        effectiveFrom: (row.effective_from as string | null) ?? null,
+        approvalReference: null,
+        configurationStatus: "fallback",
+        overlapException: false,
       });
     }
+  }
+
+  for (const processId of processIds) {
+    setMissing(processId);
+  }
+
+  return map;
+}
+
+async function getMonthlyPlanMap(processIds: string[], period: string): Promise<Map<string, MonthlyPlanMeta>> {
+  const map = new Map<string, MonthlyPlanMeta>();
+  if (processIds.length === 0 || !(await tableExists("process_monthly_plan"))) return map;
+
+  const rows = await queryRows<RowDataPacket>(
+    `SELECT
+        process_id,
+        contracted_seats,
+        required_productive_hc,
+        required_roster_hc,
+        buffer_target_pct,
+        revenue_budget,
+        direct_cost_budget,
+        indirect_cost_budget,
+        profit_budget,
+        status
+       FROM process_monthly_plan
+      WHERE process_id IN (${placeholders(processIds)})
+        AND period_code = ?
+      ORDER BY FIELD(status, 'locked', 'approved', 'draft'), updated_at DESC`,
+    [...processIds, period]
+  );
+
+  for (const row of rows) {
+    const processId = String(row.process_id);
+    if (map.has(processId)) continue;
+    map.set(processId, {
+      contractedSeats: row.contracted_seats != null ? toNumber(row.contracted_seats) : null,
+      requiredProductiveHc: row.required_productive_hc != null ? toNumber(row.required_productive_hc) : null,
+      requiredRosterHc: row.required_roster_hc != null ? toNumber(row.required_roster_hc) : null,
+      bufferTargetPct: row.buffer_target_pct != null ? toNumber(row.buffer_target_pct) : null,
+      revenueBudget: row.revenue_budget != null ? toNumber(row.revenue_budget) : null,
+      directCostBudget: row.direct_cost_budget != null ? toNumber(row.direct_cost_budget) : null,
+      indirectCostBudget: row.indirect_cost_budget != null ? toNumber(row.indirect_cost_budget) : null,
+      profitBudget: row.profit_budget != null ? toNumber(row.profit_budget) : null,
+      status: row.status ? String(row.status) : null,
+    });
   }
 
   return map;
@@ -388,7 +614,7 @@ async function getRevenueDailyMap(processIds: string[], start: string, end: stri
       revenue: toNumber(row.actual_revenue_estimate),
       forecast: Math.max(toNumber(row.expected_revenue), toNumber(row.actual_revenue_estimate)),
       revenueAtRisk: toNumber(row.revenue_at_risk),
-      billableHc: toNumber(row.available_hc),
+      billableHc: row.available_hc != null ? toNumber(row.available_hc) : null,
       requiredHc: toNumber(row.required_hc),
       availableHc: toNumber(row.available_hc),
       freshness: maxDate(row.generated_at as string | null, row.revenue_date as string | null),
@@ -578,10 +804,28 @@ function directCostClassExpr(alias: string, effectiveProcessExpr: string) {
   return `COALESCE(${alias}.cost_class, CASE WHEN ${effectiveProcessExpr} IS NOT NULL THEN 'direct' ELSE 'indirect' END)`;
 }
 
+function actualVendorStatusExpr(alias: string, columns: Set<string>) {
+  const statusColumns = [
+    columns.has("payment_status") ? `${alias}.payment_status` : null,
+    columns.has("status") ? `${alias}.status` : null,
+  ].filter(Boolean);
+
+  if (statusColumns.length === 0) {
+    return "0 = 1";
+  }
+
+  return `LOWER(COALESCE(${statusColumns.join(", ")}, '')) IN ('approved','finance_approved','posted','paid')`;
+}
+
+function actualGrnStatusExpr(alias: string) {
+  return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
+}
+
 async function getVendorDirectCostMap(processIds: string[], start: string, end: string): Promise<Map<string, VendorCostMeta>> {
   const map = new Map<string, VendorCostMeta>();
   if (processIds.length === 0) return map;
   const costCentreProcessIdSupported = await hasCostCentreProcessId();
+  const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
   if (await tableExists("vendor_payment_tracking")) {
     const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
@@ -591,10 +835,11 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
           SUM(COALESCE(vpt.due_amount, 0)) AS approved_amount,
           COUNT(vpt.id) AS item_count,
           MAX(COALESCE(vpt.payment_date, vpt.due_date, vpt.updated_at, vpt.created_at)) AS freshness
-         FROM vendor_payment_tracking vpt
+        FROM vendor_payment_tracking vpt
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
         WHERE ${resolvedProcessExpr} IN (${placeholders(processIds)})
           AND ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'direct'
+          AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
           AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
         GROUP BY ${resolvedProcessExpr}`,
       [...processIds, start, end]
@@ -617,12 +862,12 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
           SUM(COALESCE(g.amount, 0)) AS approved_amount,
           COUNT(g.id) AS item_count,
           MAX(COALESCE(g.reviewed_at, g.due_date, g.bill_date, g.updated_at, g.created_at)) AS freshness
-         FROM grn_request g
+        FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
         WHERE ${resolvedProcessExpr} IN (${placeholders(processIds)})
           AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'direct'
-          AND g.status = 'approved'
+          AND ${actualGrnStatusExpr("g")}
           AND vpt.id IS NULL
           AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
         GROUP BY ${resolvedProcessExpr}`,
@@ -652,6 +897,7 @@ async function getIndirectAllocationMap(
   const map = new Map<string, IndirectAllocationMeta>();
   if (processes.length === 0) return map;
   const costCentreProcessIdSupported = await hasCostCentreProcessId();
+  const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
   const branchProcessMap = new Map<string, ProcessBaseRow[]>();
   const branchHeadcount = new Map<string, number>();
@@ -670,10 +916,11 @@ async function getIndirectAllocationMap(
     const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
       `SELECT vpt.branch_id, SUM(COALESCE(vpt.due_amount, 0)) AS pool_amount
-         FROM vendor_payment_tracking vpt
+        FROM vendor_payment_tracking vpt
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
         WHERE vpt.branch_id IN (${placeholders(branchIds)})
           AND ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
+          AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
           AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
         GROUP BY vpt.branch_id`,
       [...branchIds, start, end]
@@ -685,11 +932,11 @@ async function getIndirectAllocationMap(
     const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
       `SELECT g.branch_id, SUM(COALESCE(g.amount, 0)) AS pool_amount
-         FROM grn_request g
+        FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
         WHERE g.branch_id IN (${placeholders(branchIds)})
           AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
-          AND g.status = 'approved'
+          AND ${actualGrnStatusExpr("g")}
           AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
         GROUP BY g.branch_id`,
       [...branchIds, start, end]
@@ -717,52 +964,149 @@ async function getIndirectAllocationMap(
   return map;
 }
 
+function classifyAdjustmentMetric(metricKey: string) {
+  switch (metricKey) {
+    case "recognized_revenue":
+    case "variable_billing":
+    case "reward":
+      return "revenue";
+    case "penalty":
+    case "credit_note":
+      return "revenue_negative";
+    case "direct_people_cost":
+      return "direct_people_cost";
+    case "direct_non_people_cost":
+    case "other_operating_adjustment":
+      return "direct_non_people_cost";
+    case "indirect_cost":
+      return "indirect_cost";
+    case "operating_profit":
+      return "operating_profit";
+    default:
+      return "unsupported";
+  }
+}
+
+async function getApprovedAdjustmentMap(processIds: string[], period: string): Promise<Map<string, AdjustmentMeta>> {
+  const map = new Map<string, AdjustmentMeta>();
+  if (processIds.length === 0 || !(await tableExists("pnl_adjustment_journal"))) return map;
+
+  const rows = await queryRows<RowDataPacket>(
+    `SELECT process_id, metric_key, adjustment_amount
+       FROM pnl_adjustment_journal
+      WHERE process_id IN (${placeholders(processIds)})
+        AND period_code = ?
+        AND approval_status = 'approved'
+        AND reversed_at IS NULL`,
+    [...processIds, period]
+  ).catch(() => []);
+
+  for (const row of rows) {
+    const processId = String(row.process_id);
+    const current = map.get(processId) ?? {
+      revenue: 0,
+      directPeopleCost: 0,
+      directNonPeopleCost: 0,
+      indirectCost: 0,
+      operatingProfit: 0,
+    };
+    const amount = toNumber(row.adjustment_amount);
+    switch (classifyAdjustmentMetric(String(row.metric_key ?? ""))) {
+      case "revenue":
+        current.revenue += amount;
+        break;
+      case "revenue_negative":
+        current.revenue -= Math.abs(amount);
+        break;
+      case "direct_people_cost":
+        current.directPeopleCost += amount;
+        break;
+      case "direct_non_people_cost":
+        current.directNonPeopleCost += amount;
+        break;
+      case "indirect_cost":
+        current.indirectCost += amount;
+        break;
+      case "operating_profit":
+        current.operatingProfit += amount;
+        break;
+      default:
+        break;
+    }
+    map.set(processId, current);
+  }
+
+  return map;
+}
+
 function buildRecord(
   process: ProcessBaseRow,
   contracts: Map<string, ContractMeta>,
   workforce: Map<string, WorkforceMeta>,
+  monthlyPlans: Map<string, MonthlyPlanMeta>,
   activeHeadcount: NumericMap,
   revenueDaily: Map<string, RevenueSnapshot>,
   invoices: Map<string, InvoiceMeta>,
   payroll: Map<string, PayrollMeta>,
   expenses: Map<string, ExpenseMeta>,
   vendorDirectCosts: Map<string, VendorCostMeta>,
-  indirectAllocations: Map<string, IndirectAllocationMeta>
+  indirectAllocations: Map<string, IndirectAllocationMeta>,
+  approvedAdjustments: Map<string, AdjustmentMeta>
 ): ProcessPnlRecord {
   const contract = contracts.get(process.process_id);
   const workforceMeta = workforce.get(process.process_id);
+  const monthlyPlan = monthlyPlans.get(process.process_id);
   const revenue = revenueDaily.get(process.process_id);
   const invoice = invoices.get(process.process_id);
   const payrollMeta = payroll.get(process.process_id);
   const expense = expenses.get(process.process_id);
   const vendorDirectCost = vendorDirectCosts.get(process.process_id);
   const indirect = indirectAllocations.get(process.process_id);
+  const adjustments = approvedAdjustments.get(process.process_id);
 
   const activeHc = activeHeadcount.get(process.process_id) ?? 0;
-  const billableHc = revenue?.billableHc ?? activeHc;
-  const requiredProductiveHc = workforceMeta?.productiveHc ?? revenue?.requiredHc ?? activeHc;
-  const requiredRosterHc = workforceMeta?.rosterHc ?? requiredProductiveHc;
+  const billableHc = revenue?.billableHc ?? null;
+  const requiredProductiveHc = monthlyPlan?.requiredProductiveHc ?? workforceMeta?.productiveHc ?? revenue?.requiredHc ?? activeHc;
+  const requiredRosterHc = monthlyPlan?.requiredRosterHc ?? workforceMeta?.rosterHc ?? requiredProductiveHc;
   const actualBufferPct = requiredRosterHc > 0 ? ((activeHc - requiredRosterHc) / requiredRosterHc) * 100 : null;
 
-  const revenueMtd = invoice?.recognizedRevenue && invoice.recognizedRevenue > 0
+  const baseRevenueMtd = invoice?.recognizedRevenue && invoice.recognizedRevenue > 0
     ? invoice.recognizedRevenue
     : revenue?.revenue ?? 0;
+  const revenueMtd = baseRevenueMtd + (adjustments?.revenue ?? 0);
   const revenueForecast = Math.max(
     revenue?.forecast ?? 0,
     invoice?.recognizedRevenue ?? 0,
-    revenueMtd
-  );
+    baseRevenueMtd
+  ) + (adjustments?.revenue ?? 0);
   const salaryMtd = payrollMeta?.gross ?? 0;
-  const directPeopleCost = payrollMeta?.total ?? 0;
-  const directNonPeopleCost = (expense?.approvedAmount ?? 0) + (vendorDirectCost?.approvedAmount ?? 0);
+  const directPeopleCost = (payrollMeta?.total ?? 0) + (adjustments?.directPeopleCost ?? 0);
+  const directNonPeopleCost = (expense?.approvedAmount ?? 0) + (vendorDirectCost?.approvedAmount ?? 0) + (adjustments?.directNonPeopleCost ?? 0);
   const directCost = directPeopleCost + directNonPeopleCost;
-  const indirectCost = indirect?.allocatedAmount ?? 0;
+  const indirectCost = (indirect?.allocatedAmount ?? 0) + (adjustments?.indirectCost ?? 0);
   const totalCost = directCost + indirectCost;
   const contributionMargin = revenueMtd - directCost;
-  const operatingProfit = revenueMtd - totalCost;
+  const operatingProfit = revenueMtd - totalCost + (adjustments?.operatingProfit ?? 0);
   const operatingMarginPct = revenueMtd > 0 ? (operatingProfit / revenueMtd) * 100 : null;
-  const revenueAtRisk = (revenue?.revenueAtRisk ?? 0) + Math.max(0, invoice?.outstandingRevenue ?? 0);
+  const revenueLeakage = revenue?.revenueAtRisk ?? 0;
+  const receivableRisk = Math.max(0, invoice?.outstandingRevenue ?? 0);
+  const revenueAtRisk = revenueLeakage;
   const monthEndProjectedProfit = revenueForecast - totalCost;
+  const revenueBudget = monthlyPlan?.revenueBudget ?? null;
+  const directCostBudget = monthlyPlan?.directCostBudget ?? null;
+  const indirectCostBudget = monthlyPlan?.indirectCostBudget ?? null;
+  const profitBudget = monthlyPlan?.profitBudget ?? null;
+  const revenueVariance = revenueBudget != null ? revenueMtd - revenueBudget : null;
+  const directCostVariance = directCostBudget != null ? directCost - directCostBudget : null;
+  const indirectCostVariance = indirectCostBudget != null ? indirectCost - indirectCostBudget : null;
+  const operatingProfitVariance = profitBudget != null ? operatingProfit - profitBudget : null;
+  const operatingMarginVariance = revenueBudget != null && profitBudget != null
+    ? operatingMarginPct == null
+      ? null
+      : operatingMarginPct - ((profitBudget / Math.max(revenueBudget, 1)) * 100)
+    : null;
+  const headcountVariance = monthlyPlan?.requiredProductiveHc != null ? activeHc - monthlyPlan.requiredProductiveHc : null;
+  const bufferVariance = monthlyPlan?.bufferTargetPct != null && actualBufferPct != null ? actualBufferPct - monthlyPlan.bufferTargetPct : null;
   const financialStatus: "actual" | "forecast" | "mixed" =
     (invoice?.recognizedRevenue ?? 0) > 0 && payrollMeta?.status === "actual"
       ? "actual"
@@ -778,19 +1122,28 @@ function buildRecord(
     branchId: process.branch_id,
     branchName: process.branch_name,
     billingModel: contract?.billingModel ?? null,
-    contractedSeats: contract?.contractedSeats ?? workforceMeta?.rosterHc ?? null,
+    resolvedRate: contract?.billingRate ?? null,
+    rateSource: contract?.rateSource ?? "missing",
+    rateType: contract?.rateType ?? null,
+    billingUnit: contract?.unit ?? null,
+    rateEffectiveFrom: contract?.effectiveFrom ?? null,
+    approvalReference: contract?.approvalReference ?? null,
+    configurationStatus: contract?.configurationStatus ?? "missing",
+    contractedSeats: monthlyPlan?.contractedSeats ?? contract?.contractedSeats ?? null,
     billableHc,
     requiredProductiveHc,
     requiredRosterHc,
     activeHc,
     deployedHc: revenue?.availableHc ?? activeHc,
-    bufferTargetPct: workforceMeta?.bufferPct ?? null,
+    bufferTargetPct: monthlyPlan?.bufferTargetPct ?? workforceMeta?.bufferPct ?? null,
     actualBufferPct,
     revenueMtd,
     revenueForecast,
     invoicedRevenueMtd: invoice?.invoicedRevenue ?? revenueMtd,
     collectedRevenueMtd: invoice?.collectedRevenue ?? 0,
     outstandingReceivable: invoice?.outstandingRevenue ?? 0,
+    receivableRisk,
+    totalCommercialExposure: revenueLeakage + receivableRisk,
     salaryMtd,
     directPeopleCost,
     directNonPeopleCost,
@@ -800,13 +1153,25 @@ function buildRecord(
     contributionMargin,
     operatingProfit,
     operatingMarginPct,
-    budgetVariance: null,
+    revenueBudget,
+    directCostBudget,
+    indirectCostBudget,
+    profitBudget,
+    revenueVariance,
+    directCostVariance,
+    indirectCostVariance,
+    operatingProfitVariance,
+    operatingMarginVariance,
+    headcountVariance,
+    bufferVariance,
+    budgetVariance: operatingProfitVariance,
+    revenueLeakage,
     revenueAtRisk,
     monthEndProjectedProfit,
     reconciliationStatus: reconciliationStatus({
       revenue: revenueMtd,
       payroll: directPeopleCost,
-      hasContract: Boolean(contract),
+      hasContract: Boolean(contract) && (contract?.rateSource !== "missing") && !contract?.overlapException && billableHc != null,
     }),
     financialStatus,
     processStatus: statusFromProfit({ operatingProfit, operatingMarginPct, revenueAtRisk }),
@@ -828,37 +1193,44 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     clientId: filters.clientId,
     search: filters.search,
   };
+  const cacheKey = computationCacheKey(normalizedFilters);
+  const cached = computationCache.get(cacheKey);
+  const now = Date.now();
+
+  if (cached?.value && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const contextPromise = (async (): Promise<ProcessPnlComputationContext> => {
   const { start, end } = monthRange(normalizedFilters.period);
-  const processes = await getBaseProcesses(normalizedFilters);
+  const processes = await measurePnlStep("getBaseProcesses", () => getBaseProcesses(normalizedFilters));
   const processIds = processes.map((process) => process.process_id);
 
-  const [
-    contracts,
-    workforce,
-    activeHeadcount,
-    revenueDaily,
-    invoices,
-    payroll,
-    expenses,
-    vendorDirectCosts,
-  ] = await Promise.all([
-    getContractMap(processIds, normalizedFilters.period),
-    getWorkforceMap(processIds, start, end),
-    getActiveHeadcountMap(processIds, end),
-    getRevenueDailyMap(processIds, start, end),
-    getInvoiceMap(processIds, start, end),
-    getPayrollMap(processIds, normalizedFilters.period, end),
-    getExpenseMap(processIds, start, end),
-    getVendorDirectCostMap(processIds, start, end),
-  ]);
+  const contracts = await measurePnlStep("getContractMap", () => getContractMap(processIds, normalizedFilters.period));
+  const workforce = await measurePnlStep("getWorkforceMap", () => getWorkforceMap(processIds, start, end));
+  const monthlyPlans = await measurePnlStep("getMonthlyPlanMap", () => getMonthlyPlanMap(processIds, normalizedFilters.period));
+  const activeHeadcount = await measurePnlStep("getActiveHeadcountMap", () => getActiveHeadcountMap(processIds, end));
+  const revenueDaily = await measurePnlStep("getRevenueDailyMap", () => getRevenueDailyMap(processIds, start, end));
+  const invoices = await measurePnlStep("getInvoiceMap", () => getInvoiceMap(processIds, start, end));
+  const payroll = await measurePnlStep("getPayrollMap", () => getPayrollMap(processIds, normalizedFilters.period, end));
+  const expenses = await measurePnlStep("getExpenseMap", () => getExpenseMap(processIds, start, end));
+  const vendorDirectCosts = await measurePnlStep("getVendorDirectCostMap", () => getVendorDirectCostMap(processIds, start, end));
+  const approvedAdjustments = await measurePnlStep("getApprovedAdjustmentMap", () => getApprovedAdjustmentMap(processIds, normalizedFilters.period));
 
-  const indirectAllocations = await getIndirectAllocationMap(processes, activeHeadcount, start, end);
+  const indirectAllocations = await measurePnlStep("getIndirectAllocationMap", () =>
+    getIndirectAllocationMap(processes, activeHeadcount, start, end)
+  );
 
   return {
     filters: normalizedFilters,
     processes,
     contracts,
     workforce,
+    monthlyPlans,
     activeHeadcount,
     revenueDaily,
     invoices,
@@ -866,8 +1238,27 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     expenses,
     vendorDirectCosts,
     indirectAllocations,
+    approvedAdjustments,
     generatedAt: new Date().toISOString(),
   };
+  })();
+
+  computationCache.set(cacheKey, { expiresAt: now + COMPUTATION_CACHE_TTL_MS, promise: contextPromise });
+
+  try {
+    const value = await contextPromise;
+    computationCache.set(cacheKey, {
+      expiresAt: Date.now() + COMPUTATION_CACHE_TTL_MS,
+      value,
+    });
+    return value;
+  } catch (error) {
+    const current = computationCache.get(cacheKey);
+    if (current?.promise === contextPromise) {
+      computationCache.delete(cacheKey);
+    }
+    throw error;
+  }
 }
 
 async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
@@ -888,23 +1279,14 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
   const processClause = processId ? "AND process_id = ?" : "";
   const processJoinClause = processId ? "AND e.process_id = ?" : "";
   const expenseProcessClause = processId ? "AND CAST(ec.process_id AS CHAR) = ?" : "";
-  const [
-    hasBillingInvoice,
-    salaryColumns,
-    hasExpenseClaims,
-    hasExpenseItems,
-    costCentreProcessIdSupported,
-    hasVendorPayments,
-    hasGrnRequest,
-  ] = await Promise.all([
-    tableExists("billing_invoice"),
-    listColumns("salary_prep_line").catch(() => new Set<string>()),
-    tableExists("expense_claims"),
-    tableExists("expense_items"),
-    hasCostCentreProcessId(),
-    tableExists("vendor_payment_tracking"),
-    tableExists("grn_request"),
-  ]);
+  const hasBillingInvoice = await tableExists("billing_invoice");
+  const salaryColumns = await listColumns("salary_prep_line").catch(() => new Set<string>());
+  const hasExpenseClaims = await tableExists("expense_claims");
+  const hasExpenseItems = await tableExists("expense_items");
+  const costCentreProcessIdSupported = await hasCostCentreProcessId();
+  const hasVendorPayments = await tableExists("vendor_payment_tracking");
+  const hasGrnRequest = await tableExists("grn_request");
+  const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
   const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
   const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
@@ -913,7 +1295,119 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     ? "COALESCE(spl.gratuity, 0)"
     : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
 
-  const series = await Promise.all(months.map(async (month) => {
+  const series: TrendPoint[] = [];
+  const monthSeries = buildMonthSeries(months);
+
+  if (!processId) {
+    const seriesByMonth = new Map<string, TrendPoint>(
+      monthSeries.map(({ month }) => [
+        month,
+        {
+          month,
+          revenue: 0,
+          directCost: 0,
+          indirectCost: 0,
+          operatingProfit: 0,
+        },
+      ])
+    );
+    const seriesSql = monthSeriesSql(months);
+    const seriesParams = monthSeriesParams(months);
+
+    const revenueRows = await queryRows<RowDataPacket>(
+      hasBillingInvoice
+        ? `SELECT ms.month_key, SUM(CASE WHEN bi.status <> 'draft' THEN COALESCE(bi.net_amount, 0) ELSE 0 END) AS total
+             FROM (${seriesSql}) ms
+             LEFT JOIN billing_invoice bi
+               ON bi.period_from <= ms.end_date
+              AND bi.period_to >= ms.start_date
+            GROUP BY ms.month_key`
+        : `SELECT ms.month_key, SUM(COALESCE(prd.actual_revenue_estimate, 0)) AS total
+             FROM (${seriesSql}) ms
+             LEFT JOIN process_revenue_daily prd
+               ON prd.revenue_date BETWEEN ms.start_date AND ms.end_date
+            GROUP BY ms.month_key`,
+      seriesParams
+    );
+    for (const row of revenueRows) {
+      const entry = seriesByMonth.get(String(row.month_key));
+      if (entry) entry.revenue = toNumber(row.total);
+    }
+
+    const payrollRows = await queryRows<RowDataPacket>(
+      `SELECT ms.month_key, SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
+         FROM (${seriesSql}) ms
+         LEFT JOIN salary_prep_run spr ON spr.run_month = ms.month_key
+         LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
+         LEFT JOIN employees e ON e.id = spl.employee_id
+        GROUP BY ms.month_key`,
+      seriesParams
+    ).catch(() => []);
+    for (const row of payrollRows) {
+      const entry = seriesByMonth.get(String(row.month_key));
+      if (entry) entry.directCost = toNumber(row.total);
+    }
+
+    const expenseRows = await queryRows<RowDataPacket>(
+      hasExpenseClaims && hasExpenseItems
+        ? `SELECT ms.month_key,
+                  SUM(CASE WHEN ec.status IN ('FINANCE_APPROVED', 'PAID') THEN COALESCE(ei.amount, 0) ELSE 0 END) AS total
+             FROM (${seriesSql}) ms
+             LEFT JOIN expense_items ei
+               ON ei.expense_date BETWEEN ms.start_date AND ms.end_date
+             LEFT JOIN expense_claims ec
+               ON ec.id = ei.expense_claim_id
+            GROUP BY ms.month_key`
+        : `SELECT ms.month_key, 0 AS total
+             FROM (${seriesSql}) ms`,
+      seriesParams
+    ).catch(() => []);
+    for (const row of expenseRows) {
+      const entry = seriesByMonth.get(String(row.month_key));
+      if (entry) entry.directCost += toNumber(row.total);
+    }
+
+    const indirectRows = hasVendorPayments
+      ? await queryRows<RowDataPacket>(
+          `SELECT ms.month_key, SUM(COALESCE(vpt.due_amount, 0)) AS total
+             FROM (${seriesSql}) ms
+             LEFT JOIN vendor_payment_tracking vpt
+               ON COALESCE(vpt.due_date, vpt.created_at) BETWEEN ms.start_date AND ms.end_date
+             LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+            WHERE ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'indirect'
+              AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
+            GROUP BY ms.month_key`,
+          seriesParams
+        ).catch(() => [])
+      : hasGrnRequest
+      ? await queryRows<RowDataPacket>(
+          `SELECT ms.month_key, SUM(COALESCE(g.amount, 0)) AS total
+             FROM (${seriesSql}) ms
+             LEFT JOIN grn_request g
+               ON COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ms.start_date AND ms.end_date
+             LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+            WHERE ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'indirect'
+              AND ${actualGrnStatusExpr("g")}
+            GROUP BY ms.month_key`,
+          seriesParams
+        ).catch(() => [])
+      : [];
+    for (const row of indirectRows) {
+      const entry = seriesByMonth.get(String(row.month_key));
+      if (entry) entry.indirectCost = toNumber(row.total);
+    }
+
+    for (const month of months) {
+      const entry = seriesByMonth.get(month);
+      if (!entry) continue;
+      entry.operatingProfit = entry.revenue - entry.directCost - entry.indirectCost;
+      series.push(entry);
+    }
+
+    return series;
+  }
+
+  for (const month of months) {
     const { start, end } = monthRange(month);
     const revenueRows = await queryRows<RowDataPacket>(
       hasBillingInvoice
@@ -953,6 +1447,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
            FROM vendor_payment_tracking vpt
            LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
           WHERE ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
+            AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
             AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?`,
         [start, end]
       );
@@ -964,7 +1459,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
            FROM grn_request g
            LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
           WHERE ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
-            AND g.status = 'approved'
+            AND ${actualGrnStatusExpr("g")}
             AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?`,
         [start, end]
       );
@@ -979,56 +1474,42 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
             process,
             monthlyContext.contracts,
             monthlyContext.workforce,
+            monthlyContext.monthlyPlans,
             monthlyContext.activeHeadcount,
             monthlyContext.revenueDaily,
             monthlyContext.invoices,
             monthlyContext.payroll,
             monthlyContext.expenses,
             monthlyContext.vendorDirectCosts,
-            monthlyContext.indirectAllocations
+            monthlyContext.indirectAllocations,
+            monthlyContext.approvedAdjustments
           )
           )
         .find((record) => record.processId === processId);
 
-      return {
+      series.push({
         month,
         revenue: monthlyRecord?.revenueMtd ?? toNumber(revenueRows[0]?.total),
         directCost: monthlyRecord?.directCost ?? (toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total)),
         indirectCost: monthlyRecord?.indirectCost ?? 0,
         operatingProfit: monthlyRecord?.operatingProfit
           ?? (toNumber(revenueRows[0]?.total) - toNumber(payrollRows[0]?.total) - toNumber(expenseRows[0]?.total)),
-      };
+      });
+      continue;
     }
 
-    const monthlyContext = await buildComputationContext({ ...filters, period: month });
-    const monthlyRecords = monthlyContext.processes.map((process) =>
-      buildRecord(
-        process,
-        monthlyContext.contracts,
-        monthlyContext.workforce,
-        monthlyContext.activeHeadcount,
-        monthlyContext.revenueDaily,
-        monthlyContext.invoices,
-        monthlyContext.payroll,
-        monthlyContext.expenses,
-        monthlyContext.vendorDirectCosts,
-        monthlyContext.indirectAllocations
-      )
-    );
+    const revenue = toNumber(revenueRows[0]?.total);
+    const directCost = toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total);
+    const indirectCost = indirectTotal;
 
-    const revenue = monthlyRecords.reduce((sum, record) => sum + record.revenueMtd, 0) || toNumber(revenueRows[0]?.total);
-    const directCost = monthlyRecords.reduce((sum, record) => sum + record.directCost, 0)
-      || (toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total));
-    const indirectCost = monthlyRecords.reduce((sum, record) => sum + record.indirectCost, 0) || indirectTotal;
-
-    return {
+    series.push({
       month,
       revenue,
       directCost,
       indirectCost,
       operatingProfit: revenue - directCost - indirectCost,
-    };
-  }));
+    });
+  }
 
   return series;
   })();
@@ -1069,10 +1550,19 @@ function buildAlerts(records: ProcessPnlRecord[]): PnlSummaryResponse["alerts"] 
       alerts.push({
         type: "warning",
         title: `${record.processName} has revenue at risk`,
-        detail: `Risk exposure of Rs ${Math.round(record.revenueAtRisk).toLocaleString("en-IN")} with outstanding or shortage-driven leakage.`,
+        detail: `Operational revenue leakage of Rs ${Math.round(record.revenueAtRisk).toLocaleString("en-IN")} is unresolved for the selected month.`,
         processId: record.processId,
         processName: record.processName,
         impact: record.revenueAtRisk,
+      });
+    }
+    if (record.billableHc == null) {
+      alerts.push({
+        type: "critical",
+        title: `${record.processName} is missing billable headcount`,
+        detail: `The process does not have a traceable billable headcount source for the selected month.`,
+        processId: record.processId,
+        processName: record.processName,
       });
     }
     if (record.reconciliationStatus !== "matched") {
@@ -1101,13 +1591,15 @@ async function buildRecords(filters: Partial<PnlQueryFilters>): Promise<{
       process,
       context.contracts,
       context.workforce,
+      context.monthlyPlans,
       context.activeHeadcount,
       context.revenueDaily,
       context.invoices,
       context.payroll,
       context.expenses,
       context.vendorDirectCosts,
-      context.indirectAllocations
+      context.indirectAllocations,
+      context.approvedAdjustments
     )
   );
 
@@ -1149,6 +1641,11 @@ async function getProcessDetailContext(
 }
 
 export const processPnlService = {
+  invalidateCaches() {
+    computationCache.clear();
+    trendCache.clear();
+  },
+
   async getSummary(filters: Partial<PnlQueryFilters>): Promise<PnlSummaryResponse> {
     const { context, records } = await buildRecords(filters);
     const organisationRevenue = records.reduce((sum, record) => sum + record.revenueMtd, 0);
@@ -1177,8 +1674,9 @@ export const processPnlService = {
         mostProfitableProcess: mostProfitable,
         lossMakingProcesses: records.filter((record) => record.processStatus === "loss-making").length,
         revenueAtRisk: records.reduce((sum, record) => sum + record.revenueAtRisk, 0),
+        receivableRisk: records.reduce((sum, record) => sum + record.receivableRisk, 0),
         monthEndProjectedProfit: records.reduce((sum, record) => sum + record.monthEndProjectedProfit, 0),
-        billableHeadcount: records.reduce((sum, record) => sum + record.billableHc, 0),
+        billableHeadcount: records.reduce((sum, record) => sum + (record.billableHc ?? 0), 0),
         activeHeadcount: records.reduce((sum, record) => sum + record.activeHc, 0),
       },
       alerts: buildAlerts(records),
@@ -1427,6 +1925,7 @@ export const processPnlService = {
     } = detailContext ?? await getProcessDetailContext(processId, filters);
     const expenseAmount = context.expenses.get(processId)?.approvedAmount ?? 0;
     const vendorAmount = context.vendorDirectCosts.get(processId)?.approvedAmount ?? 0;
+    const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
     const expenseRows = await queryRows<RowDataPacket>(
       await tableExists("expense_claims") && await tableExists("expense_items")
@@ -1470,10 +1969,11 @@ export const processPnlService = {
            vpt.sub_head AS sub_category,
            vpt.cost_class
            FROM vendor_payment_tracking vpt
-           LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
-           LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+          LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
+          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
           WHERE ${effectiveProcessExpr("vpt", costCentreProcessIdSupported)} = ?
             AND ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'direct'
+            AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
             AND COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) BETWEEN ? AND ?
           ORDER BY entry_date DESC
           LIMIT 250`
@@ -1502,7 +2002,7 @@ export const processPnlService = {
            LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
           WHERE ${effectiveProcessExpr("g", costCentreProcessIdSupported)} = ?
             AND ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'direct'
-            AND g.status = 'approved'
+            AND ${actualGrnStatusExpr("g")}
             AND vpt.id IS NULL
             AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
           ORDER BY entry_date DESC
@@ -1552,6 +2052,7 @@ export const processPnlService = {
       costCentreProcessIdSupported,
     } = detailContext ?? await getProcessDetailContext(processId, filters);
     const branchId = record.branchId;
+    const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
     const rows = branchId && await tableExists("vendor_payment_tracking")
       ? await queryRows<RowDataPacket>(
@@ -1563,6 +2064,7 @@ export const processPnlService = {
             LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
            WHERE vpt.branch_id = ?
              AND ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'indirect'
+             AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
              AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
            GROUP BY vpt.head, vpt.sub_head
            ORDER BY branch_pool_amount DESC`,
@@ -1578,7 +2080,7 @@ export const processPnlService = {
             LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
            WHERE g.branch_id = ?
              AND ${directCostClassExpr("g", effectiveProcessExpr("g", costCentreProcessIdSupported))} = 'indirect'
-             AND g.status = 'approved'
+             AND ${actualGrnStatusExpr("g")}
              AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?
            GROUP BY g.head, g.sub_head
            ORDER BY branch_pool_amount DESC`,
@@ -1622,11 +2124,28 @@ export const processPnlService = {
     const { context, record } = detailContext ?? await getProcessDetailContext(processId, filters);
     const issues: Array<{ severity: string; code: string; message: string }> = [];
 
-    if (!context.contracts.has(processId)) {
+    const contract = context.contracts.get(processId);
+    const monthlyPlan = context.monthlyPlans.get(processId);
+
+    if (!contract || contract.rateSource === "missing") {
       issues.push({
         severity: "critical",
         code: "MISSING_CONTRACT",
-        message: "No active commercial contract or billing unit is configured for this process.",
+        message: "No approved process rate, active contract rate, or billing-unit rate is configured for this process.",
+      });
+    }
+    if (contract?.overlapException) {
+      issues.push({
+        severity: "critical",
+        code: "OVERLAPPING_BILLING_RATES",
+        message: "Multiple approved process rates overlap for the selected period. Finance reconciliation is required.",
+      });
+    }
+    if (!monthlyPlan || !["approved", "locked"].includes(String(monthlyPlan.status ?? ""))) {
+      issues.push({
+        severity: "warning",
+        code: "MISSING_APPROVED_MONTHLY_PLAN",
+        message: "No approved or locked monthly plan was found for this process and month.",
       });
     }
     if ((context.invoices.get(processId)?.invoiceCount ?? 0) === 0 && record.revenueMtd <= 0) {
@@ -1641,6 +2160,13 @@ export const processPnlService = {
         severity: "warning",
         code: "MISSING_PAYROLL",
         message: "Payroll actuals are missing; the page is using estimated people cost.",
+      });
+    }
+    if (record.billableHc == null) {
+      issues.push({
+        severity: "critical",
+        code: "MISSING_BILLABLE_HC",
+        message: "Billable headcount is not traceable for this process in the selected month.",
       });
     }
     if (record.revenueAtRisk > 0) {
@@ -1668,6 +2194,7 @@ export const processPnlService = {
       costCentreProcessIdSupported,
     } = detailContext ?? await getProcessDetailContext(processId, filters);
     const entries: Array<Record<string, unknown>> = [];
+    const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
     if (await tableExists("billing_invoice")) {
       const invoiceRows = await queryRows<RowDataPacket>(
@@ -1720,10 +2247,11 @@ export const processPnlService = {
             vpt.due_amount AS amount,
             vpt.payment_status AS status
            FROM vendor_payment_tracking vpt
-           LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
-           LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+          LEFT JOIN grn_request grn ON grn.id = vpt.grn_request_id
+          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
           WHERE ${resolvedVendorProcessExpr} = ?
             AND ${directCostClassExpr("vpt", resolvedVendorProcessExpr)} = 'direct'
+            AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
             AND COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) BETWEEN ? AND ?`,
         [processId, start, end]
       ).catch(() => []);
@@ -1752,7 +2280,7 @@ export const processPnlService = {
            LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
           WHERE ${resolvedGrnProcessExpr} = ?
             AND ${directCostClassExpr("g", resolvedGrnProcessExpr)} = 'direct'
-            AND g.status = 'approved'
+            AND ${actualGrnStatusExpr("g")}
             AND vpt.id IS NULL
             AND COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) BETWEEN ? AND ?`,
         [processId, start, end]
@@ -1765,6 +2293,29 @@ export const processPnlService = {
           entryDate: row.entry_date,
           amount: toNumber(row.amount),
           status: row.status,
+        });
+      }
+    }
+
+    if (await tableExists("pnl_adjustment_journal")) {
+      const adjustmentRows = await queryRows<RowDataPacket>(
+        `SELECT metric_key, adjustment_amount, approval_status, approved_at, created_at, reason
+           FROM pnl_adjustment_journal
+          WHERE process_id = ?
+            AND period_code = ?
+            AND approval_status = 'approved'
+            AND reversed_at IS NULL`,
+        [processId, context.filters.period]
+      ).catch(() => []);
+
+      for (const row of adjustmentRows) {
+        entries.push({
+          entryType: "adjustment",
+          reference: String(row.metric_key ?? "adjustment"),
+          entryDate: row.approved_at ?? row.created_at,
+          amount: toNumber(row.adjustment_amount),
+          status: row.approval_status,
+          note: row.reason,
         });
       }
     }
@@ -1835,7 +2386,8 @@ export const processPnlService = {
       "Indirect Cost",
       "Operating Profit",
       "OP Margin %",
-      "Revenue At Risk",
+      "Revenue Leakage",
+      "Receivable Risk",
       "Reconciliation",
       "Freshness",
     ];
@@ -1858,6 +2410,7 @@ export const processPnlService = {
           record.operatingProfit.toFixed(2),
           record.operatingMarginPct?.toFixed(2) ?? "",
           record.revenueAtRisk.toFixed(2),
+          record.receivableRisk.toFixed(2),
           record.reconciliationStatus,
           record.freshness ?? "",
         ].map(escape).join(",")

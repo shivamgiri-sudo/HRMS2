@@ -99,10 +99,10 @@ type AnalyticsData = {
   funnel: { stage: string; count: number; pct: number }[];
   byOutcome: { label: string; count: number }[];
   bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
-  byProcess: { label: string; total: number; selected: number; joined: number }[];
+  byProcess: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byRecruiter: { label: string; total: number; walkins: number; selected: number; joined: number; selRate: number }[];
-  byBranch: { label: string; total: number; selected: number; joined: number }[];
-  byGender: { label: string; count: number; joined: number }[];
+  byBranch: { label: string; total: number; walkins: number; selected: number; joined: number }[];
+  byGender: { label: string; count: number; walkins: number; selected: number; joined: number }[];
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
@@ -274,14 +274,17 @@ function MetricCard({
   );
 }
 
-function KpiTile({ label, value, sub, color }: {
-  label: string; value: string | number; sub?: string; color: string;
+function KpiTile({ label, value, sub, color, icon }: {
+  label: string; value: string | number; sub?: string; color: string; icon?: ReactNode;
 }) {
   return (
-    <div className={`rounded-2xl border ${color} bg-white p-4 shadow-sm`}>
-      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">{label}</div>
-      <div className="mt-1 text-2xl font-black text-slate-900">{value}</div>
-      {sub && <div className="text-xs text-slate-500 mt-0.5">{sub}</div>}
+    <div className={`rounded-2xl border-2 ${color} bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm hover:shadow-md transition-shadow`}>
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">{label}</div>
+        {icon && <div className="opacity-60">{icon}</div>}
+      </div>
+      <div className="mt-2 text-3xl font-black text-slate-900 tabular-nums">{value}</div>
+      {sub && <div className="text-xs text-slate-500 mt-1">{sub}</div>}
     </div>
   );
 }
@@ -1176,15 +1179,59 @@ export default function NativeATSHiringEntry() {
                   <BarChart2 className="h-4 w-4 text-violet-600" />
                   Hiring Analytics
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void loadAnalytics()}
-                  disabled={analyticsLoading}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-3 w-3 ${analyticsLoading ? "animate-spin" : ""}`} />
-                  Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        toast.info("Syncing candidate data to analytics...");
+                        const syncRes: any = await hrmsApi.post("/api/ats/recruiter/hiring-activity/backfill-from-candidates", {});
+                        const inserted = syncRes?.inserted ?? syncRes?.data?.inserted ?? 0;
+                        toast.success(`Synced ${inserted} candidates to analytics`);
+                        void loadAnalytics();
+                      } catch { toast.error("Sync failed"); }
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700 hover:bg-violet-100"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Sync Data
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const query = [
+                          aFromDate && `fromDate=${aFromDate}`, aToDate && `toDate=${aToDate}`,
+                          aBranch && `branch=${encodeURIComponent(aBranch)}`,
+                          aProcess && `process=${encodeURIComponent(aProcess)}`,
+                          aSource && `hiringSource=${encodeURIComponent(aSource)}`,
+                          aRecruiter && `recruiter=${encodeURIComponent(aRecruiter)}`,
+                        ].filter(Boolean).join("&");
+                        const res: any = await hrmsApi.get(`/api/ats/recruiter/hiring-activity/report?${query}`);
+                        const csvContent = typeof res === "string" ? res : res?.data ?? res?.csv ?? JSON.stringify(res);
+                        const blob = new Blob([csvContent], { type: "text/csv" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a"); a.href = url;
+                        a.download = `hiring-report-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+                        URL.revokeObjectURL(url);
+                        toast.success("Report downloaded");
+                      } catch { toast.error("Failed to download report"); }
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-100"
+                  >
+                    <Download className="h-3 w-3" />
+                    Report
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void loadAnalytics()}
+                    disabled={analyticsLoading}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${analyticsLoading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
                 <div className="space-y-1">
@@ -1317,39 +1364,96 @@ export default function NativeATSHiringEntry() {
               return (
                 <>
                   {/* ── KPI tiles ── */}
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <KpiTile label="Total Logged" value={totalLogged.toLocaleString()} color="border-slate-200" />
-                    <KpiTile label="Selection Rate" value={`${selPct}%`} sub={`${selCount.toLocaleString()} selected`} color="border-emerald-200" />
-                    <KpiTile label="Join Rate" value={`${joinPct}%`} sub={`${joinCount.toLocaleString()} joined`} color="border-sky-200" />
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                    <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
+                    <KpiTile label="Walk-ins" value={(analytics.funnel[2]?.count ?? 0).toLocaleString()} sub={`${analytics.funnel[2]?.pct ?? 0}% of logged`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
+                    <KpiTile label="Selected" value={selCount.toLocaleString()} sub={`${selPct}% selection rate`} color="border-emerald-300" icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} />
+                    <KpiTile label="Joined" value={joinCount.toLocaleString()} sub={`${joinPct}% join rate`} color="border-violet-300" icon={<BadgeCheck className="h-4 w-4 text-violet-500" />} />
                     <KpiTile
-                      label="Follow-ups Due"
+                      label="Follow-ups"
                       value={analytics.followupDue.length}
-                      sub="next 7 days"
-                      color={analytics.followupDue.length > 0 ? "border-amber-300" : "border-slate-200"}
+                      sub="due in 7 days"
+                      color={analytics.followupDue.length > 0 ? "border-amber-400" : "border-slate-200"}
+                      icon={<Bell className="h-4 w-4 text-amber-500" />}
                     />
                   </div>
 
-                  {/* ── Row 1: Funnel + Outcome Donut ── */}
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {/* Funnel — fixed right margin, removed dead map */}
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                      <div className="mb-3 text-sm font-black text-slate-900">Hiring Funnel</div>
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart data={analytics.funnel} layout="vertical" margin={{ left: 20, right: 80 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                          <XAxis type="number" tick={{ fontSize: 11 }} />
-                          <YAxis dataKey="stage" type="category" tick={{ fontSize: 11 }} width={80} />
-                          <Tooltip formatter={(v: number) => [v, "Count"]} />
-                          <Bar dataKey="count" radius={[0, 4, 4, 0]}
-                            label={{ position: "right", fontSize: 11, formatter: (v: number, entry: any) => `${v} (${entry?.pct ?? 0}%)` }}>
-                            {analytics.funnel.map((_, i) => (
-                              <Bar key={i} dataKey="count" fill={FUNNEL_COLORS[i] ?? "#64748b"} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
+                  {/* ── Visual Hiring Funnel ── */}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className="text-sm font-black text-slate-900">Hiring Funnel</div>
+                      <div className="text-xs text-slate-400">Conversion at each stage</div>
                     </div>
+                    {analytics.funnel.length === 0 ? (
+                      <AnalyticsEmptyState label="No funnel data" />
+                    ) : (
+                      <div className="relative flex flex-col items-center gap-0">
+                        {analytics.funnel.map((stage, i) => {
+                          const maxCount = analytics.funnel[0]?.count || 1;
+                          const widthPct = Math.max(20, (stage.count / maxCount) * 100);
+                          const dropOff = i > 0 ? analytics.funnel[i - 1].count - stage.count : 0;
+                          const dropPct = i > 0 && analytics.funnel[i - 1].count > 0
+                            ? Math.round((dropOff / analytics.funnel[i - 1].count) * 100) : 0;
+                          const colors = [
+                            "from-slate-500 to-slate-600",
+                            "from-blue-500 to-blue-600",
+                            "from-amber-500 to-amber-600",
+                            "from-emerald-500 to-emerald-600",
+                            "from-violet-500 to-violet-600",
+                          ];
+                          const bgColor = colors[i] ?? "from-slate-500 to-slate-600";
+                          return (
+                            <div key={stage.stage} className="w-full flex flex-col items-center">
+                              {i > 0 && dropOff > 0 && (
+                                <div className="flex items-center gap-2 py-0.5">
+                                  <div className="h-px w-8 bg-rose-200" />
+                                  <span className="text-[10px] font-bold text-rose-500">−{dropOff} ({dropPct}% drop)</span>
+                                  <div className="h-px w-8 bg-rose-200" />
+                                </div>
+                              )}
+                              {i > 0 && dropOff === 0 && <div className="h-1" />}
+                              <div
+                                className={`relative flex items-center justify-between rounded-xl bg-gradient-to-r ${bgColor} px-5 py-3 text-white shadow-sm transition-all hover:shadow-md hover:scale-[1.01]`}
+                                style={{ width: `${widthPct}%`, minWidth: "200px" }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-bold">{stage.stage}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="text-lg font-black tabular-nums">{stage.count.toLocaleString()}</span>
+                                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-bold">
+                                    {stage.pct}%
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {/* Conversion summary */}
+                        {analytics.funnel.length >= 2 && (
+                          <div className="mt-4 flex flex-wrap items-center justify-center gap-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3">
+                            <div className="text-center">
+                              <div className="text-lg font-black text-emerald-600">
+                                {analytics.funnel[0].count > 0 ? Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 100) : 0}%
+                              </div>
+                              <div className="text-[10px] font-bold uppercase text-slate-400">Overall Conversion</div>
+                            </div>
+                            {analytics.funnel.map((s, i) => i > 0 && (
+                              <div key={s.stage} className="text-center">
+                                <div className="text-sm font-black text-slate-700">
+                                  {analytics.funnel[i - 1].count > 0 ? Math.round((s.count / analytics.funnel[i - 1].count) * 100) : 0}%
+                                </div>
+                                <div className="text-[10px] text-slate-400">{analytics.funnel[i - 1].stage} → {s.stage}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
+                  {/* ── Row 1: Outcome Donut + KPIs side ── */}
+                  <div className="grid gap-4 md:grid-cols-2">
                     {/* Outcome Donut — ApexCharts */}
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
                       <div className="mb-3 text-sm font-black text-slate-900">Outcome Distribution</div>
@@ -1358,6 +1462,28 @@ export default function NativeATSHiringEntry() {
                       ) : (
                         <ReactApexChart type="donut" series={donutSeries} options={donutOptions} height={280} />
                       )}
+                    </div>
+
+                    {/* Stage-to-stage conversion cards */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 text-sm font-black text-slate-900">Stage Conversion Rates</div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {analytics.funnel.map((s, i) => {
+                          if (i === 0) return null;
+                          const prev = analytics.funnel[i - 1];
+                          const rate = prev.count > 0 ? Math.round((s.count / prev.count) * 100) : 0;
+                          const rateColor = rate >= 60 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
+                            : rate >= 30 ? "text-amber-600 bg-amber-50 border-amber-200"
+                            : "text-rose-600 bg-rose-50 border-rose-200";
+                          return (
+                            <div key={s.stage} className={`rounded-xl border p-3 ${rateColor}`}>
+                              <div className="text-2xl font-black">{rate}%</div>
+                              <div className="text-[10px] font-bold uppercase mt-0.5">{prev.stage} → {s.stage}</div>
+                              <div className="text-[10px] mt-1 opacity-75">{prev.count} → {s.count}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
 
@@ -1447,18 +1573,20 @@ export default function NativeATSHiringEntry() {
                   <div className="grid gap-4 md:grid-cols-2">
                     {/* Process Breakdown */}
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                      <div className="mb-3 text-sm font-black text-slate-900">Process Breakdown</div>
+                      <div className="mb-1 text-sm font-black text-slate-900">Process Breakdown</div>
+                      <div className="mb-3 text-xs text-slate-400">Candidates per process — logged → walk-in → selected → joined</div>
                       {analytics.byProcess.length === 0 ? (
                         <AnalyticsEmptyState label="No process data" />
                       ) : (
-                        <ResponsiveContainer width="100%" height={Math.max(180, analytics.byProcess.length * 36)}>
-                          <BarChart data={analytics.byProcess} layout="vertical" margin={{ left: 10, right: 40 }}>
+                        <ResponsiveContainer width="100%" height={Math.max(180, analytics.byProcess.length * 40)}>
+                          <BarChart data={analytics.byProcess} layout="vertical" margin={{ left: 10, right: 50 }}>
                             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                             <XAxis type="number" tick={{ fontSize: 10 }} />
-                            <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={110} />
-                            <Tooltip formatter={(v: number, name: string) => [v, name]} />
+                            <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={120} />
+                            <Tooltip formatter={(v: number, name: string) => [v.toLocaleString(), name]} />
                             <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                             <Bar dataKey="total"    fill="#94a3b8" name="Logged"   radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="walkins"  fill="#0ea5e9" name="Walk-in"  radius={[0, 3, 3, 0]} />
                             <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 3, 3, 0]} />
                             <Bar dataKey="joined"   fill="#6366f1" name="Joined"   radius={[0, 3, 3, 0]} />
                           </BarChart>
@@ -1468,18 +1596,20 @@ export default function NativeATSHiringEntry() {
 
                     {/* Branch Breakdown */}
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                      <div className="mb-3 text-sm font-black text-slate-900">Branch Breakdown</div>
+                      <div className="mb-1 text-sm font-black text-slate-900">Branch Breakdown</div>
+                      <div className="mb-3 text-xs text-slate-400">Candidates per branch — logged → walk-in → selected → joined</div>
                       {(analytics.byBranch ?? []).length === 0 ? (
                         <AnalyticsEmptyState label="No branch data" />
                       ) : (
-                        <ResponsiveContainer width="100%" height={Math.max(180, (analytics.byBranch ?? []).length * 36)}>
-                          <BarChart data={analytics.byBranch ?? []} layout="vertical" margin={{ left: 10, right: 40 }}>
+                        <ResponsiveContainer width="100%" height={Math.max(180, (analytics.byBranch ?? []).length * 40)}>
+                          <BarChart data={analytics.byBranch ?? []} layout="vertical" margin={{ left: 10, right: 50 }}>
                             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                             <XAxis type="number" tick={{ fontSize: 10 }} />
                             <YAxis dataKey="label" type="category" tick={{ fontSize: 10 }} width={110} />
-                            <Tooltip formatter={(v: number, name: string) => [v, name]} />
+                            <Tooltip formatter={(v: number, name: string) => [v.toLocaleString(), name]} />
                             <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                             <Bar dataKey="total"    fill="#94a3b8" name="Logged"   radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="walkins"  fill="#0ea5e9" name="Walk-in"  radius={[0, 3, 3, 0]} />
                             <Bar dataKey="selected" fill="#10b981" name="Selected" radius={[0, 3, 3, 0]} />
                             <Bar dataKey="joined"   fill="#6366f1" name="Joined"   radius={[0, 3, 3, 0]} />
                           </BarChart>
@@ -1490,18 +1620,45 @@ export default function NativeATSHiringEntry() {
 
                   {/* ── Row 5: Gender Donut + Recruiter Conversion ── */}
                   <div className="grid gap-4 md:grid-cols-2">
-                    {/* Gender Distribution — ApexCharts donut */}
+                    {/* Gender Distribution */}
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                      <div className="mb-3 text-sm font-black text-slate-900">Gender Distribution</div>
+                      <div className="mb-1 text-sm font-black text-slate-900">Gender Distribution</div>
+                      <div className="mb-3 text-xs text-slate-400">Candidates by gender with conversion</div>
                       {genderData.length === 0 ? (
                         <AnalyticsEmptyState label="No gender data" />
                       ) : (
-                        <ReactApexChart
-                          type="donut"
-                          series={genderData.map((g) => g.count)}
-                          options={genderOptions}
-                          height={240}
-                        />
+                        <div className="space-y-2">
+                          <ReactApexChart
+                            type="donut"
+                            series={genderData.map((g) => g.count)}
+                            options={genderOptions}
+                            height={180}
+                          />
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-slate-100">
+                                  <th className="py-1 text-left text-[10px] font-bold uppercase text-slate-400">Gender</th>
+                                  <th className="py-1 text-right text-[10px] font-bold uppercase text-slate-400">Total</th>
+                                  <th className="py-1 text-right text-[10px] font-bold uppercase text-slate-400">Walk-in</th>
+                                  <th className="py-1 text-right text-[10px] font-bold uppercase text-slate-400">Selected</th>
+                                  <th className="py-1 text-right text-[10px] font-bold uppercase text-slate-400">Joined</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {genderData.map((g) => (
+                                  <tr key={g.label}>
+                                    <td className="py-1 font-semibold text-slate-700">{g.label}</td>
+                                    <td className="py-1 text-right tabular-nums">{g.count}</td>
+                                    <td className="py-1 text-right tabular-nums text-sky-600">{(g as any).walkins ?? 0}</td>
+                                    <td className="py-1 text-right tabular-nums text-emerald-600">{(g as any).selected ?? 0}</td>
+                                    <td className="py-1 text-right tabular-nums text-violet-600 font-bold">{g.joined ?? 0}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
                       )}
                     </div>
 

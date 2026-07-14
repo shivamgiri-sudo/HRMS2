@@ -1,12 +1,22 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 
+const tableExistsCache = new Map<string, Promise<boolean>>();
+
 export async function tableExists(tableName: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
-    [tableName]
-  );
-  return rows.length > 0;
+  if (!tableExistsCache.has(tableName)) {
+    tableExistsCache.set(
+      tableName,
+      db.execute<RowDataPacket[]>(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1",
+        [tableName]
+      ).then(([rows]) => rows.length > 0).catch((error) => {
+        tableExistsCache.delete(tableName);
+        throw error;
+      })
+    );
+  }
+  return tableExistsCache.get(tableName)!;
 }
 
 export async function scalar(sql: string, params: unknown[] = [], fallback = 0): Promise<number> {

@@ -49,6 +49,7 @@ export interface PnlBillingRateRow {
   effective_from: string;
   effective_to: string | null;
   approval_reference?: string | null;
+  approved_by?: string | null;
 }
 
 export interface PnlMonthlyPlanRow {
@@ -77,11 +78,14 @@ export interface PnlAdjustmentRow {
   client_name?: string | null;
   period_code: string;
   metric_key: string;
+  adjustment_class?: string | null;
   previous_value: number;
   adjustment_amount: number;
   revised_value: number;
   reason: string;
   approval_status: string;
+  rejection_reason?: string | null;
+  reversal_reason?: string | null;
   created_at: string;
 }
 
@@ -259,6 +263,38 @@ export function usePnlConfiguration(period?: string, processId?: string) {
     onSuccess: invalidate,
   });
 
+  const approveAdjustment = useMutation({
+    mutationFn: async (adjustmentId: string) => {
+      const response = await hrmsApi.post<{ success: boolean; data: { success: boolean } }>(
+        `/api/finance/pnl/adjustments/${adjustmentId}/approve`
+      );
+      return response.data;
+    },
+    onSuccess: invalidate,
+  });
+
+  const rejectAdjustment = useMutation({
+    mutationFn: async (payload: { adjustmentId: string; reason: string }) => {
+      const response = await hrmsApi.post<{ success: boolean; data: { success: boolean } }>(
+        `/api/finance/pnl/adjustments/${payload.adjustmentId}/reject`,
+        { reason: payload.reason }
+      );
+      return response.data;
+    },
+    onSuccess: invalidate,
+  });
+
+  const reverseAdjustment = useMutation({
+    mutationFn: async (payload: { adjustmentId: string; reason: string }) => {
+      const response = await hrmsApi.post<{ success: boolean; data: { success: boolean } }>(
+        `/api/finance/pnl/adjustments/${payload.adjustmentId}/reverse`,
+        { reason: payload.reason }
+      );
+      return response.data;
+    },
+    onSuccess: invalidate,
+  });
+
   return {
     referenceQuery,
     contractsQuery,
@@ -270,5 +306,8 @@ export function usePnlConfiguration(period?: string, processId?: string) {
     saveRate,
     saveMonthlyPlan,
     createAdjustment,
+    approveAdjustment,
+    rejectAdjustment,
+    reverseAdjustment,
   };
 }

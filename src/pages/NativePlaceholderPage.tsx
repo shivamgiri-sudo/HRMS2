@@ -1,7 +1,7 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import LMSIntegrationAdmin from "./LMSIntegrationAdmin";
 import LMSProgressDashboard from "./LMSProgressDashboard";
-import NativeWFMLiveTracker from "./NativeWFMLiveTracker";
+import NativeBiometricCommandCenter from "./NativeBiometricCommandCenter";
 import NativeQualityDashboard from "./NativeQualityDashboard";
 import NativeOperationsDashboard from "./NativeOperationsDashboard";
 
@@ -15,7 +15,7 @@ export default function NativePlaceholderPage({ title, module }: { title: string
   }
 
   if (title === "WFM Live Tracker") {
-    return <NativeWFMLiveTracker />;
+    return <NativeBiometricCommandCenter />;
   }
 
   if (title === "Quality Dashboard") {

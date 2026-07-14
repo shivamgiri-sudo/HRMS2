@@ -21,6 +21,7 @@ export interface PnlPeriodCloseData {
     mostProfitableProcess: { processId: string; processName: string; value: number } | null;
     lossMakingProcesses: number;
     revenueAtRisk: number;
+    receivableRisk: number;
     monthEndProjectedProfit: number;
     billableHeadcount: number;
     activeHeadcount: number;
@@ -53,6 +54,11 @@ export interface PnlPeriodCloseData {
     signed_at: string | null;
     note: string | null;
   }>;
+  availableActions: {
+    signoffRole: "finance_preparer" | "finance_head" | "accounts_head" | "ceo" | null;
+    canSignoff: boolean;
+    canLock: boolean;
+  };
   allocationDrivers: Array<{
     branchName: string;
     revenue: number;
@@ -104,11 +110,10 @@ export function usePnlReconciliation(period?: string) {
   });
 
   const signoff = useMutation({
-    mutationFn: async (payload: { periodId: string; signoffRole: "finance_preparer" | "finance_head" | "accounts_head" | "ceo"; note?: string }) => {
+    mutationFn: async (payload: { periodId: string; note?: string }) => {
       const response = await hrmsApi.post<{ success: boolean; data: { success: boolean } }>(
         `/api/finance/pnl/period/${payload.periodId}/signoff`,
         {
-          signoffRole: payload.signoffRole,
           note: payload.note ?? null,
         }
       );

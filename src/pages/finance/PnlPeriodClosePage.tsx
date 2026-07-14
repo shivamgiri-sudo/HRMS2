@@ -38,14 +38,14 @@ export default function PnlPeriodClosePage() {
 
   const closeData = periodCloseQuery.data;
 
-  async function handleSignoff(role: keyof typeof signoffLabels) {
+  async function handleSignoff() {
     if (!closeData?.period.id) return;
     try {
       await signoff.mutateAsync({
         periodId: closeData.period.id,
-        signoffRole: role,
       });
-      toast.success(`${signoffLabels[role]} signoff recorded.`);
+      const role = closeData.availableActions.signoffRole;
+      toast.success(role ? `${signoffLabels[role]} signoff recorded.` : "Signoff recorded.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to record signoff.");
     }
@@ -134,6 +134,10 @@ export default function PnlPeriodClosePage() {
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Revenue at risk</p>
                     <p className="mt-2 text-2xl font-black">{formatCurrency(closeData?.summary.revenueAtRisk)}</p>
                   </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Receivable risk</p>
+                    <p className="mt-2 text-2xl font-black">{formatCurrency(closeData?.summary.receivableRisk)}</p>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -176,7 +180,7 @@ export default function PnlPeriodClosePage() {
                 <RefreshCw className="mr-2 h-4 w-4" />
                 {recalculate.isPending ? "Refreshing..." : "Recalculate"}
               </Button>
-              <Button onClick={handleLock} disabled={lockPeriod.isPending || closeData?.period.status === "locked"}>
+              <Button onClick={handleLock} disabled={lockPeriod.isPending || !closeData?.availableActions.canLock || closeData?.period.status === "locked"}>
                 <Lock className="mr-2 h-4 w-4" />
                 {lockPeriod.isPending ? "Locking..." : "Lock period"}
               </Button>
@@ -205,9 +209,17 @@ export default function PnlPeriodClosePage() {
                         : "Pending signoff"}
                     </p>
                   </div>
-                  <Button variant={item.status === "signed" ? "outline" : "default"} onClick={() => handleSignoff(item.role)} disabled={signoff.isPending}>
-                    {item.status === "signed" ? "Signed" : "Sign off"}
-                  </Button>
+                  {item.status === "signed" ? (
+                    <Button variant="outline" disabled>
+                      Signed
+                    </Button>
+                  ) : closeData?.availableActions.signoffRole === item.role ? (
+                    <Button onClick={() => handleSignoff()} disabled={signoff.isPending}>
+                      Sign off
+                    </Button>
+                  ) : (
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Waiting</span>
+                  )}
                 </div>
               ))}
             </CardContent>

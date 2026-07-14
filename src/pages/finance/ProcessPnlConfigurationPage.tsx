@@ -80,6 +80,9 @@ export default function ProcessPnlConfigurationPage() {
     saveRate,
     saveMonthlyPlan,
     createAdjustment,
+    approveAdjustment,
+    rejectAdjustment,
+    reverseAdjustment,
   } = usePnlConfiguration(period);
 
   const references = referenceQuery.data;
@@ -534,6 +537,26 @@ export default function ProcessPnlConfigurationPage() {
                       />
                     </div>
                     <div className="space-y-2">
+                      <Label htmlFor="plan-direct-cost">Direct cost budget</Label>
+                      <Input
+                        id="plan-direct-cost"
+                        type="number"
+                        value={planForm.direct_cost_budget ?? 0}
+                        onChange={(event) => setPlanForm((current) => ({ ...current, direct_cost_budget: asNumber(event.target.value) }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="plan-indirect-cost">Indirect cost budget</Label>
+                      <Input
+                        id="plan-indirect-cost"
+                        type="number"
+                        value={planForm.indirect_cost_budget ?? 0}
+                        onChange={(event) => setPlanForm((current) => ({ ...current, indirect_cost_budget: asNumber(event.target.value) }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
                       <Label htmlFor="plan-profit">Profit budget</Label>
                       <Input
                         id="plan-profit"
@@ -541,6 +564,19 @@ export default function ProcessPnlConfigurationPage() {
                         value={planForm.profit_budget ?? 0}
                         onChange={(event) => setPlanForm((current) => ({ ...current, profit_budget: asNumber(event.target.value) }))}
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="plan-status">Plan status</Label>
+                      <select
+                        id="plan-status"
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={planForm.status ?? "draft"}
+                        onChange={(event) => setPlanForm((current) => ({ ...current, status: event.target.value }))}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="approved">Approved</option>
+                        <option value="locked">Locked</option>
+                      </select>
                     </div>
                   </div>
                   <Button onClick={handleSavePlan} disabled={saveMonthlyPlan.isPending || !planForm.process_id}>
@@ -630,6 +666,59 @@ export default function ProcessPnlConfigurationPage() {
                           <p className="text-sm font-semibold text-slate-950">{formatCurrency(row.revised_value)}</p>
                           <p className="mt-1 text-xs text-slate-500">{row.period_code}</p>
                         </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {row.approval_status === "pending" && (
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  await approveAdjustment.mutateAsync(row.id);
+                                  toast.success("Adjustment approved.");
+                                } catch (error) {
+                                  toast.error(error instanceof Error ? error.message : "Approval failed.");
+                                }
+                              }}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                const reason = window.prompt("Enter rejection reason");
+                                if (!reason) return;
+                                try {
+                                  await rejectAdjustment.mutateAsync({ adjustmentId: row.id, reason });
+                                  toast.success("Adjustment rejected.");
+                                } catch (error) {
+                                  toast.error(error instanceof Error ? error.message : "Rejection failed.");
+                                }
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                        {row.approval_status === "approved" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              const reason = window.prompt("Enter reversal reason");
+                              if (!reason) return;
+                              try {
+                                await reverseAdjustment.mutateAsync({ adjustmentId: row.id, reason });
+                                toast.success("Adjustment reversed.");
+                              } catch (error) {
+                                toast.error(error instanceof Error ? error.message : "Reversal failed.");
+                              }
+                            }}
+                          >
+                            Reverse
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}

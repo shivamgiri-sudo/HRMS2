@@ -303,18 +303,16 @@ async function lookupProcess(name: string | undefined): Promise<string | null> {
 // ── Core Import ───────────────────────────────────────────────────────────────
 
 async function findExistingCandidate(mobile: string, email: string | undefined): Promise<{ id: string; candidate_code: string } | null> {
-  const mobileHash = hashMobile(mobile);
   const [byMobile] = await db.execute<RowDataPacket[]>(
-    `SELECT id, candidate_code FROM ats_candidate WHERE mobile_hash = ? OR mobile = ? LIMIT 1`,
-    [mobileHash, mobile]
+    `SELECT id, candidate_code FROM ats_candidate WHERE mobile = ? LIMIT 1`,
+    [mobile]
   );
   if ((byMobile as RowDataPacket[]).length) return (byMobile as RowDataPacket[])[0] as { id: string; candidate_code: string };
 
   if (email) {
-    const emailHash = hashEmail(email);
     const [byEmail] = await db.execute<RowDataPacket[]>(
-      `SELECT id, candidate_code FROM ats_candidate WHERE email_hash = ? OR email = ? LIMIT 1`,
-      [emailHash, email.toLowerCase().trim()]
+      `SELECT id, candidate_code FROM ats_candidate WHERE email = ? LIMIT 1`,
+      [email.toLowerCase().trim()]
     );
     if ((byEmail as RowDataPacket[]).length) return (byEmail as RowDataPacket[])[0] as { id: string; candidate_code: string };
   }
@@ -333,7 +331,8 @@ async function importOneCandidate(
   row: ImportRow,
   rowIdx: number,
   actorUserId: string,
-  dryRun: boolean
+  dryRun: boolean,
+  importBatchId: string | null = null
 ): Promise<{ action: "created" | "updated" | "skipped"; warnings: ImportWarning[] }> {
   const warnings: ImportWarning[] = [];
   const cid = row.CandidateID ?? `row-${rowIdx}`;
@@ -388,28 +387,32 @@ async function importOneCandidate(
       [candidateDbId, currentStage, createdAt, actorUserId]
     );
 
+    // Upsert hiring activity for updated candidates too
+    const recruiterUserId = await lookupRecruiter(row.RecruiterAssignedName, row.RecruiterEmail);
+    await insertHiringActivity(
+      row, candidateDbId, recruiterUserId,
+      row.RecruiterAssignedName?.trim() || null,
+      actorUserId, createdAt, currentStage, importBatchId
+    );
+
     return { action: "updated", warnings };
   }
 
   // Insert new candidate
   candidateDbId = randomUUID();
-  const mobileHash = hashMobile(mobile);
-  const emailHash = email ? hashEmail(email) : null;
 
   await db.execute(
     `INSERT INTO ats_candidate
-      (id, candidate_code, full_name, mobile, mobile_hash, email, email_hash, gender,
+      (id, candidate_code, full_name, mobile, email, gender,
        applied_for_process, applied_for_branch, current_stage, remarks,
        walk_in_date, created_at, updated_at, active_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
     [
       candidateDbId,
       row.CandidateID?.trim() ?? `IMP-${randomUUID().slice(0, 8).toUpperCase()}`,
       row.FullName?.trim(),
       mobile,
-      mobileHash,
       email ?? null,
-      emailHash,
       normalizeGender(row.Gender) ?? null,
       row.RoleApplied?.trim() ?? null,
       row.Branch?.trim() ?? null,
@@ -478,6 +481,13 @@ async function importOneCandidate(
     );
   }
 
+  // Insert into recruiter hiring activity for analytics/funnel tracking
+  await insertHiringActivity(
+    row, candidateDbId, recruiterUserId,
+    row.RecruiterAssignedName?.trim() || null,
+    actorUserId, createdAt, currentStage, importBatchId
+  );
+
   return { action: "created", warnings };
 }
 
@@ -489,12 +499,149 @@ function buildSkillRemarks(row: ImportRow): string {
   return parts.join(", ");
 }
 
+// ── Employee Auto-Match ──────────────────────────────────────────────────────
+
+async function findEmployeeByMobileOrEmail(mobile: string, email?: string): Promise<{ id: string; employee_code: string } | null> {
+  if (mobile) {
+    // Match by mobile (primary) or alternate_mobile
+    const [byMobile] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code FROM employees WHERE mobile = ? OR alternate_mobile = ? LIMIT 1`,
+      [mobile, mobile]
+    );
+    if ((byMobile as RowDataPacket[]).length) return (byMobile as RowDataPacket[])[0] as { id: string; employee_code: string };
+  }
+  if (email) {
+    // Match by personal_email — this is what candidates provide pre-onboarding
+    // DO NOT match official_email/auth_user.email which is generated post-onboarding
+    const [byEmail] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code FROM employees WHERE personal_email = ? LIMIT 1`,
+      [email.toLowerCase().trim()]
+    );
+    if ((byEmail as RowDataPacket[]).length) return (byEmail as RowDataPacket[])[0] as { id: string; employee_code: string };
+  }
+  return null;
+}
+
+function deriveHiringFlags(row: ImportRow, currentStage: string): {
+  walkin_flag: number; contacted_flag: number; final_selection_flag: number; joined_flag: number;
+  current_status: string; joining_status: string | null; hr_interview_status: string | null;
+} {
+  const endStage = (row["Walk-in EndStage"] || row.Status || "").toLowerCase().trim();
+  const finalDecision = (row.FinalDecision || "").toLowerCase().trim();
+  const joiningConfirm = (row["Joining Confirmation"] || "").toLowerCase().trim();
+
+  // Everyone in the CSV was contacted — rejected/hold/not interested/no-show all mean we reached them
+  const contacted_flag = 1;
+  const walkin_flag = endStage !== "" && !["no show", "not interested", "not reachable", ""].includes(endStage) ? 1 : 0;
+  const final_selection_flag = ["selected", "offer_extended", "joined", "offered"].includes(finalDecision) ||
+    currentStage === "Offer_Extended" || currentStage === "Onboarded" ? 1 : 0;
+  const joined_flag = joiningConfirm === "yes" || joiningConfirm === "joined" ||
+    finalDecision === "joined" || currentStage === "Onboarded" ? 1 : 0;
+
+  let current_status = "Contacted";
+  if (joined_flag) current_status = "Joined";
+  else if (final_selection_flag) current_status = "Selected";
+  else if (endStage.includes("reject") || finalDecision === "rejected") current_status = "Rejected";
+  else if (endStage === "hold" || finalDecision === "hold") current_status = "Hold";
+  else if (endStage === "no show") current_status = "No Show";
+  else if (endStage === "walkout") current_status = "Walkout";
+  else if (finalDecision === "not interested" || endStage.includes("not interested")) current_status = "Not Interested";
+  else if (walkin_flag) current_status = "Walk-in Completed";
+
+  const hr_interview_status = row.Round1_Result?.trim() || null;
+  const joining_status = joined_flag ? "Joined" : final_selection_flag ? "Offer Extended" : null;
+
+  return { walkin_flag, contacted_flag, final_selection_flag, joined_flag, current_status, joining_status, hr_interview_status };
+}
+
+async function insertHiringActivity(
+  row: ImportRow,
+  candidateDbId: string,
+  recruiterUserId: string | null,
+  recruiterName: string | null,
+  actorUserId: string,
+  createdAt: string,
+  currentStage: string,
+  importBatchId: string | null
+): Promise<void> {
+  const mobile = String(row.Mobile ?? "").replace(/\D/g, "");
+  const email = row.Email?.trim().toLowerCase() || undefined;
+  const flags = deriveHiringFlags(row, currentStage);
+
+  // Auto-match with employee table via mobile or personal_email
+  const employee = await findEmployeeByMobileOrEmail(mobile, email);
+
+  const activityDate = parseHistoricalDate(row.CreatedDate) ?? createdAt.split(" ")[0];
+
+  await db.execute(
+    `INSERT INTO ats_recruiter_hiring_activity
+      (id, activity_date, activity_month, recruiter_id, recruiter_name_snapshot,
+       hiring_source, position_name, location_name, branch_name, process_name,
+       candidate_name, gender, mobile, candidate_email,
+       education_qualification, experience_level, candidate_location,
+       recruiter_remarks, recruiter_rejection_reason,
+       hr_interview_status, ops_interview_status,
+       current_status, joining_status,
+       walkin_flag, contacted_flag, final_selection_flag, joined_flag,
+       linked_candidate_id, employee_id, joined_candidate_emp_code,
+       import_batch_id, source_system, created_by, created_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      activityDate,
+      row.CreatedDate ? (row.CreatedDate.substring(0, 7) || null) : null,
+      recruiterUserId,
+      recruiterName || row.RecruiterAssignedName?.trim() || "Unknown",
+      "Bulk Import",
+      row.RoleApplied?.trim() || row.Process?.trim() || "General",
+      row.Branch?.trim() || "Not specified",
+      row.Branch?.trim() || null,
+      row.Process?.trim() || row.RoleApplied?.trim() || "General",
+      row.FullName?.trim() || "",
+      row.Gender?.trim() || null,
+      mobile,
+      row.Email?.trim() || null,
+      row.Education?.trim() || null,
+      row.Experience?.trim() || null,
+      row.Address?.trim() || null,
+      row.RecruiterSelected?.trim() || null,
+      row["Rejection VOC"]?.trim() || row.Round1_VOC?.trim() || null,
+      flags.hr_interview_status,
+      row.Round2_Result?.trim() || null,
+      flags.current_status,
+      flags.joining_status,
+      flags.walkin_flag,
+      flags.contacted_flag,
+      flags.final_selection_flag,
+      flags.joined_flag,
+      candidateDbId,
+      employee?.id || null,
+      employee?.employee_code || null,
+      importBatchId,
+      "BULK_IMPORT",
+      actorUserId,
+      createdAt,
+    ]
+  ).catch((err) => {
+    // Don't fail the whole import if hiring activity insert fails
+    console.warn(`[bulk-import] hiring activity insert failed for row ${row.CandidateID}: ${err.message}`);
+  });
+
+  // Also update ats_candidate with employee_code if found
+  if (employee && candidateDbId) {
+    await db.execute(
+      `UPDATE ats_candidate SET employee_code = ? WHERE id = ? AND (employee_code IS NULL OR employee_code = '')`,
+      [employee.employee_code, candidateDbId]
+    ).catch(() => {});
+  }
+}
+
 // ── Main Orchestrator ─────────────────────────────────────────────────────────
 
 export async function runBulkImport(params: {
   rows: ImportRow[];
   actorUserId: string;
   dryRun: boolean;
+  importBatchId?: string;
 }): Promise<ImportResult> {
   // Clear lookup caches for fresh run
   recruiterCache.clear();
@@ -507,35 +654,41 @@ export async function runBulkImport(params: {
     warnings: [],
   };
 
-  for (let i = 0; i < params.rows.length; i++) {
-    const row = params.rows[i];
-    const rowIdx = i + 2; // 1-indexed, +1 for header row
+  const importBatchId = params.dryRun ? null : randomUUID();
 
-    const { errors, warnings } = validateRow(row, rowIdx);
-    result.warnings.push(...warnings);
+  const BATCH_SIZE = 10;
+  for (let batchStart = 0; batchStart < params.rows.length; batchStart += BATCH_SIZE) {
+    const batch = params.rows.slice(batchStart, batchStart + BATCH_SIZE);
+    await Promise.all(batch.map(async (row, idx) => {
+      const i = batchStart + idx;
+      const rowIdx = i + 2;
 
-    if (errors.length) {
-      result.errors.push(...errors);
-      result.summary.errors++;
-      continue;
-    }
+      const { errors, warnings } = validateRow(row, rowIdx);
+      result.warnings.push(...warnings);
 
-    try {
-      const { action, warnings: actionWarnings } = await importOneCandidate(row, rowIdx, params.actorUserId, params.dryRun);
-      result.warnings.push(...actionWarnings);
-      if (action === "created") result.summary.created++;
-      else if (action === "updated") result.summary.updated++;
-      else result.summary.skipped++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result.errors.push({
-        row: rowIdx,
-        candidateId: row.CandidateID ?? `row-${rowIdx}`,
-        field: "db",
-        message: msg,
-      });
-      result.summary.errors++;
-    }
+      if (errors.length) {
+        result.errors.push(...errors);
+        result.summary.errors++;
+        return;
+      }
+
+      try {
+        const { action, warnings: actionWarnings } = await importOneCandidate(row, rowIdx, params.actorUserId, params.dryRun, importBatchId);
+        result.warnings.push(...actionWarnings);
+        if (action === "created") result.summary.created++;
+        else if (action === "updated") result.summary.updated++;
+        else result.summary.skipped++;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.errors.push({
+          row: rowIdx,
+          candidateId: row.CandidateID ?? `row-${rowIdx}`,
+          field: "db",
+          message: msg,
+        });
+        result.summary.errors++;
+      }
+    }));
   }
 
   return result;

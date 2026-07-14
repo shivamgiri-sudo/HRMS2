@@ -9,8 +9,15 @@ export interface ProcessPnlRecord {
   branchId: string | null;
   branchName: string | null;
   billingModel: string | null;
+  resolvedRate: number | null;
+  rateSource: "process_billing_rate" | "client_contract_master" | "billing_unit" | "missing" | "overlap_exception";
+  rateType: string | null;
+  billingUnit: string | null;
+  rateEffectiveFrom: string | null;
+  approvalReference: string | null;
+  configurationStatus: "approved" | "fallback" | "missing" | "overlap_exception";
   contractedSeats: number | null;
-  billableHc: number;
+  billableHc: number | null;
   requiredProductiveHc: number;
   requiredRosterHc: number;
   activeHc: number;
@@ -22,6 +29,8 @@ export interface ProcessPnlRecord {
   invoicedRevenueMtd: number;
   collectedRevenueMtd: number;
   outstandingReceivable: number;
+  receivableRisk: number;
+  totalCommercialExposure: number;
   salaryMtd: number;
   directPeopleCost: number;
   directNonPeopleCost: number;
@@ -31,7 +40,19 @@ export interface ProcessPnlRecord {
   contributionMargin: number;
   operatingProfit: number;
   operatingMarginPct: number | null;
+  revenueBudget: number | null;
+  directCostBudget: number | null;
+  indirectCostBudget: number | null;
+  profitBudget: number | null;
+  revenueVariance: number | null;
+  directCostVariance: number | null;
+  indirectCostVariance: number | null;
+  operatingProfitVariance: number | null;
+  operatingMarginVariance: number | null;
+  headcountVariance: number | null;
+  bufferVariance: number | null;
   budgetVariance: number | null;
+  revenueLeakage: number;
   revenueAtRisk: number;
   monthEndProjectedProfit: number;
   reconciliationStatus: "matched" | "pending" | "exception";
@@ -57,6 +78,7 @@ export interface ProcessPnlSummary {
     mostProfitableProcess: { processId: string; processName: string; value: number } | null;
     lossMakingProcesses: number;
     revenueAtRisk: number;
+    receivableRisk: number;
     monthEndProjectedProfit: number;
     billableHeadcount: number;
     activeHeadcount: number;
@@ -127,4 +149,15 @@ export function useProcessPnl(filters: ProcessPnlFilters) {
 
 export function processPnlExportUrl(filters: ProcessPnlFilters) {
   return `/api/finance/pnl/export${toQueryString(filters)}`;
+}
+
+export async function downloadProcessPnlExport(filters: ProcessPnlFilters) {
+  const query = toQueryString(filters);
+  const blob = await hrmsApi.getBlob(`/api/finance/pnl/export${query}`);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `process-pnl-${filters.period ?? "current"}.csv`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { useProcessPnl, processPnlExportUrl } from "@/hooks/useProcessPnl";
+import { downloadProcessPnlExport, useProcessPnl } from "@/hooks/useProcessPnl";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { ProcessProfitabilityTable } from "@/components/finance/pnl/ProcessProfitabilityTable";
 import { PnlWaterfallChart } from "@/components/finance/pnl/PnlWaterfallChart";
@@ -93,6 +93,12 @@ export default function ProcessPnlPage() {
           tone: summary.kpis.revenueAtRisk > 0 ? ("warning" as const) : ("good" as const),
         },
         {
+          label: "Receivable risk",
+          value: summary.kpis.receivableRisk,
+          kind: "currency" as const,
+          tone: summary.kpis.receivableRisk > 0 ? ("warning" as const) : ("good" as const),
+        },
+        {
           label: "Projected month-end profit",
           value: summary.kpis.monthEndProjectedProfit,
           kind: "currency" as const,
@@ -135,7 +141,7 @@ export default function ProcessPnlPage() {
                 <Button
                   variant="outline"
                   className="border-white/15 bg-white/5 text-white hover:bg-white/10"
-                  onClick={() => window.open(processPnlExportUrl({ period, branchId: branchId || undefined, clientId: clientId || undefined, search: search || undefined }), "_blank")}
+                  onClick={() => void downloadProcessPnlExport({ period, branchId: branchId || undefined, clientId: clientId || undefined, search: search || undefined })}
                 >
                   <Download className="mr-2 h-4 w-4" />
                   Export current view

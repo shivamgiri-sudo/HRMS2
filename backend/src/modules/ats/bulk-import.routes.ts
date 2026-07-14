@@ -17,6 +17,7 @@ const h = (fn: AH) => (req: AuthenticatedRequest, res: Response, next: NextFunct
 // Roles: admin, super_admin
 bulkImportRouter.post(
   "/candidates",
+  (req, _res, next) => { req.setTimeout(10 * 60 * 1000); next(); },
   requireAuth,
   requireRole("admin", "super_admin"),
   upload.single("file"),

@@ -15,7 +15,7 @@ interface UploadBatchRow extends RowDataPacket {
 }
 router.use(requireAuth);
 
-router.get("/templates", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
@@ -34,14 +34,14 @@ router.get("/templates", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(asy
   }
 }));
 
-router.get("/batches", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50"
   );
   res.json({ success: true, data: rows });
 }));
 
-router.get("/batches/:id/rows", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? ORDER BY row_no ASC",
     [req.params.id]
@@ -49,7 +49,7 @@ router.get("/batches/:id/rows", requireRole("admin", "hr", "wfm", "wfm_analyst")
   res.json({ success: true, data: rows });
 }));
 
-router.post("/batches", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const body = req.body as {
     upload_batch_no?: string; upload_type_code: string; original_file_name?: string;
     file_path?: string; file_size_bytes?: number; total_rows: number; valid_rows: number;
@@ -80,7 +80,7 @@ router.post("/batches", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(asyn
   res.status(201).json({ success: true, data: rows[0] ?? null });
 }));
 
-router.post("/batches/:id/rows", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{
     row_no: number;
     raw_data?: Record<string, unknown> | unknown[] | string | null;
@@ -106,7 +106,7 @@ router.post("/batches/:id/rows", requireRole("admin", "hr", "wfm", "wfm_analyst"
 }));
 
 // POST /batches/:id/import — dispatch import by rpc_name
-router.post("/batches/:id/import", requireRole("admin", "hr", "wfm", "wfm_analyst"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { rpc_name } = req.body as { rpc_name?: string };
 
