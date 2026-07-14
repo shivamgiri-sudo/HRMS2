@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { ShieldX, Users2, Activity, ClipboardCheck, BarChart2, Star, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUserRole } from "@/hooks/useUserRole";
 import TeamOverviewTab from "@/components/my-team/TeamOverviewTab";
 import TeamAttendanceTab from "@/components/my-team/TeamAttendanceTab";
@@ -34,14 +34,24 @@ export default function MyTeamPage() {
   const { data: roleData, isLoading: roleLoading } = useUserRole();
   const [activeTab, setActiveTab] = useState<TabValue>("overview");
 
-  // Badge counts for tabs
+  // Track which tabs have been visited — mount on first visit, keep mounted after
+  const mounted = useRef<Set<TabValue>>(new Set(["overview"]));
+  function handleTabChange(v: string) {
+    const tab = v as TabValue;
+    mounted.current.add(tab);
+    setActiveTab(tab);
+  }
+
+  // Badge counts — low staleTime, no heavy queries
   const { data: alertsData } = useQuery({
     queryKey: ["management", "alerts", "unack"],
     queryFn: () => hrmsApi.get<any>("/api/management/alerts?acknowledged=false"),
+    staleTime: 60_000,
   });
   const { data: leaveData } = useQuery({
     queryKey: ["team-leaves", "pending"],
-    queryFn: () => hrmsApi.get<any>("/api/leave/requests?status=pending&limit=200"),
+    queryFn: () => hrmsApi.get<any>("/api/leave/requests?status=pending&limit=50"),
+    staleTime: 60_000,
   });
 
   const alertCount = ((alertsData as any)?.data ?? []).length;
@@ -91,8 +101,8 @@ export default function MyTeamPage() {
             </div>
           </div>
 
-          {/* ── Tabs integrated into header ── */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
+          {/* ── Tabs ── */}
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="mt-4 h-auto gap-0 bg-transparent p-0 border-0 w-full overflow-x-auto flex-nowrap">
               {TABS.map(({ value, label, icon: Icon }) => (
                 <TabsTrigger
@@ -116,26 +126,28 @@ export default function MyTeamPage() {
               ))}
             </TabsList>
 
-            {/* ── Content area ── */}
+            {/* ── Content area — lazy-mount: render only after first visit ── */}
             <div className="py-6">
-              <TabsContent value="overview"    className="mt-0 focus-visible:outline-none">
-                <TeamOverviewTab onActionsClick={() => setActiveTab("actions")} />
-              </TabsContent>
-              <TabsContent value="attendance"  className="mt-0 focus-visible:outline-none">
-                <TeamAttendanceTab />
-              </TabsContent>
-              <TabsContent value="leave"       className="mt-0 focus-visible:outline-none">
-                <TeamLeaveTab />
-              </TabsContent>
-              <TabsContent value="performance" className="mt-0 focus-visible:outline-none">
-                <TeamPerformanceTab />
-              </TabsContent>
-              <TabsContent value="quality"     className="mt-0 focus-visible:outline-none">
-                <TeamQualityTab />
-              </TabsContent>
-              <TabsContent value="actions"     className="mt-0 focus-visible:outline-none">
-                <TeamActionsTab />
-              </TabsContent>
+              <div hidden={activeTab !== "overview"}>
+                {mounted.current.has("overview") && (
+                  <TeamOverviewTab onActionsClick={() => handleTabChange("actions")} />
+                )}
+              </div>
+              <div hidden={activeTab !== "attendance"}>
+                {mounted.current.has("attendance") && <TeamAttendanceTab />}
+              </div>
+              <div hidden={activeTab !== "leave"}>
+                {mounted.current.has("leave") && <TeamLeaveTab />}
+              </div>
+              <div hidden={activeTab !== "performance"}>
+                {mounted.current.has("performance") && <TeamPerformanceTab />}
+              </div>
+              <div hidden={activeTab !== "quality"}>
+                {mounted.current.has("quality") && <TeamQualityTab />}
+              </div>
+              <div hidden={activeTab !== "actions"}>
+                {mounted.current.has("actions") && <TeamActionsTab />}
+              </div>
             </div>
           </Tabs>
         </div>

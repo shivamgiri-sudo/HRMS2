@@ -75,13 +75,13 @@ export default function TeamPerformanceTab() {
   const { data: perfData, isLoading } = useQuery({
     queryKey: ["management", "agent-performance"],
     queryFn: () => hrmsApi.get<any>("/api/management/agent-performance"),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const { data: membersData } = useQuery({
     queryKey: ["management", "team-members"],
     queryFn: () => hrmsApi.get<any>("/api/management/team-members"),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const agents: AgentPerf[] = (perfData as any)?.data ?? [];

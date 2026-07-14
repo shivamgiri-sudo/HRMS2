@@ -84,7 +84,7 @@ export default function TeamQualityTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["manager", "team-quality"],
     queryFn: () => hrmsApi.get<any>("/api/manager/team-quality"),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const qd = (data as any)?.data as QualityData | undefined;

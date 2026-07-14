@@ -84,19 +84,19 @@ export default function TeamOverviewTab({ onActionsClick }: { onActionsClick: ()
   const { data: overviewRes, isLoading: overviewLoading } = useQuery({
     queryKey: ["management", "team-overview"],
     queryFn: () => hrmsApi.get<any>("/api/management/team-overview"),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const { data: membersRes, isLoading: membersLoading } = useQuery({
     queryKey: ["management", "team-members"],
     queryFn: () => hrmsApi.get<any>("/api/management/team-members"),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
   const { data: alertsRes } = useQuery({
     queryKey: ["management", "alerts", "unack"],
     queryFn: () => hrmsApi.get<any>("/api/management/alerts?acknowledged=false"),
-    staleTime: 30_000,
+    staleTime: 2 * 60_000,
   });
 
   const ov = (overviewRes as any)?.data as TeamOverview | undefined;

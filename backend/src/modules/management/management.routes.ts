@@ -198,11 +198,42 @@ router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async
 
 router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
-  const [summary, salaryRows] = await Promise.all([
-    managementService.getDashboardSummary(
-      req.query.process_id as string | undefined,
-      (!isWide && employeeIds) ? employeeIds : undefined
+
+  // Build scoped WHERE clause
+  const hasScope = !isWide && employeeIds && employeeIds.length > 0;
+  const scopePlaceholders = hasScope ? employeeIds!.map(() => "?").join(",") : null;
+  const empClause = hasScope ? `AND e.id IN (${scopePlaceholders})` : "";
+  const empParams: unknown[] = hasScope ? [...employeeIds!] : [];
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [headcountRows, attendanceRows, kpiRows, salaryRows] = await Promise.all([
+    // Fast headcount — simple COUNT with index on active_status
+    db.execute<any[]>(
+      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 ${empClause}`,
+      empParams
     ),
+    // Attendance rate for today (or latest record date)
+    db.execute<any[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(adr.attendance_status IN ('present','late')) AS present_count,
+         SUM(adr.attendance_status = 'half_day') AS half_count
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+       WHERE adr.record_date = ? ${empClause}`,
+      [today, ...empParams]
+    ),
+    // Avg KPI — simple AVG on pre-aggregated daily actuals, no window function
+    db.execute<any[]>(
+      `SELECT ROUND(AVG(kda.actual_value), 1) AS avg_kpi
+       FROM kpi_daily_actual kda
+       JOIN employees e ON e.id = kda.employee_id
+       WHERE DATE_FORMAT(kda.score_date,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')
+         AND e.active_status = 1 ${empClause}`,
+      empParams
+    ),
+    // Last approved payroll cost
     db.execute<any[]>(
       `SELECT COALESCE(total_gross, 0) AS total_gross
        FROM salary_prep_run
@@ -210,11 +241,19 @@ router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head"
        ORDER BY run_month DESC LIMIT 1`
     ),
   ]);
-  const monthlyCost = Number((salaryRows[0] as any[])[0]?.total_gross ?? 0);
+
+  const headcount = Number(headcountRows[0][0]?.headcount ?? 0);
+  const att = attendanceRows[0][0] ?? {};
+  const total = Number(att.total ?? 0);
+  const present = Number(att.present_count ?? 0) + Number(att.half_count ?? 0) * 0.5;
+  const utilization = total > 0 ? Math.round((present / total) * 100) : 0;
+  const avgKpi = Math.round(Number(kpiRows[0][0]?.avg_kpi ?? 0));
+  const monthlyCost = Number(salaryRows[0][0]?.total_gross ?? 0);
+
   res.json({ success: true, data: {
-    headcount: summary.headcount ?? 0,
-    utilization_pct: summary.attendance_rate ?? 0,
-    avg_quality_score: summary.avg_kpi_score ?? 0,
+    headcount,
+    utilization_pct: utilization,
+    avg_quality_score: avgKpi,
     monthly_cost: monthlyCost,
   }});
 }));
