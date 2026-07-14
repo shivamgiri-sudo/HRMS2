@@ -12,9 +12,11 @@ import { planningRuleService } from "./planningRule.service.js";
 import { slotRequirementService } from "./slotRequirement.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
 import { calculate } from "./hcCalculation.service.js";
+import { attendanceAprBulkRouter } from "./attendance-apr-bulk.routes.js";
 
 export const wfmRouter = Router();
 wfmRouter.use(requireAuth);
+wfmRouter.use("/attendance", attendanceAprBulkRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
