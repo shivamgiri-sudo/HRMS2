@@ -15,6 +15,8 @@ const ROLE_ALIASES: Record<string, string[]> = {
   "manager":         ["process_manager"],
   "team_leader":     ["tl"],
   "tl":              ["team_leader"],
+  "wfm":             ["wfm_analyst"],
+  "wfm_analyst":     ["wfm"],
 };
 
 /** Expand a list of roles to include their known aliases */
