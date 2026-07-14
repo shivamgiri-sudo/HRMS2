@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { AlertCircle, ShieldX, TrendingDown, Activity, Users } from "lucide-react";
+import { AlertCircle, ShieldX, TrendingDown, Activity, Users, DollarSign, TrendingUp, AlertTriangle, Target } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   RoleDashboardShell,
-  KpiMetricGrid,
   GoodBadInsightPanel,
   DashboardDrilldownDrawer,
   WorkInboxPanel,
@@ -13,7 +12,6 @@ import {
 } from "@/components/dashboard";
 import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import { MetricTileEnhanced } from "@/components/dashboard/MetricTileEnhanced";
-import type { KpiMetric } from "@/components/dashboard";
 import type { InsightItem } from "@/components/dashboard";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
@@ -187,117 +185,6 @@ export default function CeoDashboard() {
     }
   }
 
-  const metrics: KpiMetric[] = [
-    {
-      id: "headcount_active",
-      metric: "Active Headcount",
-      value: summary?.headcount?.active ?? null,
-      unit: "",
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("headcount_active", "Active Headcount"),
-    },
-    {
-      id: "onboarding_pending",
-      metric: "Onboarding Pending",
-      value: summary?.onboarding?.pending ?? null,
-      unit: "",
-      status:
-        summary?.onboarding?.pending != null
-          ? summary.onboarding.pending > 10
-            ? "bad"
-            : "neutral"
-          : undefined,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("onboarding_pending", "Onboarding Pending"),
-    },
-    {
-      id: "bgv_pending",
-      metric: "BGV Pending",
-      value: summary?.bgv?.pending ?? null,
-      unit: "",
-      status:
-        summary?.bgv?.pending != null
-          ? summary.bgv.pending > 5
-            ? "bad"
-            : "neutral"
-          : undefined,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("bgv_pending", "BGV Pending"),
-    },
-    {
-      id: "name_mismatch_blocking",
-      metric: "Name Mismatch (Blocking)",
-      value: summary?.nameMismatch?.blocking ?? null,
-      unit: "",
-      status:
-        summary?.nameMismatch?.blocking != null
-          ? summary.nameMismatch.blocking > 0
-            ? "bad"
-            : "good"
-          : undefined,
-      higherIsBetter: false,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("name_mismatch_blocking", "Name Mismatch — Blocking"),
-    },
-    {
-      id: "tat_breached",
-      metric: "TAT Breached",
-      value: summary?.tat?.breached ?? null,
-      unit: "",
-      status:
-        summary?.tat?.breached != null
-          ? summary.tat.breached > 0
-            ? "bad"
-            : "good"
-          : undefined,
-      higherIsBetter: false,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("tat_breached", "TAT Breached"),
-    },
-    {
-      id: "incentive_pending",
-      metric: "Incentive Pending",
-      value:
-        summary?.incentive?.pendingAmount != null
-          ? formatInr(summary.incentive.pendingAmount)
-          : null,
-      unit: "",
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("incentive_pending", "Incentive Pending"),
-    },
-    {
-      id: "payroll_readiness",
-      metric: "Payroll Readiness",
-      value: summary?.payroll?.readyPct ?? null,
-      unit: "%",
-      status:
-        summary?.payroll?.readyPct != null
-          ? summary.payroll.readyPct >= 90
-            ? "good"
-            : summary.payroll.readyPct >= 70
-            ? "neutral"
-            : "bad"
-          : undefined,
-      higherIsBetter: true,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("payroll_readiness", "Payroll Readiness"),
-    },
-    {
-      id: "resignation_risk",
-      metric: "Resignation Risk (Pending Discussion)",
-      value: summary?.resignation?.pendingDiscussion ?? null,
-      unit: "",
-      status:
-        summary?.resignation?.pendingDiscussion != null
-          ? summary.resignation.pendingDiscussion > 0
-            ? "bad"
-            : "good"
-          : undefined,
-      higherIsBetter: false,
-      drilldownAvailable: true,
-      onClick: () => openDrilldown("resignation_risk", "Resignation Risk — Pending Discussion"),
-    },
-  ];
 
   const loading = summaryLoading || roleLoading;
 
@@ -325,6 +212,7 @@ export default function CeoDashboard() {
       )}
 
       <div className="space-y-6">
+        {/* IMMEDIATE ACTIONS BAR - Red alert for critical compliance items */}
         <DashboardActionStrip
           items={[
             {
@@ -370,49 +258,97 @@ export default function CeoDashboard() {
           <InterventionPanel flags={opsPulse.intervention_flags} title="Today's Operations — Immediate Actions" />
         )}
 
-        {/* BI cross-metric tiles */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <MetricTileEnhanced
-            label="Login Adherence"
-            value={opsPulse?.login_adherence_pct ?? null}
-            unit="%"
-            status={opsPulse?.login_adherence_pct >= 90 ? "ok" : opsPulse?.login_adherence_pct >= 80 ? "warn" : "critical"}
-            trend={opsPulse ? (opsPulse.login_adherence_pct >= 90 ? "up" : "down") : null}
-            icon={<Users className="h-4 w-4 text-blue-600" />}
-            higherIsBetter
-          />
-          <MetricTileEnhanced
-            label="Avg Shrinkage"
-            value={opsPulse?.avg_shrinkage_pct ?? null}
-            unit="%"
-            status={opsPulse?.avg_shrinkage_pct <= 18 ? "ok" : opsPulse?.avg_shrinkage_pct <= 25 ? "warn" : "critical"}
-            trend={opsPulse ? (opsPulse.avg_shrinkage_pct <= 18 ? "down" : "up") : null}
-            icon={<Activity className="h-4 w-4 text-orange-600" />}
-            higherIsBetter={false}
-          />
-          <MetricTileEnhanced
-            label="Revenue Gap MTD"
-            value={revenueRisk?.gap_pct ?? null}
-            unit="%"
-            status={revenueRisk?.gap_pct >= 0 ? "ok" : revenueRisk?.gap_pct >= -10 ? "warn" : "critical"}
-            trend={revenueRisk ? (revenueRisk.gap_pct >= 0 ? "up" : "down") : null}
-            icon={<TrendingDown className="h-4 w-4 text-red-600" />}
-            higherIsBetter
-          />
-          <MetricTileEnhanced
-            label="Certified Learners"
-            value={trainingPulse?.summary?.certified_pct ?? null}
-            unit="%"
-            status={trainingPulse?.summary?.certified_pct >= 80 ? "ok" : trainingPulse?.summary?.certified_pct >= 60 ? "warn" : "critical"}
-            trend={trainingPulse ? (trainingPulse.summary?.certified_pct >= 80 ? "up" : "down") : null}
-            icon={<Users className="h-4 w-4 text-emerald-600" />}
-            higherIsBetter
-          />
+        {/* ROW 1: FINANCIAL HEALTH - CEO's primary concern */}
+        <div>
+          <h2 className="text-sm font-semibold text-slate-600 mb-3 uppercase tracking-wider">Financial Health</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricTileEnhanced
+              label="Revenue (MTD)"
+              value={pnlSummary?.kpis?.organisationRevenue ? (pnlSummary.kpis.organisationRevenue / 1000000).toFixed(1) : null}
+              unit="M"
+              status={pnlSummary?.kpis?.organisationRevenue ? "ok" : "unknown"}
+              trend={null}
+              icon={<DollarSign className="h-4 w-4 text-emerald-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Operating Margin"
+              value={pnlSummary?.kpis?.operatingMarginPct ?? null}
+              unit="%"
+              status={
+                pnlSummary?.kpis?.operatingMarginPct >= 15 ? "ok" :
+                pnlSummary?.kpis?.operatingMarginPct >= 10 ? "warn" : "critical"
+              }
+              trend={null}
+              icon={<TrendingUp className="h-4 w-4 text-blue-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Revenue at Risk"
+              value={revenueRisk?.revenue_at_risk_inr ? (revenueRisk.revenue_at_risk_inr / 1000000).toFixed(1) : null}
+              unit="M"
+              status={revenueRisk?.revenue_at_risk_inr > 5000000 ? "critical" : revenueRisk?.revenue_at_risk_inr > 2000000 ? "warn" : "ok"}
+              icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
+              higherIsBetter={false}
+            />
+            <MetricTileEnhanced
+              label="Projected Profit"
+              value={pnlSummary?.kpis?.monthEndProjectedProfit ? (pnlSummary.kpis.monthEndProjectedProfit / 1000000).toFixed(1) : null}
+              unit="M"
+              status={pnlSummary?.kpis?.monthEndProjectedProfit && pnlSummary.kpis.monthEndProjectedProfit > 0 ? "ok" : "critical"}
+              icon={<TrendingUp className="h-4 w-4 text-emerald-600" />}
+              higherIsBetter
+            />
+          </div>
         </div>
 
-        {/* KPI Metrics */}
-        <KpiMetricGrid metrics={metrics} columns={3} loading={summaryLoading} />
+        {/* ROW 2: OPERATIONAL EFFICIENCY - Day-to-day performance indicators */}
+        <div>
+          <h2 className="text-sm font-semibold text-slate-600 mb-3 uppercase tracking-wider">Operational Efficiency</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricTileEnhanced
+              label="Login Adherence"
+              value={opsPulse?.login_adherence_pct ?? null}
+              unit="%"
+              status={opsPulse?.login_adherence_pct >= 90 ? "ok" : opsPulse?.login_adherence_pct >= 80 ? "warn" : "critical"}
+              trend={opsPulse?.login_adherence_pct >= 90 ? "up" : "down"}
+              icon={<Users className="h-4 w-4 text-blue-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Avg Shrinkage"
+              value={opsPulse?.avg_shrinkage_pct ?? null}
+              unit="%"
+              status={opsPulse?.avg_shrinkage_pct <= 18 ? "ok" : opsPulse?.avg_shrinkage_pct <= 25 ? "warn" : "critical"}
+              trend={opsPulse?.avg_shrinkage_pct <= 18 ? "down" : "up"}
+              icon={<Activity className="h-4 w-4 text-orange-600" />}
+              higherIsBetter={false}
+            />
+            <MetricTileEnhanced
+              label="Quality Score"
+              value={execQuality?.metrics?.overall_quality_score ?? null}
+              unit="%"
+              status={
+                execQuality?.metrics?.status === "On Track" ? "ok" :
+                execQuality?.metrics?.status === "At Risk" ? "warn" : "critical"
+              }
+              trend={execQuality?.metrics?.trend_7day?.direction === "up" ? "up" : "down"}
+              icon={<Target className="h-4 w-4 text-emerald-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Active Headcount"
+              value={summary?.headcount?.active ?? null}
+              unit=""
+              status="ok"
+              trend="stable"
+              icon={<Users className="h-4 w-4 text-slate-600" />}
+              higherIsBetter
+            />
+          </div>
+        </div>
 
+        {/* PROCESS P&L SNAPSHOT - Financial deep-dive */}
         {pnlSummary?.kpis && (
           <DashboardCard title="Process P&L Snapshot">
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.25fr_0.75fr]">
@@ -460,30 +396,7 @@ export default function CeoDashboard() {
           </DashboardCard>
         )}
 
-        <DashboardCard title="Executive AI Briefing">
-          <AIInsightPanel
-            contextType="ceo_dashboard"
-            role="ceo"
-            title="Executive AI Briefing"
-            enabled={!summaryLoading && summary !== null}
-            data={{
-              headcount: summary?.headcount?.active,
-              onboarding_pending: summary?.onboarding?.pending,
-              bgv_pending: summary?.bgv?.pending,
-              name_mismatch_blocking: summary?.nameMismatch?.blocking,
-              tat_breached: summary?.tat?.breached,
-              payroll_readiness_pct: summary?.payroll?.readyPct,
-              resignation_pending: summary?.resignation?.pendingDiscussion,
-              dpdp_pending: summary?.dpdp?.pending,
-              appointment_esign_pending: summary?.appointmentEsign?.pending,
-              quality_score: execQuality?.metrics?.overall_quality_score,
-              quality_status: execQuality?.metrics?.status,
-              org_avg_kpi: orgKpi?.orgAvgScore,
-            }}
-          />
-        </DashboardCard>
-
-        {/* Good / Bad Insights + Work Inbox side by side on desktop */}
+        {/* INSIGHTS & WORK INBOX - Side-by-side contextual information */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
             <GoodBadInsightPanel
@@ -497,112 +410,120 @@ export default function CeoDashboard() {
           </div>
         </div>
 
-        {/* Quality Overview Panel */}
-        {execQuality && execQuality.process_performance && execQuality.process_performance.length > 0 && (
-          <div>
-            <h2 className="text-base font-semibold text-gray-700 mb-3">Quality Overview (Last 30 Days)</h2>
+        {/* SECONDARY SECTIONS - Collapsed by default, expandable for detail */}
+        <details className="group">
+          <summary className="cursor-pointer select-none text-base font-semibold text-gray-700 py-3 px-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors flex items-center gap-2">
+            <span className="inline-block transition-transform group-open:rotate-180">▶</span>
+            Quality Overview & Process Performance (Last 30 Days)
+          </summary>
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            {execQuality && execQuality.process_performance && execQuality.process_performance.length > 0 && (
+              <div className="space-y-4">
+                {/* Summary cards */}
+                {execQuality.metrics && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-white rounded-xl p-4 shadow-sm border">
+                      <p className="text-xs text-gray-500">Org Quality Score</p>
+                      <p className="text-2xl font-bold text-blue-600">
+                        {execQuality.metrics.overall_quality_score ?? "—"}%
+                      </p>
+                    </div>
+                    <div className="bg-white rounded-xl p-4 shadow-sm border">
+                      <p className="text-xs text-gray-500">Quality vs Target</p>
+                      <p className={`text-2xl font-bold ${execQuality.metrics.gap_pct >= 0 ? "text-green-600" : "text-red-500"}`}>
+                        {execQuality.metrics.gap_pct >= 0 ? "+" : ""}{execQuality.metrics.gap_pct ?? "—"}%
+                      </p>
+                    </div>
+                    <div className="bg-white rounded-xl p-4 shadow-sm border">
+                      <p className="text-xs text-gray-500">Risk Agents</p>
+                      <p className="text-2xl font-bold text-amber-500">
+                        {execQuality.risk_summary
+                          ? (execQuality.risk_summary.critical_agents_count ?? 0) + (execQuality.risk_summary.at_risk_agents_count ?? 0)
+                          : "—"}
+                      </p>
+                    </div>
+                    <div className="bg-white rounded-xl p-4 shadow-sm border">
+                      <p className="text-xs text-gray-500">Overall Status</p>
+                      <p className={`text-lg font-bold ${
+                        execQuality.metrics.status === "On Track" ? "text-green-600" :
+                        execQuality.metrics.status === "At Risk"  ? "text-amber-500" :
+                                                                    "text-red-600"
+                      }`}>
+                        {execQuality.metrics.status ?? "—"}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
-            {/* Summary cards */}
-            {execQuality.metrics && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                <div className="bg-white rounded-xl p-4 shadow-sm border">
-                  <p className="text-xs text-gray-500">Org Quality Score</p>
-                  <p className="text-2xl font-bold text-blue-600">
-                    {execQuality.metrics.overall_quality_score ?? "—"}%
-                  </p>
-                </div>
-                <div className="bg-white rounded-xl p-4 shadow-sm border">
-                  <p className="text-xs text-gray-500">Quality vs Target</p>
-                  <p className={`text-2xl font-bold ${execQuality.metrics.gap_pct >= 0 ? "text-green-600" : "text-red-500"}`}>
-                    {execQuality.metrics.gap_pct >= 0 ? "+" : ""}{execQuality.metrics.gap_pct ?? "—"}%
-                  </p>
-                </div>
-                <div className="bg-white rounded-xl p-4 shadow-sm border">
-                  <p className="text-xs text-gray-500">Risk Agents</p>
-                  <p className="text-2xl font-bold text-amber-500">
-                    {execQuality.risk_summary
-                      ? (execQuality.risk_summary.critical_agents_count ?? 0) + (execQuality.risk_summary.at_risk_agents_count ?? 0)
-                      : "—"}
-                  </p>
-                </div>
-                <div className="bg-white rounded-xl p-4 shadow-sm border">
-                  <p className="text-xs text-gray-500">Overall Status</p>
-                  <p className={`text-lg font-bold ${
-                    execQuality.metrics.status === "On Track" ? "text-green-600" :
-                    execQuality.metrics.status === "At Risk"  ? "text-amber-500" :
-                                                                "text-red-600"
-                  }`}>
-                    {execQuality.metrics.status ?? "—"}
-                  </p>
+                {/* Process Scorecard Table */}
+                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                  <div className="px-4 py-3 border-b">
+                    <p className="text-sm font-semibold text-gray-700">Process Quality Scorecard</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Process</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Avg Score</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Agents</th>
+                          <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Calls</th>
+                          <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {execQuality.process_performance.map((p, i) => (
+                          <tr key={p.process || i} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 font-medium text-gray-800">{p.process || "—"}</td>
+                            <td className="px-4 py-2 text-right font-semibold text-gray-800">{p.avg_quality}%</td>
+                            <td className="px-4 py-2 text-right text-gray-600">{p.agent_count}</td>
+                            <td className="px-4 py-2 text-right text-gray-600">{p.calls_handled?.toLocaleString()}</td>
+                            <td className="px-4 py-2 text-center">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                                p.status === "On Track" ? "bg-green-100 text-green-700" :
+                                p.status === "At Risk"  ? "bg-amber-100 text-amber-700" :
+                                                          "bg-red-100 text-red-700"
+                              }`}>
+                                {p.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
-
-            {/* Process Scorecard Table */}
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-4 py-3 border-b">
-                <p className="text-sm font-semibold text-gray-700">Process Quality Scorecard</p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Process</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Avg Score</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Agents</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500">Calls</th>
-                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {execQuality.process_performance.map((p, i) => (
-                      <tr key={p.process || i} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 font-medium text-gray-800">{p.process || "—"}</td>
-                        <td className="px-4 py-2 text-right font-semibold text-gray-800">{p.avg_quality}%</td>
-                        <td className="px-4 py-2 text-right text-gray-600">{p.agent_count}</td>
-                        <td className="px-4 py-2 text-right text-gray-600">{p.calls_handled?.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-center">
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
-                            p.status === "On Track" ? "bg-green-100 text-green-700" :
-                            p.status === "At Risk"  ? "bg-amber-100 text-amber-700" :
-                                                      "bg-red-100 text-red-700"
-                          }`}>
-                            {p.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
-        )}
+        </details>
 
-        {/* KPI Overview Panel */}
-        {orgKpi && (
-          <div>
-            <h2 className="text-base font-semibold text-gray-700 mb-3">
-              KPI Performance — {orgKpi.periodLabel}
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="bg-white rounded-xl p-4 shadow-sm border">
-                <p className="text-xs text-gray-500">Org Avg KPI Score</p>
-                <p className="text-2xl font-bold text-blue-600">{orgKpi.orgAvgScore}%</p>
+        <details className="group">
+          <summary className="cursor-pointer select-none text-base font-semibold text-gray-700 py-3 px-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors flex items-center gap-2">
+            <span className="inline-block transition-transform group-open:rotate-180">▶</span>
+            KPI Performance — {orgKpi?.periodLabel || "Current Period"}
+          </summary>
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            {orgKpi && (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Org Avg KPI Score</p>
+                  <p className="text-2xl font-bold text-blue-600">{orgKpi.orgAvgScore}%</p>
+                </div>
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Best Process</p>
+                  <p className="text-lg font-bold text-green-600">{orgKpi.topProcess?.processName ?? "—"}</p>
+                  <p className="text-sm text-gray-500">{orgKpi.topProcess?.avgScore ?? ""}%</p>
+                </div>
+                <div className="bg-white rounded-xl p-4 shadow-sm border">
+                  <p className="text-xs text-gray-500">Needs Attention</p>
+                  <p className="text-lg font-bold text-red-500">{orgKpi.bottomProcess?.processName ?? "—"}</p>
+                  <p className="text-sm text-gray-500">{orgKpi.bottomProcess?.avgScore ?? ""}%</p>
+                </div>
               </div>
-              <div className="bg-white rounded-xl p-4 shadow-sm border">
-                <p className="text-xs text-gray-500">Best Process</p>
-                <p className="text-lg font-bold text-green-600">{orgKpi.topProcess?.processName ?? "—"}</p>
-                <p className="text-sm text-gray-500">{orgKpi.topProcess?.avgScore ?? ""}%</p>
-              </div>
-              <div className="bg-white rounded-xl p-4 shadow-sm border">
-                <p className="text-xs text-gray-500">Needs Attention</p>
-                <p className="text-lg font-bold text-red-500">{orgKpi.bottomProcess?.processName ?? "—"}</p>
-                <p className="text-sm text-gray-500">{orgKpi.bottomProcess?.avgScore ?? ""}%</p>
-              </div>
-            </div>
+            )}
           </div>
-        )}
+        </details>
       </div>
 
       <DashboardDrilldownDrawer

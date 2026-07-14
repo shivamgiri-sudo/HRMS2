@@ -1,3 +1,7 @@
+// ⚠️ DEPRECATED — Use src/pages/dashboards/CeoDashboard.tsx instead
+// This layout component is kept for backward compatibility but should not be used for new work
+// The main CEO dashboard has been restructured for better executive focus and uses real APIs
+
 import { useQuery } from "@tanstack/react-query";
 import {
   Users,
@@ -21,6 +25,9 @@ import { useDashboardUser } from "../widgets/useDashboardUser";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
+/**
+ * @deprecated Use src/pages/dashboards/CeoDashboard.tsx instead
+ */
 export function CeoLayout() {
   const { firstName } = useDashboardUser();
 
