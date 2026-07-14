@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClipboardCheck, Clock, Users } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatISTDate } from "@/lib/utils";
 
 interface Assignment {
   id: string;

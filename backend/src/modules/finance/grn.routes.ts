@@ -32,6 +32,9 @@ grnRouter.get(
     try {
       const result = await grnService.listGrns({
         branchId: req.query.branchId as string,
+        processId: req.query.processId as string,
+        costCentreId: req.query.costCentreId as string,
+        costClass: req.query.costClass as string,
         status: req.query.status as string,
         financialYear: req.query.financialYear as string,
         grnType: req.query.grnType as string,

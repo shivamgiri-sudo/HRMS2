@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { Loader2, ShieldOff } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { formatISTDate } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

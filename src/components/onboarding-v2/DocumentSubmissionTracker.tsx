@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle2, Clock, AlertCircle, Upload } from 'lucide-react';
+import { formatISTDate } from "@/lib/utils";
 
 export interface DocumentStatus {
   docType: string;

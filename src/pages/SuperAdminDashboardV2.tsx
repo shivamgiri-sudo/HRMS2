@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useExecutiveQualitySummary } from "@/hooks/useExecutiveQuality";
 import { useOrgKpiSummary } from "@/hooks/useOrgKpiSummary";
+import { formatIST } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

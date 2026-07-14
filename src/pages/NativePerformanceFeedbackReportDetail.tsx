@@ -17,6 +17,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import { formatISTDate } from "@/lib/utils";
 
 interface CompetencyScore {
   competency_id: string;

@@ -5,6 +5,7 @@ import { FileText, Users, CreditCard, AlertTriangle, Scale, Ban } from "lucide-r
 import hrHubLogo from "@/assets/brand/mcn-logo.png";
 import Footer from "@/components/layout/Footer";
 import { isProductionDomain } from "@/lib/domain";
+import { formatISTDate } from "@/lib/utils";
 
 const TermsOfService = () => {
   const sections = [

@@ -6,6 +6,7 @@ import { ExpenseItemsList } from '../../components/expenses/ExpenseItemsList';
 import { usePendingApprovals, useClaimDetails, useManagerApprove, useRejectClaim } from '../../integrations/expenses/hooks';
 import { ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatISTDate } from "@/lib/utils";
 
 interface ClaimDetailProps {
   claimId: number;

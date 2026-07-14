@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Loader2, Play, X, CheckCircle2, Clock, ArrowRight } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST } from "@/lib/utils";
 
 type Process = { id: string; process_name?: string; process_code?: string };
 type Shift = { id: string; shift_code: string; shift_name: string; start_time: string; end_time: string; version: number };

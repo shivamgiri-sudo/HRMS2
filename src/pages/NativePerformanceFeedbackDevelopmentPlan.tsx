@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useUserRole } from "@/hooks/useUserRole";
 import { DevPlanTimeline } from "@/components/performance-feedback";
 import { toast } from "sonner";
+import { formatISTDate } from "@/lib/utils";
 
 interface Goal {
   id: string;

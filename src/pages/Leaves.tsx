@@ -24,7 +24,7 @@ import {
   isAfter,
   isBefore,
 } from "date-fns";
-import { normalizeDate } from "@/lib/utils";
+import { normalizeDate, formatISTDate } from "@/lib/utils";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {

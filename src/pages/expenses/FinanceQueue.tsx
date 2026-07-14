@@ -14,6 +14,7 @@ import type { ExpenseClaim } from '../../integrations/expenses/types';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { expenseApi } from '../../integrations/expenses/api';
+import { formatISTDate } from "@/lib/utils";
 
 interface ClaimRowProps {
   claim: ExpenseClaim;

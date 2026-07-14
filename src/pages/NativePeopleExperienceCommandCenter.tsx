@@ -19,6 +19,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { formatIST } from "@/lib/utils";
 
 type Summary = {
   employees_scanned: number;

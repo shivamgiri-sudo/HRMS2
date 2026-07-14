@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import {
@@ -6,6 +6,7 @@ import {
   AlertCircle, CheckCircle, Settings, Grid, List, Filter,
   UserCheck, UserX, Eye, TrendingUp
 } from 'lucide-react';
+import { formatISTDate } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -102,13 +103,17 @@ export default function SuperAdminModuleAccess() {
   };
 
   // ── Search Employees ───────────────────────────────────────────────────────────
-  const handleSearchEmployees = async () => {
-    if (!searchQuery.trim() || searchQuery.trim().length < 2) return;
+  const handleSearchEmployees = useCallback(async (q?: string) => {
+    const query = (q ?? searchQuery).trim();
+    if (!query || query.length < 2) {
+      setSearchResults([]);
+      return;
+    }
 
     setSearchLoading(true);
     try {
       const res = await hrmsApi.get<{ success: boolean; data: Employee[] }>(
-        `/api/ats/super-admin/search-employees?q=${encodeURIComponent(searchQuery.trim())}`
+        `/api/ats/super-admin/search-employees?q=${encodeURIComponent(query)}`
       );
       setSearchResults(res.data || []);
     } catch (err: any) {
@@ -116,7 +121,17 @@ export default function SuperAdminModuleAccess() {
     } finally {
       setSearchLoading(false);
     }
-  };
+  }, [searchQuery]);
+
+  // Auto-search as user types (debounced 300ms)
+  useEffect(() => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(() => handleSearchEmployees(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // ── Grant Access ───────────────────────────────────────────────────────────────
   const handleGrantAccess = async () => {

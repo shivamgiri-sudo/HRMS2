@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Loader2 } from "lucide-react";
+import { formatIST } from "@/lib/utils";
 
 interface Dispute {
   id: string;

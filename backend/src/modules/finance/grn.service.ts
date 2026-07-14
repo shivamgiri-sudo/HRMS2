@@ -12,6 +12,9 @@ export type GrnStatus = "draft" | "submitted" | "approved" | "rejected" | "cance
 export interface CreateGrnPayload {
   grnType: GrnType;
   branchId: string;
+  processId?: string;
+  costCentreId?: string;
+  costClass?: "direct" | "indirect";
   vendorId?: string;
   vendorName?: string;
   head: string;
@@ -61,6 +64,11 @@ export const grnService = {
     const id = randomUUID();
     const fy = payload.financialYear ?? getCurrentFinancialYear();
     const grnNumber = await generateGrnNumber(payload.branchId, fy);
+    const attribution = await resolveFinanceAttribution(
+      payload.processId ?? null,
+      payload.costCentreId ?? null,
+      payload.costClass
+    );
 
     const dueDate = payload.billDate && payload.paymentTermsDays != null
       ? addDays(payload.billDate, payload.paymentTermsDays)
@@ -68,16 +76,19 @@ export const grnService = {
 
     await db.execute(
       `INSERT INTO grn_request
-         (id, grn_number, grn_type, branch_id, vendor_id, vendor_name, head, sub_head,
+         (id, grn_number, grn_type, branch_id, process_id, cost_centre_id, cost_class, vendor_id, vendor_name, head, sub_head,
           amount, bill_date, payment_terms_days, due_date, remarks,
-          attachment_path, attachment_original_name, status, financial_year,
+          attachment_path, attachment_original_name, attachment_mime, status, financial_year,
           created_by, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
       [
         id,
         grnNumber,
         payload.grnType,
         payload.branchId,
+        attribution.processId,
+        attribution.costCentreId,
+        attribution.costClass,
         payload.vendorId ?? null,
         payload.vendorName ?? null,
         payload.head,
@@ -89,6 +100,7 @@ export const grnService = {
         payload.remarks ?? null,
         payload.attachmentPath ?? null,
         payload.attachmentOriginalName ?? null,
+        null,
         "draft",
         fy,
         actorUserId,
@@ -98,6 +110,9 @@ export const grnService = {
     await writeGrnAudit("CREATE_DRAFT", id, actorUserId, actorRole, {
       grn_number: grnNumber,
       status: "draft",
+      process_id: attribution.processId,
+      cost_centre_id: attribution.costCentreId,
+      cost_class: attribution.costClass,
     });
 
     return { id, grnNumber };
@@ -167,6 +182,9 @@ export const grnService = {
 
   async listGrns(filters: {
     branchId?: string;
+    processId?: string;
+    costCentreId?: string;
+    costClass?: string;
     status?: string;
     financialYear?: string;
     grnType?: string;
@@ -178,6 +196,9 @@ export const grnService = {
     const params: unknown[] = [];
 
     if (filters.branchId) { conditions.push("g.branch_id = ?"); params.push(filters.branchId); }
+    if (filters.processId) { conditions.push("g.process_id = ?"); params.push(filters.processId); }
+    if (filters.costCentreId) { conditions.push("g.cost_centre_id = ?"); params.push(filters.costCentreId); }
+    if (filters.costClass) { conditions.push("g.cost_class = ?"); params.push(filters.costClass); }
     if (filters.status) { conditions.push("g.status = ?"); params.push(filters.status); }
     if (filters.financialYear) { conditions.push("g.financial_year = ?"); params.push(filters.financialYear); }
     if (filters.grnType) { conditions.push("g.grn_type = ?"); params.push(filters.grnType); }
@@ -193,11 +214,16 @@ export const grnService = {
     const offset = (page - 1) * limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT g.*, bm.name AS branch_name,
+      `SELECT g.*,
+              COALESCE(bm.branch_name, bm.name) AS branch_name,
+              pm.process_name,
+              ccm.cost_centre_name,
               CONCAT(cb.first_name,' ',cb.last_name) AS created_by_name,
               CONCAT(rb.first_name,' ',rb.last_name) AS reviewed_by_name
        FROM grn_request g
        LEFT JOIN branch_master bm ON bm.id = g.branch_id
+       LEFT JOIN process_master pm ON pm.id = g.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
        LEFT JOIN auth_user cb ON cb.id = g.created_by
        LEFT JOIN auth_user rb ON rb.id = g.reviewed_by
        ${where}
@@ -252,6 +278,9 @@ async function getGrnOrThrow(grnId: string) {
     grn_number: string;
     grn_type: GrnType;
     branch_id: string;
+    process_id: string | null;
+    cost_centre_id: string | null;
+    cost_class: "direct" | "indirect";
     vendor_id: string | null;
     vendor_name: string | null;
     head: string;
@@ -276,6 +305,52 @@ function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+async function resolveFinanceAttribution(
+  processId: string | null,
+  costCentreId: string | null,
+  costClassInput: "direct" | "indirect" | undefined
+) {
+  let resolvedProcessId = processId?.trim() || null;
+  const resolvedCostCentreId = costCentreId?.trim() || null;
+  let mappedProcessId: string | null = null;
+
+  if (resolvedCostCentreId) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, process_id
+         FROM cost_centre_master
+        WHERE id = ?
+        LIMIT 1`,
+      [resolvedCostCentreId]
+    );
+    const costCentre = rows[0] as RowDataPacket | undefined;
+    if (!costCentre) {
+      throw new Error("Selected cost centre was not found");
+    }
+    mappedProcessId = costCentre.process_id ? String(costCentre.process_id) : null;
+    if (resolvedProcessId && mappedProcessId && resolvedProcessId !== mappedProcessId) {
+      throw new Error("Selected cost centre is mapped to a different process");
+    }
+    resolvedProcessId = resolvedProcessId ?? mappedProcessId;
+  }
+
+  const normalizedCostClass = costClassInput
+    ?? (resolvedProcessId || resolvedCostCentreId ? "direct" : "indirect");
+
+  if (normalizedCostClass === "direct" && !resolvedProcessId) {
+    throw new Error("Direct GRN cost must be tagged to a process or a process-mapped cost centre");
+  }
+
+  if (normalizedCostClass === "indirect" && resolvedProcessId) {
+    throw new Error("Indirect GRN cost cannot carry a direct process mapping");
+  }
+
+  return {
+    processId: normalizedCostClass === "direct" ? resolvedProcessId : null,
+    costCentreId: resolvedCostCentreId,
+    costClass: normalizedCostClass,
+  };
 }
 
 async function writeGrnAudit(

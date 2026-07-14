@@ -6,6 +6,7 @@ import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { formatIST } from "@/lib/utils";
 
 type AttendanceStatus = "present" | "absent" | "half_day" | "late" | "early_exit" | "leave_approved" | "holiday" | "week_off" | "unreconciled";
 interface ReconRecord { id: string; employee_id: string; employee_name: string; employee_code: string; roster_date: string; process_name: string | null; branch_name: string | null; planned_shift_start: string | null; planned_shift_end: string | null; actual_login_time: string | null; actual_logout_time: string | null; actual_minutes: number; required_minutes: number; adherence_pct: number; attendance_status: AttendanceStatus; late_by_minutes: number; early_exit_minutes: number; }

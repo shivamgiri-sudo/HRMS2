@@ -23,6 +23,7 @@ import { useLeaveBalanceReport } from "@/hooks/useLeaveBalanceReport";
 import { useReportMasters } from "@/hooks/useReportMasters";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { formatISTDate } from "@/lib/utils";
 
 const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => ({ value: String(currentYear - i), label: String(currentYear - i) }));

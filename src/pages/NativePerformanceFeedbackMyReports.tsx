@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { FileText, TrendingUp, TrendingDown, Minus, Calendar } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatISTDate } from "@/lib/utils";
 
 interface Report {
   id: string;

@@ -19,6 +19,7 @@ import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatIST } from "@/lib/utils";
 
 type Channel = "email" | "sms" | "whatsapp";
 type EmailProviderType = "nodemailer" | "sendgrid" | "mailgun" | "local-email-tool";

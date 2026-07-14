@@ -7,6 +7,7 @@ import { Download, Package } from "lucide-react";
 import { useAssetReport } from "@/hooks/useAssetReport";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { formatISTDate } from "@/lib/utils";
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-IN", {

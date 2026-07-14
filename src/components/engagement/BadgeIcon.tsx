@@ -5,7 +5,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, formatISTDate } from "@/lib/utils";
 
 interface BadgeIconProps {
   badge_name: string;

@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { FileCheck, Clock, Eye, RefreshCw } from "lucide-react";
+import { formatISTDate } from "@/lib/utils";
 
 interface UnverifiedDoc {
   id: string;

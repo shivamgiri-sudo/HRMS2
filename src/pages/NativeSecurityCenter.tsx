@@ -4,6 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatIST } from "@/lib/utils";
 
 type SecuritySummary = {
   securityScore: number;

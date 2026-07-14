@@ -10,6 +10,9 @@ export interface VendorPaymentFilters {
   financialYear?: string;
   month?: string;
   branchId?: string;
+  processId?: string;
+  costCentreId?: string;
+  costClass?: string;
   head?: string;
   subHead?: string;
   vendorId?: string;
@@ -22,6 +25,9 @@ export interface VendorPaymentFilters {
 }
 
 export interface UpdatePaymentPayload {
+  processId?: string;
+  costCentreId?: string;
+  costClass?: "direct" | "indirect";
   paymentMode?: string;
   paymentDate?: string;
   bankId?: string;
@@ -72,6 +78,9 @@ export const vendorPaymentService = {
       params.push(filters.month);
     }
     if (filters.branchId)     { conds.push("vpt.branch_id = ?");    params.push(filters.branchId); }
+    if (filters.processId)    { conds.push("vpt.process_id = ?");   params.push(filters.processId); }
+    if (filters.costCentreId) { conds.push("vpt.cost_centre_id = ?"); params.push(filters.costCentreId); }
+    if (filters.costClass)    { conds.push("vpt.cost_class = ?");   params.push(filters.costClass); }
     if (filters.head)         { conds.push("vpt.head = ?");         params.push(filters.head); }
     if (filters.subHead)      { conds.push("vpt.sub_head = ?");     params.push(filters.subHead); }
     if (filters.vendorId)     { conds.push("vpt.vendor_id = ?");    params.push(filters.vendorId); }
@@ -102,11 +111,15 @@ export const vendorPaymentService = {
               bm.ifsc_prefix,
               b.branch_name,
               b.branch_code,
+              pm.process_name,
+              ccm.cost_centre_name,
               vm.vendor_type,
               vm.gst_number   AS vendor_gst
        FROM vendor_payment_tracking vpt
        LEFT JOIN bank_master  bm ON bm.id = vpt.bank_id
        LEFT JOIN branch_master b  ON b.id  = vpt.branch_id
+       LEFT JOIN process_master pm ON pm.id = vpt.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
        LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
        ${where}
        ORDER BY vpt.due_date ASC, vpt.created_at ASC
@@ -122,10 +135,14 @@ export const vendorPaymentService = {
       `SELECT vpt.*,
               bm.bank_name  AS bank_master_name,
               b.branch_name, b.branch_code,
+              pm.process_name,
+              ccm.cost_centre_name,
               vm.vendor_type, vm.contact_email, vm.contact_phone
        FROM vendor_payment_tracking vpt
        LEFT JOIN bank_master  bm ON bm.id = vpt.bank_id
        LEFT JOIN branch_master b  ON b.id  = vpt.branch_id
+       LEFT JOIN process_master pm ON pm.id = vpt.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
        LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
        WHERE vpt.id = ? LIMIT 1`,
       [id]

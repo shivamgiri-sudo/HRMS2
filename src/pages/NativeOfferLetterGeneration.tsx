@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { FilePen, CheckCircle, ChevronRight, Search, Copy } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, formatISTDate } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

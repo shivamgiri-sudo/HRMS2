@@ -272,6 +272,8 @@ export const navGroups: NavGroup[] = [
         label: "Finance",      href: "/finance/process-pnl", icon: ic(DollarSign), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Finance & procurement",
         children: [
           { label: "Process P&L",             href: "/finance/process-pnl",              icon: ic(BarChart3),    roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Profitability command centre" },
+          { label: "P&L Configuration",       href: "/finance/process-pnl/configuration", icon: ic(Settings2),   roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Contracts, plans and rates" },
+          { label: "P&L Period Close",        href: "/finance/process-pnl/period-close",  icon: ic(CheckCircle), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Signoff and lock" },
           { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin"], description: "Goods receipt notes" },
           { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Vendor payment tracking" },
         ],

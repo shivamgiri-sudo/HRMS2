@@ -202,6 +202,8 @@ const NativeERP                     = lazy(() => import("./pages/NativeERP"));
 const NativeVendorPaymentTracking   = lazy(() => import("./pages/NativeVendorPaymentTracking"));
 const ProcessPnlPage                = lazy(() => import("./pages/finance/ProcessPnlPage"));
 const ProcessPnlDetailPage          = lazy(() => import("./pages/finance/ProcessPnlDetailPage"));
+const ProcessPnlConfigurationPage   = lazy(() => import("./pages/finance/ProcessPnlConfigurationPage"));
+const PnlPeriodClosePage            = lazy(() => import("./pages/finance/PnlPeriodClosePage"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
 const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
@@ -544,6 +546,8 @@ const App = () => (
               <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute><NativeVendorPaymentTracking /></ProtectedRoute>} />
               <Route path="/finance/grn" element={<ProtectedRoute><NativeGRNManagement /></ProtectedRoute>} />
               <Route path="/finance/process-pnl" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlPage /></ProtectedRoute>} />
+              <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
+              <Route path="/finance/process-pnl/period-close" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><PnlPeriodClosePage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/:processId" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlDetailPage /></ProtectedRoute>} />
               <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />

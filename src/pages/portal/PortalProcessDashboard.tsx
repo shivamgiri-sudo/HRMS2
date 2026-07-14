@@ -8,6 +8,7 @@ import {
   Loader2, LogOut, Briefcase, RefreshCw, CheckCircle, Clock, AlertCircle, XCircle,
   FileText, Activity, Users, MessageSquare, ClipboardList, Shield, User, ArrowRight
 } from "lucide-react";
+import { formatISTDate } from "@/lib/utils";
 
 const TABS = ["Performance", "Glide Paths", "Action Plans", "Governance", "Attrition", "Commentary"] as const;
 type Tab = typeof TABS[number];

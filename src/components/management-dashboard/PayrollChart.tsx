@@ -15,6 +15,7 @@ import {
   Legend,
 } from "recharts";
 import { usePayrollProjection } from "@/hooks/useManagementDashboard";
+import { formatISTDate } from "@/lib/utils";
 
 function inrShort(v: number) {
   if (v >= 10_000_000) return `₹${(v / 10_000_000).toFixed(1)}Cr`;

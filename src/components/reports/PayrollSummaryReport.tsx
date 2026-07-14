@@ -25,6 +25,7 @@ import { usePayrollSummary } from "@/hooks/usePayrollSummary";
 import { useReportMasters } from "@/hooks/useReportMasters";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { formatISTDate } from "@/lib/utils";
 
 const MONTHS = [
   { value: "1", label: "January" },
