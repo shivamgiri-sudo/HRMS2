@@ -150,6 +150,14 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     return res.json({ success: true, data });
   }
 
+  if (rpc_name === "import_shift_roster_batch") {
+    const { importShiftRosterBatch } = await import(
+      "../bulk-upload/shift-roster-bulk.service.js"
+    );
+    const data = await importShiftRosterBatch(id, req.authUser!.id);
+    return res.json({ success: true, data });
+  }
+
   if (rpc_name === "import_upload_batch") {
     const { importEmployeeMasterBatch } = await import(
       "../bulk-upload/employee-master-bulk.service.js"

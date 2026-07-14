@@ -75,6 +75,7 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ROSTER_ASSIGNMENT_BULK: "import_roster_assignment_batch",
   WEEK_OFF_PREFERENCE_BULK: "import_weekoff_preference_batch",
   SHIFT_ROTATION_TYPE_UPDATE: "import_shift_rotation_type_batch",
+  SHIFT_ROSTER_BULK: "import_shift_roster_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {
