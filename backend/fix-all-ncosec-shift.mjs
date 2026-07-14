@@ -92,7 +92,7 @@ if (!DRY_RUN) {
     SET
       adr.clock_in_time  = bio.first_punch_in,
       adr.clock_out_time = bio.last_punch_out,
-      adr.raw_minutes    = TIMESTAMPDIFF(MINUTE, bio.first_punch_in, bio.last_punch_out),
+      adr.raw_minutes    = COALESCE(TIMESTAMPDIFF(MINUTE, bio.first_punch_in, bio.last_punch_out), bio.raw_minutes, 0),
       adr.source_system  = 'ncosec_fixed',
       adr.updated_at     = NOW()
     WHERE adr.is_locked = 0
