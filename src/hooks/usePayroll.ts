@@ -28,6 +28,9 @@ export interface PayrollRecord {
   monthNum: number;
   year: number;
   basic: number;
+  hra: number;
+  specialAllowance: number;
+  incentiveTotal: number;
   allowances: number;
   deductions: number;
   netSalary: number;
@@ -43,6 +46,18 @@ export interface PayrollRecord {
   leaveDays?: number;
   lwpDays?: number;
   absentDays?: number;
+  eligibleWeekoffDays?: number;
+  eligibleHolidayDays?: number;
+  paidWorkingDays?: number;
+  finalPayableDays?: number;
+  // Deduction components (from salary_prep_line)
+  pfEmployee?: number;
+  esicEmployee?: number;
+  professionalTax?: number;
+  tdsAmount?: number;
+  lwpDeduction?: number;
+  advanceRecovery?: number;
+  otherDeductions?: number;
 }
 
 const MONTH_NAMES = [
@@ -86,6 +101,9 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     monthNum,
     year: Number(yearStr || 0),
     basic: Number(row.basic ?? 0),
+    hra: Number(row.hra ?? 0),
+    specialAllowance: Number(row.special_allowance ?? 0),
+    incentiveTotal: Number(row.incentive_total ?? 0),
     allowances,
     deductions: Number(row.total_deductions ?? 0),
     netSalary: Number(row.net_salary ?? 0),
@@ -95,11 +113,22 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     department:  row.dept_name ?? row.department_name ?? row.department ?? undefined,
     branch:      row.branch_name ?? undefined,
     process:     row.process_name ?? undefined,
-    workingDays: row.working_days !== undefined ? Number(row.working_days) : undefined,
-    presentDays: row.present_days !== undefined ? Number(row.present_days) : undefined,
-    leaveDays:   row.leave_days   !== undefined ? Number(row.leave_days)   : undefined,
-    lwpDays:     row.lwp_days     !== undefined ? Number(row.lwp_days)     : undefined,
-    absentDays:  row.absent_days  !== undefined ? Number(row.absent_days)  : undefined,
+    workingDays:          row.working_days          !== undefined ? Number(row.working_days)          : undefined,
+    presentDays:          row.present_days          !== undefined ? Number(row.present_days)          : undefined,
+    leaveDays:            row.leave_days            !== undefined ? Number(row.leave_days)            : undefined,
+    lwpDays:              row.lwp_days              !== undefined ? Number(row.lwp_days)              : undefined,
+    absentDays:           row.absent_days           !== undefined ? Number(row.absent_days)           : undefined,
+    eligibleWeekoffDays:  row.eligible_weekoff_days !== undefined ? Number(row.eligible_weekoff_days) : undefined,
+    eligibleHolidayDays:  row.eligible_holiday_days !== undefined ? Number(row.eligible_holiday_days) : undefined,
+    paidWorkingDays:      row.paid_working_days     !== undefined ? Number(row.paid_working_days)     : undefined,
+    finalPayableDays:     row.final_payable_days    !== undefined ? Number(row.final_payable_days)    : undefined,
+    pfEmployee:           row.pf_employee           !== undefined ? Number(row.pf_employee)           : undefined,
+    esicEmployee:         row.esic_employee         !== undefined ? Number(row.esic_employee)         : undefined,
+    professionalTax:      row.professional_tax      !== undefined ? Number(row.professional_tax)      : undefined,
+    tdsAmount:            row.tds                   !== undefined ? Number(row.tds)                   : undefined,
+    lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,
+    advanceRecovery:      row.advance_recovery      !== undefined ? Number(row.advance_recovery)      : undefined,
+    otherDeductions:      row.other_deductions      !== undefined ? Number(row.other_deductions)      : undefined,
   };
 };
 

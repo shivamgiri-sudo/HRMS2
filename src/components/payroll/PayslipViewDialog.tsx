@@ -1,5 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
-import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Dialog,
   DialogContent,
@@ -34,8 +32,8 @@ import {
 import {
   useEmployeeSalaryHistoryByCode,
   usePayrollLineAttendance,
+  type PayrollRecord,
 } from "@/hooks/usePayroll";
-import type { PayrollRecord } from "@/hooks/usePayroll";
 
 interface PayslipViewDialogProps {
   open: boolean;
@@ -89,16 +87,6 @@ function AttTile({
 }
 
 export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDialogProps) {
-  const { data: salaryStructure, isLoading } = useQuery({
-    queryKey: ["salary-structure-view", record?.employeeId],
-    queryFn: async () => {
-      if (!record?.employeeId) return null;
-      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/payroll/structures");
-      return res.data ?? null;
-    },
-    enabled: !!record?.employeeId && open,
-  });
-
   const { data: salaryHistory = [], isLoading: historyLoading } = useEmployeeSalaryHistoryByCode(
     open ? record?.employeeCode : null
   );
@@ -111,27 +99,10 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
   if (!record) return null;
 
-  const getAllowanceBreakdown = () => {
-    if (!salaryStructure) return [];
-    const items: { label: string; amount: number }[] = [];
-    if (salaryStructure.hra) items.push({ label: "House Rent Allowance (HRA)", amount: Number(salaryStructure.hra) });
-    if (salaryStructure.transport_allowance) items.push({ label: "Transport Allowance", amount: Number(salaryStructure.transport_allowance) });
-    if (salaryStructure.medical_allowance) items.push({ label: "Medical Allowance", amount: Number(salaryStructure.medical_allowance) });
-    if (salaryStructure.other_allowances) items.push({ label: "Other Allowances", amount: Number(salaryStructure.other_allowances) });
-    return items;
-  };
-
-  const getDeductionBreakdown = () => {
-    if (!salaryStructure) return [];
-    const items: { label: string; amount: number }[] = [];
-    if (salaryStructure.tax_deduction) items.push({ label: "Tax Deduction", amount: Number(salaryStructure.tax_deduction) });
-    if (salaryStructure.other_deductions) items.push({ label: "Other Deductions", amount: Number(salaryStructure.other_deductions) });
-    return items;
-  };
-
-  const allowanceBreakdown = getAllowanceBreakdown();
-  const deductionBreakdown = getDeductionBreakdown();
-  const grossSalary = record.basic + record.allowances;
+  const hra            = record.hra            ?? 0;
+  const specialAllow   = record.specialAllowance ?? 0;
+  const incentiveTotal = record.incentiveTotal  ?? 0;
+  const grossSalary    = record.basic + record.allowances;
 
   // MoM delta
   const thisRunMonth = `${record.year}-${String(record.monthNum).padStart(2, "0")}`;
@@ -150,6 +121,23 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const attHalfDay  = attDetail?.half_days     ?? 0;
   const attWorking  = attDetail?.working_days  ?? record.workingDays ?? 0;
   const hasAttData  = attWorking > 0 || attPresent > 0 || attDetail !== null;
+
+  // Payable days — from salary_prep_line via record
+  const eligibleWeekoff  = record.eligibleWeekoffDays  ?? 0;
+  const eligibleHoliday  = record.eligibleHolidayDays  ?? 0;
+  const paidWorkingDays  = record.paidWorkingDays       ?? 0;
+  // finalPayableDays = present + eligible_weekoff + eligible_holiday
+  const finalPayableDays = record.finalPayableDays ??
+    (attPresent + eligibleWeekoff + eligibleHoliday) || paidWorkingDays;
+
+  // Deduction components from salary_prep_line
+  const pfEmployee     = record.pfEmployee     ?? 0;
+  const esicEmployee   = record.esicEmployee   ?? 0;
+  const professionalTax= record.professionalTax?? 0;
+  const tdsAmount      = record.tdsAmount      ?? 0;
+  const lwpDeduction   = record.lwpDeduction   ?? 0;
+  const advanceRecovery= record.advanceRecovery?? 0;
+  const otherDeductions= record.otherDeductions?? 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -278,6 +266,20 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   </p>
                 )}
 
+                {/* Payable days calculation row */}
+                <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800">Payable Days</span>
+                    <span className="font-black text-base text-emerald-700 tabular-nums">{finalPayableDays}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-slate-500">
+                    <span>{attPresent} present</span>
+                    {eligibleWeekoff > 0 && <span>+ {eligibleWeekoff} eligible week off</span>}
+                    {eligibleHoliday > 0 && <span>+ {eligibleHoliday} eligible holiday</span>}
+                    {attLwp > 0 && <span className="text-amber-600">− {attLwp} LWP</span>}
+                  </div>
+                </div>
+
                 {/* LWP warning */}
                 {attLwp > 0 && (
                   <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
@@ -290,7 +292,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
           </div>
 
           {/* ── Earnings / Deductions ─────────────────────────────────────── */}
-          {isLoading ? (
+          {false ? (
             <div className="space-y-4">
               <Skeleton className="h-32 w-full" />
               <Skeleton className="h-32 w-full" />
@@ -310,14 +312,25 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                         <td className="py-1.5 text-muted-foreground">Basic Salary</td>
                         <td className="py-1.5 text-right font-mono font-semibold">{fmt(record.basic)}</td>
                       </tr>
-                      {allowanceBreakdown.length > 0 ? (
-                        allowanceBreakdown.map((item) => (
-                          <tr key={item.label} className="border-b">
-                            <td className="py-1.5 text-muted-foreground">{item.label}</td>
-                            <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(item.amount)}</td>
-                          </tr>
-                        ))
-                      ) : (
+                      {hra > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">HRA</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(hra)}</td>
+                        </tr>
+                      )}
+                      {specialAllow > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Special Allowance</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(specialAllow)}</td>
+                        </tr>
+                      )}
+                      {incentiveTotal > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Incentive</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(incentiveTotal)}</td>
+                        </tr>
+                      )}
+                      {hra === 0 && specialAllow === 0 && incentiveTotal === 0 && record.allowances > 0 && (
                         <tr className="border-b">
                           <td className="py-1.5 text-muted-foreground">Total Allowances</td>
                           <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(record.allowances)}</td>
@@ -341,12 +354,56 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                 <div className="rounded-lg border bg-background p-4">
                   <table className="w-full text-sm">
                     <tbody>
-                      {deductionBreakdown.length > 0 && deductionBreakdown.map((item) => (
-                        <tr key={item.label} className="border-b">
-                          <td className="py-1.5 text-muted-foreground">{item.label}</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(item.amount)}</td>
+                      {pfEmployee > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Provident Fund (PF)</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(pfEmployee)}</td>
                         </tr>
-                      ))}
+                      )}
+                      {esicEmployee > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">ESIC</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(esicEmployee)}</td>
+                        </tr>
+                      )}
+                      {professionalTax > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Professional Tax</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(professionalTax)}</td>
+                        </tr>
+                      )}
+                      {tdsAmount > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">TDS (Income Tax)</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(tdsAmount)}</td>
+                        </tr>
+                      )}
+                      {lwpDeduction > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">LWP Deduction</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(lwpDeduction)}</td>
+                        </tr>
+                      )}
+                      {advanceRecovery > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Advance Recovery</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(advanceRecovery)}</td>
+                        </tr>
+                      )}
+                      {otherDeductions > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Other Deductions</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(otherDeductions)}</td>
+                        </tr>
+                      )}
+                      {pfEmployee === 0 && esicEmployee === 0 && professionalTax === 0 &&
+                       tdsAmount === 0 && lwpDeduction === 0 && advanceRecovery === 0 &&
+                       otherDeductions === 0 && record.deductions > 0 && (
+                        <tr className="border-b">
+                          <td className="py-1.5 text-muted-foreground">Deductions</td>
+                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(record.deductions)}</td>
+                        </tr>
+                      )}
                       <tr className="font-semibold">
                         <td className="py-1.5">Total Deductions</td>
                         <td className="py-1.5 text-right font-mono text-destructive">-{fmt(record.deductions)}</td>

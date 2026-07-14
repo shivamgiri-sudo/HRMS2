@@ -613,14 +613,25 @@ export const payrollService = {
         COALESCE(spl.incentive_total, 0)   AS incentive_total,
         COALESCE(spl.total_deductions, 0)  AS total_deductions,
         COALESCE(spl.net_salary, 0)        AS net_salary,
-        COALESCE(spl.working_days, 0)      AS working_days,
-        COALESCE(spl.present_days, 0)      AS present_days,
-        COALESCE(spl.leave_days, 0)        AS leave_days,
-        COALESCE(spl.lwp_days, 0)          AS lwp_days,
+        COALESCE(spl.working_days, 0)           AS working_days,
+        COALESCE(spl.present_days, 0)           AS present_days,
+        COALESCE(spl.leave_days, 0)             AS leave_days,
+        COALESCE(spl.lwp_days, 0)               AS lwp_days,
         GREATEST(0, COALESCE(spl.working_days, 0)
           - COALESCE(spl.present_days, 0)
           - COALESCE(spl.leave_days, 0)
-          - COALESCE(spl.lwp_days, 0))     AS absent_days,
+          - COALESCE(spl.lwp_days, 0))          AS absent_days,
+        COALESCE(spl.eligible_weekoff_days, 0)  AS eligible_weekoff_days,
+        COALESCE(spl.eligible_holiday_days, 0)  AS eligible_holiday_days,
+        COALESCE(spl.paid_working_days, 0)      AS paid_working_days,
+        COALESCE(spl.final_payable_days, 0)     AS final_payable_days,
+        COALESCE(spl.pf_employee, 0)            AS pf_employee,
+        COALESCE(spl.esic_employee, 0)          AS esic_employee,
+        COALESCE(spl.professional_tax, 0)       AS professional_tax,
+        COALESCE(spl.tds, 0)                    AS tds,
+        COALESCE(spl.lwp_deduction, 0)          AS lwp_deduction,
+        COALESCE(spl.advance_recovery, 0)       AS advance_recovery,
+        COALESCE(spl.other_deductions, 0)       AS other_deductions,
         bm.branch_name,
         pm.process_name,
         dm.dept_name AS department_name,
@@ -643,12 +654,28 @@ export const payrollService = {
   },
 
   async getPayrollOverview(runMonth: string): Promise<any> {
+    // Pick the single canonical run for the month: prefer most-progressed status, then newest
     const [runRow] = await db.execute<RowDataPacket[]>(
-      "SELECT id, run_month, status, total_employees, total_gross, total_net FROM salary_prep_run WHERE run_month = ? LIMIT 1",
+      `SELECT id, run_month, status, total_employees, total_gross, total_net
+         FROM salary_prep_run
+        WHERE run_month = ?
+        ORDER BY
+          CASE status
+            WHEN 'disbursed'  THEN 1
+            WHEN 'locked'     THEN 2
+            WHEN 'approved'   THEN 3
+            WHEN 'completed'  THEN 4
+            WHEN 'processing' THEN 5
+            WHEN 'draft'      THEN 6
+            ELSE 7
+          END,
+          created_at DESC
+        LIMIT 1`,
       [runMonth]
     );
     let run = Array.isArray(runRow) && runRow.length ? runRow[0] : null;
     let isFallback = false;
+    let effectiveRunId: string | null = run ? String(run.id) : null;
     let effectiveRunMonth = runMonth;
 
     // If no run exists for requested month, fall back to the most recent completed run
@@ -656,34 +683,37 @@ export const payrollService = {
       const [fallbackRow] = await db.execute<RowDataPacket[]>(
         `SELECT id, run_month, status, total_employees, total_gross, total_net
            FROM salary_prep_run
-          WHERE status IN ('disbursed','finalized','finalised','calculated','reviewed','approved','locked')
-          ORDER BY run_month DESC
+          WHERE status IN ('disbursed','locked','approved','completed','processing','draft')
+          ORDER BY run_month DESC, created_at DESC
           LIMIT 1`
       );
       if (Array.isArray(fallbackRow) && fallbackRow.length) {
         run = fallbackRow[0];
+        effectiveRunId = String(run.id);
         effectiveRunMonth = String(run.run_month);
         isFallback = true;
       }
     }
 
-    const [stats] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT spl.employee_id) AS employee_count,
-              SUM(spl.basic)             AS total_basic,
-              SUM(spl.gross_salary)      AS total_gross,
-              SUM(spl.net_salary)        AS total_net,
-              SUM(spl.total_deductions)  AS total_deductions,
-              SUM(spl.pf_employee)       AS total_pf,
-              SUM(spl.esic_employee)     AS total_esi,
-              SUM(spl.tds)               AS total_tds,
-              CASE WHEN COUNT(DISTINCT spl.employee_id) > 0
-                   THEN ROUND(SUM(spl.net_salary) / COUNT(DISTINCT spl.employee_id), 2)
-                   ELSE 0 END            AS avg_net
-       FROM salary_prep_line spl
-       JOIN salary_prep_run spr ON spr.id = spl.run_id
-       WHERE spr.run_month = ?`,
-      [effectiveRunMonth]
-    );
+    const [stats] = effectiveRunId
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(DISTINCT spl.employee_id) AS employee_count,
+                  SUM(spl.basic)             AS total_basic,
+                  SUM(spl.gross_salary)      AS total_gross,
+                  SUM(spl.net_salary)        AS total_net,
+                  SUM(spl.total_deductions)  AS total_deductions,
+                  SUM(spl.pf_employee)       AS total_pf,
+                  SUM(spl.esic_employee)     AS total_esi,
+                  SUM(spl.tds)               AS total_tds,
+                  CASE WHEN COUNT(DISTINCT spl.employee_id) > 0
+                       THEN ROUND(SUM(spl.net_salary) / COUNT(DISTINCT spl.employee_id), 2)
+                       ELSE 0 END            AS avg_net
+           FROM salary_prep_line spl
+           WHERE spl.run_id = ?`,
+          [effectiveRunId]
+        )
+      : [[null]];
+
     return {
       run,
       stats: Array.isArray(stats) && stats.length ? stats[0] : null,
