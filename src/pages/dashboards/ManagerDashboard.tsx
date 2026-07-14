@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertCircle, ShieldX } from "lucide-react";
+import { AlertCircle, ShieldX, Medal, Star } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Link } from "react-router-dom";
 import {
@@ -51,6 +51,9 @@ export default function ManagerDashboard() {
   const [summary, setSummary] = useState<ManagerSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [teamQuality, setTeamQuality] = useState<any | null>(null);
+  const [leaveRequests, setLeaveRequests] = useState<any[] | null>(null);
+  const [kpiLeaderboard, setKpiLeaderboard] = useState<any[] | null>(null);
   const [drilldown, setDrilldown] = useState<DrilldownState>({
     open: false,
     metricCode: "",
@@ -83,6 +86,11 @@ export default function ManagerDashboard() {
       .finally(() => {
         if (!cancelled) setSummaryLoading(false);
       });
+
+    // Non-critical enrichment
+    hrmsApi.get("/api/manager/team-quality").then((r: any) => { if (!cancelled) setTeamQuality(r.data ?? r ?? null); }).catch(() => {});
+    hrmsApi.get("/api/leave/requests?status=pending&limit=5").then((r: any) => { if (!cancelled) setLeaveRequests(r.data ?? r ?? null); }).catch(() => {});
+    hrmsApi.get("/api/kpi/leaderboard?limit=5").then((r: any) => { if (!cancelled) setKpiLeaderboard(r.data ?? r ?? null); }).catch(() => {});
 
     return () => {
       cancelled = true;
@@ -337,6 +345,109 @@ export default function ManagerDashboard() {
             }}
           />
         </DashboardCard>
+
+        {/* TEAM QUALITY SUMMARY */}
+        {teamQuality && (
+          <DashboardCard title="Team Quality Performance">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="flex flex-col justify-center items-center rounded-xl border border-blue-100 bg-blue-50 p-6">
+                <p className="text-xs font-bold uppercase tracking-wide text-blue-700 mb-2">Team Avg Quality</p>
+                <p className={`text-4xl font-black ${(teamQuality.avg_quality_score ?? 0) >= 80 ? "text-emerald-700" : (teamQuality.avg_quality_score ?? 0) >= 65 ? "text-amber-600" : "text-red-600"}`}>
+                  {teamQuality.avg_quality_score ?? "—"}%
+                </p>
+                <p className="text-xs text-blue-600 mt-2">{teamQuality.total_calls_audited ?? 0} calls audited</p>
+              </div>
+              <div className="lg:col-span-2 overflow-auto max-h-48">
+                {teamQuality.agents && teamQuality.agents.length > 0 ? (
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Agent</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Score</th>
+                        <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Calls</th>
+                        <th className="px-3 py-2 text-center text-xs font-semibold text-slate-500">Band</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {teamQuality.agents.map((a: any, i: number) => (
+                        <tr key={i} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 font-medium text-slate-800">{a.agent_name}</td>
+                          <td className="px-3 py-2 text-right font-bold">{a.quality_score}%</td>
+                          <td className="px-3 py-2 text-right text-slate-500">{a.calls_audited}</td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              a.band === "excellent" ? "bg-emerald-100 text-emerald-700" :
+                              a.band === "good" ? "bg-blue-100 text-blue-700" :
+                              a.band === "average" ? "bg-amber-100 text-amber-700" :
+                              "bg-red-100 text-red-700"
+                            }`}>{a.band ?? "—"}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : <p className="text-sm text-slate-400 py-6 text-center">No quality data for this period.</p>}
+              </div>
+            </div>
+          </DashboardCard>
+        )}
+
+        {/* KPI LEADERBOARD */}
+        {kpiLeaderboard && kpiLeaderboard.length > 0 && (
+          <DashboardCard title="KPI Leaderboard — Top Performers">
+            <div className="space-y-2">
+              {kpiLeaderboard.slice(0, 5).map((emp: any, i: number) => (
+                <div key={i} className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-4 py-2.5">
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black ${i === 0 ? "bg-yellow-400 text-yellow-900" : i === 1 ? "bg-slate-300 text-slate-700" : i === 2 ? "bg-amber-600/20 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                    {i + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{emp.employee_name ?? emp.name}</p>
+                    <p className="text-xs text-slate-400">{emp.process_name ?? emp.process ?? ""}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-black text-blue-700">{emp.kpi_score ?? emp.score}%</p>
+                  </div>
+                  {i === 0 && <Medal className="h-4 w-4 text-yellow-500 shrink-0" />}
+                </div>
+              ))}
+              <Link to="/my-kpi" className="block mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 text-center">
+                View full leaderboard →
+              </Link>
+            </div>
+          </DashboardCard>
+        )}
+
+        {/* PENDING LEAVE REQUESTS */}
+        {leaveRequests && leaveRequests.length > 0 && (
+          <DashboardCard title="Pending Leave Requests">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Employee</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Leave Type</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Dates</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-slate-500">Days</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {leaveRequests.map((req: any, i: number) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-800">{req.employee_name ?? req.employeeName}</td>
+                      <td className="px-3 py-2 text-slate-600">{req.leave_type ?? req.leaveType}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500">{req.from_date ?? req.startDate} → {req.to_date ?? req.endDate}</td>
+                      <td className="px-3 py-2 text-center font-semibold">{req.days ?? req.duration}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Link to="/leaves" className="block mt-3 text-xs font-medium text-blue-600 hover:text-blue-800">
+                Manage all leave requests →
+              </Link>
+            </div>
+          </DashboardCard>
+        )}
 
         <WorkInboxPanel maxItems={10} />
       </div>

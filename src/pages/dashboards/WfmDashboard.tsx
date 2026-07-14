@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertCircle, ShieldCheck, AlertTriangle, TrendingUp, Clock, ShieldX } from "lucide-react";
+import { AlertCircle, ShieldCheck, AlertTriangle, TrendingUp, Clock, ShieldX, Activity, Fingerprint } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { TeamRosterWidget } from "@/components/dashboard/widgets/TeamRosterWidget";
+import { MetricTileEnhanced } from "@/components/dashboard/MetricTileEnhanced";
 import { Link } from "react-router-dom";
 import {
   DashboardDrilldownDrawer,
@@ -62,6 +64,8 @@ export default function WfmDashboard() {
     metricName: "",
   });
   const [rosterHealth, setRosterHealth] = useState<RosterHealth | null>(null);
+  const [bioAdherence, setBioAdherence] = useState<any | null>(null);
+  const [mismatchSummary, setMismatchSummary] = useState<any | null>(null);
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -112,6 +116,14 @@ export default function WfmDashboard() {
       .catch(() => {
         if (!cancelled) setRosterHealth(null);
       });
+
+    const bioParams = new URLSearchParams();
+    if (branchId) bioParams.set("branchId", branchId);
+    if (processId) bioParams.set("processId", processId);
+    const bioQs = bioParams.toString() ? `?${bioParams.toString()}` : "";
+
+    hrmsApi.get(`/api/wfm/biometric-summary/adherence-summary${bioQs}`).then((r: any) => { if (!cancelled) setBioAdherence(r.data ?? null); }).catch(() => {});
+    hrmsApi.get("/api/wfm/mismatch-review/summary").then((r: any) => { if (!cancelled) setMismatchSummary(r.data ?? null); }).catch(() => {});
 
     return () => {
       cancelled = true;
@@ -266,6 +278,73 @@ export default function WfmDashboard() {
         />
 
         <KpiMetricGrid metrics={metrics} columns={4} loading={summaryLoading} />
+
+        {/* LIVE TEAM ROSTER — Who's on the floor right now */}
+        <TeamRosterWidget />
+
+        {/* BIOMETRIC ADHERENCE — Quality breakdown of attendance */}
+        {bioAdherence && (
+          <div>
+            <h2 className="text-sm font-semibold text-slate-600 mb-3 uppercase tracking-wider">Biometric Adherence</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <MetricTileEnhanced
+                label="Adherence %"
+                value={bioAdherence.adherence_pct ?? null}
+                unit="%"
+                status={bioAdherence.adherence_pct >= 90 ? "ok" : bioAdherence.adherence_pct >= 80 ? "warn" : "critical"}
+                trend={bioAdherence.adherence_pct >= 90 ? "up" : "down"}
+                icon={<Fingerprint className="h-4 w-4 text-blue-600" />}
+                higherIsBetter
+              />
+              <MetricTileEnhanced
+                label="Late %"
+                value={bioAdherence.late_pct ?? null}
+                unit="%"
+                status={bioAdherence.late_pct <= 5 ? "ok" : bioAdherence.late_pct <= 10 ? "warn" : "critical"}
+                icon={<Clock className="h-4 w-4 text-amber-600" />}
+                higherIsBetter={false}
+              />
+              <MetricTileEnhanced
+                label="Shrinkage %"
+                value={bioAdherence.shrinkage_pct ?? null}
+                unit="%"
+                status={bioAdherence.shrinkage_pct <= 18 ? "ok" : bioAdherence.shrinkage_pct <= 25 ? "warn" : "critical"}
+                icon={<Activity className="h-4 w-4 text-orange-600" />}
+                higherIsBetter={false}
+              />
+              <MetricTileEnhanced
+                label="Absent Count"
+                value={bioAdherence.absent_count ?? null}
+                status={bioAdherence.absent_count === 0 ? "ok" : bioAdherence.absent_count <= 5 ? "warn" : "critical"}
+                icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
+                higherIsBetter={false}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* PUNCH MISMATCH SUMMARY — Data quality alert */}
+        {mismatchSummary && (mismatchSummary.unresolved_mismatches > 0 || mismatchSummary.missing_punches > 0 || mismatchSummary.weekoff_worked > 0) && (
+          <DashboardCard title="Biometric Data Quality — Punch Mismatches">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className={`rounded-xl border p-4 ${mismatchSummary.unresolved_mismatches > 0 ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Unresolved Mismatches</p>
+                <p className={`mt-2 text-2xl font-black ${mismatchSummary.unresolved_mismatches > 0 ? "text-amber-700" : "text-emerald-700"}`}>{mismatchSummary.unresolved_mismatches ?? 0}</p>
+                <p className="text-xs text-slate-400 mt-1">Last 60 days</p>
+              </div>
+              <div className={`rounded-xl border p-4 ${mismatchSummary.missing_punches > 0 ? "border-red-200 bg-red-50" : "border-slate-200 bg-slate-50"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Missing Punches</p>
+                <p className={`mt-2 text-2xl font-black ${mismatchSummary.missing_punches > 0 ? "text-red-700" : "text-emerald-700"}`}>{mismatchSummary.missing_punches ?? 0}</p>
+                <p className="text-xs text-slate-400 mt-1">Needs correction</p>
+              </div>
+              <div className={`rounded-xl border p-4 ${mismatchSummary.weekoff_worked > 0 ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50"}`}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Week-off Worked</p>
+                <p className={`mt-2 text-2xl font-black ${mismatchSummary.weekoff_worked > 0 ? "text-blue-700" : "text-emerald-700"}`}>{mismatchSummary.weekoff_worked ?? 0}</p>
+                <p className="text-xs text-slate-400 mt-1">Approval required</p>
+              </div>
+            </div>
+          </DashboardCard>
+        )}
 
         {rosterHealth && (
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

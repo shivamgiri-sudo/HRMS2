@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ProfileCompletionWidget } from "@/components/dashboard/widgets/ProfileCompletionWidget";
+import { RecentPayslipWidget } from "@/components/dashboard/widgets/RecentPayslipWidget";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AlertCircle,
@@ -495,18 +497,24 @@ export default function EmployeeSelfDashboard() {
           loading={onboardingLoading}
         />
 
-        {/* Leave Balance + Work Inbox side by side */}
+        {/* Leave Balance + Recent Payslip side by side */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <LeaveBalanceCard
             balances={leaveBalances}
             loading={leaveLoading}
             error={leaveError}
           />
-          <WorkInboxPanel maxItems={6} />
+          <RecentPayslipWidget />
         </div>
 
-        {/* Quick Links */}
-        <QuickLinks />
+        {/* Work Inbox */}
+        <WorkInboxPanel maxItems={6} />
+
+        {/* Profile Completion + Quick Links */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ProfileCompletionWidget />
+          <QuickLinks />
+        </div>
       </div>
     </RoleDashboardShell>
     </DashboardLayout>

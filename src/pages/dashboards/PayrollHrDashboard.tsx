@@ -409,6 +409,8 @@ export default function PayrollHrDashboard() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<string>("");
   const [processId, setProcessId] = useState<string>("");
+  const [costByBranch, setCostByBranch] = useState<any[] | null>(null);
+  const [payrollExposure, setPayrollExposure] = useState<any | null>(null);
   const [drilldown, setDrilldown] = useState<DrilldownState>({
     open: false,
     metricCode: "",
@@ -444,6 +446,9 @@ export default function PayrollHrDashboard() {
       .finally(() => {
         if (!cancelled) setSummaryLoading(false);
       });
+
+    hrmsApi.get("/api/payroll/cost-summary?groupBy=branch").then((r: any) => { if (!cancelled) setCostByBranch(r.data ?? r ?? null); }).catch(() => {});
+    hrmsApi.get("/api/bi/payroll-exposure-summary").then((r: any) => { if (!cancelled) setPayrollExposure(r.data ?? null); }).catch(() => {});
 
     return () => { cancelled = true; };
   }, [branchId, processId]);
@@ -655,11 +660,79 @@ export default function PayrollHrDashboard() {
           <MoMTrendChart data={ops?.momTrend ?? []} />
         </div>
 
+        {/* PAYROLL EXPOSURE SUMMARY — BI risk picture */}
+        {payrollExposure && (
+          <DashboardCard title="Payroll Exposure Summary">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <MetricTileEnhanced
+                label="Employees at Risk"
+                value={payrollExposure.employees_at_risk ?? payrollExposure.risk_count ?? null}
+                status={(payrollExposure.employees_at_risk ?? payrollExposure.risk_count ?? 0) > 0 ? "warn" : "ok"}
+                icon={<AlertTriangle className="h-4 w-4 text-amber-600" />}
+                higherIsBetter={false}
+              />
+              <MetricTileEnhanced
+                label="Salary Hold Exposure"
+                value={payrollExposure.salary_hold_gross ? `₹${((payrollExposure.salary_hold_gross ?? 0) / 100000).toFixed(1)}L` : null}
+                status={(payrollExposure.salary_hold_count ?? 0) > 0 ? "warn" : "ok"}
+                icon={<Banknote className="h-4 w-4 text-red-600" />}
+                higherIsBetter={false}
+              />
+              <MetricTileEnhanced
+                label="Compliance Gaps"
+                value={payrollExposure.compliance_gap_count ?? null}
+                status={(payrollExposure.compliance_gap_count ?? 0) > 0 ? "critical" : "ok"}
+                icon={<FileCheck className="h-4 w-4 text-slate-500" />}
+                higherIsBetter={false}
+              />
+              <MetricTileEnhanced
+                label="Pending Disbursal"
+                value={payrollExposure.pending_disbursal_count ?? null}
+                status={(payrollExposure.pending_disbursal_count ?? 0) > 0 ? "warn" : "ok"}
+                icon={<DollarSign className="h-4 w-4 text-blue-600" />}
+                higherIsBetter={false}
+              />
+            </div>
+          </DashboardCard>
+        )}
+
         {/* BRANCH READINESS + COMPLIANCE — Side by side */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <BranchReadinessMini branches={ops?.branchReadiness ?? []} />
           <ComplianceHealth filings={ops?.statutoryFiling ?? []} />
         </div>
+
+        {/* PAYROLL COST BY BRANCH */}
+        {costByBranch && costByBranch.length > 0 && (
+          <DashboardCard title="Payroll Cost by Branch">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Branch</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Employees</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Gross</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Net</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">PF</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">ESI</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {costByBranch.map((b: any, i: number) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-800">{b.branch_name}</td>
+                      <td className="px-3 py-2 text-right text-slate-600">{b.employee_count}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{fmtLakh(Number(b.total_gross))}</td>
+                      <td className="px-3 py-2 text-right">{fmtLakh(Number(b.total_net))}</td>
+                      <td className="px-3 py-2 text-right text-blue-700">{fmtLakh(Number(b.total_pf ?? 0))}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700">{fmtLakh(Number(b.total_esic ?? b.total_esi ?? 0))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </DashboardCard>
+        )}
 
         {/* VARIANCE ALERTS — Full width, only shown when data exists */}
         <VarianceAlerts alerts={ops?.varianceAlerts ?? []} />

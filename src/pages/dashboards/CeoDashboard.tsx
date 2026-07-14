@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { AlertCircle, ShieldX, TrendingDown, Activity, Users, DollarSign, TrendingUp, AlertTriangle, Target } from "lucide-react";
+import { AlertCircle, ShieldX, TrendingDown, Activity, Users, DollarSign, TrendingUp, AlertTriangle, Target, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
+import { MovementChart } from "@/components/dashboard/widgets/MovementChart";
 import {
   RoleDashboardShell,
   GoodBadInsightPanel,
@@ -97,6 +98,8 @@ export default function CeoDashboard() {
   const [revenueRisk, setRevenueRisk] = useState<any | null>(null);
   const [trainingPulse, setTrainingPulse] = useState<any | null>(null);
   const [pnlSummary, setPnlSummary] = useState<PnlSummaryResponse | null>(null);
+  const [rootCauses, setRootCauses] = useState<any | null>(null);
+  const [ownerAccountability, setOwnerAccountability] = useState<any[] | null>(null);
 
   const openDrilldown = useCallback((metricCode: string, metricName: string) => {
     setDrilldown({ open: true, metricCode, metricName });
@@ -154,12 +157,14 @@ export default function CeoDashboard() {
     };
   }, [branchId, processId]);
 
-  // Load BI data (non-critical, fail silently)
+  // Load BI + insight data (non-critical, fail silently)
   useEffect(() => {
     let cancelled = false;
     hrmsApi.get("/api/bi/daily-operations-pulse").then((r: any) => { if (!cancelled) setOpsPulse(r.data ?? null); }).catch(() => {});
     hrmsApi.get("/api/bi/revenue-at-risk").then((r: any) => { if (!cancelled) setRevenueRisk(r.data ?? null); }).catch(() => {});
     hrmsApi.get("/api/bi/training-readiness-pulse").then((r: any) => { if (!cancelled) setTrainingPulse(r.data ?? null); }).catch(() => {});
+    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/root-causes`).then((r: any) => { if (!cancelled) setRootCauses(r.data ?? null); }).catch(() => {});
+    hrmsApi.get(`/api/dashboards/${DASHBOARD_CODE}/owner-accountability`).then((r: any) => { if (!cancelled) setOwnerAccountability(r.data?.accountability ?? null); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -397,6 +402,92 @@ export default function CeoDashboard() {
             </div>
           </DashboardCard>
         )}
+
+        {/* ROOT CAUSES — What specifically is blocking, not just counts */}
+        {rootCauses && (rootCauses.rootCauses?.length > 0) && (
+          <DashboardCard title="Root Cause Analysis — Top Blockers">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* TAT breaches */}
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-red-600 mb-2">TAT Breached</p>
+                {rootCauses.rootCauses.filter((r: any) => r.domain === "TAT").length === 0
+                  ? <p className="text-xs text-slate-400">No breaches</p>
+                  : rootCauses.rootCauses.filter((r: any) => r.domain === "TAT").map((r: any, i: number) => (
+                    <div key={i} className="flex items-start justify-between py-1.5 border-b border-slate-100 last:border-0">
+                      <span className="text-xs text-slate-700 flex-1">{r.label}</span>
+                      <div className="text-right ml-2">
+                        <span className="text-xs font-bold text-red-600">{r.count}</span>
+                        {r.detail?.maxAgeHours != null && <p className="text-[10px] text-slate-400">{r.detail.maxAgeHours}h max age</p>}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+              {/* Name mismatches */}
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-amber-600 mb-2">Name Mismatch (Blocking)</p>
+                {rootCauses.rootCauses.filter((r: any) => r.domain === "NAME_MISMATCH").length === 0
+                  ? <p className="text-xs text-slate-400">None blocking</p>
+                  : rootCauses.rootCauses.filter((r: any) => r.domain === "NAME_MISMATCH").map((r: any, i: number) => (
+                    <div key={i} className="py-1.5 border-b border-slate-100 last:border-0">
+                      <p className="text-xs font-medium text-slate-700">{r.label}</p>
+                      {r.detail && <p className="text-[10px] text-slate-400">Fields: {r.detail}</p>}
+                    </div>
+                  ))}
+              </div>
+              {/* Stuck onboarding */}
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-blue-600 mb-2">Stuck Onboarding</p>
+                {rootCauses.rootCauses.filter((r: any) => r.domain === "ONBOARDING").length === 0
+                  ? <p className="text-xs text-slate-400">None stuck</p>
+                  : rootCauses.rootCauses.filter((r: any) => r.domain === "ONBOARDING").map((r: any, i: number) => (
+                    <div key={i} className="py-1.5 border-b border-slate-100 last:border-0">
+                      <p className="text-xs font-medium text-slate-700">{r.label}</p>
+                      <p className="text-[10px] text-slate-400 capitalize">{r.detail}</p>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </DashboardCard>
+        )}
+
+        {/* OWNER ACCOUNTABILITY — Which teams are bottlenecks */}
+        {ownerAccountability && ownerAccountability.length > 0 && (
+          <DashboardCard title="Team Accountability — Work Item Status">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">Role / Team</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Pending</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Overdue</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Completed</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">Completion %</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {ownerAccountability.map((row: any, i: number) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-800 capitalize">{(row.role ?? "").replace(/_/g, " ")}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{row.pending}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={row.overdue > 0 ? "font-bold text-red-600" : "text-slate-400"}>{row.overdue}</span>
+                      </td>
+                      <td className="px-3 py-2 text-right text-emerald-600 font-semibold">{row.completed}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={`font-bold ${row.completionRate >= 80 ? "text-emerald-600" : row.completionRate >= 50 ? "text-amber-600" : "text-red-600"}`}>
+                          {row.completionRate}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </DashboardCard>
+        )}
+
+        {/* WORKFORCE MOVEMENT — Joins vs exits trend */}
+        <MovementChart />
 
         {/* INSIGHTS & WORK INBOX - Side-by-side contextual information */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
