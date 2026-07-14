@@ -17,7 +17,7 @@ import {
 } from "../ats/candidate-file.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
+export const UPLOADS_ROOT = path.resolve(__dirname, "../../../../uploads");
 
 // Ensure uploads root exists on startup
 fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
