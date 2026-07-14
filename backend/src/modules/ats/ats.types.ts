@@ -65,6 +65,7 @@ export interface CandidateListFilters {
   stage?: string;
   branch?: string;
   process?: string;
+  sourcingChannel?: string;
   search?: string;
   fromDate?: string;
   toDate?: string;

@@ -2513,7 +2513,7 @@ export const breakManagementService = {
     try {
       await connection.beginTransaction();
 
-      const results = [];
+      const results: any[] = [];
 
       for (const employeeId of body.employee_ids) {
         try {
@@ -2552,7 +2552,7 @@ export const breakManagementService = {
     try {
       await connection.beginTransaction();
 
-      const results = [];
+      const results: any[] = [];
 
       for (const employeeId of body.employee_ids) {
         try {
@@ -2588,7 +2588,7 @@ export const breakManagementService = {
     try {
       await connection.beginTransaction();
 
-      const results = [];
+      const results: any[] = [];
 
       for (const employeeId of body.employee_ids) {
         try {
@@ -2624,7 +2624,7 @@ export const breakManagementService = {
     try {
       await connection.beginTransaction();
 
-      const results = [];
+      const results: any[] = [];
 
       for (const employeeId of body.employee_ids) {
         try {
