@@ -289,7 +289,6 @@ const NativeWeekOffDayRuleConfig    = lazy(() => import("./pages/NativeWeekOffDa
 const NativeAttendanceDisputes      = lazy(() => import("./pages/NativeAttendanceDisputes"));
 const NativeAttendanceExceptionEngine = lazy(() => import("./pages/NativeAttendanceExceptionEngine"));
 const NativeCosecSyncMonitoring     = lazy(() => import("./pages/NativeCosecSyncMonitoring"));
-const NativePayrollReadiness        = lazy(() => import("./pages/NativePayrollReadiness"));
 const NativeWorkforcePlanning       = lazy(() => import("./pages/NativeWorkforcePlanning"));
 const NativeITProvisioningTracker   = lazy(() => import("./pages/NativeITProvisioningTracker"));
 const NativeControlTower            = lazy(() => import("./pages/NativeControlTower"));
@@ -329,6 +328,7 @@ const PortalOverview = lazy(() => import("./pages/portal/PortalOverview"));
 const PortalProcessDashboard = lazy(() => import("./pages/portal/PortalProcessDashboard"));
 const BreakDesk = lazy(() => import("./pages/BreakDesk"));
 const BreakDeskDevices = lazy(() => import("./pages/BreakDeskDevices"));
+const BreakReports = lazy(() => import("./pages/BreakReports"));
 const WaitingRoomDisplay = lazy(() => import("./pages/WaitingRoomDisplay"));
 
 const queryClient = new QueryClient({
@@ -567,7 +567,6 @@ const App = () => (
               <Route path="/customization/new" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
               <Route path="/customization/:id/edit" element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
               <Route path="/payroll/payslips" element={<ProtectedRoute><Gate pageCode="PAYROLL_PAYSLIPS"><NativePayslipCenter /></Gate></ProtectedRoute>} />
-              <Route path="/payroll/readiness" element={<ProtectedRoute><Gate pageCode="PAYROLL"><NativePayrollReadiness /></Gate></ProtectedRoute>} />
               <Route path="/payroll/epf-compliance" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll', 'hr', 'manager']}><PayrollEpfCompliancePage /></ProtectedRoute>} />
               <Route path="/payroll/pf-creation-queue" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfCreationQueuePage /></ProtectedRoute>} />
               <Route path="/payroll/pf-batches" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfBatchesPage /></ProtectedRoute>} />
@@ -590,7 +589,7 @@ const App = () => (
               <Route path="/payroll/holiday-work-approvals" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm']}><HolidayWorkApprovals /></ProtectedRoute>} />
               <Route path="/payroll/validation" element={<ProtectedRoute roles={['super_admin','payroll_head']}><PayrollValidationScreen /></ProtectedRoute>} />
               <Route path="/payroll/noc" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><NocManagement /></ProtectedRoute>} />
-              <Route path="/payroll/branch-readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch']}><BranchPayrollReadiness /></ProtectedRoute>} />
+              <Route path="/payroll/branch-readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll']}><BranchPayrollReadiness /></ProtectedRoute>} />
               <Route path="/payroll/calendar" element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><PayrollCalendar /></ProtectedRoute>} />
               <Route path="/payroll/cost-summary" element={<ProtectedRoute roles={['super_admin','payroll_head','finance']}><PayrollCostSummary /></ProtectedRoute>} />
               <Route path="/payroll/statutory-filing" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><StatutoryFilingTracker /></ProtectedRoute>} />
@@ -678,6 +677,7 @@ const App = () => (
               {/* Public kiosk display — no auth required */}
               <Route path="/break-management/devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
               <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
+              <Route path="/break-reports" element={<ProtectedRoute roles={['super_admin', 'admin', 'hr', 'wfm', 'manager', 'process_manager']}><BreakReports /></ProtectedRoute>} />
               <Route path="/break-desk" element={<BreakDeskErrorBoundary><BreakDesk /></BreakDeskErrorBoundary>} />
               <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
 

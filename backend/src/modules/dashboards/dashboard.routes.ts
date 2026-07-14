@@ -439,4 +439,157 @@ router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) =>
   });
 }));
 
+// ─── Payroll Operational Summary (for Payroll HR Dashboard) ──────────────────
+router.get("/PAYROLL_HR_DASHBOARD/operational-summary", h(async (_req: AuthenticatedRequest, res: any) => {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  // Current payroll run status
+  const currentRun = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month, status, run_label, created_at, closed_at,
+            attendance_snapshot_locked, tds_mode
+       FROM salary_prep_run
+      WHERE run_month = ?
+      ORDER BY created_at DESC LIMIT 1`,
+    [currentMonth]
+  ).then(([r]) => (r as any[])[0] ?? null).catch(() => null);
+
+  // Total salary bill from latest run
+  const salaryBill = currentRun?.id ? await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT employee_id) AS emp_count,
+            COALESCE(SUM(gross_pay), SUM(gross_salary), SUM(gross_amount), 0) AS total_gross,
+            COALESCE(SUM(net_pay), SUM(net_salary), SUM(net_amount), 0) AS total_net,
+            COALESCE(SUM(total_deductions), 0) AS total_deductions
+       FROM salary_prep_line WHERE run_id = ?`,
+    [currentRun.id]
+  ).then(([r]) => (r as any[])[0] ?? null).catch(() => null) : null;
+
+  // Employees on salary hold
+  const salaryHold = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM employees
+      WHERE active_status = 1 AND salary_hold = 1`
+  ).then(([r]) => Number((r as any[])[0]?.count ?? 0)).catch(() => 0);
+
+  // Pending HO queue counts
+  const pendingOptOuts = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM employee_statutory_override WHERE status = 'pending'`
+  ).then(([r]) => Number((r as any[])[0]?.count ?? 0)).catch(() => 0);
+
+  const pendingBankChanges = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM employee_bank_change_request WHERE status = 'pending'`
+  ).then(([r]) => Number((r as any[])[0]?.count ?? 0)).catch(() => 0);
+
+  const pendingCheque = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM cheque_validation_queue WHERE status = 'pending'`
+  ).then(([r]) => Number((r as any[])[0]?.count ?? 0)).catch(() => 0);
+
+  const pendingAdvances = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM salary_advance_log WHERE status = 'pending'`
+  ).then(([r]) => Number((r as any[])[0]?.count ?? 0)).catch(() => 0);
+
+  // FnF pending
+  const fnfPending = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM full_final_settlement WHERE status IN ('pending','draft','in_progress')`
+  ).then(([r]) => Number((r as any[])[0]?.count ?? 0)).catch(() => 0);
+
+  // Disbursement status
+  const disbursement = await db.execute<RowDataPacket[]>(
+    `SELECT status, COUNT(*) AS count FROM payroll_disbursal
+      WHERE pay_month = ? GROUP BY status`,
+    [currentMonth]
+  ).then(([r]) => {
+    const map: Record<string, number> = { initiated: 0, in_progress: 0, completed: 0, failed: 0 };
+    for (const row of r as any[]) map[row.status] = Number(row.count);
+    return map;
+  }).catch(() => ({ initiated: 0, in_progress: 0, completed: 0, failed: 0 }));
+
+  // Branch readiness summary
+  const branchReadiness = await db.execute<RowDataPacket[]>(
+    `SELECT r.branch_id, b.branch_name, r.readiness_score, r.readiness_status,
+            r.employee_count, r.branch_head_signoff
+       FROM payroll_branch_readiness r
+       LEFT JOIN branch_master b ON b.id = r.branch_id
+      WHERE r.process_month = ?
+      ORDER BY r.readiness_score ASC`,
+    [currentMonth]
+  ).then(([r]) => r as any[]).catch(() => []);
+
+  // MoM payroll cost trend (last 6 months)
+  const momTrend = await db.execute<RowDataPacket[]>(
+    `SELECT run_month,
+            COUNT(DISTINCT spl.employee_id) AS headcount,
+            COALESCE(SUM(spl.gross_pay), SUM(spl.gross_salary), SUM(spl.gross_amount), 0) AS total_gross,
+            COALESCE(SUM(spl.net_pay), SUM(spl.net_salary), SUM(spl.net_amount), 0) AS total_net
+       FROM salary_prep_run spr
+       JOIN salary_prep_line spl ON spl.run_id = spr.id
+      WHERE spr.run_month >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 6 MONTH), '%Y-%m')
+      GROUP BY spr.run_month
+      ORDER BY spr.run_month ASC`
+  ).then(([r]) => r as any[]).catch(() => []);
+
+  // Statutory filing status
+  const statutoryFiling = await db.execute<RowDataPacket[]>(
+    `SELECT filing_type, due_date, status, filed_date
+       FROM statutory_filing_tracker
+      WHERE due_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        AND due_date <= DATE_ADD(CURDATE(), INTERVAL 60 DAY)
+      ORDER BY due_date ASC`
+  ).then(([r]) => r as any[]).catch(() => []);
+
+  // Variance alerts (employees with >10% change vs prior month)
+  const varianceAlerts = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS employee_name,
+            curr.gross_pay AS current_gross, prev.gross_pay AS previous_gross,
+            ROUND(((curr.gross_pay - prev.gross_pay) / prev.gross_pay) * 100, 1) AS variance_pct
+       FROM salary_prep_line curr
+       JOIN salary_prep_run curr_run ON curr_run.id = curr.run_id AND curr_run.run_month = ?
+       JOIN salary_prep_run prev_run ON prev_run.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')
+       JOIN salary_prep_line prev ON prev.run_id = prev_run.id AND prev.employee_id = curr.employee_id
+       JOIN employees e ON e.id = curr.employee_id
+      WHERE prev.gross_pay > 0
+        AND ABS((curr.gross_pay - prev.gross_pay) / prev.gross_pay) > 0.10
+      ORDER BY ABS((curr.gross_pay - prev.gross_pay) / prev.gross_pay) DESC
+      LIMIT 20`,
+    [currentMonth, currentMonth]
+  ).then(([r]) => r as any[]).catch(() => []);
+
+  return res.json({
+    success: true,
+    data: {
+      currentMonth,
+      currentRun: currentRun ? {
+        id: currentRun.id,
+        month: currentRun.run_month,
+        status: currentRun.status ?? "draft",
+        label: currentRun.run_label,
+        attendanceLocked: !!currentRun.attendance_snapshot_locked,
+        tdsMode: currentRun.tds_mode,
+        createdAt: currentRun.created_at,
+        closedAt: currentRun.closed_at,
+      } : null,
+      salaryBill: salaryBill ? {
+        employeeCount: Number(salaryBill.emp_count ?? 0),
+        totalGross: Number(salaryBill.total_gross ?? 0),
+        totalNet: Number(salaryBill.total_net ?? 0),
+        totalDeductions: Number(salaryBill.total_deductions ?? 0),
+      } : null,
+      salaryHoldCount: salaryHold,
+      pendingQueues: {
+        optOuts: pendingOptOuts,
+        bankChanges: pendingBankChanges,
+        chequeValidation: pendingCheque,
+        advances: pendingAdvances,
+        total: pendingOptOuts + pendingBankChanges + pendingCheque + pendingAdvances,
+      },
+      fnfPending,
+      disbursement,
+      branchReadiness,
+      momTrend,
+      statutoryFiling,
+      varianceAlerts,
+      generatedAt: new Date().toISOString(),
+    },
+  });
+}));
+
 export { router as dashboardRouter };

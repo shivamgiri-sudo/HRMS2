@@ -62,6 +62,8 @@ interface BranchReadiness {
   readiness_score: number;
   readiness_status: "not_started" | "in_progress" | "ready" | "blocked";
   employee_count: number;
+  employee_count_active: number;
+  employee_count_left: number;
   projected_gross: number | null;
   projected_net: number | null;
   projection_computed_at: string | null;
@@ -254,7 +256,10 @@ function BranchCard({
         <div className="flex items-start justify-between gap-2">
           <div>
             <CardTitle className="text-base leading-tight">{branch.branch_name}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-0.5">{branch.employee_count} employees</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {branch.employee_count_active || branch.employee_count} Active
+              {branch.employee_count_left > 0 && <span className="text-orange-600"> · {branch.employee_count_left} Left (salary due)</span>}
+            </p>
           </div>
           <ScoreCircle score={branch.readiness_score} size={56} />
         </div>
@@ -702,7 +707,9 @@ function BranchView({
             {data.readiness_status.replace("_", " ")}
           </Badge>
           <p className="text-xs text-muted-foreground mt-1">
-            {data.employee_count} employees · {data.process_month}
+            {data.employee_count_active || data.employee_count} Active
+            {data.employee_count_left > 0 && <span className="text-orange-600"> · {data.employee_count_left} Left (salary due)</span>}
+            {" "}· {data.process_month}
           </p>
         </div>
         {data.branch_head_signoff && (
@@ -788,6 +795,20 @@ function BranchView({
           </div>
         </div>
       )}
+
+      {/* How It Works — process guide */}
+      <details className="rounded-lg border p-4 bg-blue-50/50">
+        <summary className="text-sm font-medium cursor-pointer text-blue-900">How Payroll Readiness Works</summary>
+        <ol className="mt-3 space-y-2 text-xs text-blue-800 list-decimal list-inside">
+          <li><strong>WFM finalizes attendance</strong> → "Attendance Frozen" auto-detects from the system</li>
+          <li><strong>Branch Head / WFM uploads incentives</strong> in the Incentives module → status updates automatically</li>
+          <li><strong>Branch Head marks</strong> "Custom Deductions" and "Overtime Entered" as done (toggle buttons above)</li>
+          <li><strong>Bank details &amp; UAN %</strong> are computed from employee records — update in Employee profiles</li>
+          <li><strong>NOC &amp; Holiday Work</strong> are resolved in their respective modules</li>
+          <li><strong>Branch Head signs off</strong> when all items are green (attendance must be frozen first)</li>
+          <li><strong>HO can override</strong> readiness status if needed (with mandatory reason)</li>
+        </ol>
+      </details>
 
       {/* Sign-off button */}
       <div className="flex justify-end">

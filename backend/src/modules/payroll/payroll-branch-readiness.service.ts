@@ -49,6 +49,8 @@ export interface BranchReadinessRecord {
   readiness_status: "not_started" | "in_progress" | "ready" | "blocked";
   // salary projection
   employee_count: number;
+  employee_count_active: number;
+  employee_count_left: number;
   projected_gross: number | null;
   projected_net: number | null;
   projection_computed_at: string | null;
@@ -99,6 +101,8 @@ async function ensureTable(): Promise<void> {
         projected_gross DECIMAL(14,2) NULL,
         projected_net DECIMAL(14,2) NULL,
         employee_count INT NOT NULL DEFAULT 0,
+        employee_count_active INT NOT NULL DEFAULT 0,
+        employee_count_left INT NOT NULL DEFAULT 0,
         projection_computed_at DATETIME NULL,
 
         ho_override_ready TINYINT(1) NOT NULL DEFAULT 0,
@@ -448,6 +452,8 @@ export const payrollBranchReadinessService = {
     let projectedGross: number | null = null;
     let projectedNet: number | null = null;
     let employeeCount = 0;
+    let employeeCountActive = 0;
+    let employeeCountLeft = 0;
 
     // Try salary_prep_run lines first
     try {
@@ -499,14 +505,12 @@ export const payrollBranchReadinessService = {
         );
         const row = estRows[0] as any;
         if (row) {
-          employeeCount = Number(row.emp_count ?? 0);
+          employeeCountActive = Number(row.emp_count ?? 0);
           projectedGross = row.est_gross != null ? Number(row.est_gross) : null;
-          // Net estimated as 85% of gross (rough heuristic before deductions computed)
           projectedNet =
             projectedGross != null ? Math.round(projectedGross * 0.85) : null;
         }
       } catch {
-        // employee_salary_assignment may not exist
         try {
           const [empRows] = await db.execute<RowDataPacket[]>(
             `SELECT COUNT(*) AS emp_count FROM employees
@@ -515,12 +519,35 @@ export const payrollBranchReadinessService = {
                 AND LOWER(COALESCE(employment_status, 'active')) = 'active'`,
             [branchId]
           );
-          employeeCount = Number((empRows[0] as any)?.emp_count ?? 0);
+          employeeCountActive = Number((empRows[0] as any)?.emp_count ?? 0);
         } catch {
-          employeeCount = 0;
+          employeeCountActive = 0;
         }
       }
     }
+
+    // Count employees who left during this pay month but still need salary
+    const [ym, mm] = month.split("-").map(Number);
+    const monthStart = `${month}-01`;
+    const monthEnd = new Date(ym, mm, 0).toISOString().slice(0, 10);
+    try {
+      const [leftRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS left_count FROM employees
+          WHERE branch_id = ?
+            AND LOWER(COALESCE(employment_status, 'active')) IN ('resigned','terminated','absconded','separated')
+            AND (
+              (last_working_day IS NOT NULL AND last_working_day >= ? AND last_working_day <= ?)
+              OR (resignation_date IS NOT NULL AND resignation_date >= ? AND resignation_date <= ?
+                  AND last_working_day IS NULL)
+            )`,
+        [branchId, monthStart, monthEnd, monthStart, monthEnd]
+      );
+      employeeCountLeft = Number((leftRows[0] as any)?.left_count ?? 0);
+    } catch {
+      employeeCountLeft = 0;
+    }
+
+    employeeCount = employeeCountActive + employeeCountLeft;
 
     // Persist
     if (!(await tableExists())) return;
@@ -531,13 +558,28 @@ export const payrollBranchReadinessService = {
             SET projected_gross = ?,
                 projected_net = ?,
                 projection_computed_at = NOW(),
-                employee_count = ?
+                employee_count = ?,
+                employee_count_active = ?,
+                employee_count_left = ?
           WHERE process_month = ? AND branch_id = ?`,
-        [projectedGross, projectedNet, employeeCount, month, branchId]
+        [projectedGross, projectedNet, employeeCount, employeeCountActive, employeeCountLeft, month, branchId]
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[BranchReadiness] refreshProjection persist failed — ${msg}`);
+      // Columns may not exist yet — try without the new columns
+      try {
+        await db.execute(
+          `UPDATE payroll_branch_readiness
+              SET projected_gross = ?,
+                  projected_net = ?,
+                  projection_computed_at = NOW(),
+                  employee_count = ?
+            WHERE process_month = ? AND branch_id = ?`,
+          [projectedGross, projectedNet, employeeCount, month, branchId]
+        );
+      } catch {
+        console.warn(`[BranchReadiness] refreshProjection persist failed — ${msg}`);
+      }
     }
   },
 
@@ -652,6 +694,8 @@ export const payrollBranchReadinessService = {
       readiness_score: score,
       readiness_status: status,
       employee_count: Number(record.employee_count ?? 0),
+      employee_count_active: Number((record as any).employee_count_active ?? record.employee_count ?? 0),
+      employee_count_left: Number((record as any).employee_count_left ?? 0),
       projected_gross: record.projected_gross ?? null,
       projected_net: record.projected_net ?? null,
       projection_computed_at: (record.projection_computed_at as string) ?? null,

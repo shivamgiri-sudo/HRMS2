@@ -325,6 +325,50 @@ router.get("/advances/:employeeId", h(async (req: AuthenticatedRequest, res: Res
   return c.listAdvances(req as any, res);
 }));
 
+// GET /api/payroll/advances — list ALL advances for HO queue (finance/admin view)
+router.get("/advances",
+  requireRole("admin", "hr", "super_admin", "finance", "payroll", "payroll_head"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT sal.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name
+         FROM salary_advance_log sal
+         JOIN employees e ON e.id = sal.employee_id
+        ORDER BY sal.advance_date DESC
+        LIMIT 500`
+    );
+    res.json(rows);
+  })
+);
+
+// PATCH /api/payroll/advances/:id/approve
+router.patch("/advances/:id/approve",
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    await db.execute(
+      `UPDATE salary_advance_log SET status = 'approved', approved_by = ?, approved_at = NOW() WHERE id = ?`,
+      [req.authUser!.id, id]
+    );
+    await logSensitiveAction({ actor_user_id: req.authUser!.id, action_type: "advance_approved", module_key: "payroll", entity_type: "salary_advance_log", entity_id: id });
+    res.json({ success: true, message: "Advance approved" });
+  })
+);
+
+// PATCH /api/payroll/advances/:id/reject
+router.patch("/advances/:id/reject",
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const { reason } = req.body;
+    await db.execute(
+      `UPDATE salary_advance_log SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = NOW() WHERE id = ?`,
+      [reason ?? null, req.authUser!.id, id]
+    );
+    await logSensitiveAction({ actor_user_id: req.authUser!.id, action_type: "advance_rejected", module_key: "payroll", entity_type: "salary_advance_log", entity_id: id, metadata: { reason } });
+    res.json({ success: true, message: "Advance rejected" });
+  })
+);
+
 // ─── Statutory Config ─────────────────────────────────────────────────────────
 
 router.get("/statutory-config", requireRole("admin", "super_admin", "finance", "payroll"), h(c.getStatutoryConfig));

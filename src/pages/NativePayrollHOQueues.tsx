@@ -2076,70 +2076,66 @@ const TABS = [
 
 export default function NativePayrollHOQueues() {
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="space-y-6">
       {/* Page header */}
-      <div className="border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#e8f2fc]">
-            <Building2 className="size-5 text-[#073f78]" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-slate-900">
-              Payroll HO — Operations Queue
-            </h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              PF/ESI opt-outs · Manual TDS · Cheque validation · Bank changes ·
-              Salary history · Window status
-            </p>
-          </div>
+      <div className="flex items-center gap-4">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#e8f2fc]">
+          <Building2 className="size-5 text-[#073f78]" />
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-slate-900">
+            Payroll HO — Operations Queue
+          </h1>
+          <p className="mt-0.5 text-xs text-slate-500">
+            PF/ESI opt-outs · Manual TDS · Cheque validation · Bank changes ·
+            Salary history · Window status · Custom deductions · Advances
+          </p>
         </div>
       </div>
 
-      <div className="p-6">
-        <Tabs defaultValue="optout">
-          {/* Tab bar */}
-          <TabsList className="mb-6 flex h-auto w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
-            {TABS.map(({ value, label, icon: Icon }) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                className="flex flex-1 min-w-[110px] items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-600 transition-colors data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm"
-              >
-                <Icon className="size-3.5 shrink-0" />
-                <span className="truncate">{label}</span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
+      <Tabs defaultValue="optout">
+        {/* Tab bar */}
+        <TabsList className="mb-6 flex h-auto w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
+          {TABS.map(({ value, label, icon: Icon }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="flex flex-1 min-w-[110px] items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-medium text-slate-600 transition-colors data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm"
+            >
+              <Icon className="size-3.5 shrink-0" />
+              <span className="truncate">{label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-          {/* Tab content panels */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <TabsContent value="optout" className="mt-0">
-              <OptOutQueue />
-            </TabsContent>
-            <TabsContent value="tds" className="mt-0">
-              <ManualTDSTab />
-            </TabsContent>
-            <TabsContent value="cheque" className="mt-0">
-              <ChequeValidationTab />
-            </TabsContent>
-            <TabsContent value="bankchg" className="mt-0">
-              <BankChangeTab />
-            </TabsContent>
-            <TabsContent value="salhistory" className="mt-0">
-              <SalaryHistoryTab />
-            </TabsContent>
-            <TabsContent value="window" className="mt-0">
-              <RunWindowTab />
-            </TabsContent>
-            <TabsContent value="deductions" className="mt-0">
-              <CustomDeductionsTab />
-            </TabsContent>
-            <TabsContent value="advances" className="mt-0">
-              <AdvanceRequestsTab />
-            </TabsContent>
-          </div>
-        </Tabs>
-      </div>
+        {/* Tab content panels */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <TabsContent value="optout" className="mt-0">
+            <OptOutQueue />
+          </TabsContent>
+          <TabsContent value="tds" className="mt-0">
+            <ManualTDSTab />
+          </TabsContent>
+          <TabsContent value="cheque" className="mt-0">
+            <ChequeValidationTab />
+          </TabsContent>
+          <TabsContent value="bankchg" className="mt-0">
+            <BankChangeTab />
+          </TabsContent>
+          <TabsContent value="salhistory" className="mt-0">
+            <SalaryHistoryTab />
+          </TabsContent>
+          <TabsContent value="window" className="mt-0">
+            <RunWindowTab />
+          </TabsContent>
+          <TabsContent value="deductions" className="mt-0">
+            <CustomDeductionsTab />
+          </TabsContent>
+          <TabsContent value="advances" className="mt-0">
+            <AdvanceRequestsTab />
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
