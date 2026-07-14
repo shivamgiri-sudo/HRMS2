@@ -173,15 +173,19 @@ async function resolveShiftDateSmart(employeeId: string, explicitDate?: string |
   if (shiftLookupCache.has(employeeId)) {
     shift = shiftLookupCache.get(employeeId)!;
   } else {
-    const [rows] = await db.execute(
-      `SELECT s.start_time, s.end_time, s.duration_minutes
-       FROM employee_shifts es
-       JOIN shifts s ON s.id = es.shift_id
-       WHERE es.employee_id = ? AND es.is_current = 1
-       LIMIT 1`,
-      [employeeId],
-    );
-    shift = (rows as any[])[0] ?? null;
+    try {
+      const [rows] = await db.execute(
+        `SELECT s.start_time, s.end_time, s.duration_minutes
+         FROM employee_shifts es
+         JOIN shifts s ON s.id = es.shift_id
+         WHERE es.employee_id = ? AND es.is_current = 1
+         LIMIT 1`,
+        [employeeId],
+      );
+      shift = (rows as any[])[0] ?? null;
+    } catch {
+      shift = null;
+    }
     shiftLookupCache.set(employeeId, shift);
   }
 
@@ -594,6 +598,14 @@ function resolveShiftWorkedMinutes(row: {
   biometric_punch_in_time?: unknown;
   biometric_punch_out_time?: unknown;
 }) {
+  if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
+    const punchIn = new Date(String(row.biometric_punch_in_time).replace(" ", "T") + (String(row.biometric_punch_in_time).includes("+") ? "" : "+05:30"));
+    const punchOut = new Date(String(row.biometric_punch_out_time).replace(" ", "T") + (String(row.biometric_punch_out_time).includes("+") ? "" : "+05:30"));
+    if (!Number.isNaN(punchIn.getTime()) && !Number.isNaN(punchOut.getTime())) {
+      const diff = Math.floor((punchOut.getTime() - punchIn.getTime()) / 60000);
+      if (diff > 0) return diff;
+    }
+  }
   const biometricMinutes = Number(row.biometric_minutes ?? 0);
   if (Number.isFinite(biometricMinutes) && biometricMinutes > 0) {
     return biometricMinutes;
@@ -2739,10 +2751,12 @@ export const breakManagementService = {
         br.branch_name,
         d.department_name,
         bds.shift_date,
-        s.shift_name,
-        s.start_time AS shift_start_time,
-        s.end_time AS shift_end_time,
-        CASE WHEN s.start_time IS NOT NULL AND s.start_time >= '18:00:00' THEN 'Night' ELSE 'Day' END AS shift_type,
+        e.shift_name AS shift_name,
+        CASE
+          WHEN bds.biometric_punch_in_time IS NOT NULL AND HOUR(bds.biometric_punch_in_time) >= 18 THEN 'Night'
+          WHEN bds.biometric_punch_in_time IS NOT NULL AND HOUR(bds.biometric_punch_in_time) < 6 THEN 'Night'
+          ELSE 'Day'
+        END AS shift_type,
         bds.biometric_punch_in_time AS punch_in,
         bds.biometric_punch_out_time AS punch_out,
         CASE
@@ -2774,8 +2788,6 @@ export const breakManagementService = {
       LEFT JOIN processes p ON p.id = bds.process_id
       LEFT JOIN branches br ON br.id = bds.branch_id
       LEFT JOIN departments d ON d.id = e.department_id
-      LEFT JOIN employee_shifts es ON es.employee_id = e.id AND es.is_current = 1
-      LEFT JOIN shifts s ON s.id = es.shift_id
       ${where}
       ORDER BY bds.shift_date DESC, e.employee_code ASC
       LIMIT ?`,
