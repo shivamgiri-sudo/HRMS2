@@ -49,6 +49,7 @@ type DeskFilters = {
   branch_id?: string;
   process_id?: string;
   department_id?: string;
+  designation_id?: string;
   manager_id?: string;
   shift?: string;
   status?: string;
@@ -1020,6 +1021,10 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
     where.push("e.department_id = ?");
     params.push(filters.department_id);
   }
+  if (filters.designation_id) {
+    where.push("e.designation_id = ?");
+    params.push(filters.designation_id);
+  }
   if (filters.manager_id) {
     where.push("e.reporting_manager_id = ?");
     params.push(filters.manager_id);
@@ -1268,6 +1273,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       branch_id: row.branch_id ?? null,
       process_id: row.process_id ?? null,
       department_id: row.department_id ?? null,
+      designation_id: row.designation_id ?? null,
       manager_id: row.reporting_manager_id ?? null,
       branch_name: row.branch_name,
       process_name: row.process_name,
@@ -1358,7 +1364,7 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
   const processWhere = allowedProcesses.length > 0 ? `AND e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})` : "";
   const scopeParams = [kiosk.branch_id, ...allowedProcesses].filter(Boolean);
 
-  const [branchRows, processRows, departmentRows, managerRows, shiftRows] = await Promise.all([
+  const [branchRows, processRows, departmentRows, designationRows, managerRows, shiftRows] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT DISTINCT e.branch_id AS value, bm.branch_name AS label
          FROM employees e
@@ -1397,6 +1403,18 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
       scopeParams,
     ),
     db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.designation_id AS value, des.designation_name AS label
+         FROM employees e
+         LEFT JOIN designation_master des ON des.id = e.designation_id
+        WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+          ${branchWhere}
+          ${processWhere}
+          AND e.designation_id IS NOT NULL
+        ORDER BY des.designation_name ASC`,
+      scopeParams,
+    ),
+    db.execute<RowDataPacket[]>(
       `SELECT DISTINCT e.reporting_manager_id AS value,
               COALESCE(NULLIF(TRIM(mgr.full_name), ''), TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')))) AS label
          FROM employees e
@@ -1432,6 +1450,7 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
     branches: mapRows(branchRows),
     processes: mapRows(processRows),
     departments: mapRows(departmentRows),
+    designations: mapRows(designationRows),
     managers: mapRows(managerRows),
     shifts: mapRows(shiftRows),
     statuses: STATUS_OPTIONS.map((status) => ({ value: status, label: status })),

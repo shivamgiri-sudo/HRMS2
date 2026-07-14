@@ -13,6 +13,7 @@ type FiltersState = {
   branch_id: string;
   process_id: string;
   department_id: string;
+  designation_id: string;
   manager_id: string;
   shift: string;
   status: string;
@@ -37,6 +38,7 @@ type DeskEmployee = {
   branch_id?: string | null;
   process_id?: string | null;
   department_id?: string | null;
+  designation_id?: string | null;
   manager_id?: string | null;
   branch_name: string | null;
   process_name: string | null;
@@ -103,6 +105,7 @@ type BreakDeskBootstrap = {
     branches: Option[];
     processes: Option[];
     departments: Option[];
+    designations: Option[];
     managers: Option[];
     shifts: Option[];
     statuses: Option[];
@@ -127,6 +130,7 @@ const DEFAULT_FILTERS: FiltersState = {
   branch_id: "",
   process_id: "",
   department_id: "",
+  designation_id: "",
   manager_id: "",
   shift: "",
   status: "",
@@ -226,6 +230,9 @@ function filterDeskEmployees(employees: DeskEmployee[], filters: FiltersState, s
       return false;
     }
     if (filters.department_id && employee.department_id !== filters.department_id) {
+      return false;
+    }
+    if (filters.designation_id && employee.designation_id !== filters.designation_id) {
       return false;
     }
     if (filters.manager_id && employee.manager_id !== filters.manager_id) {
@@ -433,7 +440,7 @@ export default function BreakDesk() {
     [allEmployees, deferredSearch, filters],
   );
   const counters = useMemo(
-    () => (employees.length > 0 || filters.status || deferredSearch.trim() || filters.branch_id || filters.process_id || filters.department_id || filters.manager_id || filters.shift
+    () => (employees.length > 0 || filters.status || deferredSearch.trim() || filters.branch_id || filters.process_id || filters.department_id || filters.designation_id || filters.manager_id || filters.shift
       ? buildCounters(employees)
       : (deskData?.counters ?? bootstrap?.counters ?? {})),
     [bootstrap?.counters, deferredSearch, deskData?.counters, employees, filters],
@@ -520,6 +527,10 @@ export default function BreakDesk() {
   const departmentOptions = useMemo(
     () => bootstrap?.filters.departments.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
     [bootstrap?.filters.departments],
+  );
+  const designationOptions = useMemo(
+    () => bootstrap?.filters.designations.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
+    [bootstrap?.filters.designations],
   );
   const managerOptions = useMemo(
     () => bootstrap?.filters.managers.map((option) => ({ ...option, value: option.value, label: option.label })) ?? [],
@@ -640,7 +651,7 @@ export default function BreakDesk() {
                 </div>
 
                 <div className="rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-                  <div className="grid gap-2 xl:grid-cols-[1.35fr_repeat(5,minmax(0,1fr))]">
+                  <div className="grid gap-2 xl:grid-cols-[1.35fr_repeat(6,minmax(0,1fr))]">
                     <label className="flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
                       <Search className="h-4 w-4 text-slate-400" />
                       <input ref={searchInputRef} value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search name, code, biometric ID" className="h-full w-full bg-transparent text-sm outline-none placeholder:text-slate-400" />
@@ -648,6 +659,7 @@ export default function BreakDesk() {
                     <SelectBox label="Branch" value={filters.branch_id} options={branchOptions} onChange={(value) => setFilters((current) => ({ ...current, branch_id: value }))} disabled={kioskBranchLocked} />
                     <SelectBox label="Process" value={filters.process_id} options={processOptions} onChange={(value) => setFilters((current) => ({ ...current, process_id: value }))} disabled={kioskProcessLocked} />
                     <SelectBox label="Department" value={filters.department_id} options={departmentOptions} onChange={(value) => setFilters((current) => ({ ...current, department_id: value }))} />
+                    <SelectBox label="Designation" value={filters.designation_id} options={designationOptions} onChange={(value) => setFilters((current) => ({ ...current, designation_id: value }))} />
                     <SelectBox label="Manager" value={filters.manager_id} options={managerOptions} onChange={(value) => setFilters((current) => ({ ...current, manager_id: value }))} />
                     <SelectBox label="Shift" value={filters.shift} options={shiftOptions} onChange={(value) => setFilters((current) => ({ ...current, shift: value }))} />
                   </div>
