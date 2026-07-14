@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AlertCircle,
@@ -381,6 +382,7 @@ export default function EmployeeSelfDashboard() {
   const loading = roleLoading;
 
   return (
+    <DashboardLayout>
     <RoleDashboardShell
       title={`Welcome, ${employeeName}`}
       subtitle="Your personal dashboard"
@@ -507,5 +509,6 @@ export default function EmployeeSelfDashboard() {
         <QuickLinks />
       </div>
     </RoleDashboardShell>
+    </DashboardLayout>
   );
 }

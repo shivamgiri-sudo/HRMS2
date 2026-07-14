@@ -20,6 +20,7 @@ import { useOrgKpiSummary } from "../../hooks/useOrgKpiSummary";
 import { AIInsightPanel } from "@/components/ai";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { normalizeDashboardSummary } from "@/lib/dashboardCompat";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 const DASHBOARD_CODE = "CEO_DASHBOARD";
 
@@ -189,6 +190,7 @@ export default function CeoDashboard() {
   const loading = summaryLoading || roleLoading;
 
   return (
+    <DashboardLayout>
     <RoleDashboardShell
       title="CEO Dashboard"
       subtitle="Organisation-wide summary"
@@ -534,5 +536,6 @@ export default function CeoDashboard() {
         dashboardCode={DASHBOARD_CODE}
       />
     </RoleDashboardShell>
+    </DashboardLayout>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { AlertCircle, ShieldX } from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Link } from "react-router-dom";
 import {
   DashboardDrilldownDrawer,
@@ -266,6 +267,7 @@ export default function ManagerDashboard() {
   const loading = summaryLoading || roleLoading;
 
   return (
+    <DashboardLayout>
     <RoleDashboardShell
       title="Manager Dashboard"
       subtitle="Read-only team operations and approval overview"
@@ -347,5 +349,6 @@ export default function ManagerDashboard() {
         dashboardCode={DASHBOARD_CODE}
       />
     </RoleDashboardShell>
+    </DashboardLayout>
   );
 }

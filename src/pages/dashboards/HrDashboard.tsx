@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { AlertCircle, ShieldX } from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Link } from "react-router-dom";
 import {
   RoleDashboardShell,
@@ -217,6 +218,7 @@ export default function HrDashboard() {
   const loading = summaryLoading || roleLoading;
 
   return (
+    <DashboardLayout>
     <RoleDashboardShell
       title="HR Dashboard"
       subtitle="Recruitment, onboarding, BGV and exit management"
@@ -318,5 +320,6 @@ export default function HrDashboard() {
         dashboardCode={DASHBOARD_CODE}
       />
     </RoleDashboardShell>
+    </DashboardLayout>
   );
 }

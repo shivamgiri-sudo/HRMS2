@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { AlertCircle, ShieldCheck, AlertTriangle, TrendingUp, Clock, ShieldX } from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Link } from "react-router-dom";
 import {
   DashboardDrilldownDrawer,
@@ -219,6 +220,7 @@ export default function WfmDashboard() {
   const loading = summaryLoading || roleLoading;
 
   return (
+    <DashboardLayout>
     <RoleDashboardShell
       title="WFM / Attendance Dashboard"
       subtitle="Read-only workforce attendance summary"
@@ -349,5 +351,6 @@ export default function WfmDashboard() {
         dashboardCode={DASHBOARD_CODE}
       />
     </RoleDashboardShell>
+    </DashboardLayout>
   );
 }

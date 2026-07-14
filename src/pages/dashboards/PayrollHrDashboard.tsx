@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AlertCircle, ShieldX, TrendingDown, Banknote, Users, Clock, FileCheck, AlertTriangle, CheckCircle2, Building2, DollarSign } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -498,6 +499,7 @@ export default function PayrollHrDashboard() {
     : null;
 
   return (
+    <DashboardLayout>
     <RoleDashboardShell
       title="Payroll Command Centre"
       subtitle="Live payroll operations, disbursement, compliance and readiness"
@@ -706,5 +708,6 @@ export default function PayrollHrDashboard() {
         dashboardCode={DASHBOARD_CODE}
       />
     </RoleDashboardShell>
+    </DashboardLayout>
   );
 }
