@@ -347,6 +347,16 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
     [targetId],
   );
 
+  // Documents — combine joining-document checklist + general employee_documents
+  const [[clDocRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
+       SUM(CASE WHEN status IN ('uploaded','submitted','pending_verification','signed') THEN 1 ELSE 0 END) AS checklist_awaiting,
+       SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS checklist_verified
+       FROM employee_joining_document_checklist WHERE employee_id = ?`,
+    [targetId],
+  ).catch(() => [[{ checklist_missing: null, checklist_awaiting: null, checklist_verified: null }]] as any) as any;
+
   const [[docRow]] = await db.execute<RowDataPacket[]>(
     `SELECT
        SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
@@ -355,7 +365,12 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
        FROM employee_documents
       WHERE employee_id = ?`,
     [targetId],
-  );
+  ).catch(() => [[{ missing_docs: 0, awaiting_verification: 0, verified_docs: 0 }]] as any) as any;
+
+  const clTotal = Number(clDocRow?.checklist_missing ?? 0) + Number(clDocRow?.checklist_awaiting ?? 0) + Number(clDocRow?.checklist_verified ?? 0);
+  const resolvedMissingDocs    = clTotal > 0 ? Number(clDocRow?.checklist_missing ?? 0)  : Number(docRow?.missing_docs ?? 0);
+  const resolvedAwaitingVerify = clTotal > 0 ? Number(clDocRow?.checklist_awaiting ?? 0) : Number(docRow?.awaiting_verification ?? 0);
+  const resolvedVerifiedDocs   = clTotal > 0 ? Number(clDocRow?.checklist_verified ?? 0) : Number(docRow?.verified_docs ?? 0);
 
   const [tierRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(gtm.tier_name, gt.tier_name, 'Unassigned') AS tier_name,
@@ -391,10 +406,10 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
       attendance: attendanceData,
       performance: performanceRows[0] ?? null,
       active_assets: Number(assetRow?.active_assets ?? 0),
-      missing_docs: Number(docRow?.missing_docs ?? 0),
-      awaiting_verification: Number(docRow?.awaiting_verification ?? 0),
-      verified_docs: Number(docRow?.verified_docs ?? 0),
-      pending_docs: Number(docRow?.missing_docs ?? 0),
+      missing_docs: resolvedMissingDocs,
+      awaiting_verification: resolvedAwaitingVerify,
+      verified_docs: resolvedVerifiedDocs,
+      pending_docs: resolvedMissingDocs,
       gamification_tier: tierRows[0] ?? null,
       journey,
       salary,

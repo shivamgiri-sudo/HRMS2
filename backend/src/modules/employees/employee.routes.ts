@@ -675,9 +675,21 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
     activeAssets = Number(assetRows[0]?.active_assets ?? 0);
   } catch (_e) { /* table may not exist yet */ }
 
-  // Documents — 3-way split: missing / awaiting verification / verified
+  // Documents — combine joining-document checklist + general employee_documents
+  // Checklist is the primary source for onboarded employees; employee_documents is secondary
   let missingDocs = 0, awaitingVerification = 0, verifiedDocs = 0;
   try {
+    // Checklist counts (employee_joining_document_checklist)
+    const [clRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
+         SUM(CASE WHEN status IN ('uploaded','submitted','pending_verification','signed') THEN 1 ELSE 0 END) AS checklist_awaiting,
+         SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS checklist_verified
+         FROM employee_joining_document_checklist WHERE employee_id = ?`,
+      [targetId]
+    ).catch(() => [[{ checklist_missing: null, checklist_awaiting: null, checklist_verified: null }]] as any);
+
+    // General employee_documents counts
     const [docRows] = await db.execute<RowDataPacket[]>(
       `SELECT
          SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
@@ -685,10 +697,24 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
          SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_docs
          FROM employee_documents WHERE employee_id = ?`,
       [targetId]
-    );
-    missingDocs = Number(docRows[0]?.missing_docs ?? 0);
-    awaitingVerification = Number(docRows[0]?.awaiting_verification ?? 0);
-    verifiedDocs = Number(docRows[0]?.verified_docs ?? 0);
+    ).catch(() => [[{ missing_docs: 0, awaiting_verification: 0, verified_docs: 0 }]] as any);
+
+    const clMissing = Number(clRows[0]?.checklist_missing ?? 0);
+    const clAwaiting = Number(clRows[0]?.checklist_awaiting ?? 0);
+    const clVerified = Number(clRows[0]?.checklist_verified ?? 0);
+    const clTotal = clMissing + clAwaiting + clVerified;
+
+    if (clTotal > 0) {
+      // Employee has a checklist — use it as the authoritative source
+      missingDocs = clMissing;
+      awaitingVerification = clAwaiting;
+      verifiedDocs = clVerified;
+    } else {
+      // No checklist rows — fall back to general employee_documents
+      missingDocs = Number(docRows[0]?.missing_docs ?? 0);
+      awaitingVerification = Number(docRows[0]?.awaiting_verification ?? 0);
+      verifiedDocs = Number(docRows[0]?.verified_docs ?? 0);
+    }
   } catch (_e) { /* table may not exist yet */ }
 
   // Gamification tier

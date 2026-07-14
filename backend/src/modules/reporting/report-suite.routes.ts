@@ -1502,18 +1502,41 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "employee-document-compliance":
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+      // Use checklist counts when available (employees onboarded via ATS),
+      // fall back to employee_documents for legacy/direct uploads.
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name, d.dept_name AS department_name,
-                    COUNT(ed.id) AS total_docs,
-                    SUM(CASE WHEN ed.file_url IS NOT NULL AND ed.file_url != '' AND ed.file_url NOT LIKE 'legacy://%' THEN 1 ELSE 0 END) AS uploaded_docs,
-                    SUM(CASE WHEN ed.verified = 1 THEN 1 ELSE 0 END) AS verified_docs,
-                    SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url = '' THEN 1 ELSE 0 END) AS missing_docs
+                    -- Checklist counts (primary for ATS-onboarded employees)
+                    COALESCE(cl_agg.total_cl, 0)    AS checklist_total,
+                    COALESCE(cl_agg.verified_cl, 0) AS checklist_verified,
+                    COALESCE(cl_agg.missing_cl, 0)  AS checklist_missing,
+                    -- General employee_documents counts (fallback)
+                    COUNT(ed.id)                                                                                         AS ed_total,
+                    SUM(CASE WHEN ed.verified = 1 THEN 1 ELSE 0 END)                                                   AS ed_verified,
+                    SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url = '' THEN 1 ELSE 0 END)                           AS ed_missing,
+                    -- Resolved counts: prefer checklist when it has rows
+                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.total_cl,0)    ELSE COUNT(ed.id) END AS total_docs,
+                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.verified_cl,0) ELSE SUM(CASE WHEN ed.verified=1 THEN 1 ELSE 0 END) END AS verified_docs,
+                    CASE WHEN COALESCE(cl_agg.total_cl,0) > 0 THEN COALESCE(cl_agg.missing_cl,0)  ELSE SUM(CASE WHEN ed.file_url IS NULL OR ed.file_url='' THEN 1 ELSE 0 END) END AS missing_docs,
+                    COALESCE(e.joining_document_completion_pct, 0) AS completion_pct,
+                    e.joining_document_status
                FROM employees e
                LEFT JOIN employee_documents ed ON ed.employee_id = e.id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN (
+                 SELECT employee_id,
+                        COUNT(*) AS total_cl,
+                        SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS verified_cl,
+                        SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory=1 THEN 1 ELSE 0 END) AS missing_cl
+                   FROM employee_joining_document_checklist
+                  GROUP BY employee_id
+               ) cl_agg ON cl_agg.employee_id = e.id
               WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, d.dept_name
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, d.dept_name,
+                       cl_agg.total_cl, cl_agg.verified_cl, cl_agg.missing_cl,
+                       e.joining_document_completion_pct, e.joining_document_status
               ORDER BY missing_docs DESC, employee_name`;
       break;
 
