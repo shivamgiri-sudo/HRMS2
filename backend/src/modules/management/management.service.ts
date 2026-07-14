@@ -771,6 +771,7 @@ export const managementService = {
       ffLiabilityResult,
     ] = await Promise.all([
       // 1. Payroll liability — current month run (matches Payroll page total)
+      // Fixed: select only the LATEST run for the current month to avoid summing across multiple runs
       db.execute<RowDataPacket[]>(
         `SELECT
            COALESCE(SUM(spl.gross_salary), 0)  AS total_gross,
@@ -779,12 +780,25 @@ export const managementService = {
            COALESCE(SUM(spl.esic_employer), 0) AS total_esic_employer,
            COUNT(DISTINCT spl.employee_id)     AS employee_count,
            spr.run_month
-         FROM salary_prep_run spr
-         JOIN salary_prep_line spl ON spl.run_id = spr.id
-         WHERE spr.run_month = DATE_FORMAT(CURDATE(), '%Y-%m')
-           AND spr.status IN ('draft','processing','completed')
-         GROUP BY spr.run_month
-         LIMIT 1`
+         FROM salary_prep_line spl
+         JOIN (
+           SELECT id, run_month
+           FROM salary_prep_run
+           WHERE run_month = DATE_FORMAT(CURDATE(), '%Y-%m')
+             AND status IN ('draft','processing','completed','locked','disbursed')
+           ORDER BY
+             CASE status
+               WHEN 'disbursed' THEN 1
+               WHEN 'locked' THEN 2
+               WHEN 'completed' THEN 3
+               WHEN 'processing' THEN 4
+               WHEN 'draft' THEN 5
+               ELSE 6
+             END,
+             created_at DESC
+           LIMIT 1
+         ) spr ON spr.id = spl.run_id
+         GROUP BY spr.run_month`
       ),
       // 2. HC gap by process: mandated vs active
       db.execute<RowDataPacket[]>(

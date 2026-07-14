@@ -1123,6 +1123,28 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
   const dimension = (req.query.dimension as string) || "department";
   let runMonth = req.query.runMonth as string | undefined;
 
+  // Resolve the canonical single run for the month (most-progressed status, newest on tie)
+  const pickRunId = async (month: string): Promise<string | null> => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM salary_prep_run
+        WHERE run_month = ? AND status NOT IN ('cancelled')
+        ORDER BY
+          CASE status
+            WHEN 'disbursed'  THEN 1
+            WHEN 'locked'     THEN 2
+            WHEN 'approved'   THEN 3
+            WHEN 'completed'  THEN 4
+            WHEN 'processing' THEN 5
+            WHEN 'draft'      THEN 6
+            ELSE 7
+          END,
+          created_at DESC
+        LIMIT 1`,
+      [month]
+    );
+    return (rows as any[])[0]?.id ?? null;
+  };
+
   if (!runMonth) {
     const [latest] = await db.execute<RowDataPacket[]>(
       `SELECT run_month FROM salary_prep_run WHERE status NOT IN ('draft','cancelled')
@@ -1132,6 +1154,9 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
     if (!runMonth) return res.json({ success: true, runMonth: null, kpi: {}, data: [] });
   }
 
+  const runId = await pickRunId(runMonth);
+  if (!runId) return res.json({ success: true, runMonth, kpi: {}, data: [] });
+
   const [kpiRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT spl.employee_id)             AS headcount,
             ROUND(SUM(spl.net_salary),2)                AS total_net,
@@ -1140,9 +1165,8 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
             ROUND(SUM(COALESCE(spl.pf_employer,0)),2)   AS total_pf_employer,
             ROUND(SUM(COALESCE(spl.esic_employer,0)),2) AS total_esic_employer
      FROM salary_prep_line spl
-     JOIN salary_prep_run spr ON spr.id = spl.run_id AND spr.run_month = ?
-     WHERE spl.status != 'cancelled'`,
-    [runMonth]
+     WHERE spl.run_id = ? AND spl.status != 'cancelled'`,
+    [runId]
   );
 
   const DIM: Record<string, { sel: string; join: string; grp: string }> = {
@@ -1175,13 +1199,12 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
             ROUND(SUM(COALESCE(spl.pf_employer,0)),2)                                                 AS total_pf_employer,
             ROUND(SUM(COALESCE(spl.esic_employer,0)),2)                                               AS total_esic_employer
      FROM salary_prep_line spl
-     JOIN salary_prep_run spr ON spr.id = spl.run_id AND spr.run_month = ?
      LEFT JOIN employees e ON e.id = spl.employee_id
      ${d.join}
-     WHERE spl.status != 'cancelled'
+     WHERE spl.run_id = ? AND spl.status != 'cancelled'
      GROUP BY ${d.grp}
      ORDER BY total_net DESC`,
-    [runMonth]
+    [runId]
   );
 
   return res.json({ success: true, runMonth, kpi: (kpiRows as any[])[0] ?? {}, data: dimRows });
