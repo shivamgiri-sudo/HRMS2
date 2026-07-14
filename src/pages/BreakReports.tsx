@@ -84,7 +84,7 @@ export default function BreakReports() {
       if (processId) params.set("process_id", processId);
       if (employeeId) params.set("employee_id", employeeId);
 
-      const token = localStorage.getItem("auth_token") || "";
+      const token = localStorage.getItem("hrms_access_token") || "";
       const res = await fetch(apiUrl(`/api/break-management/reports/daily-summary?${params.toString()}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
