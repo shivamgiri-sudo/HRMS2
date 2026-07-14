@@ -37,6 +37,12 @@ export interface PayrollRecord {
   department?: string;
   branch?: string;
   process?: string;
+  // Attendance breakdown (from salary_prep_line)
+  workingDays?: number;
+  presentDays?: number;
+  leaveDays?: number;
+  lwpDays?: number;
+  absentDays?: number;
 }
 
 const MONTH_NAMES = [
@@ -89,6 +95,11 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     department:  row.dept_name ?? row.department_name ?? row.department ?? undefined,
     branch:      row.branch_name ?? undefined,
     process:     row.process_name ?? undefined,
+    workingDays: row.working_days !== undefined ? Number(row.working_days) : undefined,
+    presentDays: row.present_days !== undefined ? Number(row.present_days) : undefined,
+    leaveDays:   row.leave_days   !== undefined ? Number(row.leave_days)   : undefined,
+    lwpDays:     row.lwp_days     !== undefined ? Number(row.lwp_days)     : undefined,
+    absentDays:  row.absent_days  !== undefined ? Number(row.absent_days)  : undefined,
   };
 };
 
@@ -122,6 +133,7 @@ export function usePayrollRecords(filters: PayrollRecordFilters = {}) {
     queryKey: ["payroll-records", filters],
     queryFn: () => fetchPayrollRecordPage(filters),
     placeholderData: (prev) => prev,
+    staleTime: 0, // Always consider data stale to ensure search updates immediately
   });
 }
 
@@ -599,6 +611,33 @@ export function usePayrollEmployeeSearch(query: string) {
     },
     enabled: query.trim().length >= 2,
     staleTime: 60_000,
+  });
+}
+
+export interface PayrollLineAttendance {
+  total_days: number;
+  present_days: number;
+  absent_days: number;
+  week_off_days: number;
+  holiday_days: number;
+  half_days: number;
+  approved_leave_days: number;
+  lwp_days: number;
+  working_days: number;
+}
+
+export function usePayrollLineAttendance(lineId: string | null | undefined, open: boolean) {
+  return useQuery<PayrollLineAttendance | null>({
+    queryKey: ["payroll-line-attendance", lineId],
+    queryFn: async () => {
+      if (!lineId) return null;
+      const res = await hrmsApi.get<{ success: boolean; data: PayrollLineAttendance }>(
+        `/api/payroll/lines/${lineId}/attendance`
+      );
+      return res.data ?? null;
+    },
+    enabled: !!lineId && open,
+    staleTime: 5 * 60_000,
   });
 }
 

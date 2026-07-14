@@ -163,6 +163,43 @@ router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "pay
   return c.listPayrollRecords(req, res);
 }));
 router.get("/overview", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getPayrollOverview));
+
+// ─── Attendance summary for a specific payroll line (used in payslip dialog) ──
+router.get("/lines/:lineId/attendance", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
+  const { lineId } = req.params;
+  // Resolve employee_id + run_month from the line
+  const [lineRows] = await db.execute<RowDataPacket[]>(
+    `SELECT spl.employee_id, spr.run_month
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+      WHERE spl.id = ? LIMIT 1`,
+    [lineId]
+  );
+  const line = (lineRows as any[])[0];
+  if (!line) return res.status(404).json({ success: false, message: "Line not found" });
+
+  const [yr, mo] = String(line.run_month).split("-");
+  const monthStart = `${yr}-${mo}-01`;
+  const monthEnd   = new Date(Number(yr), Number(mo), 0).toISOString().slice(0, 10); // last day of month
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*)                                                                         AS total_days,
+       COUNT(CASE WHEN attendance_status IN ('present','late')         THEN 1 END)      AS present_days,
+       COUNT(CASE WHEN attendance_status = 'absent'                    THEN 1 END)      AS absent_days,
+       COUNT(CASE WHEN attendance_status = 'week_off'                  THEN 1 END)      AS week_off_days,
+       COUNT(CASE WHEN attendance_status = 'holiday'                   THEN 1 END)      AS holiday_days,
+       COUNT(CASE WHEN attendance_status = 'half_day'                  THEN 1 END)      AS half_days,
+       COUNT(CASE WHEN attendance_status = 'leave_approved'            THEN 1 END)      AS approved_leave_days,
+       COALESCE(SUM(lwp_value), 0)                                                      AS lwp_days,
+       COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END)      AS working_days
+     FROM attendance_daily_record
+    WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
+    [line.employee_id, monthStart, monthEnd]
+  );
+  const summary = (rows as any[])[0] ?? {};
+  return res.json({ success: true, data: summary });
+}));
 router.post("/runs",
   requireRole("admin", "super_admin", "finance", "payroll"),
   requireScopedRole(["finance", "payroll"], async (req) => ({

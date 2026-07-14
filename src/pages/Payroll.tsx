@@ -155,8 +155,8 @@ const Payroll = () => {
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth() + 1;
   const currentYear = currentDate.getFullYear();
-  const debouncedSearchQuery = useDebounce(searchQuery.trim(), 250);
-  const debouncedHistorySearchQuery = useDebounce(historySearchQuery.trim(), 250);
+  const debouncedSearchQuery = useDebounce(searchQuery.trim(), 300);
+  const debouncedHistorySearchQuery = useDebounce(historySearchQuery.trim(), 300);
 
   const currentMonthFilters = useMemo(() => ({
     month: monthFilter === "current" ? currentMonth : undefined,
@@ -178,17 +178,23 @@ const Payroll = () => {
   const { data: runSummaries = [], isLoading: isLoadingHistory } = usePayrollRunSummaries();
 
   // History records: fetch with selected year/month filters (paginated to avoid full table scan)
-  const historyFilters = useMemo(() => ({
-    month: historyMonth !== "all" ? parseInt(historyMonth) : undefined,
-    year:  historyYear  !== "all" ? parseInt(historyYear)  : undefined,
-    status: historyStatus !== "all" ? historyStatus : undefined,
-    search: debouncedHistorySearchQuery || undefined,
-    branchId:     historyBranchId  !== "all" ? historyBranchId  : undefined,
-    departmentId: historyDeptId    !== "all" ? historyDeptId    : undefined,
-    processId:    historyProcessId !== "all" ? historyProcessId : undefined,
-    page: historyPage,
-    limit: historyPageSize,
-  }), [historyMonth, historyYear, historyStatus, debouncedHistorySearchQuery, historyBranchId, historyDeptId, historyProcessId, historyPage, historyPageSize]);
+  // When both month and year are "all", don't set them at all to fetch all historical records
+  const historyFilters = useMemo(() => {
+    const hasMonthFilter = historyMonth !== "all";
+    const hasYearFilter = historyYear !== "all";
+
+    return {
+      month: hasMonthFilter ? parseInt(historyMonth) : undefined,
+      year:  hasYearFilter ? parseInt(historyYear)  : undefined,
+      status: historyStatus !== "all" ? historyStatus : undefined,
+      search: debouncedHistorySearchQuery || undefined,
+      branchId:     historyBranchId  !== "all" ? historyBranchId  : undefined,
+      departmentId: historyDeptId    !== "all" ? historyDeptId    : undefined,
+      processId:    historyProcessId !== "all" ? historyProcessId : undefined,
+      page: historyPage,
+      limit: historyPageSize,
+    };
+  }, [historyMonth, historyYear, historyStatus, debouncedHistorySearchQuery, historyBranchId, historyDeptId, historyProcessId, historyPage, historyPageSize]);
   const { data: historyRecordsPage, isLoading: isLoadingHistoryRecords } = usePayrollRecords(historyFilters);
   const historyRecords = historyRecordsPage?.records ?? [];
   const historyTotalItems = historyRecordsPage?.total ?? 0;
@@ -945,10 +951,19 @@ const Payroll = () => {
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <Input
                       placeholder="Search by name, email or employee code..."
-                      className="h-10 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
+                      className="h-10 rounded-xl border-slate-200 bg-white pl-10 pr-9 text-sm shadow-sm"
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
                     />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                   <Select value={monthFilter} onValueChange={setMonthFilter}>
                     <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
@@ -1059,6 +1074,11 @@ const Payroll = () => {
                 />
               ) : (
                 <>
+                  {searchQuery.trim() && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">
+                      <span className="font-semibold">{currentTotalItems}</span> result{currentTotalItems !== 1 ? 's' : ''} found for "{searchQuery.trim()}"
+                    </div>
+                  )}
                   <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <PayrollTable
                       records={currentRecords}
@@ -1091,10 +1111,19 @@ const Payroll = () => {
                     <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <Input
                       placeholder="Search by name, email or employee code..."
-                      className="h-10 rounded-xl border-slate-200 bg-white pl-10 text-sm shadow-sm"
+                      className="h-10 rounded-xl border-slate-200 bg-white pl-10 pr-9 text-sm shadow-sm"
                       value={historySearchQuery}
                       onChange={(event) => setHistorySearchQuery(event.target.value)}
                     />
+                    {historySearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setHistorySearchQuery("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                   <Select value={historyMonth} onValueChange={setHistoryMonth}>
                     <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm">
@@ -1203,6 +1232,11 @@ const Payroll = () => {
                 />
               ) : (
                 <>
+                  {historySearchQuery.trim() && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">
+                      <span className="font-semibold">{historyTotalItems}</span> result{historyTotalItems !== 1 ? 's' : ''} found for "{historySearchQuery.trim()}"
+                    </div>
+                  )}
                   <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                     <PayrollTable
                       records={historyRecords}

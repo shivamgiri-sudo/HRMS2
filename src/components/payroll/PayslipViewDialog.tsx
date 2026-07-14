@@ -8,7 +8,20 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Minus, TrendingUp, TrendingDown, Minus as Flat } from "lucide-react";
+import {
+  Plus,
+  Minus,
+  TrendingUp,
+  TrendingDown,
+  Minus as Flat,
+  Calendar,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Umbrella,
+  AlertTriangle,
+  Sun,
+} from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -18,31 +31,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useEmployeeSalaryHistoryByCode } from "@/hooks/usePayroll";
-
-interface PayrollRecord {
-  id: string;
-  employeeId: string;
-  employeeCode: string;
-  employee: {
-    name: string;
-    email: string;
-    avatar?: string;
-  };
-  month: string;
-  monthNum: number;
-  year: number;
-  basic: number;
-  allowances: number;
-  deductions: number;
-  netSalary: number;
-  status: "paid" | "pending" | "processing";
-  paidAt?: string;
-  designation?: string;
-  department?: string;
-  branch?: string;
-  process?: string;
-}
+import {
+  useEmployeeSalaryHistoryByCode,
+  usePayrollLineAttendance,
+} from "@/hooks/usePayroll";
+import type { PayrollRecord } from "@/hooks/usePayroll";
 
 interface PayslipViewDialogProps {
   open: boolean;
@@ -74,6 +67,27 @@ const getStatusBadge = (status: string) => {
   }
 };
 
+// ── Attendance tile ──────────────────────────────────────────────────────────
+function AttTile({
+  label,
+  value,
+  icon,
+  color,
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  color: string;
+}) {
+  return (
+    <div className={`flex flex-col items-center justify-center gap-1 rounded-xl border p-3 text-center ${color}`}>
+      <div className="text-lg">{icon}</div>
+      <span className="text-xl font-black tabular-nums">{value}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wide leading-tight opacity-80">{label}</span>
+    </div>
+  );
+}
+
 export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDialogProps) {
   const { data: salaryStructure, isLoading } = useQuery({
     queryKey: ["salary-structure-view", record?.employeeId],
@@ -89,11 +103,17 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
     open ? record?.employeeCode : null
   );
 
+  // Detailed attendance from attendance_daily_record (includes week_off, holidays, half_days)
+  const { data: attDetail, isLoading: attLoading } = usePayrollLineAttendance(
+    record?.id,
+    open
+  );
+
   if (!record) return null;
 
   const getAllowanceBreakdown = () => {
     if (!salaryStructure) return [];
-    const items = [];
+    const items: { label: string; amount: number }[] = [];
     if (salaryStructure.hra) items.push({ label: "House Rent Allowance (HRA)", amount: Number(salaryStructure.hra) });
     if (salaryStructure.transport_allowance) items.push({ label: "Transport Allowance", amount: Number(salaryStructure.transport_allowance) });
     if (salaryStructure.medical_allowance) items.push({ label: "Medical Allowance", amount: Number(salaryStructure.medical_allowance) });
@@ -103,7 +123,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
   const getDeductionBreakdown = () => {
     if (!salaryStructure) return [];
-    const items = [];
+    const items: { label: string; amount: number }[] = [];
     if (salaryStructure.tax_deduction) items.push({ label: "Tax Deduction", amount: Number(salaryStructure.tax_deduction) });
     if (salaryStructure.other_deductions) items.push({ label: "Other Deductions", amount: Number(salaryStructure.other_deductions) });
     return items;
@@ -113,12 +133,23 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const deductionBreakdown = getDeductionBreakdown();
   const grossSalary = record.basic + record.allowances;
 
-  // MoM delta — compare this record's month against the previous one in history
+  // MoM delta
   const thisRunMonth = `${record.year}-${String(record.monthNum).padStart(2, "0")}`;
   const thisIdx = salaryHistory.findIndex((h) => h.runMonth === thisRunMonth);
   const prevPoint = thisIdx > 0 ? salaryHistory[thisIdx - 1] : null;
   const momDelta = prevPoint ? record.netSalary - prevPoint.netSalary : null;
   const momPct = prevPoint && prevPoint.netSalary > 0 ? (momDelta! / prevPoint.netSalary) * 100 : null;
+
+  // Attendance numbers — prefer live attDetail, fallback to record-level fields from salary_prep_line
+  const attPresent  = attDetail?.present_days  ?? record.presentDays  ?? 0;
+  const attLeave    = attDetail?.approved_leave_days ?? record.leaveDays ?? 0;
+  const attLwp      = attDetail ? Number(attDetail.lwp_days) : (record.lwpDays ?? 0);
+  const attAbsent   = attDetail?.absent_days   ?? record.absentDays  ?? 0;
+  const attWeekOff  = attDetail?.week_off_days ?? 0;
+  const attHoliday  = attDetail?.holiday_days  ?? 0;
+  const attHalfDay  = attDetail?.half_days     ?? 0;
+  const attWorking  = attDetail?.working_days  ?? record.workingDays ?? 0;
+  const hasAttData  = attWorking > 0 || attPresent > 0 || attDetail !== null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -128,7 +159,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Employee Details */}
+          {/* ── Employee Details ─────────────────────────────────────────── */}
           <div className="rounded-lg border bg-muted/30 p-4">
             <h3 className="font-semibold mb-3">Employee Details</h3>
             <div className="grid grid-cols-2 gap-3 text-sm">
@@ -178,6 +209,87 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
             </div>
           </div>
 
+          {/* ── Attendance Record ─────────────────────────────────────────── */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-slate-600" />
+              <span className="text-sm font-semibold text-slate-900">
+                Attendance — {record.month} {record.year}
+              </span>
+              {attWorking > 0 && (
+                <span className="ml-auto text-xs text-slate-500">{attWorking} working days</span>
+              )}
+            </div>
+
+            {attLoading ? (
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+              </div>
+            ) : !hasAttData ? (
+              <p className="text-sm text-slate-400 text-center py-4">
+                No attendance data found for this period.
+              </p>
+            ) : (
+              <>
+                {/* Main tiles */}
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                  <AttTile
+                    label="Present"
+                    value={attPresent}
+                    icon={<CheckCircle2 className="h-4 w-4" />}
+                    color="border-emerald-200 bg-emerald-50 text-emerald-700"
+                  />
+                  <AttTile
+                    label="Absent"
+                    value={attAbsent}
+                    icon={<XCircle className="h-4 w-4" />}
+                    color="border-red-200 bg-red-50 text-red-700"
+                  />
+                  <AttTile
+                    label="Week Off"
+                    value={attWeekOff}
+                    icon={<Sun className="h-4 w-4" />}
+                    color="border-blue-200 bg-blue-50 text-blue-700"
+                  />
+                  <AttTile
+                    label="Leave"
+                    value={attLeave}
+                    icon={<Umbrella className="h-4 w-4" />}
+                    color="border-violet-200 bg-violet-50 text-violet-700"
+                  />
+                  <AttTile
+                    label="LWP"
+                    value={attLwp}
+                    icon={<AlertTriangle className="h-4 w-4" />}
+                    color={attLwp > 0 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-100 text-slate-400"}
+                  />
+                  <AttTile
+                    label="Holiday"
+                    value={attHoliday}
+                    icon={<Clock className="h-4 w-4" />}
+                    color="border-teal-200 bg-teal-50 text-teal-700"
+                  />
+                </div>
+
+                {/* Half-day indicator */}
+                {attHalfDay > 0 && (
+                  <p className="mt-2 text-xs text-slate-500 text-center">
+                    + {attHalfDay} half day{attHalfDay !== 1 ? "s" : ""} included in present count
+                  </p>
+                )}
+
+                {/* LWP warning */}
+                {attLwp > 0 && (
+                  <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    {attLwp} day{attLwp !== 1 ? "s" : ""} of Leave Without Pay deducted from this month's salary.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Earnings / Deductions ─────────────────────────────────────── */}
           {isLoading ? (
             <div className="space-y-4">
               <Skeleton className="h-32 w-full" />
@@ -246,7 +358,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
             </div>
           )}
 
-          {/* Net Salary */}
+          {/* ── Net Salary ───────────────────────────────────────────────── */}
           <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -262,12 +374,12 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
             </div>
           </div>
 
-          {/* Salary Trend */}
+          {/* ── Salary Trend ─────────────────────────────────────────────── */}
           <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Salary Trend</p>
-                <p className="text-xs text-slate-500 mt-0.5">Net salary across all processed months for this employee</p>
+                <p className="text-xs text-slate-500 mt-0.5">Net salary across all processed months</p>
               </div>
               {salaryHistory.length > 0 && (
                 <Badge variant="outline" className="text-xs">
@@ -278,9 +390,13 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
             {historyLoading ? (
               <Skeleton className="h-[160px] w-full rounded-xl" />
-            ) : salaryHistory.length < 2 ? (
+            ) : salaryHistory.length === 0 ? (
               <div className="flex h-[100px] items-center justify-center text-sm text-slate-400">
-                {salaryHistory.length === 0 ? "No history available" : "Only one month on record — trend available from two months"}
+                No salary history found — run payroll for previous months first.
+              </div>
+            ) : salaryHistory.length === 1 ? (
+              <div className="flex h-[60px] items-center justify-center text-sm text-slate-400">
+                Only one month on record — trend visible from two months onwards.
               </div>
             ) : (
               <>
@@ -311,7 +427,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   </AreaChart>
                 </ResponsiveContainer>
 
-                {/* Compact monthly table */}
+                {/* Monthly table */}
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>

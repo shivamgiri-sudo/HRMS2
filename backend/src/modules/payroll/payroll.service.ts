@@ -615,7 +615,12 @@ export const payrollService = {
         COALESCE(spl.net_salary, 0)        AS net_salary,
         COALESCE(spl.working_days, 0)      AS working_days,
         COALESCE(spl.present_days, 0)      AS present_days,
+        COALESCE(spl.leave_days, 0)        AS leave_days,
         COALESCE(spl.lwp_days, 0)          AS lwp_days,
+        GREATEST(0, COALESCE(spl.working_days, 0)
+          - COALESCE(spl.present_days, 0)
+          - COALESCE(spl.leave_days, 0)
+          - COALESCE(spl.lwp_days, 0))     AS absent_days,
         bm.branch_name,
         pm.process_name,
         dm.dept_name AS department_name,
