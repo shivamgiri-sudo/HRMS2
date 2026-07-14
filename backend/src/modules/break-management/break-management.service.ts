@@ -176,13 +176,14 @@ async function resolveShiftDateSmart(employeeId: string, explicitDate?: string |
     shift = shiftLookupCache.get(employeeId)!;
   } else {
     try {
+      const today = currentIstDateTime().date;
       const [rows] = await db.execute(
-        `SELECT s.start_time, s.end_time, s.duration_minutes
-         FROM employee_shifts es
-         JOIN shifts s ON s.id = es.shift_id
-         WHERE es.employee_id = ? AND es.is_current = 1
+        `SELECT s.start_time, s.end_time, s.required_minutes AS duration_minutes
+         FROM wfm_roster_assignment ra
+         JOIN wfm_shift_master s ON s.id = ra.shift_id
+         WHERE ra.employee_id = ? AND ra.roster_date = ?
          LIMIT 1`,
-        [employeeId],
+        [employeeId, today],
       );
       shift = (rows as any[])[0] ?? null;
     } catch (err: any) {
