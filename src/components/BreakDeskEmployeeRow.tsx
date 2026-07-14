@@ -130,7 +130,9 @@ function EmployeeRowComponent({
             </div>
             <div className="flex gap-1 text-[10px] text-slate-500">
               <span className="font-semibold text-slate-600">{employee.employee_code}</span>
-              <span>· {employee.biometric_id}</span>
+              {employee.biometric_id && employee.biometric_id !== employee.employee_code && (
+                <span>· {employee.biometric_id}</span>
+              )}
             </div>
           </div>
         </div>
