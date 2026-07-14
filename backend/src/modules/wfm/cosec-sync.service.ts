@@ -276,16 +276,11 @@ async function resolveEmployee(cosecUserId: string) {
   return rows[0] as any | undefined;
 }
 
-// mysql2 pool uses timezone:"+05:30". Inserting a bare "YYYY-MM-DD HH:mm:ss"
-// string makes mysql2 shift it by +05:30 before storing, producing wrong times.
-// Tagging the string with +05:30 tells mysql2 the value is already IST, so it
-// stores the exact wall-clock time that came from the COSEC server.
+// COSEC stores IST wall-clock times as bare "YYYY-MM-DD HH:mm:ss" strings.
+// mysql2 pool timezone:"+05:30" only shifts JavaScript Date objects — bare
+// string values are written to DATETIME columns as-is. Do not append "+05:30".
 function tagIST(val: string): string {
-  if (!val) return val;
-  // Already tagged or not a bare datetime string — leave untouched
-  if (/[Z+\-]\d{2}:\d{2}$/.test(val) || val.endsWith('Z')) return val;
-  // "YYYY-MM-DD HH:mm:ss" → "YYYY-MM-DD HH:mm:ss+05:30"
-  return val + '+05:30';
+  return val; // pass bare string through unchanged
 }
 
 async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmapped"> {
