@@ -34,21 +34,33 @@ export class QualityManagerService {
     agent_breakdown: AgentBreakdown[];
   }> {
     const conn = await this.db.getConnection();
+    const isWide = managerCode === '__ALL__';
 
     try {
-      // Get all direct reports for this manager
-      const [directReports] = await conn.execute<RowDataPacket[]>(
-        `SELECT id, employee_code, CONCAT(first_name, ' ', COALESCE(last_name, '')) as full_name
-         FROM mas_hrms.employees
-         WHERE reporting_manager_id = (
-           SELECT id FROM mas_hrms.employees WHERE employee_code = ? AND employment_status = 'Active'
-         )
-         AND employment_status = 'Active'`,
-        [managerCode]
-      );
+      let agentCodes: string[];
 
-      if (!directReports || directReports.length === 0) {
-        logger.info(`No direct reports found for manager: ${managerCode}`);
+      if (isWide) {
+        // Admin/HR/CEO: return all active employees
+        const [allEmps] = await conn.execute<RowDataPacket[]>(
+          `SELECT employee_code FROM mas_hrms.employees WHERE active_status = 1 AND employee_code IS NOT NULL LIMIT 500`
+        );
+        agentCodes = (allEmps as any[]).map((r) => r.employee_code);
+      } else {
+        // Get all direct reports for this manager
+        const [directReports] = await conn.execute<RowDataPacket[]>(
+          `SELECT id, employee_code, CONCAT(first_name, ' ', COALESCE(last_name, '')) as full_name
+           FROM mas_hrms.employees
+           WHERE reporting_manager_id = (
+             SELECT id FROM mas_hrms.employees WHERE employee_code = ? AND employment_status = 'Active'
+           )
+           AND employment_status = 'Active'`,
+          [managerCode]
+        );
+        agentCodes = (directReports as any[]).map((r: any) => r.employee_code);
+      }
+
+      if (!agentCodes || agentCodes.length === 0) {
+        logger.info(`No team members found for manager: ${managerCode}`);
         return {
           team_summary: {
             avg_quality: 0,
@@ -61,8 +73,6 @@ export class QualityManagerService {
           agent_breakdown: []
         };
       }
-
-      const agentCodes = directReports.map((r: any) => r.employee_code);
 
       // Get quality metrics for all direct reports
       const placeholders = agentCodes.map(() => '?').join(',');

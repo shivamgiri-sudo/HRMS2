@@ -12,6 +12,7 @@ import TeamQualityTab from "@/components/my-team/TeamQualityTab";
 import TeamActionsTab from "@/components/my-team/TeamActionsTab";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 const MANAGER_ROLES = [
   "super_admin", "admin", "hr",
@@ -50,20 +51,22 @@ export default function MyTeamPage() {
     const allowed = MANAGER_ROLES.some((r) => (roleData?.roleKeys ?? []).includes(r));
     if (!allowed) {
       return (
-        <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-          <div className="max-w-sm w-full rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
-              <ShieldX className="h-7 w-7 text-red-500" />
+        <DashboardLayout>
+          <div className="flex min-h-[60vh] items-center justify-center p-4">
+            <div className="max-w-sm w-full rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
+                <ShieldX className="h-7 w-7 text-red-500" />
+              </div>
+              <h2 className="text-lg font-semibold text-slate-900 mb-1">Access Restricted</h2>
+              <p className="text-sm text-slate-500 mb-5">
+                This page is accessible to managers and team leadership roles only.
+              </p>
+              <Button asChild variant="outline" className="rounded-xl">
+                <Link to="/dashboard">Go to Dashboard</Link>
+              </Button>
             </div>
-            <h2 className="text-lg font-semibold text-slate-900 mb-1">Access Restricted</h2>
-            <p className="text-sm text-slate-500 mb-5">
-              This page is accessible to managers and team leadership roles only.
-            </p>
-            <Button asChild variant="outline" className="rounded-xl">
-              <Link to="/dashboard">Go to Dashboard</Link>
-            </Button>
           </div>
-        </div>
+        </DashboardLayout>
       );
     }
   }
@@ -74,9 +77,9 @@ export default function MyTeamPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <DashboardLayout>
       {/* ── Rich gradient page header ── */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 px-4 pb-0 pt-6 sm:px-6">
+      <div className="-mx-4 -mt-5 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 px-4 pb-0 pt-6 sm:-mx-5 sm:px-6 lg:-mx-6">
         <div className="mx-auto max-w-7xl">
           <div className="flex items-center gap-3 mb-1">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 backdrop-blur-sm">
@@ -114,7 +117,7 @@ export default function MyTeamPage() {
             </TabsList>
 
             {/* ── Content area ── */}
-            <div className="mx-auto max-w-7xl px-0 py-6">
+            <div className="py-6">
               <TabsContent value="overview"    className="mt-0 focus-visible:outline-none">
                 <TeamOverviewTab onActionsClick={() => setActiveTab("actions")} />
               </TabsContent>
@@ -137,6 +140,6 @@ export default function MyTeamPage() {
           </Tabs>
         </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

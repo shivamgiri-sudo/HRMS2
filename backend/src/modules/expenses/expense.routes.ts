@@ -44,7 +44,7 @@ expenseRouter.put('/categories/:id', requireRole('admin', 'hr'), h(expenseContro
 expenseRouter.delete('/categories/:id', requireRole('admin', 'hr'), h(expenseController.deleteCategory.bind(expenseController)));
 
 expenseRouter.get('/claims/my-claims', h(expenseController.getMyClaims.bind(expenseController)));
-expenseRouter.get('/claims/pending-approval', requireRole('manager'), h(expenseController.getPendingApprovals.bind(expenseController)));
+expenseRouter.get('/claims/pending-approval', requireRole('manager', 'admin', 'hr', 'branch_head', 'process_manager'), h(expenseController.getPendingApprovals.bind(expenseController)));
 expenseRouter.get('/claims/finance-queue', requireRole('finance', 'admin'), h(expenseController.getFinanceQueue.bind(expenseController)));
 expenseRouter.get('/claims/export-for-payment', requireRole('finance', 'admin'), h(expenseController.exportForPayment.bind(expenseController)));
 expenseRouter.get('/claims/:claimId', h(expenseController.getClaimDetails.bind(expenseController)));

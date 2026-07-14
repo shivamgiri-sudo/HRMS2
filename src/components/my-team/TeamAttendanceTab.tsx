@@ -94,7 +94,7 @@ export default function TeamAttendanceTab() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["team-attendance-daily", date],
-    queryFn: () => hrmsApi.get<any>(`/api/attendance-daily/daily?date=${date}&limit=500`),
+    queryFn: () => hrmsApi.get<any>(`/api/wfm/attendance/daily?date=${date}&limit=500`),
     staleTime: 30_000,
   });
 

@@ -34,7 +34,7 @@ async function getEmployeeCode(userId: string): Promise<string | null> {
 router.get(
   '/team-quality',
   requireAuth,
-  requireRole('process_manager', 'team_leader', 'manager', 'branch_head'),
+  requireRole('admin', 'hr', 'ceo', 'process_manager', 'team_leader', 'manager', 'branch_head', 'tl'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser?.id;
@@ -42,11 +42,7 @@ router.get(
         return res.status(403).json({ success: false, error: 'Unauthorized' });
       }
 
-      // Get employee code for the authenticated manager
       const employeeCode = await getEmployeeCode(userId);
-      if (!employeeCode) {
-        return res.status(403).json({ success: false, error: 'Manager employee code not found' });
-      }
 
       const daysBack = parseInt(req.query.daysBack as string) || 7;
       const process = (req.query.process as string) || 'INBOUND';
@@ -56,7 +52,8 @@ router.get(
         return res.status(400).json({ success: false, error: 'daysBack must be between 1 and 365' });
       }
 
-      const result = await service.getTeamQuality(employeeCode, daysBack, process);
+      // Wide roles (admin/hr/ceo) without an employee record get org-wide quality via null managerCode
+      const result = await service.getTeamQuality(employeeCode ?? '__ALL__', daysBack, process);
 
       res.json({
         success: true,
