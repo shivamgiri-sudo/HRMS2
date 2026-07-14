@@ -97,6 +97,14 @@ interface ProcessPnlComputationContext {
   generatedAt: string;
 }
 
+interface TrendPoint {
+  month: string;
+  revenue: number;
+  directCost: number;
+  indirectCost: number;
+  operatingProfit: number;
+}
+
 function defaultPeriod(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -176,12 +184,29 @@ async function listColumns(tableName: string): Promise<Set<string>> {
 }
 
 let costCentreProcessIdSupportPromise: Promise<boolean> | null = null;
+const TREND_CACHE_TTL_MS = 60_000;
+const trendCache = new Map<string, {
+  expiresAt: number;
+  value?: TrendPoint[];
+  promise?: Promise<TrendPoint[]>;
+}>();
 
 async function hasCostCentreProcessId(): Promise<boolean> {
   if (!costCentreProcessIdSupportPromise) {
     costCentreProcessIdSupportPromise = columnExists("cost_centre_master", "process_id").catch(() => false);
   }
   return costCentreProcessIdSupportPromise;
+}
+
+function trendCacheKey(processId: string | null, filters: PnlQueryFilters): string {
+  return [
+    processId ?? "all",
+    filters.period,
+    filters.branchId ?? "",
+    filters.processId ?? "",
+    filters.clientId ?? "",
+    filters.search?.trim() ?? "",
+  ].join("|");
 }
 
 function effectiveProcessExpr(alias: string, costCentreProcessIdSupported: boolean): string {
@@ -846,24 +871,52 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
 }
 
 async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
-  const months = Array.from({ length: 6 }, (_, index) => shiftMonth(filters.period, index - 5));
-  const series: Array<{
-    month: string;
-    revenue: number;
-    directCost: number;
-    indirectCost: number;
-    operatingProfit: number;
-  }> = [];
+  const cacheKey = trendCacheKey(processId, filters);
+  const cached = trendCache.get(cacheKey);
+  const now = Date.now();
 
+  if (cached?.value && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const trendPromise = (async (): Promise<TrendPoint[]> => {
+  const months = Array.from({ length: 6 }, (_, index) => shiftMonth(filters.period, index - 5));
   const processClause = processId ? "AND process_id = ?" : "";
   const processJoinClause = processId ? "AND e.process_id = ?" : "";
   const expenseProcessClause = processId ? "AND CAST(ec.process_id AS CHAR) = ?" : "";
-  const branchFilters = filters.branchId ? [filters.branchId] : [];
+  const [
+    hasBillingInvoice,
+    salaryColumns,
+    hasExpenseClaims,
+    hasExpenseItems,
+    costCentreProcessIdSupported,
+    hasVendorPayments,
+    hasGrnRequest,
+  ] = await Promise.all([
+    tableExists("billing_invoice"),
+    listColumns("salary_prep_line").catch(() => new Set<string>()),
+    tableExists("expense_claims"),
+    tableExists("expense_items"),
+    hasCostCentreProcessId(),
+    tableExists("vendor_payment_tracking"),
+    tableExists("grn_request"),
+  ]);
 
-  for (const month of months) {
+  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
+  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
+  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
+  const gratuityExpr = salaryColumns.has("gratuity")
+    ? "COALESCE(spl.gratuity, 0)"
+    : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+
+  const series = await Promise.all(months.map(async (month) => {
     const { start, end } = monthRange(month);
     const revenueRows = await queryRows<RowDataPacket>(
-      await tableExists("billing_invoice")
+      hasBillingInvoice
         ? `SELECT SUM(CASE WHEN status <> 'draft' THEN COALESCE(net_amount, 0) ELSE 0 END) AS total
              FROM billing_invoice
             WHERE period_from <= ? AND period_to >= ? ${processClause}`
@@ -872,14 +925,6 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
             WHERE revenue_date BETWEEN ? AND ? ${processClause}`,
       processId ? [end, start, processId] : [end, start]
     );
-
-    const salaryColumns = await listColumns("salary_prep_line");
-    const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-    const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-    const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-    const gratuityExpr = salaryColumns.has("gratuity")
-      ? "COALESCE(spl.gratuity, 0)"
-      : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
 
     const payrollRows = await queryRows<RowDataPacket>(
       `SELECT SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
@@ -891,7 +936,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     ).catch(() => [{ total: 0 } as RowDataPacket]);
 
     const expenseRows = await queryRows<RowDataPacket>(
-      await tableExists("expense_claims") && await tableExists("expense_items")
+      hasExpenseClaims && hasExpenseItems
         ? `SELECT SUM(CASE WHEN ec.status IN ('FINANCE_APPROVED', 'PAID') THEN COALESCE(ei.amount, 0) ELSE 0 END) AS total
              FROM expense_claims ec
              JOIN expense_items ei ON ei.expense_claim_id = ec.id
@@ -901,8 +946,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     ).catch(() => [{ total: 0 } as RowDataPacket]);
 
     let indirectTotal = 0;
-    const costCentreProcessIdSupported = await hasCostCentreProcessId();
-    if (await tableExists("vendor_payment_tracking")) {
+    if (hasVendorPayments) {
       const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
         `SELECT SUM(COALESCE(vpt.due_amount, 0)) AS total
@@ -913,7 +957,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
         [start, end]
       );
       indirectTotal = toNumber(indirectRows[0]?.total);
-    } else if (await tableExists("grn_request")) {
+    } else if (hasGrnRequest) {
       const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
         `SELECT SUM(COALESCE(g.amount, 0)) AS total
@@ -943,18 +987,17 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
             monthlyContext.vendorDirectCosts,
             monthlyContext.indirectAllocations
           )
-        )
+          )
         .find((record) => record.processId === processId);
 
-      series.push({
+      return {
         month,
         revenue: monthlyRecord?.revenueMtd ?? toNumber(revenueRows[0]?.total),
         directCost: monthlyRecord?.directCost ?? (toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total)),
         indirectCost: monthlyRecord?.indirectCost ?? 0,
         operatingProfit: monthlyRecord?.operatingProfit
           ?? (toNumber(revenueRows[0]?.total) - toNumber(payrollRows[0]?.total) - toNumber(expenseRows[0]?.total)),
-      });
-      continue;
+      };
     }
 
     const monthlyContext = await buildComputationContext({ ...filters, period: month });
@@ -978,16 +1021,34 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
       || (toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total));
     const indirectCost = monthlyRecords.reduce((sum, record) => sum + record.indirectCost, 0) || indirectTotal;
 
-    series.push({
+    return {
       month,
       revenue,
       directCost,
       indirectCost,
       operatingProfit: revenue - directCost - indirectCost,
-    });
-  }
+    };
+  }));
 
   return series;
+  })();
+
+  trendCache.set(cacheKey, { expiresAt: now + TREND_CACHE_TTL_MS, promise: trendPromise });
+
+  try {
+    const value = await trendPromise;
+    trendCache.set(cacheKey, {
+      expiresAt: Date.now() + TREND_CACHE_TTL_MS,
+      value,
+    });
+    return value;
+  } catch (error) {
+    const current = trendCache.get(cacheKey);
+    if (current?.promise === trendPromise) {
+      trendCache.delete(cacheKey);
+    }
+    throw error;
+  }
 }
 
 function buildAlerts(records: ProcessPnlRecord[]): PnlSummaryResponse["alerts"] {

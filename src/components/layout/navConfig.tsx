@@ -234,8 +234,7 @@ export const navGroups: NavGroup[] = [
         label: "Payroll",      href: "/payroll", icon: ic(CreditCard), roles: ["admin","hr","finance","payroll"], description: "Payroll & statutory",
         children: [
           { label: "Payroll",               href: "/payroll",                      icon: ic(CreditCard), roles: ["admin","hr","finance","payroll"],                    description: "Payroll" },
-          { label: "Payroll Readiness",     href: "/payroll/readiness",            icon: ic(CreditCard), pageCode: "PAYROLL",  roles: ["admin","hr","finance","payroll"], description: "Payroll readiness" },
-          { label: "Branch Readiness",      href: "/payroll/branch-readiness",     icon: ic(Building2),  roles: ["super_admin","payroll_head","branch_head","payroll_branch"], description: "Branch-wise payroll readiness" },
+          { label: "Payroll Readiness",      href: "/payroll/branch-readiness",     icon: ic(Building2),  roles: ["super_admin","payroll_head","branch_head","payroll_branch","admin","hr","finance","payroll"], description: "Branch-wise payroll readiness" },
           { label: "Payroll Calendar",      href: "/payroll/calendar",             icon: ic(CalendarDays), roles: ["super_admin","payroll_head","payroll_branch"], description: "Payroll planning calendar" },
           { label: "HO Queues",             href: "/payroll/ho-queues",            icon: ic(ClipboardList), roles: ["admin","hr","finance","payroll","super_admin"],   description: "HO approval queues" },
           { label: "Cheque Validation",     href: "/payroll/cheque-validation",    icon: ic(FileCheck),     roles: ["payroll","payroll_head","super_admin","finance"], description: "Cheque name validation" },

@@ -80,6 +80,35 @@ export interface ProcessPnlDetailBundle {
   };
 }
 
+export interface ProcessPnlOverviewData extends ProcessPnlRecord {
+  period: string;
+  topPositiveContributors: Array<{ label: string; value: number }>;
+  topNegativeContributors: Array<{ label: string; value: number }>;
+}
+
+export type ProcessPnlRevenueData = ProcessPnlDetailBundle["revenue"];
+export type ProcessPnlWorkforceData = ProcessPnlDetailBundle["workforce"];
+export type ProcessPnlPeopleCostData = ProcessPnlDetailBundle["peopleCost"];
+export type ProcessPnlDirectCostData = ProcessPnlDetailBundle["directCost"];
+export type ProcessPnlIndirectAllocationData = ProcessPnlDetailBundle["indirectAllocation"];
+export type ProcessPnlTrendData = ProcessPnlDetailBundle["trend"];
+export type ProcessPnlReconciliationData = ProcessPnlDetailBundle["reconciliation"];
+export type ProcessPnlLedgerData = ProcessPnlDetailBundle["ledger"];
+
+type ProcessPnlSectionMap = {
+  overview: ProcessPnlOverviewData;
+  revenue: ProcessPnlRevenueData;
+  workforce: ProcessPnlWorkforceData;
+  "people-cost": ProcessPnlPeopleCostData;
+  "direct-cost": ProcessPnlDirectCostData;
+  "indirect-allocation": ProcessPnlIndirectAllocationData;
+  trend: ProcessPnlTrendData;
+  reconciliation: ProcessPnlReconciliationData;
+  ledger: ProcessPnlLedgerData;
+};
+
+export type ProcessPnlSectionKey = keyof ProcessPnlSectionMap;
+
 function toQueryString(filters: ProcessPnlFilters): string {
   const params = new URLSearchParams();
   if (filters.period) params.set("period", filters.period);
@@ -102,6 +131,27 @@ export function useProcessPnlDetail(processId: string, filters: ProcessPnlFilter
       return response.data;
     },
     enabled: Boolean(processId),
+    staleTime: 60_000,
+  });
+}
+
+export function useProcessPnlSection<K extends ProcessPnlSectionKey>(
+  processId: string,
+  filters: ProcessPnlFilters,
+  section: K,
+  enabled = true
+) {
+  const query = toQueryString(filters);
+
+  return useQuery({
+    queryKey: ["process-pnl-section", section, processId, filters],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: ProcessPnlSectionMap[K] }>(
+        `/api/finance/pnl/processes/${processId}/${section}${query}`
+      );
+      return response.data;
+    },
+    enabled: enabled && Boolean(processId),
     staleTime: 60_000,
   });
 }

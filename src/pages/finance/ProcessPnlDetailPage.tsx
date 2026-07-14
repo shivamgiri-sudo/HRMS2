@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, FileText, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { useProcessPnlDetail } from "@/hooks/useProcessPnlDetail";
+import { useProcessPnlSection } from "@/hooks/useProcessPnlDetail";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { MarginBridgeChart } from "@/components/finance/pnl/MarginBridgeChart";
 import { ProfitabilityTrendChart } from "@/components/finance/pnl/ProfitabilityTrendChart";
@@ -80,13 +81,48 @@ function DataTable({
   );
 }
 
+function SectionSkeleton({ tall = false }: { tall?: boolean }) {
+  return (
+    <div className="space-y-5">
+      <Skeleton className="h-28 rounded-3xl" />
+      <Skeleton className={`${tall ? "h-[420px]" : "h-[260px]"} rounded-3xl`} />
+    </div>
+  );
+}
+
 export default function ProcessPnlDetailPage() {
   const { processId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const period = searchParams.get("period") ?? currentPeriod();
-  const detailQuery = useProcessPnlDetail(processId, { period });
+  const [activeTab, setActiveTab] = useState("overview");
+  const filters = { period };
 
-  if (detailQuery.isLoading) {
+  const overviewQuery = useProcessPnlSection(processId, filters, "overview");
+  const revenueQuery = useProcessPnlSection(processId, filters, "revenue", activeTab === "revenue");
+  const workforceQuery = useProcessPnlSection(processId, filters, "workforce", activeTab === "workforce");
+  const peopleCostQuery = useProcessPnlSection(
+    processId,
+    filters,
+    "people-cost",
+    activeTab === "workforce" || activeTab === "people-cost"
+  );
+  const directCostQuery = useProcessPnlSection(processId, filters, "direct-cost", activeTab === "direct-cost");
+  const indirectAllocationQuery = useProcessPnlSection(
+    processId,
+    filters,
+    "indirect-allocation",
+    activeTab === "indirect"
+  );
+  const trendQuery = useProcessPnlSection(processId, filters, "trend", activeTab === "trend");
+  const reconciliationQuery = useProcessPnlSection(
+    processId,
+    filters,
+    "reconciliation",
+    activeTab === "reconciliation"
+  );
+  const ledgerQuery = useProcessPnlSection(processId, filters, "ledger", activeTab === "ledger");
+
+  if (overviewQuery.isLoading) {
     return (
       <DashboardLayout>
         <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -98,8 +134,8 @@ export default function ProcessPnlDetailPage() {
     );
   }
 
-  const detail = detailQuery.data;
-  if (!detail) {
+  const overview = overviewQuery.data;
+  if (!overview) {
     return (
       <DashboardLayout>
         <div className="mx-auto max-w-4xl px-4 py-10">
@@ -114,8 +150,7 @@ export default function ProcessPnlDetailPage() {
     );
   }
 
-  const record = detail.record;
-  const overview = detail.overview as any;
+  const record = overview;
 
   const kpiItems = [
     { label: "Revenue", value: record.revenueMtd, kind: "currency" as const, tone: "good" as const },
@@ -189,7 +224,7 @@ export default function ProcessPnlDetailPage() {
 
         <PnlExecutiveKpiStrip items={kpiItems} />
 
-        <Tabs defaultValue="overview" className="space-y-5">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
           <TabsList className="h-auto flex-wrap justify-start rounded-2xl bg-slate-100 p-1">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="revenue">Revenue</TabsTrigger>
@@ -224,7 +259,7 @@ export default function ProcessPnlDetailPage() {
                 <CardContent className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-3">
                     <p className="text-sm font-semibold text-emerald-700">Positive contributors</p>
-                    {(overview.topPositiveContributors ?? []).map((item: any, index: number) => (
+                    {(overview.topPositiveContributors ?? []).map((item, index: number) => (
                       <div key={index} className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3">
                         <p className="text-sm text-slate-700">{item.label}</p>
                         <p className="text-base font-semibold text-emerald-900">{formatCurrency(item.value)}</p>
@@ -233,7 +268,7 @@ export default function ProcessPnlDetailPage() {
                   </div>
                   <div className="space-y-3">
                     <p className="text-sm font-semibold text-rose-700">Negative contributors</p>
-                    {(overview.topNegativeContributors ?? []).map((item: any, index: number) => (
+                    {(overview.topNegativeContributors ?? []).map((item, index: number) => (
                       <div key={index} className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3">
                         <p className="text-sm text-slate-700">{item.label}</p>
                         <p className="text-base font-semibold text-rose-900">{formatCurrency(item.value)}</p>
@@ -246,17 +281,18 @@ export default function ProcessPnlDetailPage() {
           </TabsContent>
 
           <TabsContent value="revenue" className="space-y-5">
+            {!revenueQuery.data ? <SectionSkeleton /> : <>
             <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
               <Card className="rounded-3xl border-slate-200 shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-base font-semibold text-slate-950">Revenue summary</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm text-slate-700">
-                  <div className="flex justify-between"><span>Recognized revenue</span><span className="font-semibold">{formatCurrency(detail.revenue.summary.recognizedRevenue)}</span></div>
-                  <div className="flex justify-between"><span>Invoiced revenue</span><span className="font-semibold">{formatCurrency(detail.revenue.summary.invoicedRevenue)}</span></div>
-                  <div className="flex justify-between"><span>Collected revenue</span><span className="font-semibold">{formatCurrency(detail.revenue.summary.collectedRevenue)}</span></div>
-                  <div className="flex justify-between"><span>Outstanding receivable</span><span className="font-semibold">{formatCurrency(detail.revenue.summary.outstandingReceivable)}</span></div>
-                  <div className="flex justify-between"><span>Forecast revenue</span><span className="font-semibold">{formatCurrency(detail.revenue.summary.forecastRevenue)}</span></div>
+                  <div className="flex justify-between"><span>Recognized revenue</span><span className="font-semibold">{formatCurrency(revenueQuery.data.summary.recognizedRevenue)}</span></div>
+                  <div className="flex justify-between"><span>Invoiced revenue</span><span className="font-semibold">{formatCurrency(revenueQuery.data.summary.invoicedRevenue)}</span></div>
+                  <div className="flex justify-between"><span>Collected revenue</span><span className="font-semibold">{formatCurrency(revenueQuery.data.summary.collectedRevenue)}</span></div>
+                  <div className="flex justify-between"><span>Outstanding receivable</span><span className="font-semibold">{formatCurrency(revenueQuery.data.summary.outstandingReceivable)}</span></div>
+                  <div className="flex justify-between"><span>Forecast revenue</span><span className="font-semibold">{formatCurrency(revenueQuery.data.summary.forecastRevenue)}</span></div>
                 </CardContent>
               </Card>
 
@@ -265,10 +301,10 @@ export default function ProcessPnlDetailPage() {
                   <CardTitle className="text-base font-semibold text-slate-950">Commercial contract</CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2">
-                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Contract</span>{detail.revenue.contract?.contract_name ?? "Not configured"}</div>
-                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Billing model</span>{detail.revenue.contract?.billing_type ?? record.billingModel ?? "Unknown"}</div>
-                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Rate</span>{formatCurrency(Number(detail.revenue.contract?.billing_rate ?? 0))}</div>
-                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Minimum commitment</span>{detail.revenue.contract?.monthly_minimum_commitment ?? "-"}</div>
+                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Contract</span>{revenueQuery.data.contract?.contract_name ?? "Not configured"}</div>
+                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Billing model</span>{revenueQuery.data.contract?.billing_type ?? record.billingModel ?? "Unknown"}</div>
+                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Rate</span>{formatCurrency(Number(revenueQuery.data.contract?.billing_rate ?? 0))}</div>
+                  <div><span className="block text-xs uppercase tracking-[0.16em] text-slate-500">Minimum commitment</span>{revenueQuery.data.contract?.monthly_minimum_commitment ?? "-"}</div>
                 </CardContent>
               </Card>
             </div>
@@ -282,15 +318,17 @@ export default function ProcessPnlDetailPage() {
                 { key: "net_amount", label: "Net amount", align: "right" },
                 { key: "status", label: "Status" },
               ]}
-              rows={detail.revenue.invoices}
+              rows={revenueQuery.data.invoices}
             />
+            </>}
           </TabsContent>
 
           <TabsContent value="workforce" className="space-y-5">
+            {!workforceQuery.data || !peopleCostQuery.data ? <SectionSkeleton tall /> : <>
             <WorkforceCostBridge
               metrics={{
-                ...detail.workforce.metrics,
-                salaryMtd: detail.peopleCost.summary.salaryMtd,
+                ...workforceQuery.data.metrics,
+                salaryMtd: peopleCostQuery.data.summary.salaryMtd,
                 loadedCostPerBillableSeat: record.billableHc > 0 ? record.totalCost / record.billableHc : 0,
               }}
             />
@@ -299,7 +337,7 @@ export default function ProcessPnlDetailPage() {
                 <CardTitle className="text-base font-semibold text-slate-950">Workforce deployment</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
-                {Object.entries(detail.workforce.metrics).map(([key, value]) => (
+                {Object.entries(workforceQuery.data.metrics).map(([key, value]) => (
                   <div key={key} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                     <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{key.replace(/([A-Z])/g, " $1")}</p>
                     <p className="mt-2 text-xl font-semibold text-slate-950">{value ?? "-"}</p>
@@ -315,18 +353,20 @@ export default function ProcessPnlDetailPage() {
                 { key: "date_of_joining", label: "Joined" },
                 { key: "employment_status", label: "Status" },
               ]}
-              rows={detail.workforce.employees}
+              rows={workforceQuery.data.employees}
             />
+            </>}
           </TabsContent>
 
           <TabsContent value="people-cost" className="space-y-5">
+            {!peopleCostQuery.data ? <SectionSkeleton tall /> : <>
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-base font-semibold text-slate-950">People cost source</CardTitle>
               </CardHeader>
               <CardContent className="flex items-center justify-between text-sm text-slate-700">
-                <span>Loaded from {detail.peopleCost.source}</span>
-                <span className="font-semibold">{formatCurrency(detail.peopleCost.summary.directPeopleCost)}</span>
+                <span>Loaded from {peopleCostQuery.data.source}</span>
+                <span className="font-semibold">{formatCurrency(peopleCostQuery.data.summary.directPeopleCost)}</span>
               </CardContent>
             </Card>
             <DataTable
@@ -339,11 +379,13 @@ export default function ProcessPnlDetailPage() {
                 { key: "esic_employer", label: "Employer ESIC", align: "right" },
                 { key: "loaded_cost", label: "Loaded cost", align: "right" },
               ]}
-              rows={detail.peopleCost.employees}
+              rows={peopleCostQuery.data.employees}
             />
+            </>}
           </TabsContent>
 
           <TabsContent value="direct-cost" className="space-y-5">
+            {!directCostQuery.data ? <SectionSkeleton tall /> : <>
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-base font-semibold text-slate-950">Direct non-people cost</CardTitle>
@@ -351,26 +393,26 @@ export default function ProcessPnlDetailPage() {
               <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">People cost</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directPeopleCost)}</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(directCostQuery.data.summary.directPeopleCost)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Expense claims</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directExpenseCost)}</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(directCostQuery.data.summary.directExpenseCost)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Vendor and GRN cost</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directVendorCost)}</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(directCostQuery.data.summary.directVendorCost)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Non-people cost</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directNonPeopleCost)}</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(directCostQuery.data.summary.directNonPeopleCost)}</p>
                 </div>
               </CardContent>
             </Card>
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardContent className="flex items-center justify-between p-4 text-sm text-slate-700">
                 <span>Total direct cost</span>
-                <span className="text-xl font-semibold text-slate-950">{formatCurrency(detail.directCost.summary.directCost)}</span>
+                <span className="text-xl font-semibold text-slate-950">{formatCurrency(directCostQuery.data.summary.directCost)}</span>
               </CardContent>
             </Card>
             <DataTable
@@ -385,11 +427,13 @@ export default function ProcessPnlDetailPage() {
                 { key: "status", label: "Status" },
                 { key: "costClass", label: "Class" },
               ]}
-              rows={detail.directCost.expenses}
+              rows={directCostQuery.data.expenses}
             />
+            </>}
           </TabsContent>
 
           <TabsContent value="indirect" className="space-y-5">
+            {!indirectAllocationQuery.data ? <SectionSkeleton /> : <>
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-base font-semibold text-slate-950">Branch overhead allocation</CardTitle>
@@ -397,15 +441,15 @@ export default function ProcessPnlDetailPage() {
               <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Branch pool</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.indirectAllocation.summary.branchPoolAmount)}</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(indirectAllocationQuery.data.summary.branchPoolAmount)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Process allocation</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.indirectAllocation.summary.processAllocationAmount)}</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(indirectAllocationQuery.data.summary.processAllocationAmount)}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Allocation share</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-950">{detail.indirectAllocation.summary.processAllocationPct.toFixed(1)}%</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-950">{indirectAllocationQuery.data.summary.processAllocationPct.toFixed(1)}%</p>
                 </div>
               </CardContent>
             </Card>
@@ -417,15 +461,17 @@ export default function ProcessPnlDetailPage() {
                 { key: "processAllocationPct", label: "Allocation %", align: "right" },
                 { key: "processAllocationAmount", label: "Allocated", align: "right" },
               ]}
-              rows={detail.indirectAllocation.pools}
+              rows={indirectAllocationQuery.data.pools}
             />
+            </>}
           </TabsContent>
 
           <TabsContent value="trend" className="space-y-5">
-            <ProfitabilityTrendChart trend={detail.trend.trend} />
+            {!trendQuery.data ? <SectionSkeleton tall /> : <ProfitabilityTrendChart trend={trendQuery.data.trend} />}
           </TabsContent>
 
           <TabsContent value="reconciliation" className="space-y-5">
+            {!reconciliationQuery.data ? <SectionSkeleton /> : <>
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-base font-semibold text-slate-950">Control checks</CardTitle>
@@ -433,14 +479,14 @@ export default function ProcessPnlDetailPage() {
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm">
                   <span>Overall reconciliation</span>
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(detail.reconciliation.status)}`}>
-                    {detail.reconciliation.status}
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(reconciliationQuery.data.status)}`}>
+                    {reconciliationQuery.data.status}
                   </span>
                 </div>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  Last fresh input: {formatDate(detail.reconciliation.freshness)}
+                  Last fresh input: {formatDate(reconciliationQuery.data.freshness)}
                 </div>
-                {detail.reconciliation.issues.map((issue) => (
+                {reconciliationQuery.data.issues.map((issue) => (
                   <div key={issue.code} className={`rounded-2xl border px-4 py-3 text-sm ${issue.severity === "critical" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                     <p className="font-semibold">{issue.code}</p>
                     <p className="mt-1">{issue.message}</p>
@@ -448,9 +494,11 @@ export default function ProcessPnlDetailPage() {
                 ))}
               </CardContent>
             </Card>
+            </>}
           </TabsContent>
 
           <TabsContent value="ledger" className="space-y-5">
+            {!ledgerQuery.data ? <SectionSkeleton tall /> : <>
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950">
@@ -459,10 +507,10 @@ export default function ProcessPnlDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm text-slate-700 sm:grid-cols-4">
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Revenue</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.ledger.summary.revenue)}</p></div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Direct cost</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.ledger.summary.directCost)}</p></div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Indirect cost</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.ledger.summary.indirectCost)}</p></div>
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Operating profit</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(detail.ledger.summary.operatingProfit)}</p></div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Revenue</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(ledgerQuery.data.summary.revenue)}</p></div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Direct cost</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(ledgerQuery.data.summary.directCost)}</p></div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Indirect cost</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(ledgerQuery.data.summary.indirectCost)}</p></div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Operating profit</p><p className="mt-2 text-xl font-semibold text-slate-950">{formatCurrency(ledgerQuery.data.summary.operatingProfit)}</p></div>
               </CardContent>
             </Card>
             <DataTable
@@ -473,8 +521,9 @@ export default function ProcessPnlDetailPage() {
                 { key: "amount", label: "Amount", align: "right" },
                 { key: "status", label: "Status" },
               ]}
-              rows={detail.ledger.entries}
+              rows={ledgerQuery.data.entries}
             />
+            </>}
           </TabsContent>
         </Tabs>
         </div>
