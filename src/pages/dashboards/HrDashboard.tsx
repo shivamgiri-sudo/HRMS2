@@ -322,21 +322,28 @@ export default function HrDashboard() {
               <MetricTileEnhanced
                 label="High Risk Employees"
                 value={attritionRisk.high_risk_count ?? null}
-                status={attritionRisk.high_risk_count > 0 ? "critical" : "ok"}
+                status={
+                  attritionRisk.high_risk_count == null ? "unknown" :
+                  attritionRisk.high_risk_count > 0 ? "critical" : "ok"
+                }
                 icon={<UserMinus className="h-4 w-4 text-red-600" />}
                 higherIsBetter={false}
               />
               <MetricTileEnhanced
                 label="At Risk Employees"
                 value={attritionRisk.at_risk_count ?? null}
-                status={attritionRisk.at_risk_count > 5 ? "warn" : "ok"}
+                status={
+                  attritionRisk.at_risk_count == null ? "unknown" :
+                  attritionRisk.at_risk_count > 5 ? "warn" :
+                  attritionRisk.at_risk_count > 0 ? "warn" : "ok"
+                }
                 icon={<TrendingDown className="h-4 w-4 text-amber-600" />}
                 higherIsBetter={false}
               />
               <MetricTileEnhanced
                 label="Total Monitored"
                 value={attritionRisk.total_monitored ?? null}
-                status="unknown"
+                status={attritionRisk.total_monitored != null ? "ok" : "unknown"}
                 icon={<Users className="h-4 w-4 text-slate-500" />}
               />
             </div>

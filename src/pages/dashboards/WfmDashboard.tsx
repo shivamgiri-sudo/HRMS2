@@ -291,8 +291,12 @@ export default function WfmDashboard() {
                 label="Adherence %"
                 value={bioAdherence.adherence_pct ?? null}
                 unit="%"
-                status={bioAdherence.adherence_pct >= 90 ? "ok" : bioAdherence.adherence_pct >= 80 ? "warn" : "critical"}
-                trend={bioAdherence.adherence_pct >= 90 ? "up" : "down"}
+                status={
+                  bioAdherence.adherence_pct == null ? "unknown" :
+                  bioAdherence.adherence_pct >= 90 ? "ok" :
+                  bioAdherence.adherence_pct >= 80 ? "warn" : "critical"
+                }
+                trend={bioAdherence.adherence_pct != null ? (bioAdherence.adherence_pct >= 90 ? "up" : "down") : null}
                 icon={<Fingerprint className="h-4 w-4 text-blue-600" />}
                 higherIsBetter
               />
@@ -300,7 +304,11 @@ export default function WfmDashboard() {
                 label="Late %"
                 value={bioAdherence.late_pct ?? null}
                 unit="%"
-                status={bioAdherence.late_pct <= 5 ? "ok" : bioAdherence.late_pct <= 10 ? "warn" : "critical"}
+                status={
+                  bioAdherence.late_pct == null ? "unknown" :
+                  bioAdherence.late_pct <= 5 ? "ok" :
+                  bioAdherence.late_pct <= 10 ? "warn" : "critical"
+                }
                 icon={<Clock className="h-4 w-4 text-amber-600" />}
                 higherIsBetter={false}
               />
@@ -308,14 +316,22 @@ export default function WfmDashboard() {
                 label="Shrinkage %"
                 value={bioAdherence.shrinkage_pct ?? null}
                 unit="%"
-                status={bioAdherence.shrinkage_pct <= 18 ? "ok" : bioAdherence.shrinkage_pct <= 25 ? "warn" : "critical"}
+                status={
+                  bioAdherence.shrinkage_pct == null ? "unknown" :
+                  bioAdherence.shrinkage_pct <= 18 ? "ok" :
+                  bioAdherence.shrinkage_pct <= 25 ? "warn" : "critical"
+                }
                 icon={<Activity className="h-4 w-4 text-orange-600" />}
                 higherIsBetter={false}
               />
               <MetricTileEnhanced
                 label="Absent Count"
                 value={bioAdherence.absent_count ?? null}
-                status={bioAdherence.absent_count === 0 ? "ok" : bioAdherence.absent_count <= 5 ? "warn" : "critical"}
+                status={
+                  bioAdherence.absent_count == null ? "unknown" :
+                  bioAdherence.absent_count === 0 ? "ok" :
+                  bioAdherence.absent_count <= 5 ? "warn" : "critical"
+                }
                 icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
                 higherIsBetter={false}
               />

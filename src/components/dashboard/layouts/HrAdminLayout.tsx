@@ -486,9 +486,9 @@ export function HrAdminLayout() {
             </div>
             <div className="space-y-1.5 pt-1">
               {[
-                { label: "APR / App", pct: summary.apr_pct ?? 62, color: "#1B6AB5" },
-                { label: "Biometric", pct: summary.biometric_pct ?? 38, color: "#3BAD49" },
-              ].map((src) => (
+                { label: "APR / App", pct: summary.apr_pct ?? null, color: "#1B6AB5" },
+                { label: "Biometric", pct: summary.biometric_pct ?? null, color: "#3BAD49" },
+              ].filter(src => src.pct !== null).map((src) => (
                 <div key={src.label}>
                   <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
                     <span>{src.label}</span>
@@ -523,20 +523,20 @@ export function HrAdminLayout() {
               {[
                 {
                   label: "Rostered",
-                  pct: summary.rostered_pct ?? 88,
+                  pct: summary.rostered_pct ?? null,
                   color: "#1B6AB5",
                 },
                 {
                   label: "Utilisation",
-                  pct: summary.utilisation_pct ?? 74,
+                  pct: summary.utilisation_pct ?? null,
                   color: "#8B5CF6",
                 },
                 {
                   label: "Shrinkage",
-                  pct: summary.shrinkage_pct ?? 12,
+                  pct: summary.shrinkage_pct ?? null,
                   color: "#E8231A",
                 },
-              ].map((bar) => (
+              ].filter(bar => bar.pct !== null).map((bar) => (
                 <div key={bar.label}>
                   <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
                     <span>{bar.label}</span>

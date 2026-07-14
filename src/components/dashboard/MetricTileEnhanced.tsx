@@ -61,9 +61,9 @@ export function MetricTileEnhanced({
 
   if (loading) {
     return (
-      <div className={`rounded-2xl border ${colors.bg} p-4 shadow-sm animate-pulse ${className}`}>
-        <div className="h-3 w-20 bg-slate-200 rounded mb-2" />
-        <div className="h-7 w-16 bg-slate-200 rounded" />
+      <div className={`rounded-xl border ${colors.bg} p-3 shadow-sm animate-pulse ${className}`}>
+        <div className="h-2.5 w-16 bg-slate-200 rounded mb-2" />
+        <div className="h-5 w-12 bg-slate-200 rounded" />
       </div>
     );
   }
@@ -72,58 +72,53 @@ export function MetricTileEnhanced({
     ? (typeof value === "number" ? value.toLocaleString("en-IN") : String(value))
     : "—";
 
-  const achievementPct = target && target > 0 && typeof value === "number"
+  const achievementPct = target != null && target > 0 && typeof value === "number"
     ? Math.min(Math.round((value / target) * 100), 150)
     : null;
 
   return (
-    <div className={`group relative overflow-hidden rounded-2xl border ${colors.bg} p-4 shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${className}`}>
+    <div className={`group relative overflow-hidden rounded-xl border ${colors.bg} p-3 shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${className}`}>
       {/* Header row */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 truncate">{label}</p>
-        </div>
+      <div className="flex items-center justify-between gap-1.5">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 truncate">{label}</p>
         {icon && (
-          <div className="flex-shrink-0 rounded-xl bg-white/60 p-2 shadow-sm">{icon}</div>
+          <div className="flex-shrink-0 rounded-lg bg-white/70 p-1.5 shadow-sm">{icon}</div>
         )}
       </div>
 
       {/* Value row */}
-      <div className="mt-2 flex items-end gap-2">
-        <span className={`text-2xl font-black tracking-tight ${colors.val}`}>
+      <div className="mt-1.5 flex items-end gap-1.5">
+        <span className={`text-xl font-black tracking-tight leading-none ${colors.val}`}>
           {displayValue}
-          {unit && <span className="ml-0.5 text-sm font-semibold text-slate-400">{unit}</span>}
+          {unit && <span className="ml-0.5 text-xs font-semibold text-slate-400">{unit}</span>}
         </span>
-        <div className="mb-0.5 flex items-center gap-1">
+        <div className="mb-0.5">
           {trendIcon(trend, higherIsBetter)}
         </div>
       </div>
 
-      {/* Target progress bar */}
+      {/* Target progress bar — only when there's a real target */}
       {achievementPct !== null && (
-        <div className="mt-3">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-slate-400 font-medium">vs target ({target?.toLocaleString("en-IN")})</span>
-            <span className="text-[10px] font-bold text-slate-600">{achievementPct}%</span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+        <div className="mt-2">
+          <div className="h-1 w-full rounded-full bg-slate-200 overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-700 ${colors.bar}`}
               style={{ width: `${Math.min(achievementPct, 100)}%` }}
             />
           </div>
+          <div className="flex items-center justify-between mt-0.5">
+            <span className="text-[9px] text-slate-400">target {target?.toLocaleString("en-IN")}</span>
+            <span className="text-[9px] font-bold text-slate-500">{achievementPct}%</span>
+          </div>
         </div>
       )}
 
-      {/* Footer: variance badge + previous value */}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {varianceBadge(variancePct, higherIsBetter)}
-        {previousValue != null && (
-          <span className="text-[10px] text-slate-400">
-            vs {previousValue.toLocaleString("en-IN")} prev month
-          </span>
-        )}
-      </div>
+      {/* Variance badge — only when explicitly provided */}
+      {variancePct != null && !isNaN(variancePct) && (
+        <div className="mt-1.5">
+          {varianceBadge(variancePct, higherIsBetter)}
+        </div>
+      )}
     </div>
   );
 }

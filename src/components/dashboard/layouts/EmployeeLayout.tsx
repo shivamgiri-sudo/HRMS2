@@ -79,18 +79,23 @@ export function EmployeeLayout() {
     ? actionsData.data.filter((a: any) => a.status !== "completed").slice(0, 4)
     : [];
 
+  // Build work inbox from real data only: pending leave requests + real actions from API
   const workInboxItems = [
-    ...pendingRequests.slice(0, 1).map((r: any) => ({
+    ...pendingRequests.slice(0, 2).map((r: any) => ({
       icon: <Umbrella className="w-4 h-4 text-slate-500" />,
       title: "Leave Request – Pending Approval",
-      subtitle: `${r.leave_name ?? "Leave"} on ${r.from_date}`,
+      subtitle: `${r.leave_name ?? r.leave_type ?? "Leave"} · ${r.from_date ?? ""}`,
       badge: 1,
-      time: "2h ago",
+      time: r.created_at ? new Date(r.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—",
     })),
-    { icon: <BookOpen className="w-4 h-4 text-slate-500" />, title: "Training Assignment", subtitle: "Customer Communication Essentials", badge: 0, time: "1d ago" },
-    { icon: <FileText className="w-4 h-4 text-slate-500" />, title: "Document Acknowledgement", subtitle: "Code of Conduct – 2025", badge: 0, time: "2d ago" },
-    { icon: <Clock className="w-4 h-4 text-slate-500" />, title: "Timesheet Submission", subtitle: `Submit your timesheet for this week`, badge: 0, time: "2d ago" },
-  ].slice(0, 4);
+    ...actions.slice(0, 3).map((a: any) => ({
+      icon: <Clock className="w-4 h-4 text-slate-500" />,
+      title: a.title ?? a.item_type ?? "Action Required",
+      subtitle: a.description ?? a.detail ?? "",
+      badge: a.is_overdue ? 1 : 0,
+      time: a.due_at ? new Date(a.due_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—",
+    })),
+  ].filter(Boolean).slice(0, 4);
 
   const quickLinks = [
     { label: "Apply Leave",    subtitle: "Request time off",       href: "/leaves",       icon: <Umbrella className="w-5 h-5 text-[#1B6AB5]" />,  bg: "bg-blue-50"   },
@@ -288,7 +293,7 @@ export function EmployeeLayout() {
                     <p className="text-xs text-slate-500 mt-0.5">Completed Steps: {onbSteps} / {onbTotal || 12}</p>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <p className="text-2xl font-black text-slate-900 leading-none" style={{ fontFamily: "'Fira Code', monospace" }}>{onbPct || 92}%</p>
+                    <p className="text-2xl font-black text-slate-900 leading-none" style={{ fontFamily: "'Fira Code', monospace" }}>{onbPct > 0 ? `${onbPct}%` : "—"}</p>
                     <p className="text-[11px] text-slate-500 mt-0.5">Complete</p>
                   </div>
                 </div>
@@ -297,7 +302,7 @@ export function EmployeeLayout() {
                   <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-violet-500 rounded-full transition-all duration-700"
-                      style={{ width: `${onbPct || 92}%` }}
+                      style={{ width: `${onbPct}%` }}
                     />
                   </div>
                 </div>

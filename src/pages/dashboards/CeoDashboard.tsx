@@ -271,9 +271,9 @@ export default function CeoDashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricTileEnhanced
               label="Revenue (MTD)"
-              value={pnlSummary?.kpis?.organisationRevenue ? (pnlSummary.kpis.organisationRevenue / 1000000).toFixed(1) : null}
+              value={pnlSummary?.kpis?.organisationRevenue != null ? (pnlSummary.kpis.organisationRevenue / 1000000).toFixed(1) : null}
               unit="M"
-              status={pnlSummary?.kpis?.organisationRevenue ? "ok" : "unknown"}
+              status={pnlSummary?.kpis?.organisationRevenue != null ? "ok" : "unknown"}
               trend={null}
               icon={<DollarSign className="h-4 w-4 text-emerald-600" />}
               higherIsBetter
@@ -283,8 +283,9 @@ export default function CeoDashboard() {
               value={pnlSummary?.kpis?.operatingMarginPct ?? null}
               unit="%"
               status={
-                pnlSummary?.kpis?.operatingMarginPct >= 15 ? "ok" :
-                pnlSummary?.kpis?.operatingMarginPct >= 10 ? "warn" : "critical"
+                pnlSummary?.kpis?.operatingMarginPct == null ? "unknown" :
+                pnlSummary.kpis.operatingMarginPct >= 15 ? "ok" :
+                pnlSummary.kpis.operatingMarginPct >= 10 ? "warn" : "critical"
               }
               trend={null}
               icon={<TrendingUp className="h-4 w-4 text-blue-600" />}
@@ -292,17 +293,24 @@ export default function CeoDashboard() {
             />
             <MetricTileEnhanced
               label="Revenue at Risk"
-              value={revenueRisk?.revenue_at_risk_inr ? (revenueRisk.revenue_at_risk_inr / 1000000).toFixed(1) : null}
+              value={revenueRisk?.revenue_at_risk_inr != null ? (revenueRisk.revenue_at_risk_inr / 1000000).toFixed(1) : null}
               unit="M"
-              status={revenueRisk?.revenue_at_risk_inr > 5000000 ? "critical" : revenueRisk?.revenue_at_risk_inr > 2000000 ? "warn" : "ok"}
+              status={
+                revenueRisk?.revenue_at_risk_inr == null ? "unknown" :
+                revenueRisk.revenue_at_risk_inr > 5000000 ? "critical" :
+                revenueRisk.revenue_at_risk_inr > 2000000 ? "warn" : "ok"
+              }
               icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
               higherIsBetter={false}
             />
             <MetricTileEnhanced
               label="Projected Profit"
-              value={pnlSummary?.kpis?.monthEndProjectedProfit ? (pnlSummary.kpis.monthEndProjectedProfit / 1000000).toFixed(1) : null}
+              value={pnlSummary?.kpis?.monthEndProjectedProfit != null ? (pnlSummary.kpis.monthEndProjectedProfit / 1000000).toFixed(1) : null}
               unit="M"
-              status={pnlSummary?.kpis?.monthEndProjectedProfit && pnlSummary.kpis.monthEndProjectedProfit > 0 ? "ok" : "critical"}
+              status={
+                pnlSummary?.kpis?.monthEndProjectedProfit == null ? "unknown" :
+                pnlSummary.kpis.monthEndProjectedProfit > 0 ? "ok" : "critical"
+              }
               icon={<TrendingUp className="h-4 w-4 text-emerald-600" />}
               higherIsBetter
             />
@@ -317,8 +325,12 @@ export default function CeoDashboard() {
               label="Login Adherence"
               value={opsPulse?.login_adherence_pct ?? null}
               unit="%"
-              status={opsPulse?.login_adherence_pct >= 90 ? "ok" : opsPulse?.login_adherence_pct >= 80 ? "warn" : "critical"}
-              trend={opsPulse?.login_adherence_pct >= 90 ? "up" : "down"}
+              status={
+                opsPulse?.login_adherence_pct == null ? "unknown" :
+                opsPulse.login_adherence_pct >= 90 ? "ok" :
+                opsPulse.login_adherence_pct >= 80 ? "warn" : "critical"
+              }
+              trend={opsPulse?.login_adherence_pct != null ? (opsPulse.login_adherence_pct >= 90 ? "up" : "down") : null}
               icon={<Users className="h-4 w-4 text-blue-600" />}
               higherIsBetter
             />
@@ -326,8 +338,12 @@ export default function CeoDashboard() {
               label="Avg Shrinkage"
               value={opsPulse?.avg_shrinkage_pct ?? null}
               unit="%"
-              status={opsPulse?.avg_shrinkage_pct <= 18 ? "ok" : opsPulse?.avg_shrinkage_pct <= 25 ? "warn" : "critical"}
-              trend={opsPulse?.avg_shrinkage_pct <= 18 ? "down" : "up"}
+              status={
+                opsPulse?.avg_shrinkage_pct == null ? "unknown" :
+                opsPulse.avg_shrinkage_pct <= 18 ? "ok" :
+                opsPulse.avg_shrinkage_pct <= 25 ? "warn" : "critical"
+              }
+              trend={opsPulse?.avg_shrinkage_pct != null ? (opsPulse.avg_shrinkage_pct <= 18 ? "down" : "up") : null}
               icon={<Activity className="h-4 w-4 text-orange-600" />}
               higherIsBetter={false}
             />
@@ -336,10 +352,11 @@ export default function CeoDashboard() {
               value={execQuality?.metrics?.overall_quality_score ?? null}
               unit="%"
               status={
-                execQuality?.metrics?.status === "On Track" ? "ok" :
-                execQuality?.metrics?.status === "At Risk" ? "warn" : "critical"
+                execQuality?.metrics?.status == null ? "unknown" :
+                execQuality.metrics.status === "On Track" ? "ok" :
+                execQuality.metrics.status === "At Risk" ? "warn" : "critical"
               }
-              trend={execQuality?.metrics?.trend_7day?.direction === "up" ? "up" : "down"}
+              trend={execQuality?.metrics?.trend_7day?.direction === "up" ? "up" : execQuality?.metrics?.trend_7day?.direction === "down" ? "down" : null}
               icon={<Target className="h-4 w-4 text-emerald-600" />}
               higherIsBetter
             />
@@ -347,8 +364,8 @@ export default function CeoDashboard() {
               label="Active Headcount"
               value={summary?.headcount?.active ?? null}
               unit=""
-              status="ok"
-              trend="stable"
+              status={summary?.headcount?.active != null ? "ok" : "unknown"}
+              trend={null}
               icon={<Users className="h-4 w-4 text-slate-600" />}
               higherIsBetter
             />
