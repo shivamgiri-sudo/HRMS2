@@ -374,12 +374,135 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
   return "migrated";
 }
 
+function diffMinutes(a: string, b: string): number {
+  const da = new Date(a.replace(" ", "T") + "+05:30");
+  const db = new Date(b.replace(" ", "T") + "+05:30");
+  return Math.max(0, Math.round((db.getTime() - da.getTime()) / 60000));
+}
+
+function nextCalendarDate(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00+05:30");
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+type RosterDay = { isNightShift: boolean; isWeekOff: boolean };
+
 /**
- * Night shift rollover: when an employee's first punch is after 18:00 on day N
- * and they have punches before 10:00 on day N+1, merge day N+1 into day N.
- * This attributes the full shift to the roster start date for payroll purposes.
+ * Pre-fetch roster info for all cosec-user/date combinations in the sync window
+ * in a single query. Returns a map keyed "cosecUserId__YYYY-MM-DD".
+ * Only published/approved_final rows are used; missing key = no roster data.
+ * A shift is a night shift when end_time < start_time (crosses midnight).
  */
-export function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
+async function fetchRosterMap(groups: PunchGroup[]): Promise<Map<string, RosterDay>> {
+  if (!groups.length) return new Map();
+
+  const userIds = [...new Set(groups.map(g => g.cosecUserId))];
+  const dates   = [...new Set(groups.flatMap(g => [g.punchDate, nextCalendarDate(g.punchDate)]))];
+
+  const up = userIds.map(() => "?").join(",");
+  const dp = dates.map(() => "?").join(",");
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(ebe.cosec_user_id, e.biometric_code, e.employee_code) AS cosec_user_id,
+       ra.roster_date,
+       ra.shift_start_time,
+       ra.shift_end_time,
+       ra.is_week_off
+     FROM wfm_roster_assignment ra
+     JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1
+     LEFT JOIN employee_biometric_enrollment ebe
+       ON ebe.employee_id = e.id AND ebe.is_active = 1
+     WHERE ra.roster_date IN (${dp})
+       AND ra.publish_status IN ('published','approved_final')
+       AND (
+         ebe.cosec_user_id IN (${up})
+         OR e.biometric_code  IN (${up})
+         OR e.employee_code   IN (${up})
+       )`,
+    [...dates, ...userIds, ...userIds, ...userIds],
+  );
+
+  const map = new Map<string, RosterDay>();
+  for (const row of rows) {
+    const key   = `${row.cosec_user_id}__${String(row.roster_date).slice(0, 10)}`;
+    const start = row.shift_start_time ?? "";
+    const end   = row.shift_end_time   ?? "";
+    map.set(key, {
+      isNightShift: !!start && !!end && end < start,
+      isWeekOff: !!row.is_week_off,
+    });
+  }
+  return map;
+}
+
+/**
+ * Write a missing_punch record for a night-shift employee whose spill-over day
+ * had no COSEC punches (week-off boundary with no exit scan).
+ * Sets attendance_status='missing_punch' + lwp=1.00 + mismatch_flag=1 so HR
+ * can review and regularise rather than payroll silently treating it as absent.
+ */
+async function writeMissingPunchRecord(
+  employeeId: string,
+  date: string,
+  punchIn: string,
+  branchId: string | null,
+  processId: string | null,
+  reason: string,
+): Promise<void> {
+  await db.execute(
+    `INSERT INTO attendance_daily_record
+       (id, employee_id, record_date, clock_in_time, clock_out_time,
+        raw_minutes, biometric_minutes, attendance_status, lwp_value,
+        attendance_source, source_system, source_record_date,
+        mismatch_flag, late_mark, late_by_minutes, is_locked,
+        branch_id, process_id, created_by, created_at, updated_at,
+        status_change_reason)
+     VALUES (UUID(), ?, ?, ?, NULL, 0, 0, 'missing_punch', 1.00,
+             'biometric', 'cosec_sqlserver', ?,
+             1, 0, 0, 0, ?, ?, 'cosec_night_shift_guard', NOW(), NOW(), ?)
+     ON DUPLICATE KEY UPDATE
+       attendance_status    = IF(is_locked = 0, 'missing_punch',          attendance_status),
+       clock_in_time        = IF(is_locked = 0, VALUES(clock_in_time),     clock_in_time),
+       lwp_value            = IF(is_locked = 0, 1.00,                      lwp_value),
+       mismatch_flag        = IF(is_locked = 0, 1,                         mismatch_flag),
+       status_change_reason = IF(is_locked = 0, VALUES(status_change_reason), status_change_reason),
+       source_system        = IF(is_locked = 0, 'cosec_sqlserver',         source_system),
+       updated_at           = IF(is_locked = 0, NOW(),                     updated_at)`,
+    [employeeId, date, punchIn, date, branchId, processId, reason],
+  );
+
+  // Best-effort audit log — table created by migration 099; not fatal if absent
+  await db.execute(
+    `INSERT IGNORE INTO night_shift_incomplete_punch_log
+       (id, employee_id, punch_date, punch_in_time, reason, created_at)
+     VALUES (UUID(), ?, ?, ?, ?, NOW())`,
+    [employeeId, date, punchIn, reason],
+  ).catch(() => {});
+}
+
+/**
+ * Night shift rollover: merge COSEC day N and day N+1 when an employee's shift
+ * crosses midnight, attributing the full shift to the roster start date.
+ *
+ * Guards:
+ * 1. Roster-aware: prefer published roster (end_time < start_time = night shift)
+ *    over the punch heuristic (firstPunch >= 18:00) so day-shift workers who
+ *    occasionally punch in late are not misclassified.
+ * 2. Week-off spill-over merge: if day N+1 is week_off but COSEC has early-morning
+ *    exit punches, merge proceeds — employee worked through the boundary.
+ * 3. Missing spill-over: night shift start on day N + rostered week_off on day N+1
+ *    with zero COSEC punches → flag as missing_punch for HR review.
+ * 4. Shift change: day N+1 last punch >= 10:00 → employee switched to day shift,
+ *    do not merge, keep each day as its own record.
+ */
+export async function mergeNightShiftRollover(
+  groups: PunchGroup[],
+  rosterMap?: Map<string, RosterDay>,
+): Promise<PunchGroup[]> {
+  const map = rosterMap ?? await fetchRosterMap(groups);
+
   const byUser = new Map<string, PunchGroup[]>();
   for (const g of groups) {
     const arr = byUser.get(g.cosecUserId) ?? [];
@@ -388,7 +511,7 @@ export function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
   }
 
   const merged: PunchGroup[] = [];
-  for (const [, userGroups] of byUser) {
+  for (const [userId, userGroups] of byUser) {
     userGroups.sort((a, b) => a.punchDate.localeCompare(b.punchDate));
     const consumed = new Set<number>();
 
@@ -397,40 +520,54 @@ export function mergeNightShiftRollover(groups: PunchGroup[]): PunchGroup[] {
       const current = userGroups[i];
       const firstHour = parseInt(current.firstPunch.substring(11, 13), 10);
 
-      // If first punch is after 18:00, check if next day has early punches to merge
-      if (firstHour >= 18 && i + 1 < userGroups.length) {
-        const next = userGroups[i + 1];
-        const nextDate = new Date(current.punchDate);
-        nextDate.setDate(nextDate.getDate() + 1);
-        const expectedNextDate = nextDate.toISOString().slice(0, 10);
+      // Guard 1: prefer roster confirmation, fall back to punch heuristic
+      const rosterCurrent = map.get(`${userId}__${current.punchDate}`);
+      const isNightShiftStart = rosterCurrent
+        ? rosterCurrent.isNightShift
+        : firstHour >= 18;
 
-        if (next.punchDate === expectedNextDate) {
-          const nextLastHour = parseInt(next.lastPunch.substring(11, 13), 10);
-          // Merge if next day's last punch is before 10:00 (shift ended by morning)
-          if (nextLastHour < 10) {
-            consumed.add(i + 1);
-            const totalMinutes = current.workingMinutes + next.workingMinutes +
-              diffMinutes(current.lastPunch, next.firstPunch);
-            merged.push({
-              ...current,
-              lastPunch: next.lastPunch,
-              totalPunches: current.totalPunches + next.totalPunches,
-              workingMinutes: totalMinutes,
-            });
-            continue;
-          }
+      if (!isNightShiftStart) {
+        merged.push(current);
+        continue;
+      }
+
+      const expectedNextDate = nextCalendarDate(current.punchDate);
+      const nextIdx = (i + 1 < userGroups.length && userGroups[i + 1].punchDate === expectedNextDate)
+        ? i + 1 : -1;
+
+      if (nextIdx !== -1) {
+        const next = userGroups[nextIdx];
+        const nextLastHour = parseInt(next.lastPunch.substring(11, 13), 10);
+
+        if (nextLastHour < 10) {
+          // Guards 2 + normal merge: day N+1 ended before 10:00 → full merge.
+          // Week-off on day N+1 is fine — employee worked through it.
+          consumed.add(nextIdx);
+          const gap = diffMinutes(current.lastPunch, next.firstPunch);
+          merged.push({
+            ...current,
+            lastPunch:    next.lastPunch,
+            totalPunches: current.totalPunches + next.totalPunches,
+            workingMinutes: current.workingMinutes + next.workingMinutes + gap,
+          });
+        } else {
+          // Guard 4: day N+1 last punch >= 10:00 → shift changed, do not merge
+          merged.push(current);
+        }
+      } else {
+        // Day N+1 has no COSEC punches in this sync window.
+        const rosterNext = map.get(`${userId}__${expectedNextDate}`);
+        if (rosterNext?.isWeekOff) {
+          // Guard 3: rostered week-off with no exit scan → missing_punch
+          merged.push({ ...current, missingPunch: true } as PunchGroup & { missingPunch: boolean });
+        } else {
+          // Spill-over date outside sync range — next sync run will merge
+          merged.push(current);
         }
       }
-      merged.push(current);
     }
   }
   return merged;
-}
-
-function diffMinutes(a: string, b: string): number {
-  const da = new Date(a.replace(" ", "T") + "+05:30");
-  const db = new Date(b.replace(" ", "T") + "+05:30");
-  return Math.max(0, Math.round((db.getTime() - da.getTime()) / 60000));
 }
 
 export const cosecSyncService = {
@@ -468,15 +605,34 @@ export const cosecSyncService = {
       const rawGroups = config.sourceMode === "mysql"
         ? await pullMysqlAttendance(from, to)
         : await pullCosecAttendance(from, to);
-      const groups = mergeNightShiftRollover(rawGroups);
+      const groups = await mergeNightShiftRollover(rawGroups);
       result.pulledEvents = groups.reduce((total, group) => total + group.totalPunches, 0);
       result.groupedDays = groups.length;
 
       for (const group of groups) {
+        const isMissingPunch = !!(group as any).missingPunch;
         try {
-          const status = await migratePunchGroup(group);
-          if (status === "migrated") result.migratedDays += 1;
-          else result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
+          if (isMissingPunch) {
+            // Guard 3: night-shift start with rostered week-off and no exit punch
+            const employee = await resolveEmployee(group.cosecUserId);
+            if (employee) {
+              await writeMissingPunchRecord(
+                employee.employee_id,
+                group.punchDate,
+                group.firstPunch,
+                employee.branch_id ?? null,
+                employee.process_id ?? null,
+                `Night shift started ${group.firstPunch} but no exit punch found; day N+1 is week_off`,
+              );
+              result.migratedDays += 1;
+            } else {
+              result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
+            }
+          } else {
+            const status = await migratePunchGroup(group);
+            if (status === "migrated") result.migratedDays += 1;
+            else result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
+          }
         } catch (error) {
           result.success = false;
           result.failed.push({

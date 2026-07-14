@@ -500,7 +500,7 @@ export async function getMonthlyAttendanceFromNcosec(
     );
 
   // Apply night-shift merge (same logic as cosec-sync)
-  const merged = mergeNightShiftRollover(rawGroups);
+  const merged = await mergeNightShiftRollover(rawGroups);
 
   const results: NcosecMonthlyRecord[] = [];
   const resultKeys = new Set<string>();
