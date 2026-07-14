@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertCircle, ShieldX, TrendingUp, TrendingDown, Banknote, Users, Clock, FileCheck, AlertTriangle, CheckCircle2, Building2 } from "lucide-react";
+import { AlertCircle, ShieldX, TrendingDown, Banknote, Users, Clock, FileCheck, AlertTriangle, CheckCircle2, Building2, DollarSign } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   DashboardDrilldownDrawer,
   DashboardActionStrip,
   DashboardCard,
-  HealthScoreCard,
   RoleDashboardShell,
   WorkInboxPanel,
+  ScopedFilterBar,
 } from "@/components/dashboard";
-import type { HealthBreakdownItem } from "@/components/dashboard";
+import { MetricTileEnhanced } from "@/components/dashboard/MetricTileEnhanced";
 import { AIInsightPanel } from "@/components/ai";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +38,6 @@ interface PayrollSummary {
   appointmentEsignPending?: number | null;
   appointmentCandidatePending?: number | null;
   appointmentCompanyPending?: number | null;
-  breakdown?: HealthBreakdownItem[];
 }
 
 interface DrilldownState {
@@ -108,6 +107,7 @@ const fmtINR = (n: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
 
 const fmtLakh = (n: number) => {
+  if (!n && n !== 0) return "—";
   if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
   if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
   return fmtINR(n);
@@ -159,46 +159,6 @@ function RunStatusBanner({ run, month }: { run: OperationalData["currentRun"]; m
   );
 }
 
-// ─── Key Metrics Row ──────────────────────────────────────────────────────────
-
-function MetricCard({ label, value, subtitle, icon: Icon, variant = "default", href }: {
-  label: string;
-  value: string | number;
-  subtitle?: string;
-  icon: React.ElementType;
-  variant?: "default" | "danger" | "warning" | "success";
-  href?: string;
-}) {
-  const variants = {
-    default: "border-slate-200 bg-white",
-    danger: "border-red-200 bg-red-50",
-    warning: "border-amber-200 bg-amber-50",
-    success: "border-emerald-200 bg-emerald-50",
-  };
-  const iconColors = {
-    default: "text-slate-600",
-    danger: "text-red-600",
-    warning: "text-amber-600",
-    success: "text-emerald-600",
-  };
-
-  const content = (
-    <div className={`rounded-xl border p-4 shadow-sm transition hover:shadow-md ${variants[variant]}`}>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-          <p className="mt-1 text-2xl font-bold">{value}</p>
-          {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
-        </div>
-        <Icon className={`h-5 w-5 ${iconColors[variant]}`} />
-      </div>
-    </div>
-  );
-
-  if (href) return <Link to={href}>{content}</Link>;
-  return content;
-}
-
 // ─── Disbursement Tracker ─────────────────────────────────────────────────────
 
 function DisbursementTracker({ data }: { data: Record<string, number> }) {
@@ -235,7 +195,7 @@ function DisbursementTracker({ data }: { data: Record<string, number> }) {
   );
 }
 
-// ─── MoM Trend (simple bar chart) ────────────────────────────────────────────
+// ─── MoM Trend ────────────────────────────────────────────────────────────────
 
 function MoMTrendChart({ data }: { data: OperationalData["momTrend"] }) {
   if (!data || data.length === 0) {
@@ -269,7 +229,7 @@ function MoMTrendChart({ data }: { data: OperationalData["momTrend"] }) {
   );
 }
 
-// ─── Branch Readiness Mini ────────────────────────────────────────────────────
+// ─── Branch Readiness ─────────────────────────────────────────────────────────
 
 function BranchReadinessMini({ branches }: { branches: OperationalData["branchReadiness"] }) {
   if (!branches || branches.length === 0) return null;
@@ -439,10 +399,6 @@ function BlockersTable({
   );
 }
 
-function hasValue(value: unknown): value is number | string {
-  return value !== null && value !== undefined;
-}
-
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function PayrollHrDashboard() {
@@ -450,6 +406,8 @@ export default function PayrollHrDashboard() {
   const [summary, setSummary] = useState<PayrollSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [branchId, setBranchId] = useState<string>("");
+  const [processId, setProcessId] = useState<string>("");
   const [drilldown, setDrilldown] = useState<DrilldownState>({
     open: false,
     metricCode: "",
@@ -464,14 +422,18 @@ export default function PayrollHrDashboard() {
     setDrilldown((prev) => ({ ...prev, open: false }));
   }, []);
 
-  // Fetch existing readiness summary
   useEffect(() => {
     let cancelled = false;
     setSummaryLoading(true);
     setFetchError(null);
 
+    const params = new URLSearchParams();
+    if (branchId) params.set("branchId", branchId);
+    if (processId) params.set("processId", processId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+
     hrmsApi
-      .get(`/api/dashboards/${DASHBOARD_CODE}/summary`)
+      .get(`/api/dashboards/${DASHBOARD_CODE}/summary${qs}`)
       .then((json) => {
         if (!cancelled) setSummary(normalizeDashboardSummary<PayrollSummary>(DASHBOARD_CODE, json as DashboardPayload));
       })
@@ -483,12 +445,17 @@ export default function PayrollHrDashboard() {
       });
 
     return () => { cancelled = true; };
-  }, []);
+  }, [branchId, processId]);
 
-  // Fetch operational data
   const { data: ops } = useQuery<OperationalData>({
-    queryKey: ["payroll-operational-summary"],
-    queryFn: () => hrmsApi.get(`/api/dashboards/PAYROLL_HR_DASHBOARD/operational-summary`).then((r: any) => r.data),
+    queryKey: ["payroll-operational-summary", branchId, processId],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (branchId) params.set("branchId", branchId);
+      if (processId) params.set("processId", processId);
+      const qs = params.toString() ? `?${params.toString()}` : "";
+      return hrmsApi.get(`/api/dashboards/PAYROLL_HR_DASHBOARD/operational-summary${qs}`).then((r: any) => r.data);
+    },
     staleTime: 60_000,
   });
 
@@ -524,12 +491,27 @@ export default function PayrollHrDashboard() {
 
   const loading = summaryLoading || roleLoading;
 
+  // Derived metrics
+  const disbursedTotal = Object.values(ops?.disbursement ?? {}).reduce((a, b) => a + b, 0);
+  const disbursedPct = disbursedTotal > 0
+    ? Math.round(((ops?.disbursement?.completed ?? 0) / disbursedTotal) * 100)
+    : null;
+
   return (
     <RoleDashboardShell
       title="Payroll Command Centre"
       subtitle="Live payroll operations, disbursement, compliance and readiness"
       scopeLabel="Payroll View"
       loading={loading}
+      headerActions={
+        <ScopedFilterBar
+          onBranchChange={setBranchId}
+          onProcessChange={setProcessId}
+          onDateRangeChange={() => {}}
+          showDateRange={false}
+          className="border-0 shadow-none px-0 py-0"
+        />
+      }
     >
       {fetchError && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -539,67 +521,10 @@ export default function PayrollHrDashboard() {
       )}
 
       <div className="space-y-6">
-        {/* Current Run Status */}
+        {/* CURRENT PAYROLL RUN STATUS */}
         <RunStatusBanner run={ops?.currentRun ?? null} month={ops?.currentMonth ?? ""} />
 
-        {/* Key Metrics Row */}
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-          <MetricCard
-            label="Salary Bill"
-            value={ops?.salaryBill ? fmtLakh(ops.salaryBill.totalGross) : "—"}
-            subtitle={ops?.salaryBill ? `${ops.salaryBill.employeeCount} employees` : undefined}
-            icon={Banknote}
-            variant="default"
-          />
-          <MetricCard
-            label="Salary Hold"
-            value={ops?.salaryHoldCount ?? 0}
-            subtitle="Employees on hold"
-            icon={AlertTriangle}
-            variant={ops?.salaryHoldCount && ops.salaryHoldCount > 0 ? "danger" : "default"}
-          />
-          <MetricCard
-            label="HO Queue Pending"
-            value={ops?.pendingQueues?.total ?? 0}
-            subtitle="Opt-outs, bank, cheque, advances"
-            icon={Clock}
-            variant={ops?.pendingQueues?.total && ops.pendingQueues.total > 0 ? "warning" : "success"}
-            href="/payroll/ho-queues"
-          />
-          <MetricCard
-            label="F&F Pending"
-            value={ops?.fnfPending ?? 0}
-            subtitle="Full & final settlements"
-            icon={FileCheck}
-            variant={ops?.fnfPending && ops.fnfPending > 0 ? "warning" : "default"}
-            href="/payroll/full-final"
-          />
-          <MetricCard
-            label="Readiness Score"
-            value={summary?.readinessScore != null ? `${summary.readinessScore}%` : "—"}
-            subtitle="Overall payroll readiness"
-            icon={CheckCircle2}
-            variant={summary?.readinessScore != null && summary.readinessScore >= 80 ? "success" : "warning"}
-            href="/payroll/branch-readiness"
-          />
-        </div>
-
-        {/* Disbursement + MoM Trend */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <DisbursementTracker data={ops?.disbursement ?? {}} />
-          <MoMTrendChart data={ops?.momTrend ?? []} />
-        </div>
-
-        {/* Branch Readiness + Compliance */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <BranchReadinessMini branches={ops?.branchReadiness ?? []} />
-          <ComplianceHealth filings={ops?.statutoryFiling ?? []} />
-        </div>
-
-        {/* Variance Alerts */}
-        <VarianceAlerts alerts={ops?.varianceAlerts ?? []} />
-
-        {/* Pre-payroll Readiness Actions (existing) */}
+        {/* PRE-PAYROLL BLOCKERS — Immediate action strip */}
         <DashboardActionStrip
           title="Pre-Payroll Readiness — Immediate Actions"
           items={[
@@ -634,7 +559,110 @@ export default function PayrollHrDashboard() {
           ]}
         />
 
-        {/* Blockers + Work Inbox */}
+        {/* ROW 1: FINANCIAL SUMMARY — Salary cost picture */}
+        <div>
+          <h2 className="text-sm font-semibold text-slate-600 mb-3 uppercase tracking-wider">Financial Summary</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricTileEnhanced
+              label="Salary Bill (Gross)"
+              value={ops?.salaryBill ? fmtLakh(ops.salaryBill.totalGross) : null}
+              status={ops?.salaryBill?.totalGross ? "ok" : "unknown"}
+              icon={<Banknote className="h-4 w-4 text-emerald-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Net Payout"
+              value={ops?.salaryBill ? fmtLakh(ops.salaryBill.totalNet) : null}
+              status={ops?.salaryBill?.totalNet ? "ok" : "unknown"}
+              icon={<DollarSign className="h-4 w-4 text-blue-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Total Deductions"
+              value={ops?.salaryBill ? fmtLakh(ops.salaryBill.totalDeductions) : null}
+              status="unknown"
+              icon={<TrendingDown className="h-4 w-4 text-slate-500" />}
+            />
+            <MetricTileEnhanced
+              label="Employees Covered"
+              value={ops?.salaryBill?.employeeCount ?? null}
+              status={ops?.salaryBill?.employeeCount ? "ok" : "unknown"}
+              icon={<Users className="h-4 w-4 text-slate-600" />}
+              higherIsBetter
+            />
+          </div>
+        </div>
+
+        {/* ROW 2: OPERATIONAL HEALTH — Readiness & risk indicators */}
+        <div>
+          <h2 className="text-sm font-semibold text-slate-600 mb-3 uppercase tracking-wider">Operational Health</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricTileEnhanced
+              label="Readiness Score"
+              value={summary?.readinessScore ?? null}
+              unit="%"
+              status={
+                summary?.readinessScore == null ? "unknown" :
+                summary.readinessScore >= 80 ? "ok" :
+                summary.readinessScore >= 60 ? "warn" : "critical"
+              }
+              trend={summary?.readinessScore != null ? (summary.readinessScore >= 80 ? "up" : "down") : null}
+              icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Disbursement %"
+              value={disbursedPct}
+              unit="%"
+              status={
+                disbursedPct == null ? "unknown" :
+                disbursedPct >= 90 ? "ok" :
+                disbursedPct >= 70 ? "warn" : "critical"
+              }
+              trend={disbursedPct != null ? (disbursedPct >= 90 ? "up" : "down") : null}
+              icon={<Banknote className="h-4 w-4 text-blue-600" />}
+              higherIsBetter
+            />
+            <MetricTileEnhanced
+              label="Salary Hold"
+              value={ops?.salaryHoldCount ?? null}
+              status={
+                ops?.salaryHoldCount == null ? "unknown" :
+                ops.salaryHoldCount === 0 ? "ok" :
+                ops.salaryHoldCount <= 5 ? "warn" : "critical"
+              }
+              icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
+              higherIsBetter={false}
+            />
+            <MetricTileEnhanced
+              label="F&F Pending"
+              value={ops?.fnfPending ?? null}
+              status={
+                ops?.fnfPending == null ? "unknown" :
+                ops.fnfPending === 0 ? "ok" : "warn"
+              }
+              icon={<FileCheck className="h-4 w-4 text-amber-600" />}
+              higherIsBetter={false}
+            />
+          </div>
+        </div>
+
+        {/* DISBURSEMENT + MoM TREND — Side by side */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <DisbursementTracker data={ops?.disbursement ?? {}} />
+          <MoMTrendChart data={ops?.momTrend ?? []} />
+        </div>
+
+        {/* BRANCH READINESS + COMPLIANCE — Side by side */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <BranchReadinessMini branches={ops?.branchReadiness ?? []} />
+          <ComplianceHealth filings={ops?.statutoryFiling ?? []} />
+        </div>
+
+        {/* VARIANCE ALERTS — Full width, only shown when data exists */}
+        <VarianceAlerts alerts={ops?.varianceAlerts ?? []} />
+
+        {/* EMPLOYEE BLOCKERS + WORK INBOX */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <BlockersTable blockers={summary?.blockers} loading={summaryLoading} onDrilldown={openDrilldown} />
@@ -644,7 +672,7 @@ export default function PayrollHrDashboard() {
           </div>
         </div>
 
-        {/* AI Insight */}
+        {/* AI PAYROLL READINESS CHECK */}
         <DashboardCard title="Payroll AI Readiness Check">
           <AIInsightPanel
             contextType="payroll_readiness"
@@ -662,6 +690,9 @@ export default function PayrollHrDashboard() {
               salary_hold: ops?.salaryHoldCount,
               pending_ho_queue: ops?.pendingQueues?.total,
               fnf_pending: ops?.fnfPending,
+              disbursement_pct: disbursedPct,
+              total_gross: ops?.salaryBill?.totalGross,
+              employee_count: ops?.salaryBill?.employeeCount,
             }}
           />
         </DashboardCard>

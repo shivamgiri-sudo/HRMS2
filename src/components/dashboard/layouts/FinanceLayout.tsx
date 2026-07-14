@@ -1,3 +1,7 @@
+// ⚠️ DEPRECATED — Use src/pages/dashboards/PayrollHrDashboard.tsx instead
+// This layout uses fabricated placeholders (see // TODO comments below) and has been superseded
+// by PayrollHrDashboard which pulls all metrics from real APIs
+
 import { useQuery } from "@tanstack/react-query";
 import {
   DollarSign,
