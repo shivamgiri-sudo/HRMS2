@@ -126,9 +126,10 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const eligibleWeekoff  = record.eligibleWeekoffDays  ?? 0;
   const eligibleHoliday  = record.eligibleHolidayDays  ?? 0;
   const paidWorkingDays  = record.paidWorkingDays       ?? 0;
-  // finalPayableDays = present + eligible_weekoff + eligible_holiday
+  // Approved leave counts as present for weekoff eligibility
+  // payable = present + approved_leave + eligible_weekoff + eligible_holiday − lwp
   const finalPayableDays = record.finalPayableDays ??
-    (attPresent + eligibleWeekoff + eligibleHoliday) || paidWorkingDays;
+    (attPresent + attLeave + eligibleWeekoff + eligibleHoliday - attLwp) || paidWorkingDays;
 
   // Deduction components from salary_prep_line
   const pfEmployee     = record.pfEmployee     ?? 0;
@@ -223,7 +224,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                   <AttTile
                     label="Present"
-                    value={attPresent}
+                    value={attPresent + attLeave}
                     icon={<CheckCircle2 className="h-4 w-4" />}
                     color="border-emerald-200 bg-emerald-50 text-emerald-700"
                   />
@@ -273,7 +274,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                     <span className="font-black text-base text-emerald-700 tabular-nums">{finalPayableDays}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-slate-500">
-                    <span>{attPresent} present</span>
+                    <span>{attPresent + attLeave} present{attLeave > 0 ? ` (${attPresent} worked + ${attLeave} approved leave)` : ""}</span>
                     {eligibleWeekoff > 0 && <span>+ {eligibleWeekoff} eligible week off</span>}
                     {eligibleHoliday > 0 && <span>+ {eligibleHoliday} eligible holiday</span>}
                     {attLwp > 0 && <span className="text-amber-600">− {attLwp} LWP</span>}
