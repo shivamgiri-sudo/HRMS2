@@ -126,11 +126,12 @@ export default function ATSBulkImportPage() {
     try {
       const fd = new FormData();
       fd.append("file", selectedFile);
-      const res = await hrmsApi.postForm("/api/ats/bulk-import/preview", fd);
-      setPreview(res.data);
+      const res: any = await hrmsApi.postForm("/api/ats/bulk-import/preview", fd);
+      const payload = res?.data ?? res;
+      setPreview(payload);
       setStep("preview");
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Failed to parse file");
+      toast.error(err?.response?.data?.message ?? err?.message ?? "Failed to parse file");
       setStep("upload");
     }
   };
@@ -142,13 +143,14 @@ export default function ATSBulkImportPage() {
       const fd = new FormData();
       fd.append("file", selectedFile);
       fd.append("dryRun", String(dryRun));
-      const res = await hrmsApi.postForm("/api/ats/bulk-import/candidates", fd);
-      setResult(res.data);
+      const res: any = await hrmsApi.postForm("/api/ats/bulk-import/candidates", fd);
+      const payload = res?.data ?? res;
+      setResult(payload);
       setStep("done");
-      if (!dryRun) toast.success(`Import complete — ${res.data.summary.created} created, ${res.data.summary.updated} updated`);
-      else toast.info(`Dry run complete — ${res.data.summary.created} would be created`);
+      if (!dryRun) toast.success(`Import complete — ${payload.summary.created} created, ${payload.summary.updated} updated`);
+      else toast.info(`Dry run complete — ${payload.summary.created} would be created`);
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Import failed");
+      toast.error(err?.response?.data?.message ?? err?.message ?? "Import failed");
       setStep("preview");
     }
   };
