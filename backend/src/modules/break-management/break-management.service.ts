@@ -157,6 +157,62 @@ function resolveShiftDate(explicitDate?: string | null) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+const shiftLookupCache = new Map<string, { start_time: string; end_time: string; duration_minutes: number } | null>();
+const SHIFT_CACHE_TTL_MS = 5 * 60_000;
+let shiftCacheLastClear = Date.now();
+
+async function resolveShiftDateSmart(employeeId: string, explicitDate?: string | null): Promise<string> {
+  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) return explicitDate;
+
+  if (Date.now() - shiftCacheLastClear > SHIFT_CACHE_TTL_MS) {
+    shiftLookupCache.clear();
+    shiftCacheLastClear = Date.now();
+  }
+
+  let shift: { start_time: string; end_time: string; duration_minutes: number } | null;
+  if (shiftLookupCache.has(employeeId)) {
+    shift = shiftLookupCache.get(employeeId)!;
+  } else {
+    const [rows] = await db.execute(
+      `SELECT s.start_time, s.end_time, s.duration_minutes
+       FROM employee_shifts es
+       JOIN shifts s ON s.id = es.shift_id
+       WHERE es.employee_id = ? AND es.is_current = 1
+       LIMIT 1`,
+      [employeeId],
+    );
+    shift = (rows as any[])[0] ?? null;
+    shiftLookupCache.set(employeeId, shift);
+  }
+
+  if (!shift) return resolveShiftDate(explicitDate);
+
+  const now = currentIstDateTime();
+  const startHH = parseInt(shift.start_time?.slice(0, 2) ?? "9", 10);
+  const durationHrs = (shift.duration_minutes ?? 540) / 60;
+  const endHH = (startHH + durationHrs) % 24;
+  const crossesMidnight = startHH >= 18 && endHH < startHH;
+
+  if (crossesMidnight) {
+    if (now.hour < endHH + 2) {
+      const previous = new Date(`${now.date}T00:00:00+05:30`);
+      previous.setUTCDate(previous.getUTCDate() - 1);
+      const parts = getIstParts(previous);
+      return `${parts.year}-${parts.month}-${parts.day}`;
+    }
+    return now.date;
+  }
+
+  if (now.hour < 5 && startHH < 12) {
+    const previous = new Date(`${now.date}T00:00:00+05:30`);
+    previous.setUTCDate(previous.getUTCDate() - 1);
+    const parts = getIstParts(previous);
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  }
+
+  return now.date;
+}
+
 function shiftDateByDays(dateText: string, days: number) {
   const date = new Date(`${dateText}T00:00:00+05:30`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -1526,7 +1582,7 @@ export const breakManagementService = {
     if (!employee) throw new Error("Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
 
-    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const settings = await getSettings(employee.branch_id ?? kiosk.branch_id, employee.process_id ?? kiosk.process_id);
     const [existingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM break_sessions WHERE employee_id = ? AND shift_date = ? AND status = 'ACTIVE' LIMIT 1`,
@@ -1613,7 +1669,7 @@ export const breakManagementService = {
     date?: string | null;
   }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
-    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const shiftDate = await resolveShiftDateSmart(payload.employee_id, payload.date ?? null);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT *
          FROM break_sessions
@@ -1712,7 +1768,7 @@ export const breakManagementService = {
     const employee = await getEmployeeContext(payload.employee_id);
     if (!employee) throw new Error("Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
-    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const result = await recordManualDeskPunch(employee, shiftDate, "IN");
     await rebuildDailySummary(
       employee.id,
@@ -1748,7 +1804,7 @@ export const breakManagementService = {
     const employee = await getEmployeeContext(payload.employee_id);
     if (!employee) throw new Error("Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
-    const shiftDate = resolveShiftDate(payload.date ?? null);
+    const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const result = await recordManualDeskPunch(employee, shiftDate, "OUT");
     await rebuildDailySummary(
       employee.id,
@@ -2650,5 +2706,98 @@ export const breakManagementService = {
     } finally {
       connection.release();
     }
+  },
+
+  async getDailySummaryReport(params: {
+    date_from: string;
+    date_to: string;
+    branch_id?: string;
+    process_id?: string;
+    department_id?: string;
+    manager_id?: string;
+    employee_id?: string;
+    limit?: number;
+  }) {
+    const conditions: string[] = ["bds.shift_date >= ?", "bds.shift_date <= ?"];
+    const values: any[] = [params.date_from, params.date_to];
+
+    if (params.branch_id) { conditions.push("bds.branch_id = ?"); values.push(params.branch_id); }
+    if (params.process_id) { conditions.push("bds.process_id = ?"); values.push(params.process_id); }
+    if (params.department_id) { conditions.push("e.department_id = ?"); values.push(params.department_id); }
+    if (params.manager_id) { conditions.push("bds.manager_id = ?"); values.push(params.manager_id); }
+    if (params.employee_id) { conditions.push("bds.employee_id = ?"); values.push(params.employee_id); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limit = params.limit ?? 2000;
+
+    const [rows] = await db.execute(
+      `SELECT
+        bds.employee_id,
+        bds.employee_code,
+        COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
+        p.process_name,
+        br.branch_name,
+        d.department_name,
+        bds.shift_date,
+        s.shift_name,
+        s.start_time AS shift_start_time,
+        s.end_time AS shift_end_time,
+        CASE WHEN s.start_time IS NOT NULL AND s.start_time >= '18:00:00' THEN 'Night' ELSE 'Day' END AS shift_type,
+        bds.biometric_punch_in_time AS punch_in,
+        bds.biometric_punch_out_time AS punch_out,
+        CASE
+          WHEN bds.biometric_punch_in_time IS NOT NULL AND bds.biometric_punch_out_time IS NOT NULL
+          THEN ROUND(TIMESTAMPDIFF(MINUTE, bds.biometric_punch_in_time, bds.biometric_punch_out_time) / 60, 2)
+          ELSE NULL
+        END AS worked_hours,
+        CASE
+          WHEN bds.roster_status IN ('W/O', 'Leave') THEN bds.roster_status
+          WHEN bds.biometric_punch_in_time IS NULL THEN 'Absent'
+          WHEN bds.biometric_punch_in_time IS NOT NULL AND bds.biometric_punch_out_time IS NOT NULL
+            AND TIMESTAMPDIFF(MINUTE, bds.biometric_punch_in_time, bds.biometric_punch_out_time) >= 540
+          THEN 'Present'
+          WHEN bds.biometric_punch_in_time IS NOT NULL AND bds.biometric_punch_out_time IS NOT NULL
+          THEN 'Half Day'
+          WHEN bds.biometric_punch_in_time IS NOT NULL AND bds.biometric_punch_out_time IS NULL
+          THEN 'Punch Missing'
+          ELSE 'Absent'
+        END AS attendance_status,
+        bds.total_break_minutes,
+        bds.mini_break_count,
+        bds.long_break_count,
+        (bds.mini_break_count + bds.long_break_count) AS total_break_count,
+        bds.exceeded_break_count,
+        bds.roster_status,
+        bds.final_status
+      FROM break_daily_summary bds
+      JOIN employees e ON e.id = bds.employee_id
+      LEFT JOIN processes p ON p.id = bds.process_id
+      LEFT JOIN branches br ON br.id = bds.branch_id
+      LEFT JOIN departments d ON d.id = e.department_id
+      LEFT JOIN employee_shifts es ON es.employee_id = e.id AND es.is_current = 1
+      LEFT JOIN shifts s ON s.id = es.shift_id
+      ${where}
+      ORDER BY bds.shift_date DESC, e.employee_code ASC
+      LIMIT ?`,
+      [...values, limit],
+    );
+
+    const data = rows as any[];
+
+    const summary = {
+      total_rows: data.length,
+      total_employees: new Set(data.map((r) => r.employee_id)).size,
+      total_break_minutes: data.reduce((sum, r) => sum + (Number(r.total_break_minutes) || 0), 0),
+      total_break_sessions: data.reduce((sum, r) => sum + (Number(r.total_break_count) || 0), 0),
+      avg_break_minutes_per_day: data.length > 0
+        ? Math.round(data.reduce((sum, r) => sum + (Number(r.total_break_minutes) || 0), 0) / data.length)
+        : 0,
+      exceeded_count: data.filter((r) => (Number(r.exceeded_break_count) || 0) > 0).length,
+      present_count: data.filter((r) => r.attendance_status === "Present").length,
+      absent_count: data.filter((r) => r.attendance_status === "Absent").length,
+      half_day_count: data.filter((r) => r.attendance_status === "Half Day").length,
+    };
+
+    return { rows: data, summary };
   },
 };

@@ -97,24 +97,22 @@ function EmployeeRowComponent({
     <tr
       key={employee.employee_id}
       className={cn(
-        "align-top transition hover:bg-slate-50/70",
+        "align-middle transition hover:bg-slate-50/70",
         isSelected && "bg-blue-50/50"
       )}
     >
-      {/* Checkbox Column */}
-      <td className="px-3 py-3">
+      <td className="px-2 py-1.5">
         <Checkbox
           checked={isSelected}
           onCheckedChange={() => onToggleSelect(employee.employee_id)}
-          className="h-6 w-6 touch-none"
+          className="h-5 w-5 touch-none"
           disabled={isActing}
         />
       </td>
 
-      {/* Employee Info */}
-      <td className="px-3 py-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-[16px] bg-[linear-gradient(145deg,rgba(20,93,160,0.12),rgba(67,160,71,0.14))] text-sm font-bold text-[#145da0]">
+      <td className="px-2 py-1.5">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[linear-gradient(145deg,rgba(20,93,160,0.12),rgba(67,160,71,0.14))] text-xs font-bold text-[#145da0]">
             {employee.avatar_url ? (
               <img src={employee.avatar_url} alt={employee.employee_name} className="h-full w-full object-cover" />
             ) : (
@@ -122,49 +120,40 @@ function EmployeeRowComponent({
             )}
           </div>
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div
-                className="truncate text-[15px] font-bold tracking-[-0.03em] text-slate-900"
-                style={{ fontFamily: "'Space Grotesk', sans-serif" }}
-              >
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-xs font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                 {employee.employee_name}
-              </div>
-              <span className={cn('inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ring-1', statusTone(employee.current_status))}>
+              </span>
+              <span className={cn('inline-flex whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-bold ring-1', statusTone(employee.current_status))}>
                 {employee.current_status}
               </span>
             </div>
-            <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-slate-500">
-              <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-700">{employee.employee_code}</span>
-              {employee.designation_name ? <span>{employee.designation_name}</span> : null}
-              <span>ID {employee.biometric_id}</span>
+            <div className="flex gap-1 text-[10px] text-slate-500">
+              <span className="font-semibold text-slate-600">{employee.employee_code}</span>
+              <span>· {employee.biometric_id}</span>
             </div>
           </div>
         </div>
       </td>
 
-      {/* Team Info */}
-      <td className="px-3 py-3">
-        <div className="space-y-1 text-xs text-slate-600">
-          <div className="font-semibold text-slate-800">{employee.process_name ?? '-'}</div>
-          <div>{employee.department_name ?? '-'}</div>
-          <div>{employee.branch_name ?? '-'}</div>
-          <div className="truncate text-slate-500">RM: {employee.manager_name ?? 'Not mapped'}</div>
+      <td className="px-2 py-1.5">
+        <div className="text-[11px] leading-tight text-slate-600">
+          <div className="font-semibold text-slate-800 truncate">{employee.process_name ?? '-'}</div>
+          <div className="truncate">{employee.department_name ?? '-'}</div>
+          <div className="truncate text-slate-500">{employee.branch_name ?? '-'}</div>
         </div>
       </td>
 
-      {/* Shift / Punch */}
-      <td className="px-3 py-3">
-        <div className="space-y-1 text-xs text-slate-600">
+      <td className="px-2 py-1.5">
+        <div className="text-[11px] leading-tight text-slate-600">
           <div className="font-semibold text-slate-800">{shiftLabelForDisplay(employee)}</div>
           <div>In: {formatStamp(employee.biometric_punch_in_time)}</div>
           <div>Out: {formatStamp(employee.biometric_punch_out_time)}</div>
-          <div className="text-slate-500">Source: {employee.attendance_source_system ?? 'biometric / sync'}</div>
         </div>
       </td>
 
-      {/* Break Status */}
-      <td className="px-3 py-3">
-        <div className="space-y-1 text-xs text-slate-600">
+      <td className="px-2 py-1.5">
+        <div className="text-[11px] leading-tight text-slate-600">
           <div className="font-semibold text-slate-800">
             {employee.active_break_id
               ? `Active ${formatLiveDuration(employee.active_break_start_time, null, employee.active_break_minutes)}`
@@ -173,80 +162,66 @@ function EmployeeRowComponent({
           <div>Last: {employee.last_break_reason ?? '-'}</div>
           <div>
             {employee.exceeded_minutes > 0
-              ? `Exceeded by ${employee.exceeded_minutes} min`
+              ? `Exceeded ${employee.exceeded_minutes}m`
               : Number(employee.remaining_daily_break_minutes ?? 1) <= 0
-                ? 'Daily break limit reached'
-                : `Remaining today ${formatMinutes(Number(employee.remaining_daily_break_minutes ?? 0))}`}
+                ? 'Limit reached'
+                : `Left ${formatMinutes(Number(employee.remaining_daily_break_minutes ?? 0))}`}
           </div>
         </div>
       </td>
 
-      {/* Total Breaks */}
-      <td className="px-3 py-3 text-center font-semibold text-slate-800">{employee.total_break_count}</td>
+      <td className="px-2 py-1.5 text-center text-xs font-semibold text-slate-800">{employee.total_break_count}</td>
+      <td className="px-2 py-1.5 text-center text-xs font-semibold text-sky-700">{employee.mini_break_count}</td>
+      <td className="px-2 py-1.5 text-center text-xs font-semibold text-violet-700">{employee.long_break_count}</td>
+      <td className="px-2 py-1.5 text-center text-xs font-semibold text-slate-800">{formatMinutes(totalBreakMinutesForDisplay(employee))}</td>
+      <td className="px-2 py-1.5 text-center text-xs font-semibold text-slate-800">{formatMinutes(employee.shift_duration_minutes)}</td>
 
-      {/* Mini */}
-      <td className="px-3 py-3 text-center font-semibold text-sky-700">{employee.mini_break_count}</td>
-
-      {/* Long */}
-      <td className="px-3 py-3 text-center font-semibold text-violet-700">{employee.long_break_count}</td>
-
-      {/* Break Min */}
-      <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatMinutes(totalBreakMinutesForDisplay(employee))}</td>
-
-      {/* Shift Time */}
-      <td className="px-3 py-3 text-center font-semibold text-slate-800">{formatMinutes(employee.shift_duration_minutes)}</td>
-
-      {/* Punch Action */}
-      <td className="px-3 py-3">
+      <td className="px-2 py-1.5">
         <button
           onClick={() => onPunchAction(employee)}
           disabled={isActing || (!employee.safe_actions.can_punch_in && !employee.safe_actions.can_punch_out)}
           className={cn(
-            'inline-flex h-10 min-w-[112px] items-center justify-center rounded-2xl px-4 text-sm font-semibold transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100',
+            'inline-flex h-8 min-w-[88px] items-center justify-center rounded-xl px-3 text-xs font-semibold transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100',
             employee.safe_actions.can_punch_in
-              ? 'bg-[linear-gradient(120deg,#145da0,#1b6ab5)] text-white shadow-[0_12px_24px_rgba(20,93,160,0.18)] hover:shadow-2xl'
+              ? 'bg-[linear-gradient(120deg,#145da0,#1b6ab5)] text-white shadow-sm hover:shadow-md'
               : employee.safe_actions.can_punch_out
-                ? 'bg-[linear-gradient(120deg,#e75149,#ef5350)] text-white shadow-[0_12px_24px_rgba(239,83,80,0.18)] hover:shadow-2xl'
+                ? 'bg-[linear-gradient(120deg,#e75149,#ef5350)] text-white shadow-sm hover:shadow-md'
                 : 'border border-slate-200 bg-slate-100 text-slate-400'
           )}
         >
-          {isActing && (employee.safe_actions.can_punch_in || employee.safe_actions.can_punch_out) ? 'Processing...' : punchLabel}
+          {isActing && (employee.safe_actions.can_punch_in || employee.safe_actions.can_punch_out) ? '...' : punchLabel}
         </button>
       </td>
 
-      {/* Break Action */}
-      <td className="px-3 py-3">
+      <td className="px-2 py-1.5">
         <button
           onClick={() => onBreakAction(employee)}
           disabled={isActing || !canBreak}
           className={cn(
-            'inline-flex h-10 min-w-[112px] items-center justify-center rounded-2xl px-4 text-sm font-semibold transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100',
+            'inline-flex h-8 min-w-[88px] items-center justify-center rounded-xl px-3 text-xs font-semibold transition-all duration-150 active:scale-95 disabled:cursor-not-allowed disabled:opacity-55 disabled:active:scale-100',
             employee.safe_actions.can_end_break
-              ? 'bg-[linear-gradient(120deg,#ef8f2f,#f59e0b)] text-white shadow-[0_12px_24px_rgba(245,158,11,0.2)] hover:shadow-2xl'
+              ? 'bg-[linear-gradient(120deg,#ef8f2f,#f59e0b)] text-white shadow-sm hover:shadow-md'
               : employee.safe_actions.can_start_break
-                ? 'bg-[linear-gradient(120deg,#2a8f4d,#43a047)] text-white shadow-[0_12px_24px_rgba(67,160,71,0.2)] hover:shadow-2xl'
+                ? 'bg-[linear-gradient(120deg,#2a8f4d,#43a047)] text-white shadow-sm hover:shadow-md'
                 : 'border border-slate-200 bg-slate-100 text-slate-400'
           )}
         >
-          {isActing && canBreak ? 'Processing...' : breakLabel}
+          {isActing && canBreak ? '...' : breakLabel}
         </button>
       </td>
 
-      {/* Info */}
-      <td className="px-3 py-3">
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={() => onShowDetails(employee)}
-            className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            Today Details
-          </button>
-          {employee.attendance_source_system === 'manual_kiosk' ? (
-            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-center text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">
-              Manual Override
-            </span>
-          ) : null}
-        </div>
+      <td className="px-2 py-1.5">
+        <button
+          onClick={() => onShowDetails(employee)}
+          className="rounded-xl border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          Details
+        </button>
+        {employee.attendance_source_system === 'manual_kiosk' ? (
+          <span className="mt-1 block rounded-full bg-amber-50 px-1.5 py-0.5 text-center text-[9px] font-bold uppercase text-amber-700">
+            Manual
+          </span>
+        ) : null}
       </td>
     </tr>
   );

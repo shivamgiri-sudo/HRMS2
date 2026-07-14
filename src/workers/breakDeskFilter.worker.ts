@@ -22,12 +22,12 @@ type DeskEmployee = {
 
 type FiltersState = {
   search: string;
-  branch_id: string;
-  process_id: string;
-  department_id: string;
-  designation_id: string;
-  manager_id: string;
-  shift: string;
+  branch_id: string[];
+  process_id: string[];
+  department_id: string[];
+  designation_id: string[];
+  manager_id: string[];
+  shift: string[];
   status: string;
 };
 
@@ -52,62 +52,41 @@ self.addEventListener('message', (event: MessageEvent) => {
       });
     }
 
-    // Dropdown filters
-    if (filters.branch_id && filters.branch_id !== 'all') {
-      result = result.filter((e) => e.branch_id === filters.branch_id);
+    // Multi-select dropdown filters
+    if (filters.branch_id && filters.branch_id.length > 0) {
+      result = result.filter((e) => filters.branch_id.includes(String(e.branch_id ?? '')));
     }
 
-    if (filters.process_id && filters.process_id !== 'all') {
-      result = result.filter((e) => e.process_id === filters.process_id);
+    if (filters.process_id && filters.process_id.length > 0) {
+      result = result.filter((e) => filters.process_id.includes(String(e.process_id ?? '')));
     }
 
-    if (filters.department_id && filters.department_id !== 'all') {
-      result = result.filter((e) => e.department_id === filters.department_id);
+    if (filters.department_id && filters.department_id.length > 0) {
+      result = result.filter((e) => filters.department_id.includes(String(e.department_id ?? '')));
     }
 
-    if (filters.designation_id && filters.designation_id !== 'all') {
-      result = result.filter((e) => e.designation_id === filters.designation_id);
+    if (filters.designation_id && filters.designation_id.length > 0) {
+      result = result.filter((e) => filters.designation_id.includes(String(e.designation_id ?? '')));
     }
 
-    if (filters.manager_id && filters.manager_id !== 'all') {
-      result = result.filter((e) => e.manager_id === filters.manager_id);
+    if (filters.manager_id && filters.manager_id.length > 0) {
+      result = result.filter((e) => filters.manager_id.includes(String(e.manager_id ?? '')));
     }
 
-    if (filters.shift && filters.shift !== 'all') {
-      result = result.filter((e) => e.shift_name === filters.shift);
+    if (filters.shift && filters.shift.length > 0) {
+      result = result.filter((e) => filters.shift.includes(e.shift_name ?? ''));
     }
 
-    // Status filter (primary)
+    // Status filter — match against current_status directly
     if (filters.status && filters.status !== 'all') {
-      switch (filters.status) {
-        case 'on-duty':
-          result = result.filter((e) => e.current_status === 'On Duty');
-          break;
-        case 'on-break':
-          result = result.filter((e) => e.current_status === 'On Break');
-          break;
-        case 'exceeded':
-          result = result.filter((e) => e.current_status === 'Break Exceeded');
-          break;
-        case 'no-punch':
-          result = result.filter((e) => !e.biometric_punch_in_time);
-          break;
-        case 'active-break':
-          result = result.filter((e) => !!e.active_break_id);
-          break;
-        case 'break-limit-reached':
-          result = result.filter((e) => Number(e.remaining_daily_break_minutes ?? 1) <= 0);
-          break;
-        default:
-          break;
-      }
+      const statusVal = filters.status;
+      result = result.filter((e) => e.current_status === statusVal);
     }
 
     // Send filtered result back to main thread
     self.postMessage(result);
   } catch (error) {
     console.error('Filter worker error:', error);
-    // Fallback: return original array on error
     self.postMessage(employees);
   }
 });

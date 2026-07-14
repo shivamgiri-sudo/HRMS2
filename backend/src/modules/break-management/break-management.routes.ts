@@ -39,6 +39,21 @@ breakManagementRouter.get("/reports", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
+breakManagementRouter.get("/reports/daily-summary", h(async (req, res) => {
+  const query = z.object({
+    date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    branch_id: z.string().optional(),
+    process_id: z.string().optional(),
+    department_id: z.string().optional(),
+    manager_id: z.string().optional(),
+    employee_id: z.string().optional(),
+    limit: z.coerce.number().optional(),
+  }).parse(req.query);
+  const data = await breakManagementService.getDailySummaryReport(query);
+  return res.json({ success: true, data });
+}));
+
 breakManagementRouter.get("/settings", requireBreakAdmin, h(async (_req, res) => {
   const data = await breakManagementService.getSettingsView();
   return res.json({ success: true, data });

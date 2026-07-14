@@ -13,12 +13,12 @@ type Option = { value: string; label: string };
 
 type FiltersState = {
   search: string;
-  branch_id: string;
-  process_id: string;
-  department_id: string;
-  designation_id: string;
-  manager_id: string;
-  shift: string;
+  branch_id: string[];
+  process_id: string[];
+  department_id: string[];
+  designation_id: string[];
+  manager_id: string[];
+  shift: string[];
   status: string;
 };
 
@@ -130,12 +130,12 @@ type DeskActionResponse = {
 const ACCESS_KEY = "hrms-break-desk-access";
 const DEFAULT_FILTERS: FiltersState = {
   search: "",
-  branch_id: "",
-  process_id: "",
-  department_id: "",
-  designation_id: "",
-  manager_id: "",
-  shift: "",
+  branch_id: [],
+  process_id: [],
+  department_id: [],
+  designation_id: [],
+  manager_id: [],
+  shift: [],
   status: "",
 };
 
@@ -506,18 +506,18 @@ export default function BreakDesk() {
   const employees = filteredEmployees;
 
   const counters = useMemo(
-    () => (employees.length > 0 || filters.status || deferredSearch.trim() || filters.branch_id || filters.process_id || filters.department_id || filters.designation_id || filters.manager_id || filters.shift
+    () => (employees.length > 0 || filters.status || deferredSearch.trim() || filters.branch_id.length || filters.process_id.length || filters.department_id.length || filters.designation_id.length || filters.manager_id.length || filters.shift.length
       ? buildCounters(employees)
       : (deskData?.counters ?? bootstrap?.counters ?? {})),
     [bootstrap?.counters, deferredSearch, deskData?.counters, employees, filters],
   );
 
   const statusMetrics = [
-    { label: "Entered", value: counters.entered ?? 0, icon: LogIn },
-    { label: "On Duty", value: counters.onDuty ?? 0, icon: ShieldCheck },
-    { label: "On Break", value: counters.onBreak ?? 0, icon: Coffee },
-    { label: "Exceeded", value: counters.breakExceeded ?? 0, icon: TimerReset },
-    { label: "No Punch", value: counters.noPunchFound ?? 0, icon: UserRound },
+    { label: "Entered", value: counters.entered ?? 0, icon: LogIn, cardClass: "bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200", iconClass: "bg-blue-500 text-white" },
+    { label: "On Duty", value: counters.onDuty ?? 0, icon: ShieldCheck, cardClass: "bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200", iconClass: "bg-emerald-500 text-white" },
+    { label: "On Break", value: counters.onBreak ?? 0, icon: Coffee, cardClass: "bg-gradient-to-br from-amber-50 to-amber-100 border-amber-200", iconClass: "bg-amber-500 text-white" },
+    { label: "Exceeded", value: counters.breakExceeded ?? 0, icon: TimerReset, cardClass: "bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200", iconClass: "bg-rose-500 text-white" },
+    { label: "No Punch", value: counters.noPunchFound ?? 0, icon: UserRound, cardClass: "bg-gradient-to-br from-slate-100 to-slate-200 border-slate-300", iconClass: "bg-slate-600 text-white" },
   ];
 
   const summaryMetrics = [
@@ -843,8 +843,8 @@ export default function BreakDesk() {
             </div>
           </div>
         ) : (
-          <div className="mx-auto max-w-[1600px] px-3 py-3 sm:px-4">
-            <div className="overflow-hidden rounded-[28px] border border-white/70 bg-white/88 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur">
+          <div className="px-1.5 py-2 sm:px-2">
+            <div className="overflow-hidden rounded-[20px] border border-white/70 bg-white/88 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur">
               <div className="relative border-b border-slate-200 bg-[linear-gradient(135deg,rgba(10,44,96,0.98),rgba(20,93,160,0.92))] px-4 py-4 text-white sm:px-5">
                 <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-emerald-400/25 blur-3xl" />
                 <div className="absolute bottom-0 left-14 h-24 w-24 rounded-full bg-rose-400/25 blur-3xl" />
@@ -892,55 +892,58 @@ export default function BreakDesk() {
                 </div>
               </div>
 
-              <div className="space-y-3 p-3 sm:p-4">
-                <div className="rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-                  <div className="flex flex-wrap gap-2">
+              <div className="space-y-2 p-2 sm:p-2.5">
+                <div className="rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
+                  <div className="flex flex-wrap gap-1.5">
                     {statusMetrics.map((metric) => {
                       const Icon = metric.icon;
                       return (
-                        <div key={metric.label} className="inline-flex min-w-[132px] flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                          <div className="rounded-xl bg-white p-2 text-slate-600 shadow-sm"><Icon className="h-4 w-4" /></div>
+                        <div key={metric.label} className={cn("inline-flex min-w-[120px] flex-1 items-center gap-2 rounded-xl border px-3 py-2.5", metric.cardClass)}>
+                          <div className={cn("rounded-lg p-2 shadow-sm", metric.iconClass)}><Icon className="h-5 w-5" /></div>
                           <div className="min-w-0">
-                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{metric.label}</div>
-                            <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</div>
+                            <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-600">{metric.label}</div>
+                            <div className="text-2xl font-extrabold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {summaryMetrics.map((metric) => (
-                      <div key={metric.label} className="inline-flex min-w-[120px] flex-1 items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{metric.label}</span>
-                        <span className="font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</span>
-                      </div>
-                    ))}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {summaryMetrics.map((metric, idx) => {
+                      const accents = ["border-l-blue-500", "border-l-emerald-500", "border-l-violet-500", "border-l-amber-500", "border-l-rose-500", "border-l-sky-500", "border-l-indigo-500"];
+                      return (
+                        <div key={metric.label} className={cn("inline-flex min-w-[110px] flex-1 items-center justify-between gap-2 rounded-xl border border-slate-200 border-l-[3px] bg-white px-3 py-3", accents[idx % accents.length])}>
+                          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{metric.label}</span>
+                          <span className="text-lg font-bold text-slate-900" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{metric.value}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
                 {/* Simplified Filters */}
-                <div className="rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+                <div className="rounded-2xl border border-slate-200 bg-white px-2 py-2 shadow-sm">
                   {/* Primary filters */}
                   <div className="flex flex-wrap gap-2">
-                    <label className="flex h-12 flex-1 min-w-[250px] items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
-                      <Search className="h-4 w-4 text-slate-400" />
+                    <label className="flex h-9 flex-1 min-w-[200px] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5">
+                      <Search className="h-3.5 w-3.5 text-slate-400" />
                       <input
                         ref={searchInputRef}
                         value={filters.search}
                         onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
-                        placeholder="Search employee name or code..."
-                        className="h-full w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+                        placeholder="Search name or code..."
+                        className="h-full w-full bg-transparent text-xs outline-none placeholder:text-slate-400"
                       />
                     </label>
 
                     {/* Status pills */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {[{ label: "All", value: "" }, ...(bootstrap?.filters.statuses.slice(0, 3) ?? []).map((item) => ({ label: item.label, value: item.value }))].map((item) => (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[{ label: "All", value: "" }, ...(bootstrap?.filters.statuses ?? []).map((item) => ({ label: item.label, value: item.value }))].map((item) => (
                         <button
                           key={item.label}
                           onClick={() => setFilters((current) => ({ ...current, status: item.value }))}
                           className={cn(
-                            "rounded-full border px-4 py-2.5 text-xs font-semibold transition h-12",
+                            "rounded-full border px-3 py-2 text-[11px] font-semibold transition h-9",
                             filters.status === item.value
                               ? "border-[#145da0] bg-[#145da0] text-white shadow-[0_10px_18px_rgba(20,93,160,0.18)]"
                               : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -954,7 +957,7 @@ export default function BreakDesk() {
                     {/* Advanced filters toggle */}
                     <button
                       onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                      className="flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
                       <Filter className="h-4 w-4" />
                       More Filters
@@ -966,14 +969,14 @@ export default function BreakDesk() {
                   {showAdvancedFilters && (
                     <div className="mt-3 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                       <div className="grid gap-2 xl:grid-cols-3">
-                        <SelectBox label="Branch" value={filters.branch_id} options={branchOptions} onChange={(value) => setFilters((current) => ({ ...current, branch_id: value }))} disabled={kioskBranchLocked} />
-                        <SelectBox label="Process" value={filters.process_id} options={processOptions} onChange={(value) => setFilters((current) => ({ ...current, process_id: value }))} disabled={kioskProcessLocked} />
-                        <SelectBox label="Department" value={filters.department_id} options={departmentOptions} onChange={(value) => setFilters((current) => ({ ...current, department_id: value }))} />
+                        <MultiSelectDropdown label="Branch" selected={filters.branch_id} options={branchOptions} onChange={(val) => setFilters((c) => ({ ...c, branch_id: val }))} disabled={kioskBranchLocked} />
+                        <MultiSelectDropdown label="Process" selected={filters.process_id} options={processOptions} onChange={(val) => setFilters((c) => ({ ...c, process_id: val }))} disabled={kioskProcessLocked} />
+                        <MultiSelectDropdown label="Department" selected={filters.department_id} options={departmentOptions} onChange={(val) => setFilters((c) => ({ ...c, department_id: val }))} />
                       </div>
                       <div className="grid gap-2 xl:grid-cols-3">
-                        <SelectBox label="Designation" value={filters.designation_id} options={designationOptions} onChange={(value) => setFilters((current) => ({ ...current, designation_id: value }))} />
-                        <SelectBox label="Manager" value={filters.manager_id} options={managerOptions} onChange={(value) => setFilters((current) => ({ ...current, manager_id: value }))} />
-                        <SelectBox label="Shift" value={filters.shift} options={shiftOptions} onChange={(value) => setFilters((current) => ({ ...current, shift: value }))} />
+                        <MultiSelectDropdown label="Designation" selected={filters.designation_id} options={designationOptions} onChange={(val) => setFilters((c) => ({ ...c, designation_id: val }))} />
+                        <MultiSelectDropdown label="Manager" selected={filters.manager_id} options={managerOptions} onChange={(val) => setFilters((c) => ({ ...c, manager_id: val }))} />
+                        <MultiSelectDropdown label="Shift" selected={filters.shift} options={shiftOptions} onChange={(val) => setFilters((c) => ({ ...c, shift: val }))} />
                       </div>
                       <div className="flex justify-end gap-2">
                         <button
@@ -1029,30 +1032,30 @@ export default function BreakDesk() {
                 )}
 
                 {/* Full-Screen Table (No Virtual Scrolling) */}
-                <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="max-h-[calc(100vh-200px)] overflow-auto">
-                    <table className="min-w-[1480px] w-full text-sm">
+                    <table className="min-w-[1080px] w-full text-xs">
                       <thead className="sticky top-0 z-10 bg-slate-50">
-                        <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          <th className="px-3 py-3 w-12">
+                        <tr className="text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          <th className="px-2 py-2 w-10">
                             <Checkbox
                               checked={employees.length > 0 && selectedEmployees.size === employees.length}
                               onCheckedChange={(checked) => checked ? selectAll() : clearSelection()}
-                              className="h-5 w-5"
+                              className="h-4 w-4"
                             />
                           </th>
-                          <th className="px-3 py-3">Employee</th>
-                          <th className="px-3 py-3">Team</th>
-                          <th className="px-3 py-3">Shift / Punch</th>
-                          <th className="px-3 py-3">Break Status</th>
-                          <th className="px-3 py-3 text-center">Total Breaks</th>
-                          <th className="px-3 py-3 text-center">Mini</th>
-                          <th className="px-3 py-3 text-center">Long</th>
-                          <th className="px-3 py-3 text-center">Break Min</th>
-                          <th className="px-3 py-3 text-center">Shift Time</th>
-                          <th className="px-3 py-3">Punch Action</th>
-                          <th className="px-3 py-3">Break Action</th>
-                          <th className="px-3 py-3">Info</th>
+                          <th className="px-2 py-2">Employee</th>
+                          <th className="px-2 py-2">Team</th>
+                          <th className="px-2 py-2">Shift / Punch</th>
+                          <th className="px-2 py-2">Break Status</th>
+                          <th className="px-2 py-2 text-center">Brk</th>
+                          <th className="px-2 py-2 text-center">Mini</th>
+                          <th className="px-2 py-2 text-center">Long</th>
+                          <th className="px-2 py-2 text-center">Brk Min</th>
+                          <th className="px-2 py-2 text-center">Shift</th>
+                          <th className="px-2 py-2">Punch</th>
+                          <th className="px-2 py-2">Break</th>
+                          <th className="px-2 py-2">Info</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1155,27 +1158,79 @@ export default function BreakDesk() {
   );
 }
 
-function SelectBox({
+function MultiSelectDropdown({
   label,
-  value,
+  selected,
   options,
   onChange,
   disabled = false,
 }: {
   label: string;
-  value: string;
+  selected: string[];
   options: Option[];
-  onChange: (value: string) => void;
+  onChange: (value: string[]) => void;
   disabled?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const toggle = (val: string) => {
+    if (selected.includes(val)) onChange(selected.filter((v) => v !== val));
+    else onChange([...selected, val]);
+  };
+
   return (
-    <label className={cn("rounded-2xl border border-slate-200 bg-white px-3 py-1.5", disabled && "opacity-70")}>
+    <div ref={ref} className={cn("relative rounded-2xl border border-slate-200 bg-white px-3 py-1.5", disabled && "opacity-70 pointer-events-none")}>
       <span className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="h-7 w-full bg-transparent text-sm font-medium text-slate-700 outline-none disabled:cursor-not-allowed">
-        <option value="">All</option>
-        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-    </label>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        disabled={disabled}
+        className="flex h-7 w-full items-center justify-between bg-transparent text-sm font-medium text-slate-700 outline-none"
+      >
+        <span className="truncate">{selected.length === 0 ? "All" : `${selected.length} selected`}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 text-slate-400 transition", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 max-h-56 w-full min-w-[200px] overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className={cn("flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50", selected.length === 0 && "font-bold text-[#145da0]")}
+          >
+            <div className={cn("h-4 w-4 rounded border flex items-center justify-center", selected.length === 0 ? "border-[#145da0] bg-[#145da0]" : "border-slate-300")}>
+              {selected.length === 0 && <CheckCircle className="h-3 w-3 text-white" />}
+            </div>
+            All
+          </button>
+          {options.map((opt) => {
+            const checked = selected.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50"
+              >
+                <div className={cn("h-4 w-4 rounded border flex items-center justify-center", checked ? "border-[#145da0] bg-[#145da0]" : "border-slate-300")}>
+                  {checked && <CheckCircle className="h-3 w-3 text-white" />}
+                </div>
+                <span className="truncate">{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
