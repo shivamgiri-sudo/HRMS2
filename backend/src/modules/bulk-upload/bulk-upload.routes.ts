@@ -74,7 +74,7 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
      body.metadata ? JSON.stringify(body.metadata) : null,
      req.authUser!.id,
      body.valid_rows > 0 ? req.authUser!.id : null,
-     body.valid_rows > 0 ? new Date().toISOString() : null]
+     body.valid_rows > 0 ? new Date().toISOString().slice(0, 19).replace("T", " ") : null]
   );
   const [rows] = await db.execute<UploadBatchRow[]>("SELECT * FROM upload_batch WHERE id = ? LIMIT 1", [id]);
   res.status(201).json({ success: true, data: rows[0] ?? null });
