@@ -18,6 +18,7 @@ interface SafeQueueEntry {
   called_at: string | null;
   interview_started_at: string | null;
   candidate_name: string | null;
+  recruiter_name: string | null;
 }
 
 interface QueueMetrics {
@@ -90,11 +91,19 @@ function playChime() {
   } catch {/* silent */}
 }
 
-function buildAnnouncementText(tokenNumber: string, candidateName: string | null, role: string | null): string {
+function buildAnnouncementText(
+  tokenNumber: string,
+  candidateName: string | null,
+  role: string | null,
+  recruiterName: string | null
+): string {
   const digits = tokenNumber.slice(-3).split("").join(" ");
   const namePhrase = candidateName ? `, ${candidateName},` : "";
-  const rolePhrase = role ? ` for the position of ${role}` : "";
-  return `Attention please. Token number ${digits}${namePhrase}${rolePhrase}. Please approach the Interview Room for your interview. Thank you.`;
+  const recruiterPhrase = recruiterName && recruiterName !== 'Unassigned'
+    ? ` please meet ${recruiterName}`
+    : "";
+  const rolePhrase = role ? ` for your ${role} interview` : " for your interview";
+  return `Attention please. Token number ${digits}${namePhrase}${recruiterPhrase}${rolePhrase}. Please approach the Interview Room. Thank you.`;
 }
 
 // Microsoft Neural voice priority list
@@ -223,7 +232,7 @@ export default function WaitingRoomDisplay() {
   const [metrics, setMetrics] = useState<QueueMetrics | null>(null);
   const [tickerIdx, setTickerIdx] = useState(0);
   const [tickerVisible, setTickerVisible] = useState(true);
-  const [displayToken, setDisplayToken] = useState<{ token: string; name: string | null; role: string | null } | null>(null);
+  const [displayToken, setDisplayToken] = useState<{ token: string; name: string | null; role: string | null; recruiter: string | null } | null>(null);
   const [tokenAnimKey, setTokenAnimKey] = useState(0);
   const [flashKey, setFlashKey] = useState(0);
   const [sseConnected, setSseConnected] = useState(false);
@@ -233,7 +242,7 @@ export default function WaitingRoomDisplay() {
 
   // Announcement queue
   const seenCalledRef = useRef<Set<string>>(new Set());
-  const announceQueueRef = useRef<Array<{ token: string; name: string | null; role: string | null }>>([]);
+  const announceQueueRef = useRef<Array<{ token: string; name: string | null; role: string | null; recruiter: string | null }>>([]);
   const isSpeakingRef = useRef(false);
 
   const esRef = useRef<EventSource | null>(null);
@@ -294,7 +303,7 @@ export default function WaitingRoomDisplay() {
 
     setTimeout(() => {
       if (!window.speechSynthesis) { isSpeakingRef.current = false; drainQueue(); return; }
-      const text = buildAnnouncementText(next.token, next.name, next.role);
+      const text = buildAnnouncementText(next.token, next.name, next.role, next.recruiter);
       const voices = window.speechSynthesis.getVoices();
       const doSpeak = () => {
         const utt = new SpeechSynthesisUtterance(text);
@@ -337,8 +346,9 @@ export default function WaitingRoomDisplay() {
         seenCalledRef.current.add(entry.token_number);
         announceQueueRef.current.push({
           token: entry.token_number,
-          name: (entry as any).candidate_name ?? null,
+          name: entry.candidate_name ?? null,
           role: entry.applied_role ?? null,
+          recruiter: entry.recruiter_name ?? null,
         });
       }
     });
@@ -494,21 +504,21 @@ export default function WaitingRoomDisplay() {
           align-items: center;
           justify-content: space-between;
           padding: 0 32px;
-          height: 70px;
+          height: 80px;
           background: rgba(0,0,0,0.30);
           backdrop-filter: blur(12px);
           border-bottom: 1px solid rgba(255,255,255,0.12);
           flex-shrink: 0;
           z-index: 10;
         }
-        .wr-header-left { display: flex; align-items: center; gap: 14px; }
-        .wr-logo { height: 44px; width: auto; object-fit: contain; }
+        .wr-header-left { display: flex; align-items: center; gap: 16px; }
+        .wr-logo { height: 56px; width: auto; object-fit: contain; }
         .wr-company {
-          font-size: 19px; font-weight: 800;
+          font-size: 24px; font-weight: 800;
           letter-spacing: 0.07em; color: #FFFFFF; line-height: 1.1;
         }
         .wr-tagline {
-          font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.75);
+          font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.75);
           letter-spacing: 0.14em; text-transform: uppercase; margin-top: 2px;
         }
         .wr-header-right { display: flex; align-items: center; gap: 20px; }
@@ -548,10 +558,10 @@ export default function WaitingRoomDisplay() {
         }
         .wr-clock { text-align: right; }
         .wr-time {
-          font-size: 28px; font-weight: 800;
+          font-size: 32px; font-weight: 800;
           color: #FFFFFF; letter-spacing: 0.06em; line-height: 1;
         }
-        .wr-date { font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.8); margin-top: 2px; }
+        .wr-date { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.8); margin-top: 2px; }
 
         /* ── Body ── */
         .wr-body {
@@ -672,6 +682,10 @@ export default function WaitingRoomDisplay() {
         .wr-token-role {
           font-size: 14px; font-weight: 700; color: #1565C0; margin-top: 6px;
         }
+        .wr-recruiter-name {
+          font-size: 14px; font-weight: 600; color: rgba(21,101,192,0.85);
+          margin-top: 6px; display: flex; align-items: center; justify-content: center;
+        }
         .wr-token-instruction {
           font-size: 13px; font-weight: 500; color: #546E7A;
           margin-top: 6px; line-height: 1.4;
@@ -788,9 +802,22 @@ export default function WaitingRoomDisplay() {
           font-size: 17px; font-weight: 700; color: #FFFFFF;
           letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
+        .wr-row-candidate-text {
+          font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.85);
+          margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
         .wr-row-role-text {
           font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.8);
           margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .wr-row-recruiter {
+          flex-shrink: 0; min-width: 0; max-width: 200px; display: flex; align-items: center;
+          padding: 0 14px; border-left: 1px solid rgba(255,255,255,0.1);
+        }
+        .wr-row-recruiter-text {
+          font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.85);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          display: flex; align-items: center;
         }
         .wr-row-right { text-align: right; flex-shrink: 0; }
         .wr-row-wait { font-size: 12px; font-weight: 700; color: #FFFFFF; }
@@ -969,6 +996,15 @@ export default function WaitingRoomDisplay() {
                       <div className="wr-candidate-name">{displayToken.name}</div>
                     )}
                     {displayToken.role && <div className="wr-token-role">{displayToken.role}</div>}
+                    {displayToken.recruiter && displayToken.recruiter !== 'Unassigned' && (
+                      <div className="wr-recruiter-name">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: "6px", opacity: 0.7 }}>
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                          <circle cx="12" cy="7" r="4"/>
+                        </svg>
+                        Interviewer: {displayToken.recruiter}
+                      </div>
+                    )}
                     <div className="wr-token-instruction">
                       Please proceed to the Interview Room
                     </div>
@@ -1006,11 +1042,26 @@ export default function WaitingRoomDisplay() {
                 {inInterviewQueue.map((entry) => (
                   <div key={entry.token_number} className="wr-interview-pill">
                     <span className="wr-green-dot" />
-                    <span className="wr-interview-token">{entry.token_number}</span>
-                    {entry.applied_role && (
-                      <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.75)" }}>{entry.applied_role}</span>
-                    )}
-                    <span className="wr-interview-badge">In Progress</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="wr-interview-token">{entry.token_number}</div>
+                      {entry.candidate_name && (
+                        <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.85)", marginTop: "2px" }}>
+                          {entry.candidate_name}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
+                      {entry.recruiter_name && entry.recruiter_name !== 'Unassigned' && (
+                        <div style={{ fontSize: "13px", color: "rgba(255,255,255,0.85)", display: "flex", alignItems: "center", gap: "5px", fontWeight: 600 }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                          </svg>
+                          {entry.recruiter_name}
+                        </div>
+                      )}
+                      <span className="wr-interview-badge">In Progress</span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1050,8 +1101,26 @@ export default function WaitingRoomDisplay() {
                     <span className={`wr-row-indicator ${entry.queue_status}`} />
                     <div className="wr-row-body">
                       <div className="wr-row-token-text">{entry.token_number}</div>
+                      {entry.candidate_name && (
+                        <div className="wr-row-candidate-text">{entry.candidate_name}</div>
+                      )}
                       {entry.applied_role && (
                         <div className="wr-row-role-text">{entry.applied_role}</div>
+                      )}
+                    </div>
+                    <div className="wr-row-recruiter">
+                      {entry.recruiter_name && entry.recruiter_name !== 'Unassigned' ? (
+                        <div className="wr-row-recruiter-text">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: "4px" }}>
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                          </svg>
+                          {entry.recruiter_name}
+                        </div>
+                      ) : (
+                        <div className="wr-row-recruiter-text" style={{ opacity: 0.4, fontStyle: "italic" }}>
+                          Awaiting Assignment
+                        </div>
                       )}
                     </div>
                     <div className="wr-row-right">

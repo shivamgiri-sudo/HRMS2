@@ -41,6 +41,7 @@ type PublicQueueEntry = {
   called_at: string | null;
   interview_started_at: string | null;
   candidate_name: string | null;
+  recruiter_name: string | null;
 };
 
 function mapPublicQueueEntry(entry: Awaited<ReturnType<typeof getLiveQueue>>[number]): PublicQueueEntry {
@@ -55,6 +56,7 @@ function mapPublicQueueEntry(entry: Awaited<ReturnType<typeof getLiveQueue>>[num
     called_at: entry.called_at,
     interview_started_at: entry.interview_started_at,
     candidate_name: (entry as any).candidate_name ?? null,
+    recruiter_name: entry.recruiter_name ?? 'Unassigned',
   };
 }
 
