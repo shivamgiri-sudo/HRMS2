@@ -193,6 +193,14 @@ export function parseHistoricalFile(buffer: Buffer, mimeType: string): ImportRow
   const wb = XLSX.read(buffer, opts);
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<ImportRow>(sheet, { defval: "" });
+  // Coerce all cell values to strings — XLSX can parse numeric-looking cells as numbers
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (row[key] !== undefined && row[key] !== null && typeof row[key] !== "string") {
+        row[key] = String(row[key]);
+      }
+    }
+  }
   return rows;
 }
 
@@ -201,9 +209,10 @@ export function parseHistoricalFile(buffer: Buffer, mimeType: string): ImportRow
 export function validateRow(row: ImportRow, rowIdx: number): { errors: ImportError[]; warnings: ImportWarning[] } {
   const errors: ImportError[] = [];
   const warnings: ImportWarning[] = [];
-  const cid = row.CandidateID ?? `row-${rowIdx}`;
+  const cid = String(row.CandidateID ?? `row-${rowIdx}`);
 
-  if (!row.FullName?.trim()) {
+  const fullName = String(row.FullName ?? "").trim();
+  if (!fullName) {
     errors.push({ row: rowIdx, candidateId: cid, field: "FullName", message: "FullName is required" });
   }
   const mobile = String(row.Mobile ?? "").replace(/\D/g, "");
