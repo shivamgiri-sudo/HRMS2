@@ -5,7 +5,8 @@ import {
   FileText, GitBranch, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
-  Zap, DollarSign, ShoppingCart,
+  Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
+  Plus, Send, Lock, Shield, ShieldAlert,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -23,6 +24,12 @@ export const navGroups: NavGroup[] = [
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
       { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], description: "Team attendance, leave, KPI & approvals" },
       { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Reports" },
+      { label: "My Dashboard",     href: "/my-dashboard",     icon: ic(LayoutDashboard), pageCode: "EMPLOYEE_DASHBOARD", description: "Employee dashboard" },
+      { label: "CEO Dashboard",    href: "/ceo/dashboard",    icon: ic(Crown),           pageCode: "CEO_DASHBOARD", roles: ["ceo"], description: "CEO dashboard" },
+      { label: "HR Dashboard",     href: "/hr/dashboard",     icon: ic(Users),           pageCode: "HR_DASHBOARD", roles: ["hr", "admin"], description: "HR dashboard" },
+      { label: "WFM Dashboard",    href: "/wfm/dashboard",    icon: ic(Calendar),        pageCode: "WFM_DASHBOARD", roles: ["wfm"], description: "WFM dashboard" },
+      { label: "Payroll Dashboard", href: "/payroll-hr/dashboard", icon: ic(Receipt),    pageCode: "PAYROLL_DASHBOARD", roles: ["payroll_head", "payroll"], description: "Payroll dashboard" },
+      { label: "Manager Dashboard", href: "/manager/dashboard", icon: ic(Briefcase),     pageCode: "MANAGER_DASHBOARD", roles: ["manager", "process_manager"], description: "Manager dashboard" },
     ],
   },
 
@@ -253,6 +260,9 @@ export const navGroups: NavGroup[] = [
           { label: "Cost Summary",          href: "/payroll/cost-summary",         icon: ic(DollarSign), roles: ["super_admin","payroll_head","finance"],                 description: "Payroll cost analysis" },
           { label: "Variance Report",       href: "/payroll/variance",             icon: ic(BarChart3),  roles: ["super_admin","payroll_head","finance","admin"],         description: "Month-over-month variance" },
           { label: "Audit Trail",           href: "/payroll/audit-trail",          icon: ic(FileText),   roles: ["super_admin","payroll_head","finance","admin"],         description: "Payroll changes audit log" },
+          { label: "Disbursal Management",  href: "/payroll/disbursal",            icon: ic(Send),       pageCode: "PAYROLL_DISBURSAL", roles: ["super_admin","payroll_head","finance"], description: "Salary disbursal tracking" },
+          { label: "Loan Management",       href: "/payroll/loans",                icon: ic(CreditCard), pageCode: "PAYROLL_LOANS", roles: ["super_admin","payroll_head","hr"], description: "Employee loan management" },
+          { label: "Salary Certificates",   href: "/payroll/salary-certificates",  icon: ic(FileText),   pageCode: "SALARY_CERTIFICATE", description: "Generate salary certificates" },
         ],
       },
       {
@@ -271,6 +281,18 @@ export const navGroups: NavGroup[] = [
           { label: "People Experience",        href: "/people-experience/command-center", icon: ic(Users),   pageCode: "PEOPLE_EXPERIENCE",      description: "People ops" },
         ],
       },
+    ],
+  },
+
+  /* ── EXPENSES ─────────────────────────────────────────────── */
+  {
+    title: "Expenses",
+    items: [
+      { label: "My Expenses",    href: "/expenses",           icon: ic(Receipt),      pageCode: "MY_EXPENSES", description: "My expense claims" },
+      { label: "New Claim",      href: "/expenses/new",       icon: ic(Plus),         pageCode: "EXPENSE_CREATE", description: "New expense claim" },
+      { label: "Approvals",      href: "/expenses/approvals", icon: ic(CheckCircle),  pageCode: "EXPENSE_APPROVALS", roles: ["manager", "admin"], description: "Approve team expenses" },
+      { label: "Finance Queue",  href: "/expenses/finance",   icon: ic(DollarSign),   pageCode: "EXPENSE_FINANCE", roles: ["finance", "admin"], description: "Finance approval queue" },
+      { label: "Reports",        href: "/expenses/reports",   icon: ic(BarChart3),    pageCode: "EXPENSE_REPORTS", roles: ["admin", "finance"], description: "Expense analytics" },
     ],
   },
 
@@ -297,6 +319,9 @@ export const navGroups: NavGroup[] = [
           { label: "Settings",         href: "/settings",                    icon: ic(Settings),   description: "Settings" },
           { label: "Access Control",   href: "/settings/access-control",    icon: ic(Settings),   pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Access" },
           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },
+          { label: "Module Access",    href: "/super-admin/module-access",  icon: ic(Lock),       pageCode: "MODULE_ACCESS", roles: ["super_admin"], description: "Module permissions" },
+          { label: "Super Admin Dashboard", href: "/super-admin/dashboard", icon: ic(Shield),     pageCode: "SUPER_ADMIN_DASHBOARD", roles: ["super_admin"], description: "Super admin dashboard" },
+          { label: "Security Center",  href: "/security-center",            icon: ic(ShieldAlert),pageCode: "SECURITY_CENTER", roles: ["super_admin", "admin"], description: "Security monitoring" },
           { label: "DPDP / Privacy",   href: "/compliance/dpdp",            icon: ic(ShieldCheck),roles: ["admin","hr"],       description: "DPDP" },
           { label: "Audit Log",        href: "/audit-log",                  icon: ic(FileText),   roles: ["admin","super_admin","payroll_head","hr","wfm"], description: "Audit trail" },
           { label: "Document Templates", href: "/settings/document-templates", icon: ic(FileText), roles: ["admin","super_admin","hr"], description: "Joining document templates" },
