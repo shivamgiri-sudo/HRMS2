@@ -2755,7 +2755,7 @@ export const breakManagementService = {
         COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
         p.process_name,
         br.branch_name,
-        d.department_name,
+        d.dept_name AS department_name,
         bds.shift_date,
         e.shift_name AS shift_name,
         CASE
