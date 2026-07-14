@@ -79,6 +79,21 @@ breakManagementRouter.get("/kiosks", requireBreakAdmin, h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
+breakManagementRouter.get("/kiosks/export", requireBreakAdmin, h(async (req, res) => {
+  const query = z.object({
+    search: z.string().optional(),
+    branch_id: z.string().optional(),
+    process_id: z.string().optional(),
+    status: z.enum(["active", "inactive", "all"]).optional(),
+    mode: z.enum(["summary", "detailed"]).optional(),
+    limit: z.coerce.number().optional(),
+  }).parse(req.query);
+  const data = await breakManagementService.exportKioskDevices(query);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${data.fileName}"`);
+  return res.send(data.csv);
+}));
+
 breakManagementRouter.post("/kiosks", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
   const body = z.object({
     kiosk_code: z.string().min(3).max(100),

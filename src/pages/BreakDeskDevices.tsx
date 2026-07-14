@@ -1,7 +1,7 @@
 import { useDeferredValue, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, KeyRound, Link2, Loader2, MonitorCog, Plus, RefreshCw, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, Download, KeyRound, Link2, Loader2, MonitorCog, Plus, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -94,6 +94,7 @@ export default function BreakDeskDevices() {
   const [ipText, setIpText] = useState("");
   const [fingerprintText, setFingerprintText] = useState("");
   const [tokenResult, setTokenResult] = useState<TokenResult | null>(null);
+  const [exportMode, setExportMode] = useState<"summary" | "detailed" | null>(null);
   const deferredSearch = useDeferredValue(search);
 
   const kioskQuery = useMemo(() => new URLSearchParams({ status: "all", limit: "250" }).toString(), []);
@@ -208,6 +209,32 @@ export default function BreakDeskDevices() {
       return process.branch_id === form.branch_id;
     });
   }, [form.branch_id, processes.data]);
+
+  async function exportReport(mode: "summary" | "detailed") {
+    try {
+      setExportMode(mode);
+      const params = new URLSearchParams({
+        status,
+        mode,
+        limit: "250",
+      });
+      if (search.trim()) params.set("search", search.trim());
+      const blob = await hrmsApi.getBlob(`/api/break-management/kiosks/export?${params.toString()}`);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `break-desk-kiosks-${mode}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(mode === "summary" ? "Kiosk summary exported" : "Detailed kiosk report exported");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to export kiosk report");
+    } finally {
+      setExportMode(null);
+    }
+  }
 
   function resetForm() {
     setSelected(null);
@@ -350,9 +377,28 @@ export default function BreakDeskDevices() {
               <div className="flex flex-col gap-3 border-b border-slate-200 p-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h2 className="text-base font-black">Desk registry</h2>
-                  <p className="text-xs text-slate-500">Only mapped desks should be used on production floors.</p>
+                  <p className="text-xs text-slate-500">Only mapped desks should be used on production floors. Export summary or employee-scope detail from the same live mapping rules.</p>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="flex flex-col gap-2 lg:items-end">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => exportReport("summary")}
+                      disabled={exportMode !== null}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {exportMode === "summary" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      Export summary
+                    </button>
+                    <button
+                      onClick={() => exportReport("detailed")}
+                      disabled={exportMode !== null}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#145da0] px-3 text-xs font-bold text-white transition hover:bg-[#0a2c60] disabled:opacity-60"
+                    >
+                      {exportMode === "detailed" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      Detailed report
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
                   <label className="flex h-10 min-w-[260px] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3">
                     <Search className="h-4 w-4 text-slate-400" />
                     <input value={search} onChange={(event) => setSearch(event.target.value)} className="h-full w-full bg-transparent text-sm outline-none" placeholder="Search desk, branch, process" />
@@ -362,6 +408,7 @@ export default function BreakDeskDevices() {
                     <option value="inactive">Inactive</option>
                     <option value="all">All</option>
                   </select>
+                </div>
                 </div>
               </div>
 

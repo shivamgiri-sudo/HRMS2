@@ -227,6 +227,28 @@ function safeLimit(value: unknown, fallback = 120) {
   return Math.min(Math.floor(parsed), 500);
 }
 
+function csvEscape(value: unknown) {
+  if (value == null) return "";
+  const normalized = Array.isArray(value)
+    ? value.join(", ")
+    : typeof value === "boolean"
+      ? (value ? "Yes" : "No")
+      : String(value);
+  return `"${normalized.replace(/"/g, "\"\"")}"`;
+}
+
+function buildCsv(columns: string[], rows: Array<Record<string, unknown>>) {
+  const header = columns.map(csvEscape).join(",");
+  const body = rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")).join("\n");
+  return body ? `${header}\n${body}\n` : `${header}\n`;
+}
+
+function formatCsvDateTime(value: unknown) {
+  const normalized = normalizePunchStamp(value);
+  if (!normalized) return "";
+  return normalized;
+}
+
 function normalizeStringArrayInput(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)));
@@ -1950,6 +1972,202 @@ export const breakManagementService = {
         token_configured: true,
         desk_url: `/break-desk?kiosk=${encodeURIComponent(String(row.kiosk_code ?? ""))}`,
       })),
+    };
+  },
+
+  async exportKioskDevices(filters: {
+    search?: string;
+    branch_id?: string;
+    process_id?: string;
+    status?: "active" | "inactive" | "all";
+    mode?: "summary" | "detailed";
+    limit?: number;
+  }) {
+    const mode = filters.mode === "summary" ? "summary" : "detailed";
+    const kioskData = await this.listKioskDevices({ ...filters, limit: safeLimit(filters.limit ?? 250, 250) });
+    const generatedAtIst = currentIstDateTime().dateTime;
+    const generatedOnDate = currentIstDateTime().date;
+
+    if (mode === "summary") {
+      const rows = kioskData.rows.map((row: any) => ({
+        report_generated_at_ist: generatedAtIst,
+        kiosk_code: row.kiosk_code,
+        kiosk_name: row.kiosk_name,
+        kiosk_status: row.is_active ? "Active" : "Inactive",
+        mapping_status: row.branch_id && (row.allowed_process_ids?.length || row.process_id) ? "Branch + Process locked" : "Mapping incomplete",
+        branch_name: row.branch_name ?? "",
+        primary_process_name: row.process_name ?? "",
+        allowed_process_names: row.allowed_process_names ?? "",
+        scoped_employee_count: Number(row.scoped_employee_count ?? 0),
+        allowed_ip_count: Array.isArray(row.allowed_ip_list) ? row.allowed_ip_list.length : 0,
+        allowed_ip_list: row.allowed_ip_list ?? [],
+        device_lock_count: Array.isArray(row.allowed_device_fingerprints) ? row.allowed_device_fingerprints.length : 0,
+        device_fingerprints: row.allowed_device_fingerprints ?? [],
+        last_used_at_ist: formatCsvDateTime(row.last_used_at),
+        created_by_name: row.created_by_name ?? "",
+        desk_url: row.desk_url ?? "",
+      }));
+      return {
+        fileName: `break-desk-kiosk-summary-${generatedOnDate}.csv`,
+        csv: buildCsv([
+          "report_generated_at_ist",
+          "kiosk_code",
+          "kiosk_name",
+          "kiosk_status",
+          "mapping_status",
+          "branch_name",
+          "primary_process_name",
+          "allowed_process_names",
+          "scoped_employee_count",
+          "allowed_ip_count",
+          "allowed_ip_list",
+          "device_lock_count",
+          "device_fingerprints",
+          "last_used_at_ist",
+          "created_by_name",
+          "desk_url",
+        ], rows),
+      };
+    }
+
+    const kioskIds = kioskData.rows.map((row: any) => String(row.id ?? "")).filter(Boolean);
+    const employeeRowsByKiosk = new Map<string, any[]>();
+
+    if (kioskIds.length > 0) {
+      const placeholders = kioskIds.map(() => "?").join(", ");
+      const [employeeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+            kd.id AS kiosk_id,
+            kd.kiosk_code,
+            kd.kiosk_name,
+            kd.is_active,
+            bm.branch_name AS kiosk_branch_name,
+            pm.process_name AS primary_process_name,
+            (
+              SELECT GROUP_CONCAT(pm2.process_name ORDER BY pm2.process_name SEPARATOR ', ')
+                FROM process_master pm2
+               WHERE COALESCE(pm2.active_status, 1) = 1
+                 AND JSON_CONTAINS(kd.allowed_process_ids, JSON_QUOTE(pm2.id))
+            ) AS allowed_process_names,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), NULLIF(TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))), '')) AS employee_name,
+            e.employee_code,
+            e.branch_id AS employee_branch_id,
+            eb.branch_name AS employee_branch_name,
+            e.process_id AS employee_process_id,
+            ep.process_name AS employee_process_name,
+            e.department_id,
+            dm.dept_name AS department_name,
+            e.reporting_manager_id AS manager_id,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), NULLIF(TRIM(CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, ''))), '')) AS manager_name,
+            e.employment_status,
+            e.active_status
+         FROM break_kiosk_devices kd
+         LEFT JOIN branch_master bm ON bm.id = kd.branch_id
+         LEFT JOIN process_master pm ON pm.id = kd.process_id
+         LEFT JOIN employees e
+           ON e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+          AND (kd.branch_id IS NULL OR e.branch_id = kd.branch_id)
+          AND (
+            JSON_LENGTH(COALESCE(kd.allowed_process_ids, JSON_ARRAY())) = 0
+            OR JSON_CONTAINS(kd.allowed_process_ids, JSON_QUOTE(e.process_id))
+          )
+         LEFT JOIN branch_master eb ON eb.id = e.branch_id
+         LEFT JOIN process_master ep ON ep.id = e.process_id
+         LEFT JOIN department_master dm ON dm.id = e.department_id
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+        WHERE kd.id IN (${placeholders})
+        ORDER BY kd.kiosk_code ASC, employee_name ASC, e.employee_code ASC`,
+        kioskIds,
+      );
+
+      for (const row of employeeRows as any[]) {
+        const kioskId = String(row.kiosk_id ?? "");
+        const bucket = employeeRowsByKiosk.get(kioskId) ?? [];
+        bucket.push(row);
+        employeeRowsByKiosk.set(kioskId, bucket);
+      }
+    }
+
+    const detailedRows: Array<Record<string, unknown>> = [];
+    for (const kiosk of kioskData.rows as any[]) {
+      const scopedEmployees = employeeRowsByKiosk.get(String(kiosk.id)) ?? [];
+      if (scopedEmployees.length === 0) {
+        detailedRows.push({
+          report_generated_at_ist: generatedAtIst,
+          kiosk_code: kiosk.kiosk_code,
+          kiosk_name: kiosk.kiosk_name,
+          kiosk_status: kiosk.is_active ? "Active" : "Inactive",
+          branch_name: kiosk.branch_name ?? "",
+          allowed_process_names: kiosk.allowed_process_names ?? kiosk.process_name ?? "",
+          scoped_employee_count: Number(kiosk.scoped_employee_count ?? 0),
+          employee_in_scope: "No",
+          employee_code: "",
+          employee_name: "",
+          employee_branch_name: "",
+          employee_process_name: "",
+          department_name: "",
+          manager_name: "",
+          employment_status: "",
+          employee_active_status: "",
+          allowed_ip_list: kiosk.allowed_ip_list ?? [],
+          device_fingerprints: kiosk.allowed_device_fingerprints ?? [],
+          last_used_at_ist: formatCsvDateTime(kiosk.last_used_at),
+          desk_url: kiosk.desk_url ?? "",
+        });
+        continue;
+      }
+
+      for (const scoped of scopedEmployees) {
+        detailedRows.push({
+          report_generated_at_ist: generatedAtIst,
+          kiosk_code: kiosk.kiosk_code,
+          kiosk_name: kiosk.kiosk_name,
+          kiosk_status: kiosk.is_active ? "Active" : "Inactive",
+          branch_name: scoped.kiosk_branch_name ?? kiosk.branch_name ?? "",
+          allowed_process_names: scoped.allowed_process_names ?? kiosk.allowed_process_names ?? kiosk.process_name ?? "",
+          scoped_employee_count: Number(kiosk.scoped_employee_count ?? 0),
+          employee_in_scope: scoped.employee_code ? "Yes" : "No",
+          employee_code: scoped.employee_code ?? "",
+          employee_name: scoped.employee_name ?? "",
+          employee_branch_name: scoped.employee_branch_name ?? "",
+          employee_process_name: scoped.employee_process_name ?? "",
+          department_name: scoped.department_name ?? "",
+          manager_name: scoped.manager_name ?? "",
+          employment_status: scoped.employment_status ?? "",
+          employee_active_status: Number(scoped.active_status ?? 0) ? "Active" : "Inactive",
+          allowed_ip_list: kiosk.allowed_ip_list ?? [],
+          device_fingerprints: kiosk.allowed_device_fingerprints ?? [],
+          last_used_at_ist: formatCsvDateTime(kiosk.last_used_at),
+          desk_url: kiosk.desk_url ?? "",
+        });
+      }
+    }
+
+    return {
+      fileName: `break-desk-kiosk-detailed-${generatedOnDate}.csv`,
+      csv: buildCsv([
+        "report_generated_at_ist",
+        "kiosk_code",
+        "kiosk_name",
+        "kiosk_status",
+        "branch_name",
+        "allowed_process_names",
+        "scoped_employee_count",
+        "employee_in_scope",
+        "employee_code",
+        "employee_name",
+        "employee_branch_name",
+        "employee_process_name",
+        "department_name",
+        "manager_name",
+        "employment_status",
+        "employee_active_status",
+        "allowed_ip_list",
+        "device_fingerprints",
+        "last_used_at_ist",
+        "desk_url",
+      ], detailedRows),
     };
   },
 
