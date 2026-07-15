@@ -15,7 +15,6 @@ import {
   asRecord,
   type DashboardSummary,
   type EmployeeDashboardData,
-  type JsonRecord,
   type ReferenceDashboardData,
 } from "./reference-dashboard-model";
 import { ReferenceError, UpdatedControl } from "./ReferenceDashboardUI";
@@ -52,11 +51,12 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
     hrmsApi.get<unknown>("/api/engagement/me"),
   ]);
   const leavePayload = unwrap(leave);
+  const leaveRecord = asRecord(leavePayload);
   return {
     attendance: asRecord(unwrap(attendance)),
     balances: Array.isArray(leavePayload)
       ? asArray(leavePayload)
-      : asArray(asRecord(leavePayload).balances ?? asRecord(leavePayload).data),
+      : asArray(leaveRecord.balances ?? leaveRecord.data),
     onboarding: asRecord(unwrap(onboarding)),
     lms: asRecord(unwrap(lms)),
     engagement: asRecord(unwrap(engagement)),
@@ -183,6 +183,20 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   const orgKpiQuery = useOrgKpiSummary();
 
   const summary = (summaryQuery.data ?? {}) as DashboardSummary;
+  const queryResults = [
+    summaryQuery,
+    employeeQuery,
+    atsQuery,
+    systemQuery,
+    workforceQuery,
+    pnlQuery,
+    payrollQuery,
+    biometricQuery,
+    devicesQuery,
+    pulseQuery,
+    managerLeavesQuery,
+  ];
+
   const data: ReferenceDashboardData = {
     variant,
     summary,
@@ -200,16 +214,13 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
     quality: asRecord(unwrap(qualityQuery.data as unknown)),
     orgKpi: asRecord(unwrap(orgKpiQuery.data as unknown)),
     loading: roleLoading || (variant === "employee" ? employeeQuery.isLoading : summaryQuery.isLoading),
-    refreshing: [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery].some((query) => query.isFetching),
+    refreshing: queryResults.some((query) => query.isFetching),
     generatedAt: summary.generatedAt,
   };
 
-  const allQueries = [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery];
-  const hasError = allQueries.some((query) => query.isError);
+  const hasError = queryResults.some((query) => query.isError);
   const refreshAll = () => {
-    for (const query of allQueries) {
-      if (query.isEnabled) void query.refetch();
-    }
+    for (const query of queryResults) void query.refetch();
   };
 
   const filterControl = variant === "employee" ? undefined : (
@@ -228,7 +239,11 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   if (roleLoading) {
     return (
       <DashboardLayout>
-        <div className="space-y-4 p-2"><Skeleton className="h-12 w-80" /><Skeleton className="h-28 w-full" /><Skeleton className="h-80 w-full" /></div>
+        <div className="space-y-4 p-2">
+          <Skeleton className="h-12 w-80" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
       </DashboardLayout>
     );
   }
@@ -253,7 +268,12 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
     <DashboardLayout>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
         {hasError ? (
-          <div className="mb-4"><ReferenceError message="Some live dashboard sources could not be loaded. Available data is still displayed." onRetry={refreshAll} /></div>
+          <div className="mb-4">
+            <ReferenceError
+              message="Some live dashboard sources could not be loaded. Available data is still displayed."
+              onRetry={refreshAll}
+            />
+          </div>
         ) : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
