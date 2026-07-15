@@ -115,7 +115,7 @@ async function candidateSnapshot(candidateId: string): Promise<RowDataPacket | n
      LEFT JOIN ats_payroll_hr_validation phr ON phr.candidate_id = c.id
      LEFT JOIN salary_exception_proposal sep ON sep.candidate_id = c.id
      LEFT JOIN ats_branch_head_approval bha ON bha.candidate_id = c.id
-     LEFT JOIN salary_register sr ON sr.candidate_id = c.id AND sr.lock_status = 'locked'
+     LEFT JOIN salary_register sr ON sr.candidate_id = c.id AND sr.locked_status = 1
      LEFT JOIN jclr_detail jclr ON jclr.candidate_id = c.id
      LEFT JOIN statutory_declaration stat ON stat.candidate_id = c.id
      LEFT JOIN (
@@ -512,30 +512,19 @@ export async function lockSalaryRegister(candidateId: string, actorId: string) {
   const salaryRegisterId = randomUUID();
   await db.execute(
     `INSERT INTO salary_register
-       (id, candidate_id, payroll_validation_id, salary_slab_id, approved_gross_salary, salary_effective_from,
-        attendance_effective_from, statutory_effective_from, payroll_month_effective, lock_status, locked_by, locked_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'locked', ?, NOW(), ?)
+       (id, candidate_id, salary_slab_id, approved_ctc_annual, locked_status, locked_by, locked_at, created_by)
+     VALUES (?, ?, ?, ?, 1, ?, NOW(), ?)
      ON DUPLICATE KEY UPDATE
-       payroll_validation_id = VALUES(payroll_validation_id),
        salary_slab_id = VALUES(salary_slab_id),
-       approved_gross_salary = VALUES(approved_gross_salary),
-       salary_effective_from = VALUES(salary_effective_from),
-       attendance_effective_from = VALUES(attendance_effective_from),
-       statutory_effective_from = VALUES(statutory_effective_from),
-       payroll_month_effective = VALUES(payroll_month_effective),
-       lock_status = 'locked',
+       approved_ctc_annual = VALUES(approved_ctc_annual),
+       locked_status = 1,
        locked_by = VALUES(locked_by),
        locked_at = NOW()`,
     [
       salaryRegisterId,
       candidateId,
-      payroll.id,
       payroll.salary_slab_id,
       gross,
-      salaryEffective,
-      toDateOnly(payroll.attendance_effective_from) || salaryEffective,
-      toDateOnly(payroll.statutory_effective_from) || salaryEffective,
-      payroll.payroll_month_effective || monthOf(salaryEffective),
       actorId,
       actorId,
     ],
