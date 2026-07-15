@@ -9,6 +9,10 @@ const shellFixes = readFileSync(
   new URL("../src/pages/dashboards/reference/reference-dashboard-shell-fixes.css", import.meta.url),
   "utf8",
 );
+const dashboardStyles = readFileSync(
+  new URL("../src/pages/dashboards/role-dashboard-reference.css", import.meta.url),
+  "utf8",
+);
 
 describe("reference dashboard shell contract", () => {
   it("uses one unified shell for every dashboard role", () => {
@@ -31,5 +35,11 @@ describe("reference dashboard shell contract", () => {
     expect(shellFixes).toContain(".reference-app-shell--unified .reference-shell-content");
     expect(shellFixes).toContain("min-width: 0");
     expect(shellFixes).toContain("overflow-x: hidden");
+  });
+
+  it("does not re-import the legacy shell stylesheet after the grid override", () => {
+    expect(dashboardStyles).not.toContain("@import");
+    expect(shellSource.indexOf("reference-dashboard-shell.css"))
+      .toBeLessThan(shellSource.indexOf("reference-dashboard-shell-fixes.css"));
   });
 });
