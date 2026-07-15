@@ -1,15 +1,33 @@
 import "dotenv/config";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
+import { getUserRoleContext } from "../src/shared/roleResolver.js";
+import { resolveDashboardScope } from "../src/shared/dashboardScope.js";
+import {
+  getAppointmentEsignMetrics,
+  getAttendanceMetrics,
+  getBgvMetrics,
+  getDpdpWithdrawalMetrics,
+  getHeadcountMetrics,
+  getIncentiveMetrics,
+  getJoiningDocEsignMetrics,
+  getNameMismatchMetrics,
+  getOnboardingMetrics,
+  getPayrollReadinessMetrics,
+  getResignationMetrics,
+  getTatMetrics,
+} from "../src/modules/dashboards/dashboard-metric.service.js";
 
 const REQUIRED_TABLES = [
+  "auth_user",
+  "user_roles",
+  "user_assignment_scope",
   "employees",
   "branch_master",
   "process_master",
   "attendance_daily_record",
   "wfm_attendance_session",
   "wfm_slot_requirement",
-  "workforce_mandate",
   "ats_onboarding_bridge",
   "candidate_bgv_check",
   "candidate_name_match_summary",
@@ -57,6 +75,82 @@ async function safeAggregate(name: string, sql: string): Promise<void> {
   }
 }
 
+async function auditDashboardUser(employeeCode: string): Promise<void> {
+  console.log(`\nDashboard user resolution: ${employeeCode}`);
+  const rows = await query(
+    `SELECT e.id AS employeeId,
+            e.employee_code AS employeeCode,
+            e.user_id AS userId,
+            e.active_status AS activeStatus,
+            e.employment_status AS employmentStatus,
+            e.branch_id AS branchId,
+            e.process_id AS processId,
+            au.is_blocked AS isBlocked
+       FROM employees e
+       LEFT JOIN auth_user au ON au.id = e.user_id
+      WHERE UPPER(e.employee_code) = UPPER(?)
+      ORDER BY e.active_status DESC, e.updated_at DESC
+      LIMIT 1`,
+    [employeeCode],
+  );
+
+  const employee = rows[0] as any;
+  if (!employee) {
+    console.error(`Employee code ${employeeCode} was not found in employees.`);
+    return;
+  }
+
+  console.table([employee]);
+  if (!employee.userId) {
+    console.error("Dashboard cannot load role-scoped data because employees.user_id is NULL.");
+    return;
+  }
+
+  const context = await getUserRoleContext(String(employee.userId));
+  const scope = await resolveDashboardScope(String(employee.userId), context.primaryRole);
+  console.log("\nResolved role context");
+  console.table([{ primaryRole: context.primaryRole, roleKeys: context.roleKeys.join(", "), isSuperAdmin: context.isSuperAdmin, isHO: context.isHO }]);
+  console.log("\nResolved dashboard scope");
+  console.table([{
+    level: scope.level,
+    branchIds: scope.branchIds.join(", ") || "—",
+    processIds: scope.processIds.join(", ") || "—",
+    role: scope.role,
+  }]);
+
+  const metrics = {
+    hc: await getHeadcountMetrics(scope),
+    att: await getAttendanceMetrics(scope),
+    onb: await getOnboardingMetrics(scope),
+    payroll: await getPayrollReadinessMetrics(scope),
+    bgv: await getBgvMetrics(scope),
+    dpdp: await getDpdpWithdrawalMetrics(scope),
+    resign: await getResignationMetrics(scope),
+    incentive: await getIncentiveMetrics(scope),
+    tat: await getTatMetrics(scope),
+    nm: await getNameMismatchMetrics(scope),
+    appointmentEsign: await getAppointmentEsignMetrics(scope),
+    joiningDocEsign: await getJoiningDocEsignMetrics(scope),
+  };
+
+  console.log("\nDashboard summary API metric shape");
+  console.table(Object.entries(metrics).map(([key, metric]) => ({
+    key,
+    available: metric.available,
+    value: metric.value,
+    status: metric.status,
+    errorCode: metric.errorCode ?? "—",
+    detail: JSON.stringify(metric.detail),
+  })));
+
+  const unavailable = Object.entries(metrics).filter(([, metric]) => !metric.available);
+  if (unavailable.length > 0) {
+    console.error(`\n${unavailable.length} dashboard source(s) are unavailable for ${employeeCode}.`);
+  } else {
+    console.log(`\nAll core dashboard metric queries returned successfully for ${employeeCode}.`);
+  }
+}
+
 async function main(): Promise<void> {
   const databaseRows = await query("SELECT DATABASE() AS databaseName, VERSION() AS mysqlVersion, CURRENT_USER() AS currentUser");
   console.log("Dashboard MySQL audit — read only");
@@ -97,16 +191,16 @@ async function main(): Promise<void> {
   `);
 
   await safeAggregate("Onboarding pipeline", `
-    SELECT bridge_status, COUNT(*) AS records
+    SELECT status, COUNT(*) AS records
       FROM ats_onboarding_bridge
-     GROUP BY bridge_status
+     GROUP BY status
      ORDER BY records DESC
   `);
 
   await safeAggregate("BGV pipeline", `
-    SELECT COALESCE(bgv_status,'pending') AS bgvStatus, COUNT(*) AS records
+    SELECT COALESCE(status,'not_started') AS status, COUNT(*) AS records
       FROM candidate_bgv_check
-     GROUP BY COALESCE(bgv_status,'pending')
+     GROUP BY COALESCE(status,'not_started')
      ORDER BY records DESC
   `);
 
@@ -127,6 +221,9 @@ async function main(): Promise<void> {
     FROM employees
     WHERE active_status = 1
   `);
+
+  const employeeCode = String(process.argv[2] ?? process.env.DASHBOARD_TEST_EMPLOYEE_CODE ?? "mas47814").trim();
+  if (employeeCode) await auditDashboardUser(employeeCode);
 
   console.log("\nAudit completed. No INSERT, UPDATE, DELETE, ALTER or DROP statement was executed.");
   process.exit(0);
