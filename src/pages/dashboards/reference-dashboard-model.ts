@@ -1,0 +1,134 @@
+import type { RoleDashboardVariant } from "./roleDashboardAccess";
+
+export type JsonRecord = Record<string, unknown>;
+export type Tone = "blue" | "green" | "amber" | "red" | "violet" | "slate";
+
+export interface MetricResult {
+  value?: number | null;
+  previousValue?: number | null;
+  variancePct?: number | null;
+  target?: number | null;
+  status?: "ok" | "warn" | "critical" | "unknown";
+  trend?: "up" | "down" | "stable" | null;
+  detail?: Record<string, number | null | undefined>;
+}
+
+export interface DashboardSummary {
+  dashboardCode?: string;
+  generatedAt?: string;
+  workItems?: { pending_count?: number; overdue_count?: number };
+  metrics?: Record<string, MetricResult>;
+}
+
+export interface EmployeeDashboardData {
+  attendance: JsonRecord;
+  balances: JsonRecord[];
+  onboarding: JsonRecord;
+  lms: JsonRecord;
+  engagement: JsonRecord;
+}
+
+export interface ReferenceDashboardData {
+  variant: RoleDashboardVariant;
+  summary: DashboardSummary;
+  metrics: Record<string, MetricResult>;
+  employee: EmployeeDashboardData;
+  ats: JsonRecord;
+  system: JsonRecord;
+  workforce: JsonRecord;
+  pnl: JsonRecord;
+  payroll: JsonRecord;
+  biometric: JsonRecord;
+  devices: JsonRecord;
+  opsPulse: JsonRecord;
+  managerLeaves: JsonRecord[];
+  quality: JsonRecord;
+  orgKpi: JsonRecord;
+  loading: boolean;
+  refreshing: boolean;
+  generatedAt?: string;
+}
+
+export function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : {};
+}
+
+export function asArray(value: unknown): JsonRecord[] {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+export function asNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function asString(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return String(value);
+}
+
+export function read(record: JsonRecord, ...path: string[]): unknown {
+  let current: unknown = record;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as JsonRecord)[key];
+  }
+  return current;
+}
+
+export function numberAt(record: JsonRecord, ...path: string[]): number | null {
+  return asNumber(read(record, ...path));
+}
+
+export function stringAt(record: JsonRecord, ...path: string[]): string | null {
+  return asString(read(record, ...path));
+}
+
+export function arrayAt(record: JsonRecord, ...path: string[]): JsonRecord[] {
+  return asArray(read(record, ...path));
+}
+
+export function metricValue(metrics: Record<string, MetricResult>, key: string): number | null {
+  return asNumber(metrics[key]?.value);
+}
+
+export function metricDetail(
+  metrics: Record<string, MetricResult>,
+  key: string,
+  detailKey: string,
+): number | null {
+  return asNumber(metrics[key]?.detail?.[detailKey]);
+}
+
+export function percent(part: number | null, total: number | null): number | null {
+  if (part === null || total === null || total <= 0) return null;
+  return Math.round((part / total) * 1000) / 10;
+}
+
+export function formatValue(value: unknown, suffix = ""): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = asNumber(value);
+  if (number !== null) {
+    return `${number.toLocaleString("en-IN", { maximumFractionDigits: 1 })}${suffix}`;
+  }
+  return `${String(value)}${suffix}`;
+}
+
+export function formatCurrency(value: number | null): string {
+  if (value === null) return "—";
+  if (Math.abs(value) >= 10_000_000) return `₹ ${(value / 10_000_000).toFixed(2)} Cr`;
+  if (Math.abs(value) >= 100_000) return `₹ ${(value / 100_000).toFixed(2)} L`;
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+export function statusCount(rows: JsonRecord[], status: string): number {
+  const normalized = status.toLowerCase();
+  return rows.filter((row) => String(row.status ?? "").toLowerCase() === normalized).length;
+}
