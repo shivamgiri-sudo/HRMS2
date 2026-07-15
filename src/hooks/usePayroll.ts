@@ -14,6 +14,14 @@ export interface PayrollRecordFilters {
   limit?:        number;
 }
 
+export interface SalaryComponent {
+  component_code: string;
+  component_name: string;
+  component_type: 'earning' | 'deduction' | 'employer_cost';
+  amount: number;
+  taxable?: boolean;
+}
+
 export interface PayrollRecord {
   id: string;
   runId: string;
@@ -58,6 +66,10 @@ export interface PayrollRecord {
   lwpDeduction?: number;
   advanceRecovery?: number;
   otherDeductions?: number;
+  // Component arrays for detailed breakdown
+  earnings?: SalaryComponent[];
+  deductions?: SalaryComponent[];
+  employer_costs?: SalaryComponent[];
 }
 
 const MONTH_NAMES = [
@@ -129,6 +141,9 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,
     advanceRecovery:      row.advance_recovery      !== undefined ? Number(row.advance_recovery)      : undefined,
     otherDeductions:      row.other_deductions      !== undefined ? Number(row.other_deductions)      : undefined,
+    earnings:             row.earnings              || [],
+    deductions:           row.deductions            || [],
+    employer_costs:       row.employer_costs        || [],
   };
 };
 

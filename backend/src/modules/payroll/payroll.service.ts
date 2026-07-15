@@ -645,6 +645,29 @@ export const payrollService = {
       `SELECT COUNT(*) as total ${baseSql}`,
       allParams
     );
+
+    // Fetch component breakdown for each payroll line
+    for (const line of rows as any[]) {
+      const [components] = await db.execute<RowDataPacket[]>(
+        `SELECT component_code, component_name, component_type, amount, taxable
+         FROM salary_prep_line_component
+         WHERE line_id = ?
+         ORDER BY
+           CASE component_type
+             WHEN 'earning' THEN 1
+             WHEN 'deduction' THEN 2
+             ELSE 3
+           END,
+           component_code`,
+        [line.id]
+      );
+
+      // Split components by type
+      line.earnings = (components as any[]).filter(c => c.component_type === 'earning');
+      line.deductions = (components as any[]).filter(c => c.component_type === 'deduction');
+      line.employer_costs = (components as any[]).filter(c => c.component_type === 'employer_cost');
+    }
+
     return {
       data: Array.isArray(rows) ? rows : [],
       total: (countRow as any[])[0]?.total ?? 0,

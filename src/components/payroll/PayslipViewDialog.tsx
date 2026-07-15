@@ -140,6 +140,22 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const advanceRecovery= record.advanceRecovery?? 0;
   const otherDeductions= record.otherDeductions?? 0;
 
+  // Helper to get earning amount by component code
+  const getEarning = (code: string): number => {
+    const comp = record.earnings?.find(e =>
+      e.component_code.toUpperCase() === code.toUpperCase()
+    );
+    return Number(comp?.amount ?? 0);
+  };
+
+  // Helper to get deduction amount by component code
+  const getDeduction = (code: string): number => {
+    const comp = record.deductions?.find(d =>
+      d.component_code.toUpperCase() === code.toUpperCase()
+    );
+    return Number(comp?.amount ?? 0);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -307,36 +323,69 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   <span className="font-semibold">Earnings</span>
                 </div>
                 <div className="rounded-lg border bg-background p-4">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col className="w-2/3" />
+                      <col className="w-1/3" />
+                    </colgroup>
                     <tbody>
                       <tr className="border-b">
                         <td className="py-1.5 text-muted-foreground">Basic Salary</td>
-                        <td className="py-1.5 text-right font-mono font-semibold">{fmt(record.basic)}</td>
+                        <td className="py-1.5 text-right font-mono font-semibold">
+                          {fmt(getEarning('BASIC') || record.basic)}
+                        </td>
                       </tr>
-                      {hra > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">HRA</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(hra)}</td>
-                        </tr>
+
+                      {/* Dynamically render all non-BASIC earning components */}
+                      {record.earnings && record.earnings.length > 0 ? (
+                        record.earnings
+                          .filter(e => e.component_code !== 'BASIC' && Number(e.amount) > 0)
+                          .map((comp) => (
+                            <tr key={comp.component_code} className="border-b">
+                              <td className="py-1.5 text-muted-foreground">{comp.component_name}</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
+                                +{fmt(Number(comp.amount))}
+                              </td>
+                            </tr>
+                          ))
+                      ) : (
+                        /* Fallback for old payroll lines without component arrays */
+                        <>
+                          {hra > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">HRA</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
+                                +{fmt(hra)}
+                              </td>
+                            </tr>
+                          )}
+                          {specialAllow > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Special Allowance</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
+                                +{fmt(specialAllow)}
+                              </td>
+                            </tr>
+                          )}
+                          {incentiveTotal > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Incentive</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
+                                +{fmt(incentiveTotal)}
+                              </td>
+                            </tr>
+                          )}
+                          {hra === 0 && specialAllow === 0 && incentiveTotal === 0 && record.allowances > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Total Allowances</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
+                                +{fmt(record.allowances)}
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       )}
-                      {specialAllow > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Special Allowance</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(specialAllow)}</td>
-                        </tr>
-                      )}
-                      {incentiveTotal > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Incentive</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(incentiveTotal)}</td>
-                        </tr>
-                      )}
-                      {hra === 0 && specialAllow === 0 && incentiveTotal === 0 && record.allowances > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Total Allowances</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">+{fmt(record.allowances)}</td>
-                        </tr>
-                      )}
+
                       <tr className="font-semibold">
                         <td className="py-1.5">Gross Salary</td>
                         <td className="py-1.5 text-right font-mono">{fmt(grossSalary)}</td>
@@ -353,58 +402,96 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   <span className="font-semibold">Deductions</span>
                 </div>
                 <div className="rounded-lg border bg-background p-4">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col className="w-2/3" />
+                      <col className="w-1/3" />
+                    </colgroup>
                     <tbody>
-                      {pfEmployee > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Provident Fund (PF)</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(pfEmployee)}</td>
-                        </tr>
+                      {/* Dynamically render all deduction components */}
+                      {record.deductions && record.deductions.length > 0 ? (
+                        record.deductions
+                          .filter(d => Number(d.amount) > 0)
+                          .map((comp) => (
+                            <tr key={comp.component_code} className="border-b">
+                              <td className="py-1.5 text-muted-foreground">{comp.component_name}</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(Number(comp.amount))}
+                              </td>
+                            </tr>
+                          ))
+                      ) : (
+                        /* Fallback for old payroll lines without component arrays */
+                        <>
+                          {pfEmployee > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Provident Fund (PF)</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(pfEmployee)}
+                              </td>
+                            </tr>
+                          )}
+                          {esicEmployee > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">ESIC</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(esicEmployee)}
+                              </td>
+                            </tr>
+                          )}
+                          {professionalTax > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Professional Tax</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(professionalTax)}
+                              </td>
+                            </tr>
+                          )}
+                          {tdsAmount > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">TDS (Income Tax)</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(tdsAmount)}
+                              </td>
+                            </tr>
+                          )}
+                          {lwpDeduction > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">LWP Deduction</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(lwpDeduction)}
+                              </td>
+                            </tr>
+                          )}
+                          {advanceRecovery > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Advance Recovery</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(advanceRecovery)}
+                              </td>
+                            </tr>
+                          )}
+                          {otherDeductions > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Other Deductions</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(otherDeductions)}
+                              </td>
+                            </tr>
+                          )}
+                          {pfEmployee === 0 && esicEmployee === 0 && professionalTax === 0 &&
+                           tdsAmount === 0 && lwpDeduction === 0 && advanceRecovery === 0 &&
+                           otherDeductions === 0 && record.deductions > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Deductions</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(record.deductions)}
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       )}
-                      {esicEmployee > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">ESIC</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(esicEmployee)}</td>
-                        </tr>
-                      )}
-                      {professionalTax > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Professional Tax</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(professionalTax)}</td>
-                        </tr>
-                      )}
-                      {tdsAmount > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">TDS (Income Tax)</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(tdsAmount)}</td>
-                        </tr>
-                      )}
-                      {lwpDeduction > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">LWP Deduction</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(lwpDeduction)}</td>
-                        </tr>
-                      )}
-                      {advanceRecovery > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Advance Recovery</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(advanceRecovery)}</td>
-                        </tr>
-                      )}
-                      {otherDeductions > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Other Deductions</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(otherDeductions)}</td>
-                        </tr>
-                      )}
-                      {pfEmployee === 0 && esicEmployee === 0 && professionalTax === 0 &&
-                       tdsAmount === 0 && lwpDeduction === 0 && advanceRecovery === 0 &&
-                       otherDeductions === 0 && record.deductions > 0 && (
-                        <tr className="border-b">
-                          <td className="py-1.5 text-muted-foreground">Deductions</td>
-                          <td className="py-1.5 text-right font-mono font-semibold text-destructive">-{fmt(record.deductions)}</td>
-                        </tr>
-                      )}
+
                       <tr className="font-semibold">
                         <td className="py-1.5">Total Deductions</td>
                         <td className="py-1.5 text-right font-mono text-destructive">-{fmt(record.deductions)}</td>
