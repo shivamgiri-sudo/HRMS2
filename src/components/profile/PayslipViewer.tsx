@@ -162,8 +162,16 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const [showNewPayslipAlert, setShowNewPayslipAlert] = useState(false);
   const [salaryVisible, setSalaryVisible] = useState(false);
 
-  // Fetch employee CTC
-  const { data: employeeData } = useQuery<{ ctc: number | null }>({
+  // Fetch employee CTC + full monthly breakdown from salary assignment (not pro-rated payroll line)
+  const { data: employeeData } = useQuery<{
+    ctc: number | null;
+    monthly_ctc?: number;
+    monthly_basic?: number;
+    monthly_hra?: number;
+    monthly_special?: number;
+    basic_pct?: number;
+    hra_pct?: number;
+  }>({
     queryKey: ["employee-ctc", employeeId],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: { ctc: number | null } }>(
@@ -243,23 +251,41 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     setShowNewPayslipAlert(false);
   };
 
-  // Derive salary structure from the most recent payslip record with component breakdown
-  const salaryStructure: SalaryStructure | null = payrollRecords && payrollRecords.length > 0
-    ? {
+  // Derive salary structure — prefer full monthly CTC from salary assignment (employeeData),
+  // fall back to the most recent payroll line only when CTC data is not yet loaded.
+  const salaryStructure: SalaryStructure | null = (() => {
+    if (employeeData?.monthly_basic) {
+      // Use unprorated values from employee_salary_assignment
+      const latest = payrollRecords?.[0];
+      const pf = Number(latest?.pf_employee ?? 0);
+      const esic = Number(latest?.esic_employee ?? 0);
+      const pt = Number(latest?.professional_tax ?? 0);
+      return {
+        basic_salary: employeeData.monthly_basic,
+        hra: employeeData.monthly_hra ?? null,
+        transport_allowance: null,
+        medical_allowance: null,
+        other_allowances: employeeData.monthly_special ?? null,
+        tax_deduction: latest?.tds != null ? Number(latest.tds) : null,
+        other_deductions: (pf + esic + pt) > 0 ? (pf + esic + pt) : null,
+      };
+    }
+    if (payrollRecords && payrollRecords.length > 0) {
+      const pf = Number(payrollRecords[0].pf_employee ?? 0);
+      const esic = Number(payrollRecords[0].esic_employee ?? 0);
+      const pt = Number(payrollRecords[0].professional_tax ?? 0);
+      return {
         basic_salary: Number(payrollRecords[0].basic ?? 0),
         hra: payrollRecords[0].hra != null ? Number(payrollRecords[0].hra) : null,
         transport_allowance: null,
         medical_allowance: null,
         other_allowances: payrollRecords[0].special_allowance != null ? Number(payrollRecords[0].special_allowance) : null,
         tax_deduction: payrollRecords[0].tds != null ? Number(payrollRecords[0].tds) : null,
-        other_deductions: (() => {
-          const pf = Number(payrollRecords[0].pf_employee ?? 0);
-          const esic = Number(payrollRecords[0].esic_employee ?? 0);
-          const pt = Number(payrollRecords[0].professional_tax ?? 0);
-          return (pf + esic + pt) > 0 ? (pf + esic + pt) : null;
-        })(),
-      }
-    : null;
+        other_deductions: (pf + esic + pt) > 0 ? (pf + esic + pt) : null,
+      };
+    }
+    return null;
+  })();
 
   const getAllowanceBreakdown = () => {
     if (!payrollRecords || payrollRecords.length === 0) return [];
@@ -639,18 +665,17 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                           </tr>
                         ))}
                         <tr className="font-semibold">
-                          <td className="py-1.5">Gross Salary</td>
+                          <td className="py-1.5">Gross Salary (Monthly)</td>
                           <td className="py-1.5 text-right font-mono">
                             {renderSensitive(
-                              payrollRecords && payrollRecords.length > 0
-                                ? formatCurrency(Number(payrollRecords[0].gross_salary ?? 0))
-                                : formatCurrency(
-                                    salaryStructure.basic_salary +
-                                      (salaryStructure.hra || 0) +
-                                      (salaryStructure.transport_allowance || 0) +
-                                      (salaryStructure.medical_allowance || 0) +
-                                      (salaryStructure.other_allowances || 0)
-                                  )
+                              formatCurrency(
+                                employeeData?.monthly_ctc ??
+                                (salaryStructure.basic_salary +
+                                  (salaryStructure.hra || 0) +
+                                  (salaryStructure.transport_allowance || 0) +
+                                  (salaryStructure.medical_allowance || 0) +
+                                  (salaryStructure.other_allowances || 0))
+                              )
                             )}
                           </td>
                         </tr>

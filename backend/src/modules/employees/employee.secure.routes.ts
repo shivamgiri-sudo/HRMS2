@@ -417,6 +417,48 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
   });
 }));
 
+// GET /api/employees/:id/ctc — returns annual CTC + full monthly breakdown for payslip viewer
+router.get(`${UUID_ROUTE}/ctc`, h(async (req: any, res: any) => {
+  const userId = req.authUser!.id;
+  const targetId = String(req.params.id);
+  await assertEmployeeAccess(userId, targetId, PEOPLE_SCOPE_ROLES);
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT esa.ctc_annual,
+            ssm.basic_pct,
+            ssm.hra_pct,
+            ROUND(esa.ctc_annual / 12, 2)                                     AS monthly_ctc,
+            ROUND((esa.ctc_annual / 12) * ssm.basic_pct / 100, 2)            AS monthly_basic,
+            ROUND((esa.ctc_annual / 12) * ssm.hra_pct / 100, 2)              AS monthly_hra,
+            ROUND(
+              (esa.ctc_annual / 12)
+              - ((esa.ctc_annual / 12) * ssm.basic_pct / 100)
+              - ((esa.ctc_annual / 12) * ssm.hra_pct / 100), 2
+            )                                                                  AS monthly_special
+       FROM employee_salary_assignment esa
+       JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
+      WHERE esa.employee_id = ?
+        AND esa.active_status = 1
+      ORDER BY esa.effective_from DESC, esa.created_at DESC
+      LIMIT 1`,
+    [targetId],
+  );
+  if (!rows[0]) return res.json({ success: true, data: { ctc: null } });
+  const r = rows[0] as any;
+  return res.json({
+    success: true,
+    data: {
+      ctc:             Number(r.ctc_annual),
+      monthly_ctc:     Number(r.monthly_ctc),
+      monthly_basic:   Number(r.monthly_basic),
+      monthly_hra:     Number(r.monthly_hra),
+      monthly_special: Number(r.monthly_special),
+      basic_pct:       Number(r.basic_pct),
+      hra_pct:         Number(r.hra_pct),
+    },
+  });
+}));
+
 router.get(UUID_ROUTE, h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const targetId = String(req.params.id);
