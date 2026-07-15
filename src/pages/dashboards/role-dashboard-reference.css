@@ -1,0 +1,92 @@
+.role-dashboard-reference {
+  --dashboard-navy: #071a3a;
+  --dashboard-blue: #0b63e5;
+  --dashboard-border: #e3e9f2;
+  --dashboard-muted: #61708a;
+  --dashboard-canvas: #f7f9fc;
+  background: var(--dashboard-canvas);
+  min-height: 100vh;
+}
+
+.role-dashboard-reference .rounded-2xl {
+  border-radius: 12px !important;
+}
+
+.role-dashboard-reference .rounded-xl {
+  border-radius: 9px !important;
+}
+
+.role-dashboard-reference .shadow-\[0_8px_28px_rgba\(15\,23\,42\,0\.045\)\],
+.role-dashboard-reference .shadow-sm {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.025), 0 5px 16px rgba(15, 23, 42, 0.035) !important;
+}
+
+.role-dashboard-reference section,
+.role-dashboard-reference [class*="border-slate-200"] {
+  border-color: var(--dashboard-border) !important;
+}
+
+.role-dashboard-reference h1,
+.role-dashboard-reference h2,
+.role-dashboard-reference h3,
+.role-dashboard-reference .text-slate-900,
+.role-dashboard-reference .text-slate-950 {
+  color: var(--dashboard-navy) !important;
+}
+
+.role-dashboard-reference .text-slate-500,
+.role-dashboard-reference .text-slate-600 {
+  color: var(--dashboard-muted) !important;
+}
+
+.role-dashboard-reference .bg-white {
+  background-color: #ffffff !important;
+}
+
+.role-dashboard-reference .bg-slate-50 {
+  background-color: #f9fbfe !important;
+}
+
+.role-dashboard-reference .hover\:-translate-y-0\.5:hover {
+  transform: none !important;
+}
+
+.role-dashboard-reference a,
+.role-dashboard-reference button {
+  transition-duration: 160ms !important;
+}
+
+.role-dashboard-reference button:focus-visible,
+.role-dashboard-reference a:focus-visible {
+  outline: 2px solid rgba(11, 99, 229, 0.35);
+  outline-offset: 2px;
+}
+
+.role-dashboard-reference .text-3xl {
+  letter-spacing: -0.025em;
+}
+
+.role-dashboard-reference [class*="uppercase"] {
+  letter-spacing: 0.035em !important;
+}
+
+.role-dashboard-reference .grid {
+  align-items: stretch;
+}
+
+@media (min-width: 1280px) {
+  .role-dashboard-reference .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 18px !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .role-dashboard-reference .text-3xl {
+    font-size: 1.6rem !important;
+  }
+
+  .role-dashboard-reference section > div {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
