@@ -1,6 +1,5 @@
-import RoleDashboardV3 from "./RoleDashboardV3";
-import "./role-dashboard-reference.css";
+import ReferenceRoleDashboard from "./ReferenceRoleDashboard";
 
 export default function HrDashboard() {
-  return <div className="role-dashboard-reference"><RoleDashboardV3 variant="hr" /></div>;
+  return <ReferenceRoleDashboard variant="hr" />;
 }
