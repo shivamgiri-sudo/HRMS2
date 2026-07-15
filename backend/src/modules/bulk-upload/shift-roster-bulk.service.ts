@@ -154,7 +154,7 @@ export async function importShiftRosterBatch(
     const weekEndStr = weekEnd.toISOString().slice(0, 10);
 
     const [cycleRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM wfm_roster_cycle WHERE cycle_start_date = ? AND cycle_end_date = ? LIMIT 1",
+      "SELECT id FROM weekly_roster_cycle WHERE week_start_date = ? AND week_end_date = ? LIMIT 1",
       [weekStartStr, weekEndStr]
     );
     let cycleId: string;
@@ -163,10 +163,10 @@ export async function importShiftRosterBatch(
     } else {
       cycleId = randomUUID();
       await db.execute(
-        `INSERT INTO wfm_roster_cycle
-           (id, cycle_name, cycle_start_date, cycle_end_date, cycle_status, created_by)
-         VALUES (?, ?, ?, ?, 'draft', ?)`,
-        [cycleId, `Week ${weekStartStr}`, weekStartStr, weekEndStr, userId]
+        `INSERT INTO weekly_roster_cycle
+           (id, week_start_date, week_end_date, status, created_by, process_id, branch_id)
+         VALUES (?, ?, ?, 'draft', ?, NULL, NULL)`,
+        [cycleId, weekStartStr, weekEndStr, userId]
       );
     }
 
