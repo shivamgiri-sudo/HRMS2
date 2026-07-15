@@ -11,9 +11,12 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { canAccessRoleDashboard, type RoleDashboardVariant } from "./roleDashboardAccess";
 import {
   asArray,
+  asNumber,
   asRecord,
+  unavailableMetricCodes,
   type DashboardSummary,
   type EmployeeDashboardData,
+  type JsonRecord,
   type ReferenceDashboardData,
 } from "./reference-dashboard-model";
 import { ReferenceError, UpdatedControl } from "./ReferenceDashboardUI";
@@ -44,22 +47,72 @@ function unwrap(value: unknown): unknown {
   return record.data ?? value;
 }
 
-async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboardData> {
-  const [attendance, leave, onboarding, lms, engagement] = await Promise.all([
-    hrmsApi.get<unknown>("/api/wfm/my-attendance"),
-    hrmsApi.get<unknown>("/api/leave/balance"),
-    hrmsApi.get<unknown>("/api/ats/my-onboarding-status"),
-    employeeId ? hrmsApi.get<unknown>(`/api/lms/learner-progress/${employeeId}`) : Promise.resolve({}),
-    hrmsApi.get<unknown>("/api/engagement/me"),
-  ]);
-  const leavePayload = unwrap(leave);
-  const leaveRecord = asRecord(leavePayload);
+type OptionalPayload = {
+  value: unknown;
+  error: string | null;
+};
+
+async function optionalGet(path: string, label: string): Promise<OptionalPayload> {
+  try {
+    return { value: unwrap(await hrmsApi.get<unknown>(path)), error: null };
+  } catch (error) {
+    return {
+      value: null,
+      error: `${label}: ${error instanceof Error ? error.message : "request failed"}`,
+    };
+  }
+}
+
+function employeeAttendanceFallback(summaryPayload: unknown): JsonRecord {
+  const summary = asRecord(summaryPayload);
+  const metrics = asRecord(summary.metrics);
+  const attendanceMetric = asRecord(metrics.att);
+  const detail = asRecord(attendanceMetric.detail);
+  if (Object.keys(detail).length === 0 && attendanceMetric.value === undefined) return {};
+
   return {
-    attendance: asRecord(unwrap(attendance)),
+    presentDays: asNumber(detail.present) ?? 0,
+    halfDays: asNumber(detail.halfDay ?? detail.half_day) ?? 0,
+    absentDays: asNumber(detail.absent) ?? 0,
+    lateDays: asNumber(detail.late) ?? 0,
+    missedPunch: asNumber(detail.missedPunch ?? detail.missed_punch) ?? 0,
+    totalWorkingDays: asNumber(detail.totalWorkingDays ?? detail.total_working_days) ?? 0,
+    attendancePct: asNumber(attendanceMetric.value ?? detail.attendanceRate ?? detail.attendance_pct) ?? 0,
+  };
+}
+
+async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboardData> {
+  const [attendance, attendanceSummary, leave, onboarding, lms, engagement] = await Promise.all([
+    optionalGet("/api/wfm/my-attendance", "Attendance"),
+    optionalGet("/api/dashboards/employee/summary", "Attendance fallback"),
+    optionalGet("/api/leave/balance", "Leave balance"),
+    optionalGet("/api/ats/my-onboarding-status", "Onboarding"),
+    employeeId
+      ? optionalGet(`/api/lms/learner-progress/${employeeId}`, "Learning progress")
+      : Promise.resolve({ value: null, error: "Learning progress: employee mapping unavailable" }),
+    optionalGet("/api/engagement/me", "Engagement"),
+  ]);
+
+  const attendanceRecord = asRecord(attendance.value);
+  const fallbackAttendance = employeeAttendanceFallback(attendanceSummary.value);
+  const resolvedAttendance = Object.keys(attendanceRecord).length > 0 ? attendanceRecord : fallbackAttendance;
+  const leavePayload = leave.value;
+  const leaveRecord = asRecord(leavePayload);
+  const errors = [attendance, attendanceSummary, leave, onboarding, lms, engagement]
+    .map((payload) => payload.error)
+    .filter((message): message is string => Boolean(message));
+
+  if (Object.keys(resolvedAttendance).length === 0) {
+    errors.push("Attendance: no employee-linked attendance summary was returned");
+  }
+
+  return {
+    attendance: resolvedAttendance,
     balances: Array.isArray(leavePayload) ? asArray(leavePayload) : asArray(leaveRecord.balances ?? leaveRecord.data),
-    onboarding: asRecord(unwrap(onboarding)),
-    lms: asRecord(unwrap(lms)),
-    engagement: asRecord(unwrap(engagement)),
+    onboarding: asRecord(onboarding.value),
+    lms: asRecord(lms.value),
+    engagement: asRecord(engagement.value),
+    sourceErrors: errors,
   };
 }
 
@@ -69,6 +122,7 @@ const EMPTY_EMPLOYEE: EmployeeDashboardData = {
   onboarding: {},
   lms: {},
   engagement: {},
+  sourceErrors: [],
 };
 
 export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashboardVariant }) {
@@ -182,13 +236,15 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   const qualityQuery = useExecutiveQualitySummary(30);
   const orgKpiQuery = useOrgKpiSummary();
   const summary = (summaryQuery.data ?? {}) as DashboardSummary;
+  const metrics = summary.metrics ?? {};
+  const employeeData = employeeQuery.data ?? EMPTY_EMPLOYEE;
   const queryResults = [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery];
 
   const data: ReferenceDashboardData = {
     variant,
     summary,
-    metrics: summary.metrics ?? {},
-    employee: employeeQuery.data ?? EMPTY_EMPLOYEE,
+    metrics,
+    employee: employeeData,
     ats: atsQuery.data ?? {},
     system: systemQuery.data ?? {},
     workforce: workforceQuery.data ?? {},
@@ -205,8 +261,18 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
     generatedAt: summary.generatedAt,
   };
 
-  const hasError = queryResults.some((query) => query.isError);
+  const unavailableMetrics = unavailableMetricCodes(metrics);
+  const employeeSourceErrors = employeeData.sourceErrors ?? [];
+  const networkErrorCount = queryResults.filter((query) => query.isError).length;
   const refreshAll = () => { for (const query of queryResults) void query.refetch(); };
+
+  const errorMessage = useMemo(() => {
+    const parts: string[] = [];
+    if (networkErrorCount > 0) parts.push(`${networkErrorCount} API request${networkErrorCount === 1 ? "" : "s"} failed`);
+    if (unavailableMetrics.length > 0) parts.push(`database sources unavailable: ${unavailableMetrics.join(", ")}`);
+    if (employeeSourceErrors.length > 0) parts.push(employeeSourceErrors.join("; "));
+    return parts.length > 0 ? `${parts.join(". ")}. Available dashboard data is still shown.` : null;
+  }, [employeeSourceErrors, networkErrorCount, unavailableMetrics]);
 
   const filterControl = ["wfm", "ceo"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
@@ -224,7 +290,7 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   if (roleLoading) {
     return (
       <ReferenceDashboardShell variant={variant}>
-        <div className="space-y-4 p-2"><Skeleton className="h-12 w-80" /><Skeleton className="h-28 w-full" /><Skeleton className="h-80 w-full" /></div>
+        <div className="space-y-4 p-2"><Skeleton className="h-12 w-80 max-w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-80 w-full" /></div>
       </ReferenceDashboardShell>
     );
   }
@@ -243,12 +309,12 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
     );
   }
 
-  const employeeName = roleData?.employeeName ?? "Employee";
+  const employeeName = roleData?.employeeName ?? roleData?.employeeCode ?? "Employee";
 
   return (
     <ReferenceDashboardShell variant={variant}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
-        {hasError ? <div className="mb-4"><ReferenceError message="Some live dashboard sources could not be loaded. Available data is still displayed." onRetry={refreshAll} /></div> : null}
+        {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} /> : null}
