@@ -244,8 +244,8 @@ export async function importShiftRosterBatch(
       skipped++;
     } else {
       await db.execute(
-        "UPDATE upload_batch_row SET row_status='imported', target_record_id=? WHERE id=?",
-        [cycleId, batchRow.id]
+        "UPDATE upload_batch_row SET row_status='imported' WHERE id=?",
+        [batchRow.id]
       );
       imported += dayImported > 0 ? 1 : 0;
     }
