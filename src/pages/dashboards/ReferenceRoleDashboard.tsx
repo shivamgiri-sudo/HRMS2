@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ShieldX } from "lucide-react";
 
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ScopedFilterBar } from "@/components/dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useExecutiveQualitySummary } from "@/hooks/useExecutiveQuality";
@@ -23,6 +22,7 @@ import { EmployeeReferenceLayout } from "./reference/EmployeeReferenceLayout";
 import { HrReferenceLayout } from "./reference/HrReferenceLayout";
 import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
+import { ReferenceDashboardShell } from "./reference/ReferenceDashboardShell";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import "./role-dashboard-reference.css";
@@ -238,19 +238,19 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
 
   if (roleLoading) {
     return (
-      <DashboardLayout>
+      <ReferenceDashboardShell variant={variant}>
         <div className="space-y-4 p-2">
           <Skeleton className="h-12 w-80" />
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-80 w-full" />
         </div>
-      </DashboardLayout>
+      </ReferenceDashboardShell>
     );
   }
 
   if (!accessGranted) {
     return (
-      <DashboardLayout>
+      <ReferenceDashboardShell variant={variant}>
         <div className="flex min-h-[65vh] items-center justify-center p-6">
           <div className="w-full max-w-md rounded-xl border border-[#ffdadd] bg-white p-8 text-center shadow-sm">
             <ShieldX className="mx-auto h-12 w-12 text-[#ef4444]" />
@@ -258,14 +258,14 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
             <p className="mt-2 text-sm text-[#61708a]">Your assigned roles do not permit access to this dashboard.</p>
           </div>
         </div>
-      </DashboardLayout>
+      </ReferenceDashboardShell>
     );
   }
 
   const employeeName = roleData?.employeeName ?? "Employee";
 
   return (
-    <DashboardLayout>
+    <ReferenceDashboardShell variant={variant}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
         {hasError ? (
           <div className="mb-4">
@@ -283,6 +283,6 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
         {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} /> : null}
         {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} /> : null}
       </main>
-    </DashboardLayout>
+    </ReferenceDashboardShell>
   );
 }
