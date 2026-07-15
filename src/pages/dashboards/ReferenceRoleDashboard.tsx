@@ -24,12 +24,14 @@ import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
 import { ReferenceDashboardShell } from "./reference/ReferenceDashboardShell";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
+import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import "./role-dashboard-reference.css";
 
 const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
   employee: "EMPLOYEE_SELF_DASHBOARD",
   wfm: "WFM_DASHBOARD",
+  wfm_attendance: "WFM_DASHBOARD",
   hr: "HR_DASHBOARD",
   ceo: "CEO_DASHBOARD",
   payroll: "PAYROLL_HR_DASHBOARD",
@@ -54,9 +56,7 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
   const leaveRecord = asRecord(leavePayload);
   return {
     attendance: asRecord(unwrap(attendance)),
-    balances: Array.isArray(leavePayload)
-      ? asArray(leavePayload)
-      : asArray(leaveRecord.balances ?? leaveRecord.data),
+    balances: Array.isArray(leavePayload) ? asArray(leavePayload) : asArray(leaveRecord.balances ?? leaveRecord.data),
     onboarding: asRecord(unwrap(onboarding)),
     lms: asRecord(unwrap(lms)),
     engagement: asRecord(unwrap(engagement)),
@@ -146,7 +146,7 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   const biometricQuery = useQuery({
     queryKey: ["reference-dashboard-biometric", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/wfm/biometric-summary/adherence-summary${params}`))),
-    enabled: accessGranted && ["wfm", "manager"].includes(variant),
+    enabled: accessGranted && ["wfm", "wfm_attendance", "manager"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -154,7 +154,7 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   const devicesQuery = useQuery({
     queryKey: ["reference-dashboard-devices", branchId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/wfm/biometric-summary/device-status${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ""}`))),
-    enabled: accessGranted && variant === "wfm",
+    enabled: accessGranted && ["wfm", "wfm_attendance"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -162,7 +162,7 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   const pulseQuery = useQuery({
     queryKey: ["reference-dashboard-pulse", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/daily-operations-pulse${params}`))),
-    enabled: accessGranted && ["wfm", "manager", "ceo", "super_admin"].includes(variant),
+    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "ceo", "super_admin"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -181,21 +181,8 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
 
   const qualityQuery = useExecutiveQualitySummary(30);
   const orgKpiQuery = useOrgKpiSummary();
-
   const summary = (summaryQuery.data ?? {}) as DashboardSummary;
-  const queryResults = [
-    summaryQuery,
-    employeeQuery,
-    atsQuery,
-    systemQuery,
-    workforceQuery,
-    pnlQuery,
-    payrollQuery,
-    biometricQuery,
-    devicesQuery,
-    pulseQuery,
-    managerLeavesQuery,
-  ];
+  const queryResults = [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery];
 
   const data: ReferenceDashboardData = {
     variant,
@@ -219,11 +206,9 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   };
 
   const hasError = queryResults.some((query) => query.isError);
-  const refreshAll = () => {
-    for (const query of queryResults) void query.refetch();
-  };
+  const refreshAll = () => { for (const query of queryResults) void query.refetch(); };
 
-  const filterControl = variant === "employee" ? undefined : (
+  const filterControl = ["wfm", "ceo"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <ScopedFilterBar
         onBranchChange={setBranchId}
@@ -234,16 +219,12 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
       />
       <UpdatedControl generatedAt={data.generatedAt} refreshing={data.refreshing} onRefresh={refreshAll} />
     </div>
-  );
+  ) : undefined;
 
   if (roleLoading) {
     return (
       <ReferenceDashboardShell variant={variant}>
-        <div className="space-y-4 p-2">
-          <Skeleton className="h-12 w-80" />
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-80 w-full" />
-        </div>
+        <div className="space-y-4 p-2"><Skeleton className="h-12 w-80" /><Skeleton className="h-28 w-full" /><Skeleton className="h-80 w-full" /></div>
       </ReferenceDashboardShell>
     );
   }
@@ -267,16 +248,10 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
   return (
     <ReferenceDashboardShell variant={variant}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
-        {hasError ? (
-          <div className="mb-4">
-            <ReferenceError
-              message="Some live dashboard sources could not be loaded. Available data is still displayed."
-              onRetry={refreshAll}
-            />
-          </div>
-        ) : null}
+        {hasError ? <div className="mb-4"><ReferenceError message="Some live dashboard sources could not be loaded. Available data is still displayed." onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} /> : null}
         {variant === "hr" ? <HrReferenceLayout data={data} /> : null}
         {variant === "ceo" ? <CeoReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "payroll" ? <PayrollReferenceLayout data={data} /> : null}
