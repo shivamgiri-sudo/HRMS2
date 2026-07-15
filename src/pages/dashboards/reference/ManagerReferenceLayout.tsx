@@ -7,7 +7,6 @@ import {
   Goal,
   ListChecks,
   Megaphone,
-  Target,
   TriangleAlert,
   UserCheck,
   UserMinus,
@@ -15,7 +14,6 @@ import {
   Users,
 } from "lucide-react";
 
-import { WorkInboxPanel } from "@/components/dashboard";
 import {
   ReferenceDonut,
   ReferenceHeader,
@@ -23,7 +21,6 @@ import {
   ReferenceListRow,
   ReferenceMetricGrid,
   ReferencePanel,
-  ReferenceProgress,
   ReferenceQuickLink,
 } from "../ReferenceDashboardUI";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
@@ -35,8 +32,10 @@ import {
   metricValue,
   statusCount,
 } from "../reference-dashboard-model";
+import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 
 export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceDashboardData; managerName: string }) {
+  const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
   const team = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const present = metricDetail(m, "att", "present");
@@ -60,7 +59,7 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
 
   return (
     <div className="reference-dashboard-page">
-      <ReferenceHeader title={`Manager Dashboard 👋`} subtitle={`Overview of ${managerName}'s team and key management insights.`} />
+      <ReferenceHeader title="Manager Dashboard 👋" subtitle={`Overview of ${managerName}'s team and key management insights.`} right={productHeaderControls} />
 
       <ReferenceMetricGrid
         columns={6}
@@ -71,23 +70,18 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
           { label: "On Leave", value: approvedLeaves, helper: team ? `${Math.round((approvedLeaves / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: CalendarDays, tone: "amber" },
           { label: "Absent", value: absent, helper: team && absent !== null ? `${Math.round((absent / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: UserMinus, tone: "red" },
           { label: "New Joiners (This Month)", value: onboarding, helper: "Current month", icon: UserPlus, tone: "violet" },
-          { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/jobs" },
+          { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/ats/dashboard" },
         ]}
       />
 
       <div className="grid gap-4 xl:grid-cols-[0.92fr_0.92fr_1.16fr]">
         <ReferencePanel title="Team Attendance" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/attendance">View Details</a>}>
-          <ReferenceDonut
-            compact
-            centerValue={attendance === null ? null : `${attendance}%`}
-            centerLabel="Present"
-            data={[
-              { name: "Present", value: present ?? 0 },
-              { name: "On Leave", value: approvedLeaves },
-              { name: "Absent", value: absent ?? 0 },
-              { name: "Work From Home", value: asNumber(data.workforce.working_remotely) ?? 0 },
-            ]}
-          />
+          <ReferenceDonut compact centerValue={attendance === null ? null : `${attendance}%`} centerLabel="Present" data={[
+            { name: "Present", value: present ?? 0 },
+            { name: "On Leave", value: approvedLeaves },
+            { name: "Absent", value: absent ?? 0 },
+            { name: "Work From Home", value: asNumber(data.workforce.working_remotely) ?? 0 },
+          ]} />
           <p className="mt-3 text-center text-[9px] text-[#71809a]">Based on {formatValue(team)} team members</p>
         </ReferencePanel>
 
@@ -103,34 +97,20 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
         <ReferencePanel title="Team Member Status" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/my-team">View All</a>} bodyClassName="p-0">
           <div className="max-h-[240px] divide-y divide-[#edf1f6] overflow-y-auto">
             {teamRows.length ? teamRows.slice(0, 8).map((row, index) => (
-              <ReferenceListRow
-                key={String(row.id ?? index)}
-                icon={Users}
-                title={String(row.employee_name ?? row.full_name ?? row.name ?? `Team Member ${index + 1}`)}
-                subtitle={String(row.designation_name ?? row.designation ?? row.role ?? "Employee")}
-                value={String(row.status ?? row.attendance_status ?? "—")}
-                tone={String(row.status ?? row.attendance_status).toLowerCase().includes("present") ? "green" : String(row.status ?? row.attendance_status).toLowerCase().includes("leave") ? "amber" : "red"}
-              />
+              <ReferenceListRow key={String(row.id ?? index)} icon={Users} title={String(row.employee_name ?? row.full_name ?? row.name ?? `Team Member ${index + 1}`)} subtitle={String(row.designation_name ?? row.designation ?? row.role ?? "Employee")} value={String(row.status ?? row.attendance_status ?? "—")} tone={String(row.status ?? row.attendance_status).toLowerCase().includes("present") ? "green" : String(row.status ?? row.attendance_status).toLowerCase().includes("leave") ? "amber" : "red"} />
             )) : <div className="px-4 py-12 text-center text-[10px] text-[#94a3b8]">Team roster is unavailable</div>}
           </div>
         </ReferencePanel>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.92fr_0.92fr_1.16fr]">
-        <ReferencePanel title="Team Performance Trend" action={<span className="text-[10px] text-[#61708a]">This Month</span>}>
-          <ReferenceLineChart data={movement} height={180} />
-        </ReferencePanel>
+        <ReferencePanel title="Team Performance Trend" action={<span className="text-[10px] text-[#61708a]">This Month</span>}><ReferenceLineChart data={movement} height={180} /></ReferencePanel>
 
         <ReferencePanel title="My Tasks" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/work-inbox">View All</a>}>
           <div className="divide-y divide-[#edf1f6]">
             {interventionRows.length ? interventionRows.slice(0, 5).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={ListChecks} title={String(row.title ?? row.label ?? "Management task")} subtitle={String(row.detail ?? row.description ?? "Requires action")} value={String(row.priority ?? row.severity ?? "Open")} tone={String(row.priority ?? row.severity).toLowerCase().includes("high") ? "red" : "amber"} href={String(row.action_url ?? row.href ?? "/work-inbox")} />
-            )) : (
-              <>
-                <ReferenceListRow icon={ListChecks} title="Pending actions" subtitle="Approvals and team follow-ups" value={openActions} tone={overdue && overdue > 0 ? "red" : "blue"} href="/work-inbox" />
-                <ReferenceListRow icon={Clock3} title="Late arrival reviews" subtitle="Attendance follow-up" value={late} tone="amber" href="/attendance" />
-              </>
-            )}
+            )) : <><ReferenceListRow icon={ListChecks} title="Pending actions" subtitle="Approvals and team follow-ups" value={openActions} tone={overdue && overdue > 0 ? "red" : "blue"} href="/work-inbox" /><ReferenceListRow icon={Clock3} title="Late arrival reviews" subtitle="Attendance follow-up" value={late} tone="amber" href="/attendance" /></>}
           </div>
         </ReferencePanel>
 
@@ -140,8 +120,8 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
             <ReferenceQuickLink icon={CalendarDays} title="Attendance Report" href="/attendance" tone="green" />
             <ReferenceQuickLink icon={CalendarDays} title="Leave Calendar" href="/leaves" tone="amber" />
             <ReferenceQuickLink icon={FileText} title="Performance Report" href="/performance" tone="violet" />
-            <ReferenceQuickLink icon={Clock3} title="Team Timesheets" href="/timesheets" tone="blue" />
-            <ReferenceQuickLink icon={Megaphone} title="Announcements" href="/communication" tone="red" />
+            <ReferenceQuickLink icon={Clock3} title="Team Timesheets" href="/work-inbox" tone="blue" />
+            <ReferenceQuickLink icon={Megaphone} title="Announcements" href="/communication/dispatch" tone="red" />
           </div>
         </ReferencePanel>
       </div>
@@ -173,7 +153,7 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
         </ReferencePanel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+      <div className="grid gap-4 xl:grid-cols-2">
         <ReferencePanel title="Coaching Follow-ups" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/performance">View All</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             {arrayAt(data.workforce, "coaching_followups").length ? arrayAt(data.workforce, "coaching_followups").slice(0, 5).map((row, index) => (
@@ -190,8 +170,6 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
           </div>
         </ReferencePanel>
       </div>
-
-      <WorkInboxPanel maxItems={6} />
     </div>
   );
 }
