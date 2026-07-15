@@ -111,9 +111,9 @@ export async function importShiftRosterBatch(
       continue;
     }
 
-    // Resolve employee
+    // Resolve employee and get process_id/branch_id for cycle
     const [empRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
+      "SELECT id, process_id, branch_id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
       [employee_code]
     );
     if (!(empRows as RowDataPacket[]).length) {
@@ -126,7 +126,22 @@ export async function importShiftRosterBatch(
       skipped++;
       continue;
     }
-    const employeeId = (empRows as RowDataPacket[])[0].id as string;
+    const employee = (empRows as RowDataPacket[])[0];
+    const employeeId = employee.id as string;
+    const employeeProcessId = employee.process_id as string | null;
+    const employeeBranchId = employee.branch_id as string | null;
+
+    // Validate employee has process_id (required for weekly_roster_cycle)
+    if (!employeeProcessId) {
+      const msg = `Row ${batchRow.row_no}: employee '${employee_code}' has no process_id assigned`;
+      errors.push(msg);
+      await db.execute(
+        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
+        [JSON.stringify([msg]), batchRow.id]
+      );
+      skipped++;
+      continue;
+    }
 
     // Parse week_start_date — accept YYYY-MM-DD or DD-MM-YYYY
     let startDate: Date;
@@ -153,9 +168,10 @@ export async function importShiftRosterBatch(
     const weekStartStr = startDate.toISOString().slice(0, 10);
     const weekEndStr = weekEnd.toISOString().slice(0, 10);
 
+    // Find or create weekly roster cycle for this employee's process
     const [cycleRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM weekly_roster_cycle WHERE week_start_date = ? AND week_end_date = ? LIMIT 1",
-      [weekStartStr, weekEndStr]
+      "SELECT id FROM weekly_roster_cycle WHERE week_start_date = ? AND week_end_date = ? AND process_id = ? LIMIT 1",
+      [weekStartStr, weekEndStr, employeeProcessId]
     );
     let cycleId: string;
     if ((cycleRows as RowDataPacket[]).length) {
@@ -165,8 +181,8 @@ export async function importShiftRosterBatch(
       await db.execute(
         `INSERT INTO weekly_roster_cycle
            (id, week_start_date, week_end_date, status, created_by, process_id, branch_id)
-         VALUES (?, ?, ?, 'draft', ?, NULL, NULL)`,
-        [cycleId, weekStartStr, weekEndStr, userId]
+         VALUES (?, ?, ?, 'draft', ?, ?, ?)`,
+        [cycleId, weekStartStr, weekEndStr, userId, employeeProcessId, employeeBranchId]
       );
     }
 
