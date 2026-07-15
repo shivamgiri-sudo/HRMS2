@@ -403,7 +403,7 @@ export default function AttendanceRegularization() {
       const res = await hrmsApi.get<{ success: boolean; data: AttendancePreview }>(
         `/api/wfm/regularizations/attendance-preview?${params.toString()}`
       );
-      return res.data;
+      return res.data.data;
     },
     retry: false,
   });
@@ -699,8 +699,19 @@ export default function AttendanceRegularization() {
                         <FormItem>
                           <FormLabel className="text-xs">Current Login Time</FormLabel>
                           <FormControl>
-                            <Input type="time" {...field} readOnly className="h-9 border-slate-200 bg-white text-sm" />
+                            <Input
+                              type="time"
+                              {...field}
+                              readOnly
+                              placeholder="No record"
+                              className="h-9 border-slate-200 bg-white text-sm"
+                            />
                           </FormControl>
+                          {!field.value && (
+                            <FormDescription className="text-xs text-amber-600">
+                              No login time recorded for this date
+                            </FormDescription>
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -713,8 +724,19 @@ export default function AttendanceRegularization() {
                         <FormItem>
                           <FormLabel className="text-xs">Current Logout Time</FormLabel>
                           <FormControl>
-                            <Input type="time" {...field} readOnly className="h-9 border-slate-200 bg-white text-sm" />
+                            <Input
+                              type="time"
+                              {...field}
+                              readOnly
+                              placeholder="No record"
+                              className="h-9 border-slate-200 bg-white text-sm"
+                            />
                           </FormControl>
+                          {!field.value && (
+                            <FormDescription className="text-xs text-amber-600">
+                              No logout time recorded for this date
+                            </FormDescription>
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -885,10 +907,21 @@ export default function AttendanceRegularization() {
                   <div className="space-y-3">
                     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
                       <PreviewMetric label="Status" value={attendancePreviewQuery.data.currentStatus} />
+                      <PreviewMetric label="Login Time" value={attendancePreviewQuery.data.currentLoginTime || "Not recorded"} />
+                      <PreviewMetric label="Logout Time" value={attendancePreviewQuery.data.currentLogoutTime || "Not recorded"} />
                       <PreviewMetric label="Punch Count" value={String(attendancePreviewQuery.data.totalPunches)} />
                       <PreviewMetric label="Biometric Minutes" value={formatMinutesLabel(attendancePreviewQuery.data.biometricMinutes)} />
                       <PreviewMetric label="Raw Minutes" value={formatMinutesLabel(attendancePreviewQuery.data.rawMinutes)} />
                     </div>
+                    {(!attendancePreviewQuery.data.currentLoginTime && !attendancePreviewQuery.data.currentLogoutTime) && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        <p className="font-semibold">No attendance record found for this date</p>
+                        <p className="mt-1">
+                          This could mean: (1) No punch-in/out recorded, (2) Attendance not yet processed, or (3) Employee was absent.
+                          The requested times below will create a new attendance record.
+                        </p>
+                      </div>
+                    )}
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
                       <p className="font-semibold text-slate-900">Detected Punches</p>
                       <p className="mt-2 text-slate-600">

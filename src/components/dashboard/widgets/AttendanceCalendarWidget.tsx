@@ -17,9 +17,14 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function AttendanceCalendarWidget({ employeeId, month }: Props) {
+  const [year, mon] = month.split("-").map(Number);
+  const monthEndDay = new Date(year, mon, 0).getDate();
+  const fromDate = `${month}-01`;
+  const toDate = `${month}-${String(monthEndDay).padStart(2, "0")}`;
+
   const { data, isLoading } = useQuery<any>({
     queryKey: ["attendance-calendar", employeeId, month],
-    queryFn: () => hrmsApi.get(`/api/wfm/attendance/daily?employeeId=${employeeId}&month=${month}`),
+    queryFn: () => hrmsApi.get(`/api/wfm/attendance/ncosec-monthly?employeeId=${employeeId}&fromDate=${fromDate}&toDate=${toDate}&limit=500`),
     enabled: !!employeeId,
     staleTime: 1000 * 60 * 5,
   });
@@ -28,7 +33,6 @@ export function AttendanceCalendarWidget({ employeeId, month }: Props) {
   const statusMap: Record<string, string> = {};
   records.forEach(r => { statusMap[r.date] = r.status; });
 
-  const [year, mon] = month.split("-").map(Number);
   const monthLabel = new Date(year, mon - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
   const daysInMonth = new Date(year, mon, 0).getDate();
   const firstDayOfWeek = new Date(year, mon - 1, 1).getDay(); // 0=Sun

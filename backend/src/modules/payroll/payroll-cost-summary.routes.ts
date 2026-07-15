@@ -250,7 +250,7 @@ payrollCostSummaryRouter.get(
 
     // Look for an existing salary prep run for the given month
     const [runRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM salary_prep_run WHERE payroll_month = ? ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id FROM salary_prep_run WHERE run_month = ? ORDER BY created_at DESC LIMIT 1`,
       [month],
     );
 

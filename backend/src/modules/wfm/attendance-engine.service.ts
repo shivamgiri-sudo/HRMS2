@@ -264,9 +264,9 @@ export const attendanceEngineService = {
     // Cost centre scope: if mapping exists, employee's cost centre must be mapped
     holidaySql += `
         AND (
-          NOT EXISTS (SELECT 1 FROM holiday_cost_centre_map WHERE holiday_id = lhm.id)
+          NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
           OR EXISTS (
-            SELECT 1 FROM holiday_cost_centre_map hccm
+            SELECT 1 FROM holiday_cost_centre_mapping hccm
             WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = ?
           )
         )`;
@@ -274,9 +274,9 @@ export const attendanceEngineService = {
     // Designation scope: if mapping exists, employee's designation must be mapped
     holidaySql += `
         AND (
-          NOT EXISTS (SELECT 1 FROM holiday_designation_map WHERE holiday_id = lhm.id)
+          NOT EXISTS (SELECT 1 FROM holiday_designation_mapping WHERE holiday_id = lhm.id)
           OR EXISTS (
-            SELECT 1 FROM holiday_designation_map hdm
+            SELECT 1 FROM holiday_designation_mapping hdm
             WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = ?
           )
         )`;

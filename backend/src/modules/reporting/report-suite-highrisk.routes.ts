@@ -9,7 +9,9 @@ reportSuiteHighRiskRouter.use(requireAuth);
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const roles = requireRole("admin", "hr", "finance", "payroll", "wfm", "manager", "ceo");
-const PAYROLL_STATUSES = ["approved", "disbursed", "finalized", "locked", "released", "paid"];
+// Include all post-calculation statuses so reports show data regardless of approval stage
+// "draft" is excluded — draft runs have no calculated lines yet
+const PAYROLL_STATUSES = ["processing", "reviewed", "calculated", "approved", "locked", "disbursed", "finalized", "released", "paid"];
 
 function dateParam(value: unknown, fallback: string) {
   const text = String(value ?? "").trim();

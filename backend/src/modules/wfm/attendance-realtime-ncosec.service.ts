@@ -257,6 +257,52 @@ interface AttendanceOverride {
   regularization_id: string | null;
 }
 
+function istParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+  }).formatToParts(date);
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return {
+    year: pick('year'),
+    month: pick('month'),
+    day: pick('day'),
+    hour: Number(pick('hour') || '0'),
+  };
+}
+
+function shiftDateByDays(dateText: string, days: number) {
+  const date = new Date(`${dateText}T00:00:00+05:30`);
+  date.setUTCDate(date.getUTCDate() + days);
+  const parts = istParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function resolveMonthlyOverlayShiftDate() {
+  const now = istParts();
+  const today = `${now.year}-${now.month}-${now.day}`;
+  return now.hour >= 5 ? today : shiftDateByDays(today, -1);
+}
+
+function queryWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /**
  * Bulk-fetch COSEC UserID + employee metadata for a set of employee IDs.
  */
@@ -321,16 +367,16 @@ async function getAttendanceOverrides(
      WHERE lhm.holiday_date BETWEEN ? AND ?
        AND lhm.active_status = 1
        AND (
-         NOT EXISTS (SELECT 1 FROM holiday_cost_centre_map WHERE holiday_id = lhm.id)
+         NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
          OR EXISTS (
-           SELECT 1 FROM holiday_cost_centre_map hccm
+           SELECT 1 FROM holiday_cost_centre_mapping hccm
            WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = e.cost_centre_id
          )
        )
        AND (
-         NOT EXISTS (SELECT 1 FROM holiday_designation_map WHERE holiday_id = lhm.id)
+         NOT EXISTS (SELECT 1 FROM holiday_designation_mapping WHERE holiday_id = lhm.id)
          OR EXISTS (
-           SELECT 1 FROM holiday_designation_map hdm
+           SELECT 1 FROM holiday_designation_mapping hdm
            WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = e.designation_id
          )
        )`,
@@ -427,6 +473,93 @@ async function getAttendanceOverrides(
   }
 
   return overrides;
+}
+
+async function getRealtimePunchMapForMappings(
+  mappings: CosecMapping[],
+  shiftDate: string,
+): Promise<Map<string, RealTimePunch>> {
+  if (mappings.length === 0 || !env.NCOSEC_DB_HOST) return new Map();
+
+  const currentShiftDate = resolveMonthlyOverlayShiftDate();
+  if (shiftDate !== currentShiftDate) return new Map();
+
+  const userIdsByEmployee = new Map<string, string[]>();
+  for (const mapping of mappings) {
+    const userId = String(mapping.cosec_user_id ?? '').trim();
+    if (!userId) continue;
+    const bucket = userIdsByEmployee.get(userId) ?? [];
+    bucket.push(mapping.employee_id);
+    userIdsByEmployee.set(userId, bucket);
+  }
+
+  const userIds = Array.from(userIdsByEmployee.keys());
+  if (userIds.length === 0) return new Map();
+
+  const dateStart = `${shiftDate} 00:00:00`;
+  const dateEnd = shiftDate === currentShiftDate ? `${shiftDate} 23:59:59` : `${currentShiftDate} 23:59:59`;
+  const userIdColumn = env.NCOSEC_USER_ID_COLUMN || 'UserID';
+  const dateTimeColumn = env.NCOSEC_DATETIME_COLUMN || 'Edatetime';
+  const eventTable = env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn';
+
+  const pool = await getNcosecPool();
+  const request = pool.request();
+  request.input('dateStart', dateStart);
+  request.input('dateEnd', dateEnd);
+
+  const idParams: string[] = [];
+  userIds.forEach((userId, index) => {
+    const key = `userId${index}`;
+    request.input(key, userId);
+    idParams.push(`@${key}`);
+  });
+
+  const result = await queryWithTimeout(
+    request.query(`
+      SELECT
+        CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
+        CONVERT(CHAR(19), MIN(${dateTimeColumn}), 120) AS first_punch,
+        CONVERT(CHAR(19), MAX(${dateTimeColumn}), 120) AS last_punch,
+        COUNT(*) AS total_punches,
+        DATEDIFF(MINUTE, MIN(${dateTimeColumn}), MAX(${dateTimeColumn})) AS raw_minutes
+      FROM ${eventTable}
+      WHERE ${dateTimeColumn} >= @dateStart
+        AND ${dateTimeColumn} <= @dateEnd
+        AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(', ')})
+      GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
+    `),
+    5000,
+    'monthly live COSEC overlay',
+  );
+
+  const tagIST = (value: string | null | undefined) => (value ? value.replace(' ', 'T') + '+05:30' : null);
+  const livePunches = new Map<string, RealTimePunch>();
+  for (const row of result.recordset ?? []) {
+    const userId = String((row as any).user_id ?? '').trim();
+    if (!userId) continue;
+
+    const assessed = assessAggregatePunches({
+      firstPunch: String((row as any).first_punch ?? ''),
+      lastPunch: String((row as any).last_punch ?? ''),
+      totalPunches: Number((row as any).total_punches ?? 0),
+      workingMinutes: Number((row as any).raw_minutes ?? 0),
+    });
+
+    const snapshot: RealTimePunch = {
+      punch_date: shiftDate,
+      first_punch_in: tagIST(assessed.effectivePunchIn),
+      last_punch_out: tagIST(assessed.effectivePunchOut),
+      total_punches: assessed.effectivePunchCount,
+      raw_minutes: assessed.effectiveWorkingMinutes,
+      source: 'ncosec_realtime',
+    };
+
+    for (const employeeId of userIdsByEmployee.get(userId) ?? []) {
+      livePunches.set(employeeId, snapshot);
+    }
+  }
+
+  return livePunches;
 }
 
 /**
@@ -638,6 +771,71 @@ export async function getMonthlyAttendanceFromNcosec(
         working_hours_end: mapping.working_hours_end,
       },
     });
+  }
+
+  const currentShiftDate = resolveMonthlyOverlayShiftDate();
+  if (currentShiftDate >= fromDate && currentShiftDate <= toDate) {
+    const livePunches = await getRealtimePunchMapForMappings(mappings, currentShiftDate);
+    for (const [employeeId, livePunch] of livePunches) {
+      const key = `${employeeId}:${currentShiftDate}`;
+      const override = overrides.get(key);
+      if (override?.is_locked) continue;
+      if (override && ['leave_approved', 'holiday', 'week_off'].includes(override.override_status)) continue;
+
+      const mapping = empIdToMapping.get(employeeId);
+      if (!mapping) continue;
+
+      const liveClockIn = livePunch.first_punch_in;
+      const liveClockOut = livePunch.last_punch_out;
+      const liveMinutes = Math.max(0, Number(livePunch.raw_minutes ?? 0));
+      const liveStatus = liveClockIn
+        ? (liveClockOut ? classifyCosecMinutes(liveMinutes).status : 'present')
+        : 'absent';
+      const liveLwp = liveClockIn
+        ? (liveClockOut ? classifyCosecMinutes(liveMinutes).lwpValue : 0)
+        : 1;
+      const liveTotalHours = Math.round((liveMinutes / 60) * 100) / 100;
+      const liveRecord: NcosecMonthlyRecord = {
+        employee_id: mapping.employee_id,
+        employee_code: mapping.employee_code,
+        employee_name: mapping.employee_name,
+        department_name: mapping.department_name,
+        branch_name: mapping.branch_name,
+        process_name: mapping.process_name,
+        cost_centre_name: mapping.cost_centre_name,
+        record_date: currentShiftDate,
+        date: currentShiftDate,
+        clock_in_time: liveClockIn,
+        clock_out_time: liveClockOut,
+        clock_in: liveClockIn,
+        clock_out: liveClockOut,
+        raw_minutes: liveMinutes,
+        biometric_minutes: liveMinutes,
+        total_hours: liveTotalHours,
+        attendance_status: override?.override_status ?? liveStatus,
+        status: override?.override_status ?? liveStatus,
+        lwp_value: override ? override.lwp_value : liveLwp,
+        late_mark: 0,
+        is_locked: override?.is_locked ?? 0,
+        attendance_source: 'biometric',
+        source_system: override?.is_locked ? 'regularization' : 'ncosec_realtime',
+        override_note: override?.override_note ?? null,
+        employee: {
+          first_name: mapping.first_name,
+          last_name: mapping.last_name,
+          employee_code: mapping.employee_code,
+          working_hours_start: mapping.working_hours_start,
+          working_hours_end: mapping.working_hours_end,
+        },
+      };
+
+      const existingIndex = results.findIndex((record) => record.employee_id === employeeId && record.record_date === currentShiftDate);
+      if (existingIndex >= 0) {
+        results[existingIndex] = liveRecord;
+      } else {
+        results.push(liveRecord);
+      }
+    }
   }
 
   // Sort by record_date DESC, employee_code ASC

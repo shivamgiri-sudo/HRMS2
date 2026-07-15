@@ -694,17 +694,35 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
 
     // ─── A4: Payroll ─────────────────────────────────────────────────────────
     case "ytd-salary-summary": {
-      const year = Number(req.query.year ?? new Date().getFullYear());
+      // Accept both ?year=2026 (calendar year) and ?financialYear=2025-26 (Apr–Mar)
+      const fyRaw = String(req.query.financialYear ?? req.query.year ?? "").trim();
+      let monthFrom: string;
+      let monthTo: string;
+      const fyMatch = fyRaw.match(/^(\d{4})-(\d{2,4})$/);
+      if (fyMatch) {
+        // Financial year format e.g. "2025-26" → Apr 2025 – Mar 2026
+        const fyStart = Number(fyMatch[1]);
+        const fyEnd = fyStart + 1;
+        monthFrom = `${fyStart}-04`;
+        monthTo   = `${fyEnd}-03`;
+      } else {
+        // Calendar year fallback
+        const cy = Number(fyRaw) || new Date().getFullYear();
+        monthFrom = `${cy}-01`;
+        monthTo   = `${cy}-12`;
+      }
       addEmployeeFilters(req.query, clauses, params);
-      clauses.push("YEAR(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')) = ?"); params.push(year);
+      // Only include calculated/processed runs (exclude drafts)
+      clauses.push("spr.run_month BETWEEN ? AND ?"); params.push(monthFrom, monthTo);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name, d.dept_name AS department_name,
                     COUNT(DISTINCT spr.run_month) AS months_paid,
-                    SUM(spl.gross_salary) AS ytd_gross,
-                    SUM(spl.basic) AS ytd_basic,
-                    SUM(spl.pf_employee) AS ytd_pf,
-                    SUM(spl.tds_amount) AS ytd_tds,
-                    SUM(spl.net_salary) AS ytd_net
+                    ROUND(SUM(spl.gross_salary), 2) AS ytd_gross,
+                    ROUND(SUM(spl.basic), 2) AS ytd_basic,
+                    ROUND(SUM(COALESCE(spl.pf_employee, 0)), 2) AS ytd_pf,
+                    ROUND(SUM(COALESCE(spl.tds_amount, 0)), 2) AS ytd_tds,
+                    ROUND(SUM(spl.net_salary), 2) AS ytd_net
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
@@ -719,6 +737,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "cost-centre-salary-summary": {
       const month = monthParam(req.query.month);
       clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'Unassigned') AS cost_centre_name,
                     COUNT(spl.id) AS headcount,
@@ -739,6 +758,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "process-lob-salary-cost": {
       const month = monthParam(req.query.month);
       clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT p.process_name, COALESCE(l.lob_name, 'N/A') AS lob_name,
                     COUNT(spl.id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
@@ -770,6 +790,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     spr.run_month, spl.lwp_days, spl.lwp_deduction AS lwp_deduction_amount,
                     spl.gross_salary, spl.net_salary, b.branch_name
@@ -851,6 +872,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       clauses.push("spl.net_salary > 0");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
@@ -868,6 +890,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     case "pf-ecr-export": {
       const month = monthParam(req.query.month);
       clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT eu.uan AS UAN, eu.member_id AS PF_member_id,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS member_name,
                     spl.gross_salary AS gross_wages,
@@ -899,6 +922,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
               WHERE spl.pf_employee > 0
+                AND LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')
                 AND STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d') BETWEEN ? AND ?
               GROUP BY spr.run_month
               ORDER BY spr.run_month DESC`;
@@ -931,6 +955,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
               WHERE spl.esic_employee > 0
+                AND LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')
                 AND STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d') BETWEEN ? AND ?
               GROUP BY spr.run_month
               ORDER BY spr.run_month DESC`;
@@ -942,6 +967,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(e.state, 'Unknown') AS state,
                     spl.gross_salary, spl.professional_tax AS pt_deducted, spr.run_month
@@ -957,6 +983,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const year = Number(req.query.year ?? new Date().getFullYear());
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("YEAR(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')) = ?"); params.push(year);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.pan_number,
                     SUM(spl.gross_salary) AS gross_ytd,
