@@ -61,7 +61,7 @@ router.get('/:month', async (req, res) => {
           ccm.cost_centre_code,
           ccm.process_name,
           bm.branch_name
-        FROM holiday_cost_centre_map hccm
+        FROM holiday_cost_centre_mapping hccm
         JOIN cost_centre_master ccm ON ccm.id = hccm.cost_centre_id
         LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
         WHERE hccm.holiday_id = ?
@@ -73,7 +73,7 @@ router.get('/:month', async (req, res) => {
         SELECT
           hdm.designation_id,
           dm.designation_name
-        FROM holiday_designation_map hdm
+        FROM holiday_designation_mapping hdm
         JOIN designation_master dm ON dm.id = hdm.designation_id
         WHERE hdm.holiday_id = ?
         ORDER BY dm.designation_name

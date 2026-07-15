@@ -244,6 +244,7 @@ export default function WaitingRoomDisplay() {
   const seenCalledRef = useRef<Set<string>>(new Set());
   const announceQueueRef = useRef<Array<{ token: string; name: string | null; role: string | null; recruiter: string | null }>>([]);
   const isSpeakingRef = useRef(false);
+  const cachedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -266,6 +267,18 @@ export default function WaitingRoomDisplay() {
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Pre-warm TTS voices so Neerja (Indian Neural) is cached before first announcement
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    const load = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) cachedVoiceRef.current = pickBestVoice(voices);
+    };
+    load();
+    window.speechSynthesis.addEventListener("voiceschanged", load);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", load);
   }, []);
 
   useEffect(() => {
@@ -304,10 +317,10 @@ export default function WaitingRoomDisplay() {
     setTimeout(() => {
       if (!window.speechSynthesis) { isSpeakingRef.current = false; drainQueue(); return; }
       const text = buildAnnouncementText(next.token, next.name, next.role, next.recruiter);
-      const voices = window.speechSynthesis.getVoices();
       const doSpeak = () => {
         const utt = new SpeechSynthesisUtterance(text);
-        const voice = pickBestVoice(window.speechSynthesis.getVoices());
+        // Prefer cached voice (pre-warmed on mount); fall back to live lookup
+        const voice = cachedVoiceRef.current ?? pickBestVoice(window.speechSynthesis.getVoices());
         if (voice) utt.voice = voice;
         utt.lang = voice?.lang ?? "en-IN";
         utt.rate = 0.88;
@@ -317,7 +330,8 @@ export default function WaitingRoomDisplay() {
         utt.onerror = () => { isSpeakingRef.current = false; drainQueue(); };
         window.speechSynthesis.speak(utt);
       };
-      if (voices.length === 0) {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0 && !cachedVoiceRef.current) {
         window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; doSpeak(); };
       } else {
         doSpeak();

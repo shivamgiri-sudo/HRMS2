@@ -15,12 +15,14 @@ export function EmployeeLayout() {
 
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const monthStart = `${currentMonth}-01`;
+  const monthEnd = `${currentMonth}-${String(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()).padStart(2, "0")}`;
   const dataTimestamp = now.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) +
     ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) + " AM";
 
   const { data: attData } = useQuery<any>({
     queryKey: ["attendance-monthly", employeeId, currentMonth],
-    queryFn: () => hrmsApi.get(`/api/wfm/attendance/daily?employeeId=${employeeId}&month=${currentMonth}`),
+    queryFn: () => hrmsApi.get(`/api/wfm/attendance/ncosec-monthly?employeeId=${employeeId}&fromDate=${monthStart}&toDate=${monthEnd}&limit=500`),
     enabled: !!employeeId,
     staleTime: 1000 * 60 * 5,
   });
