@@ -93,6 +93,10 @@ export async function importShiftRosterBatch(
   let skipped = 0;
   const errors: string[] = [];
 
+  // Collect all assignments for batch insert
+  const allAssignments: any[] = [];
+  const rowStatusUpdates: { id: string; status: string; errors?: string[] }[] = [];
+
   for (const batchRow of batchRows as RowDataPacket[]) {
     const raw = (typeof batchRow.normalized_data === "string"
       ? JSON.parse(batchRow.normalized_data)
@@ -186,7 +190,7 @@ export async function importShiftRosterBatch(
       );
     }
 
-    // Process each day
+    // Process each day - collect assignments for batch insert
     let dayImported = 0;
     const rowErrors: string[] = [];
 
@@ -218,36 +222,61 @@ export async function importShiftRosterBatch(
         }
       }
 
-      await db.execute(
-        `INSERT INTO wfm_roster_assignment
-           (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off,
-            roster_status, publish_status, decision_source, system_decision_reason)
-         VALUES (?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?)
-         ON DUPLICATE KEY UPDATE
-           shift_template_id = VALUES(shift_template_id),
-           is_week_off = VALUES(is_week_off),
-           decision_source = 'bulk_upload',
-           system_decision_reason = VALUES(system_decision_reason),
-           updated_at = CURRENT_TIMESTAMP`,
-        [randomUUID(), cycleId, employeeId, rosterDateStr, shiftTemplateId,
-         isWeekOff ? 1 : 0, notes ?? null]
-      );
+      // Collect assignment for batch insert
+      allAssignments.push({
+        id: randomUUID(),
+        cycle_id: cycleId,
+        employee_id: employeeId,
+        roster_date: rosterDateStr,
+        shift_template_id: shiftTemplateId,
+        is_week_off: isWeekOff ? 1 : 0,
+        system_decision_reason: notes ?? null
+      });
       dayImported++;
     }
 
     if (rowErrors.length > 0) {
       errors.push(`Row ${batchRow.row_no} (${employee_code}): ${rowErrors.join("; ")}`);
+      rowStatusUpdates.push({ id: batchRow.id, status: 'error', errors: rowErrors });
+      skipped++;
+    } else {
+      rowStatusUpdates.push({ id: batchRow.id, status: 'imported' });
+      imported += dayImported > 0 ? 1 : 0;
+    }
+  }
+
+  // Batch insert all assignments
+  if (allAssignments.length > 0) {
+    const values = allAssignments.map(a =>
+      `('${a.id}', '${a.cycle_id}', '${a.employee_id}', '${a.roster_date}', ${a.shift_template_id ? `'${a.shift_template_id}'` : 'NULL'}, ${a.is_week_off}, 'published', 'published', 'bulk_upload', ${a.system_decision_reason ? `'${a.system_decision_reason.replace(/'/g, "''")}'` : 'NULL'})`
+    ).join(',');
+
+    await db.execute(
+      `INSERT INTO wfm_roster_assignment
+         (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off,
+          roster_status, publish_status, decision_source, system_decision_reason)
+       VALUES ${values}
+       ON DUPLICATE KEY UPDATE
+         shift_template_id = VALUES(shift_template_id),
+         is_week_off = VALUES(is_week_off),
+         decision_source = 'bulk_upload',
+         system_decision_reason = VALUES(system_decision_reason),
+         updated_at = CURRENT_TIMESTAMP`
+    );
+  }
+
+  // Batch update row statuses
+  for (const update of rowStatusUpdates) {
+    if (update.status === 'error') {
       await db.execute(
         "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify(rowErrors), batchRow.id]
+        [JSON.stringify(update.errors), update.id]
       );
-      skipped++;
     } else {
       await db.execute(
         "UPDATE upload_batch_row SET row_status='imported' WHERE id=?",
-        [batchRow.id]
+        [update.id]
       );
-      imported += dayImported > 0 ? 1 : 0;
     }
   }
 
