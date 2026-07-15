@@ -11,6 +11,8 @@ export interface MetricResult {
   status?: "ok" | "warn" | "critical" | "unknown";
   trend?: "up" | "down" | "stable" | null;
   detail?: Record<string, number | null | undefined>;
+  available?: boolean;
+  errorCode?: string | null;
 }
 
 export interface DashboardSummary {
@@ -18,6 +20,12 @@ export interface DashboardSummary {
   generatedAt?: string;
   workItems?: { pending_count?: number; overdue_count?: number };
   metrics?: Record<string, MetricResult>;
+  scope?: {
+    level?: string;
+    branchIds?: string[];
+    processIds?: string[];
+    role?: string;
+  };
 }
 
 export interface EmployeeDashboardData {
@@ -26,6 +34,7 @@ export interface EmployeeDashboardData {
   onboarding: JsonRecord;
   lms: JsonRecord;
   engagement: JsonRecord;
+  sourceErrors?: string[];
 }
 
 export interface ReferenceDashboardData {
@@ -101,6 +110,12 @@ export function metricDetail(
   detailKey: string,
 ): number | null {
   return asNumber(metrics[key]?.detail?.[detailKey]);
+}
+
+export function unavailableMetricCodes(metrics: Record<string, MetricResult>): string[] {
+  return Object.entries(metrics)
+    .filter(([, metric]) => metric.available === false)
+    .map(([code, metric]) => metric.errorCode || code);
 }
 
 export function percent(part: number | null, total: number | null): number | null {
