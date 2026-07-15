@@ -94,6 +94,13 @@ export const leaveService = {
   async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
     const request = await this.getRequest(id);
 
+    if (request.status === 'lapsed') {
+      throw Object.assign(
+        new Error("This leave request was lapsed at payroll cycle close and can no longer be approved or modified."),
+        { statusCode: 409 }
+      );
+    }
+
     // Handle approval - deduct leave balance
     if (input.status === 'approved') {
       // Validate leave_type_id exists
@@ -285,5 +292,57 @@ export const leaveService = {
       "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]
     );
     return (rows as LeaveHoliday[])[0];
+  },
+
+  // Called by payroll at cycle lock time. Marks all still-pending leave requests
+  // that overlap the given month as 'lapsed'. The LWP deduction already stands in
+  // attendance_daily_record (absent rows) — no salary recalculation needed.
+  async lapseUnresolvedLeaves(runId: string, runMonth: string, employeeIds: string[]): Promise<{ lapsed: number }> {
+    if (!employeeIds.length) return { lapsed: 0 };
+
+    const [year, mon] = runMonth.split('-').map(Number);
+    const monthStart = `${runMonth}-01`;
+    const lastDay = new Date(year, mon, 0).getDate();
+    const monthEnd = `${runMonth}-${String(lastDay).padStart(2, '0')}`;
+    const reason = `Payroll cycle ${runMonth} locked — leave not approved before cycle close`;
+
+    // Fetch pending leave requests that overlap this month for the run's employees
+    const placeholders = employeeIds.map(() => '?').join(', ');
+    const [pendingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_id, leave_type_id, from_date, to_date, total_days
+         FROM leave_request
+        WHERE status = 'pending'
+          AND from_date <= ?
+          AND to_date >= ?
+          AND employee_id IN (${placeholders})`,
+      [monthEnd, monthStart, ...employeeIds],
+    );
+
+    if (!(pendingRows as any[]).length) return { lapsed: 0 };
+
+    const ids = (pendingRows as any[]).map((r: any) => r.id);
+    const idPlaceholders = ids.map(() => '?').join(', ');
+
+    await db.execute(
+      `UPDATE leave_request
+          SET status = 'lapsed',
+              lapsed_at = NOW(),
+              lapsed_reason = ?,
+              lapsed_run_id = ?
+        WHERE id IN (${idPlaceholders})`,
+      [reason, runId, ...ids],
+    );
+
+    // Audit log — one row per lapsed request
+    for (const req of pendingRows as any[]) {
+      await db.execute(
+        `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+         VALUES (UUID(), ?, 'lapsed_by_payroll_close', 'system', ?)`,
+        [req.id, reason],
+      ).catch((e: unknown) => console.error('[leave-service] lapse audit log error:', e));
+    }
+
+    console.log(`[leave-service] Lapsed ${ids.length} pending leave request(s) for payroll run ${runId} (${runMonth})`);
+    return { lapsed: ids.length };
   },
 };

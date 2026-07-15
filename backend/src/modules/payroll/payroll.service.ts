@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
+import { leaveService } from "../leave/leave.service.js";
 import type {
   BulkAssignInput,
   BulkAssignResult,
@@ -336,6 +337,20 @@ export const payrollService = {
     if (input.status === "disbursed") { sets.push("disbursed_by = ?", "disbursed_at = NOW()"); params.push(userId); }
     params.push(id);
     await db.execute(`UPDATE salary_prep_run SET ${sets.join(", ")} WHERE id = ?`, params);
+
+    // On manual lock: lapse any pending leave requests for this month's employees
+    if (input.status === "locked") {
+      const [lineRows] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT employee_id FROM salary_prep_line WHERE run_id = ?`,
+        [id],
+      );
+      const employeeIds = (lineRows as any[]).map((r: any) => String(r.employee_id));
+      if (employeeIds.length > 0) {
+        await leaveService.lapseUnresolvedLeaves(id, run.run_month, employeeIds)
+          .catch((e: unknown) => console.error('[payroll-service] lapseUnresolvedLeaves error:', e));
+      }
+    }
+
     return this.getRun(id);
   },
 

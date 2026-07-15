@@ -177,6 +177,20 @@ export const payrollGovernanceService = {
         "warning",
         "Employees with mandatory joining documents pending completion/signing",
       ),
+      countIssue(
+        `${eligibleSql}
+          AND EXISTS (
+            SELECT 1 FROM leave_request lr
+             WHERE lr.employee_id = e.id
+               AND lr.status = 'pending'
+               AND lr.from_date <= ?
+               AND lr.to_date >= ?
+          )`,
+        [...params, range.end, range.start],
+        "PENDING_LEAVE_REQUESTS",
+        "warning",
+        "Employees have pending (unapproved) leave requests for this payroll month — these will be lapsed as LWP at cycle close if not resolved",
+      ),
     ];
 
     for (const issue of await Promise.all(checks)) {

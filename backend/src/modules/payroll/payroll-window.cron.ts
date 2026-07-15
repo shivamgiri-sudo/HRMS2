@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { getIstDateString } from '../../utils/dateUtils.js';
+import { leaveService } from '../leave/leave.service.js';
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -37,6 +38,17 @@ export async function runPayrollWindowClosure(): Promise<void> {
       entity_id: row.id,
       change_summary: { run_month: row.run_month, reason: 'window_close_date reached' },
     }).catch((e: unknown) => console.error('[payroll-window-cron] audit log error:', e));
+
+    // Lapse pending leave requests for all employees in this run
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT employee_id FROM salary_prep_line WHERE run_id = ?`,
+      [row.id],
+    );
+    const employeeIds = (lineRows as any[]).map((r: any) => String(r.employee_id));
+    if (employeeIds.length > 0) {
+      await leaveService.lapseUnresolvedLeaves(row.id, row.run_month, employeeIds)
+        .catch((e: unknown) => console.error('[payroll-window-cron] lapseUnresolvedLeaves error:', e));
+    }
 
     console.log(`[payroll-window-cron] Auto-locked run ${row.id} (${row.run_month})`);
   }
