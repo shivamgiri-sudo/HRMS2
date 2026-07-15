@@ -318,25 +318,13 @@ export async function startAprVicidialSyncWorker(): Promise<void> {
     console.error(`[${WORKER_NAME}] Startup sync failed:`, err.message)
   );
 
-  // Schedule daily at 01:30 IST = 20:00 UTC (after midnight, daily data is complete)
-  const scheduleNext = () => {
-    const now    = new Date();
-    const target = new Date(now);
-    target.setUTCHours(20, 0, 0, 0);
-    if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
-    const delay = target.getTime() - now.getTime();
-    console.log(`[${WORKER_NAME}] Next sync at ${target.toISOString()} (${Math.round(delay / 60000)} min)`);
-    setTimeout(() => {
-      runAprSync(1).catch(err =>
-        console.error(`[${WORKER_NAME}] Scheduled sync error:`, err.message)
-      );
-      setInterval(
-        () => runAprSync(1).catch(err =>
-          console.error(`[${WORKER_NAME}] Interval sync error:`, err.message)
-        ),
-        24 * 60 * 60 * 1000
-      );
-    }, delay);
-  };
-  scheduleNext();
+  // Run every hour to keep APR data near real-time
+  const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+  console.log(`[${WORKER_NAME}] Scheduled hourly sync (every 60 min)`);
+  setInterval(
+    () => runAprSync(0).catch(err =>
+      console.error(`[${WORKER_NAME}] Hourly sync error:`, err.message)
+    ),
+    SYNC_INTERVAL_MS
+  );
 }
