@@ -221,16 +221,16 @@ export async function importShiftRosterBatch(
       await db.execute(
         `INSERT INTO wfm_roster_assignment
            (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off,
-            roster_status, publish_status, decision_source, notes, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?, ?, ?)
+            roster_status, publish_status, decision_source, system_decision_reason)
+         VALUES (?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?)
          ON DUPLICATE KEY UPDATE
            shift_template_id = VALUES(shift_template_id),
            is_week_off = VALUES(is_week_off),
            decision_source = 'bulk_upload',
-           notes = VALUES(notes),
-           updated_by = VALUES(updated_by)`,
+           system_decision_reason = VALUES(system_decision_reason),
+           updated_at = CURRENT_TIMESTAMP`,
         [randomUUID(), cycleId, employeeId, rosterDateStr, shiftTemplateId,
-         isWeekOff ? 1 : 0, notes ?? null, userId, userId]
+         isWeekOff ? 1 : 0, notes ?? null]
       );
       dayImported++;
     }
