@@ -279,11 +279,16 @@ const Profile = () => {
                     currentUrl={avatarUrl}
                     displayName={`${employee.first_name} ${employee.last_name}`}
                     onSuccess={async (url) => {
-                      setAvatarUrl(url || null);
+                      console.log("[Profile] Photo upload success, URL:", url);
+                      // Add cache-busting timestamp to force browser reload
+                      const cacheBustedUrl = url ? `${url}?t=${Date.now()}` : null;
+                      setAvatarUrl(cacheBustedUrl);
                       // Hard remove queries to force fresh fetch
                       queryClient.removeQueries({ queryKey: ["my-profile"] });
                       queryClient.removeQueries({ queryKey: ["employee-profile"] });
-                      await refetch();
+                      console.log("[Profile] Refetching employee data...");
+                      const result = await refetch();
+                      console.log("[Profile] Refetch complete:", result.data?.avatar_url);
                     }}
                     size="2xl"
                   />

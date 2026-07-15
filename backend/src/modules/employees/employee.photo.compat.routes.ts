@@ -67,10 +67,13 @@ async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Mu
   const finalName = `${employeeId}${ext}`;
   const finalPath = path.join(PHOTOS_DIR, finalName);
 
+  console.log(`[Photo Upload] Saving photo for employee ${employeeId}: ${finalName}`);
+
   if (uploadedFile.path !== finalPath) {
     for (const existingExt of [".jpg", ".jpeg", ".png", ".webp"]) {
       const oldPath = path.join(PHOTOS_DIR, `${employeeId}${existingExt}`);
       if (oldPath !== uploadedFile.path && fs.existsSync(oldPath)) {
+        console.log(`[Photo Upload] Deleting old photo: ${oldPath}`);
         fs.unlinkSync(oldPath);
       }
     }
@@ -78,12 +81,14 @@ async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Mu
   }
 
   const fileUrl = `/uploads/employee-photos/${finalName}`;
-  await db.execute(
+  const [result] = await db.execute(
     `UPDATE employees
         SET avatar_url = ?, photo_url = ?, updated_at = COALESCE(updated_at, NOW())
       WHERE id = ?`,
     [fileUrl, fileUrl, employeeId],
   );
+
+  console.log(`[Photo Upload] Database updated for employee ${employeeId}: ${fileUrl}`, result);
 
   return fileUrl;
 }

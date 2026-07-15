@@ -204,6 +204,7 @@ export function PhotoUpload({
       const ext = pendingFileName.split(".").pop() ?? "jpg";
       form.append("photo", blob, `cropped-photo.${ext}`);
 
+      console.log("[PhotoUpload] Uploading photo to:", endpoint);
       const token = getToken();
       const res = await fetch(endpoint, {
         method: "POST",
@@ -213,12 +214,17 @@ export function PhotoUpload({
       });
 
       const data = await readJsonSafely(res);
+      console.log("[PhotoUpload] Server response:", { status: res.status, data });
+
       if (!res.ok || !data.success) {
         console.error("[PhotoUpload Error]", { status: res.status, data, endpoint });
         throw new Error(data.error ?? data.message ?? `Upload failed with status ${res.status}`);
       }
       const uploadedUrl = data.avatarUrl ?? data.photoUrl ?? data.url ?? "";
-      setPreview(normalizeFileUrl(uploadedUrl) ?? uploadedUrl);
+      // Add cache-busting timestamp to force browser to reload the image
+      const cacheBustedUrl = uploadedUrl ? `${uploadedUrl}?t=${Date.now()}` : uploadedUrl;
+      console.log("[PhotoUpload] Success! URL:", uploadedUrl, "Cache-busted:", cacheBustedUrl);
+      setPreview(normalizeFileUrl(cacheBustedUrl) ?? cacheBustedUrl);
       onSuccess?.(uploadedUrl);
     } catch (err: any) {
       setError(err.message ?? "Upload failed — please try again.");
