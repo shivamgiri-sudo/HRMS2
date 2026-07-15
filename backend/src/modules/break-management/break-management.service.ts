@@ -257,6 +257,22 @@ function resolveRealtimePunchWindow(shiftDate: string) {
   return null;
 }
 
+function queryWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function hashToken(token: string) {
   return createHash("sha256").update(token.trim()).digest("hex");
 }
@@ -538,7 +554,7 @@ async function getRealtimeNcosecPunchMap(
       idParams.push(`@${key}`);
     });
 
-    const result = await request.query(`
+    const result = await queryWithTimeout(request.query(`
       SELECT
         CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(19), MIN(${dateTimeColumn}), 120) AS first_punch,
@@ -550,7 +566,7 @@ async function getRealtimeNcosecPunchMap(
         AND ${dateTimeColumn} <= @dateEnd
         AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(", ")})
       GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
-    `);
+    `), 15000, `[break-management] realtime NCOSEC overlay (${userIds.length} users)`);
 
     const livePunches = new Map<string, LivePunchSnapshot>();
     for (const row of result.recordset ?? []) {
@@ -1144,7 +1160,11 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
         COALESCE(NULLIF(bal.source_system, ''), CASE WHEN ibd.first_punch IS NOT NULL THEN 'biometric_sync' ELSE NULL END) AS attendance_source_system,
         ra.shift_start_time,
         ra.shift_end_time,
-        COALESCE(NULLIF(sm.shift_name, ''), NULLIF(CONCAT(COALESCE(ra.shift_start_time, ''), CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END), '')) AS shift_name,
+        CASE
+          WHEN sm.shift_name IS NOT NULL AND sm.shift_name <> '' THEN sm.shift_name
+          WHEN ra.shift_start_time IS NOT NULL AND ra.shift_start_time <> '' THEN CONCAT(ra.shift_start_time, CASE WHEN ra.shift_end_time IS NOT NULL AND ra.shift_end_time <> '' THEN CONCAT(' - ', ra.shift_end_time) ELSE '' END)
+          ELSE NULL
+        END AS shift_name,
         ra.roster_status,
         lt.leave_name,
         agg.total_break_minutes,
