@@ -9,6 +9,7 @@ on:
       - "src/pages/Index.tsx"
       - "src/pages/dashboards/**"
       - "src/pages/SuperAdminDashboardV2.tsx"
+      - "tests/roleDashboardAccess.test.ts"
       - ".github/workflows/role-dashboard-v3-ci.yml"
 
 jobs:
@@ -39,7 +40,7 @@ jobs:
 
       - name: Dashboard unit tests
         working-directory: backend
-        run: npx vitest --root .. run src/pages/dashboards/__tests__/roleDashboardAccess.test.ts
+        run: npx vitest --root .. run tests/roleDashboardAccess.test.ts
 
       - name: Backend build
         working-directory: backend
