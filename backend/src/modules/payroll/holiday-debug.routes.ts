@@ -50,7 +50,7 @@ router.get('/:month', async (req, res) => {
     `);
     const branchMap = new Map(branches.map((b: any) => [b.id, b.branch_name]));
 
-    const results = [];
+    const results: any[] = [];
 
     for (const holiday of holidays as any[]) {
       // Get cost centre mappings
