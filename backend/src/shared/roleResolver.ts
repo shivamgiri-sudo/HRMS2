@@ -1,55 +1,144 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-const ROLE_PRIORITY: Record<string, number> = {
-  super_admin: 100, admin: 95, ceo: 90, management: 88,
-  ho_hr: 85, ho_payroll: 84, ho_operations: 83, ho_wfm: 82, ho_rta: 81, ho_it: 80,
-  compliance_head: 78, finance_head: 77, payroll_head: 76, operations_head: 75,
-  branch_head: 60, bm: 59, branch_manager: 58,
-  hr: 55, branch_hr: 50, hr_branch: 49,
-  branch_finance: 45, branch_it: 44,
-  process_manager: 40, manager: 39, team_lead: 38,
-  wfm_spoc: 35, qa_manager: 34, quality_analyst: 33, process_hr: 32,
-  payroll_hr: 30, recruiter: 28,
-  employee: 10, agent: 9, trainee: 8,
+/**
+ * Role priority is shared by authentication and dashboard scope resolution.
+ * Every role used by the role dashboards is explicitly ranked so an employee
+ * role can never accidentally outrank a scoped WFM, manager, HR or payroll role.
+ */
+const ROLE_PRIORITY: Readonly<Record<string, number>> = {
+  super_admin: 100,
+  admin: 98,
+  ceo: 96,
+  coo: 95,
+  management: 94,
+
+  ho_hr: 92,
+  hr_admin: 91,
+  hr: 90,
+  compliance_head: 89,
+
+  ho_payroll: 88,
+  payroll_head: 87,
+  finance_head: 86,
+  accounts_head: 85,
+  payroll_admin: 84,
+  payroll_hr: 83,
+  payroll: 82,
+  finance: 81,
+
+  ho_operations: 80,
+  operations_head: 79,
+  ho_wfm: 78,
+  ho_rta: 77,
+  wfm: 76,
+  wfm_spoc: 75,
+  rta: 74,
+
+  branch_head: 70,
+  bm: 69,
+  branch_manager: 68,
+  branch_hr: 67,
+  hr_branch: 66,
+  branch_finance: 65,
+  payroll_branch: 64,
+  branch_it: 63,
+
+  process_manager: 60,
+  manager: 59,
+  assistant_manager: 58,
+  team_leader: 57,
+  team_lead: 56,
+  tl: 55,
+  process_hr: 54,
+  qa_manager: 53,
+  quality_analyst: 52,
+
+  recruiter: 45,
+  trainer: 44,
+  qa: 43,
+  ho_it: 42,
+
+  employee: 10,
+  agent: 9,
+  trainee: 8,
 };
 
+function normalizeRole(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function uniqueRoles(values: unknown[]): string[] {
+  return Array.from(new Set(values.map(normalizeRole).filter(Boolean)));
+}
+
 export async function getUserRoleKeys(userId: string): Promise<string[]> {
-  // Try user_roles table first
+  const resolved: string[] = [];
+
+  // MySQL user_roles remains the role authority.
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-      [userId]
+      [userId],
     );
-    if ((rows as any[]).length > 0) return (rows as any[]).map((r: any) => r.role_key);
-  } catch {}
-  // Fallback: auth_user table role column
+    resolved.push(...rows.map((row) => row.role_key));
+  } catch (error) {
+    console.error("[roleResolver] user_roles lookup failed", error);
+  }
+
+  // Scoped assignments also carry a role_key. They must participate in role
+  // resolution because many WFM/manager accounts are provisioned through scope.
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT role FROM auth_user WHERE id = ? LIMIT 1",
-      [userId]
+      "SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1",
+      [userId],
     );
-    if ((rows as any[]).length > 0 && (rows as any)[0].role) {
-      return [(rows as any)[0].role as string];
+    resolved.push(...rows.map((row) => row.role_key));
+  } catch {
+    // Older databases may not have this table yet; user_roles still works.
+  }
+
+  // Compatibility fallback for installations that still store one role on auth_user.
+  if (resolved.length === 0) {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT role FROM auth_user WHERE id = ? LIMIT 1",
+        [userId],
+      );
+      if (rows[0]?.role) resolved.push(rows[0].role);
+    } catch {
+      // The role column is optional in current schema.
     }
-  } catch {}
-  // Fallback: employees table
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT role FROM employees WHERE auth_user_id = ? LIMIT 1",
-      [userId]
-    );
-    if ((rows as any[]).length > 0 && (rows as any)[0].role) {
-      return [(rows as any)[0].role as string];
+  }
+
+  // A mapped employee with no explicit role receives employee access only.
+  if (resolved.length === 0) {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+        [userId],
+      );
+      if (rows.length > 0) resolved.push("employee");
+    } catch {
+      // Final fallback below.
     }
-  } catch {}
-  console.warn(`[roleResolver] Could not resolve roles for user ${userId} — falling back to 'employee'`);
-  return ['employee'];
+  }
+
+  const roles = uniqueRoles(resolved);
+  if (roles.length > 0) return roles;
+
+  console.warn(`[roleResolver] Could not resolve roles for user ${userId}; using employee access`);
+  return ["employee"];
 }
 
-export function resolvePrimaryRole(roleKeys: string[]): string {
-  if (!roleKeys.length) return 'employee';
-  return roleKeys.sort((a, b) => (ROLE_PRIORITY[b] ?? 0) - (ROLE_PRIORITY[a] ?? 0))[0];
+export function resolvePrimaryRole(roleKeys: readonly string[]): string {
+  const normalized = uniqueRoles([...roleKeys]);
+  if (normalized.length === 0) return "employee";
+
+  return [...normalized].sort((left, right) => {
+    const priorityDifference = (ROLE_PRIORITY[right] ?? 0) - (ROLE_PRIORITY[left] ?? 0);
+    return priorityDifference !== 0 ? priorityDifference : left.localeCompare(right);
+  })[0];
 }
 
 export async function getUserRoleContext(userId: string): Promise<{
@@ -60,7 +149,10 @@ export async function getUserRoleContext(userId: string): Promise<{
 }> {
   const roleKeys = await getUserRoleKeys(userId);
   const primaryRole = resolvePrimaryRole(roleKeys);
-  const isSuperAdmin = roleKeys.includes('super_admin') || roleKeys.includes('admin');
-  const isHO = roleKeys.some(r => r.startsWith('ho_') || r === 'ceo' || r === 'management');
+  const isSuperAdmin = roleKeys.includes("super_admin") || roleKeys.includes("admin");
+  const isHO = roleKeys.some((role) =>
+    role.startsWith("ho_") || ["ceo", "coo", "management"].includes(role),
+  );
+
   return { roleKeys, primaryRole, isSuperAdmin, isHO };
 }
