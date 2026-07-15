@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { exitController } from "./exit.controller.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
 import { db } from "../../db/mysql.js";
@@ -12,6 +13,29 @@ resignationRouter.use(requireAuth);
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+
+// ── Create Resignation (employee self-service) ────────────────────────────────
+
+resignationRouter.post(
+  "/",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
+    if (!isPrivileged) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp) {
+        return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
+      }
+      req.body = { ...req.body, employeeId: emp.id };
+    }
+    req.body = {
+      ...req.body,
+      exitType: req.body.exitType ?? "voluntary",
+      exitDate: req.body.exitDate ?? req.body.last_working_day,
+    };
+    return exitController.createExitRequest(req, res);
+  })
+);
 
 // ── Discussion Routes ─────────────────────────────────────────────────────────
 

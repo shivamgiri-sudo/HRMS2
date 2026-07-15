@@ -158,10 +158,16 @@ const localDateIso = (d = new Date()) => {
 };
 const todayIso = () => localDateIso();
 
+const toUtc = (value: string): string => {
+  const s = value.includes("T") ? value : value.replace(" ", "T");
+  // Append Z if no timezone designator present
+  if (!s.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(s)) return s + "Z";
+  return s;
+};
+
 const fmt = (value?: string) => {
   if (!value) return "—";
-  const normalized = value.includes("T") ? value : value.replace(" ", "T") + "Z";
-  const d = new Date(normalized);
+  const d = new Date(toUtc(value));
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 };
@@ -853,7 +859,7 @@ export default function NativeATSCandidateMaster() {
     return rows.filter(r => {
       const s = r.status || "Waiting";
       const b = r.branch_name || "";
-      const created = new Date(r.created_at || 0).getTime();
+      const created = r.created_at ? new Date(toUtc(r.created_at)).getTime() : 0;
       const matchText = !q || [r.candidate_code, r.full_name, r.mobile, r.email, r.role_applied, b, r.recruiter_name].join(" ").toLowerCase().includes(q);
       return matchText &&
         (statusFilter === "All" || s === statusFilter) &&
@@ -1017,7 +1023,7 @@ export default function NativeATSCandidateMaster() {
                           </span>
                         </td>
                         <td className="px-3 py-2 text-[10px] text-slate-400 whitespace-nowrap">
-                          {r.created_at ? new Date(r.created_at.includes("T") ? r.created_at : r.created_at.replace(" ", "T") + "Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}
+                          {r.created_at ? new Date(toUtc(r.created_at)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <button
