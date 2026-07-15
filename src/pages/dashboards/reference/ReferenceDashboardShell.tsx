@@ -52,8 +52,6 @@ import type { RoleDashboardVariant } from "../roleDashboardAccess";
 import "./reference-dashboard-shell.css";
 import "./reference-dashboard-shell-fixes.css";
 
-type ShellMode = "corporate" | "product";
-
 type NavigationItem = {
   label: string;
   href: string;
@@ -61,7 +59,7 @@ type NavigationItem = {
 };
 
 type NavigationGroup = {
-  label?: string;
+  label: string;
   items: NavigationItem[];
 };
 
@@ -75,21 +73,12 @@ export function useReferenceDashboardShell(): ReferenceShellContextValue {
   return useContext(ReferenceShellContext);
 }
 
-const CORPORATE_MAIN: NavigationItem[] = [
-  { label: "Dashboard", href: "/dashboard", icon: Home },
-  { label: "Employees", href: "/employees", icon: Users },
-  { label: "Onboarding", href: "/onboarding", icon: UserPlus },
-  { label: "Attendance", href: "/attendance", icon: Clock },
-  { label: "Leave", href: "/leaves", icon: CalendarDays },
-  { label: "Payroll", href: "/payroll", icon: CreditCard },
-  { label: "Performance", href: "/performance", icon: BarChart3 },
-  { label: "Quality", href: "/quality", icon: ShieldCheck },
-  { label: "Learning", href: "/learning", icon: GraduationCap },
-  { label: "Incentives", href: "/payroll/incentives", icon: Award },
-  { label: "Reports", href: "/reports", icon: FileText },
+const SUPPORT_ITEMS: NavigationItem[] = [
+  { label: "Help Center", href: "/helpdesk", icon: HelpCircle },
+  { label: "Feedback", href: "/support/grievance-command-center", icon: MessageCircle },
 ];
 
-const CORPORATE_ADMIN: NavigationItem[] = [
+const ADMIN_ITEMS: NavigationItem[] = [
   { label: "Users & Roles", href: "/settings/access-control", icon: Users },
   { label: "Organization", href: "/org-masters", icon: Building2 },
   { label: "Templates", href: "/communication/templates", icon: Files },
@@ -97,81 +86,92 @@ const CORPORATE_ADMIN: NavigationItem[] = [
   { label: "System Settings", href: "/settings", icon: Settings },
 ];
 
-const CORPORATE_SUPPORT: NavigationItem[] = [
-  { label: "Help Center", href: "/helpdesk", icon: HelpCircle },
-  { label: "Feedback", href: "/support/grievance-command-center", icon: MessageCircle },
-];
-
-const PRODUCT_NAV: Record<"wfm_attendance" | "payroll" | "manager" | "super_admin", NavigationGroup[]> = {
+const NAV_BY_VARIANT: Record<RoleDashboardVariant, NavigationItem[]> = {
+  employee: [
+    { label: "Dashboard", href: "/dashboard", icon: Home },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Leave", href: "/leaves", icon: CalendarDays },
+    { label: "Payroll", href: "/payroll/payslips", icon: CreditCard },
+    { label: "Performance", href: "/performance", icon: BarChart3 },
+    { label: "Learning", href: "/lms", icon: GraduationCap },
+    { label: "Documents", href: "/profile", icon: Files },
+  ],
+  wfm: [
+    { label: "Dashboard", href: "/wfm/dashboard", icon: Home },
+    { label: "WFM / Attendance", href: "/wfm/dashboard?view=attendance", icon: Fingerprint },
+    { label: "Team", href: "/my-team", icon: Users },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Shift & Roster", href: "/wfm/roster", icon: CalendarDays },
+    { label: "Reports", href: "/reports", icon: BarChart3 },
+    { label: "Devices", href: "/wfm/cosec-monitoring", icon: Server },
+  ],
   wfm_attendance: [
-    {
-      items: [
-        { label: "Dashboard", href: "/wfm/dashboard", icon: Home },
-        { label: "Team", href: "/my-team", icon: Users },
-        { label: "Attendance", href: "/attendance", icon: Clock },
-        { label: "Leave", href: "/leaves", icon: Calendar },
-        { label: "WFM / Attendance", href: "/wfm/dashboard?view=attendance", icon: Fingerprint },
-        { label: "Shift & Roster", href: "/wfm/roster", icon: CalendarDays },
-        { label: "Performance", href: "/performance", icon: Target },
-        { label: "Reports", href: "/reports", icon: BarChart3 },
-        { label: "Devices", href: "/wfm/cosec-monitoring", icon: Server },
-        { label: "Settings", href: "/settings", icon: Settings },
-      ],
-    },
+    { label: "Dashboard", href: "/wfm/dashboard", icon: Home },
+    { label: "WFM / Attendance", href: "/wfm/dashboard?view=attendance", icon: Fingerprint },
+    { label: "Team", href: "/my-team", icon: Users },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Shift & Roster", href: "/wfm/roster", icon: CalendarDays },
+    { label: "Reports", href: "/reports", icon: BarChart3 },
+    { label: "Devices", href: "/wfm/cosec-monitoring", icon: Server },
+  ],
+  hr: [
+    { label: "Dashboard", href: "/dashboard", icon: Home },
+    { label: "Employees", href: "/employees", icon: Users },
+    { label: "Onboarding", href: "/onboarding", icon: UserPlus },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Leave", href: "/leaves", icon: CalendarDays },
+    { label: "Recruitment", href: "/ats/dashboard", icon: Briefcase },
+    { label: "Payroll", href: "/payroll", icon: CreditCard },
+    { label: "Performance", href: "/performance", icon: Target },
+    { label: "Reports", href: "/reports", icon: FileText },
+    { label: "Compliance", href: "/compliance/statutory", icon: ShieldCheck },
+  ],
+  ceo: [
+    { label: "Dashboard", href: "/dashboard", icon: Home },
+    { label: "Employees", href: "/employees", icon: Users },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Payroll", href: "/payroll", icon: CreditCard },
+    { label: "Performance", href: "/performance", icon: Target },
+    { label: "Quality", href: "/quality", icon: ShieldCheck },
+    { label: "Reports", href: "/reports", icon: BarChart3 },
   ],
   payroll: [
-    {
-      items: [
-        { label: "Dashboard", href: "/payroll-hr/dashboard", icon: Home },
-        { label: "Team", href: "/my-team", icon: Users },
-        { label: "Employees", href: "/employees", icon: User },
-        { label: "Attendance", href: "/attendance", icon: Clock },
-        { label: "Payroll", href: "/payroll", icon: CreditCard },
-        { label: "Loans & Advances", href: "/payroll/loans", icon: Wallet },
-        { label: "Reimbursements", href: "/payroll/reimbursements", icon: Receipt },
-        { label: "Reports", href: "/reports", icon: FileText },
-        { label: "Compliance", href: "/payroll/statutory-filing", icon: ShieldCheck },
-        { label: "Settings", href: "/settings", icon: Settings },
-      ],
-    },
+    { label: "Dashboard", href: "/payroll-hr/dashboard", icon: Home },
+    { label: "Employees", href: "/employees", icon: User },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Payroll", href: "/payroll", icon: CreditCard },
+    { label: "Loans & Advances", href: "/payroll/loans", icon: Wallet },
+    { label: "Reimbursements", href: "/payroll/reimbursements", icon: Receipt },
+    { label: "Incentives", href: "/payroll/incentives", icon: Award },
+    { label: "Reports", href: "/reports", icon: FileText },
+    { label: "Compliance", href: "/payroll/statutory-filing", icon: ShieldCheck },
   ],
   manager: [
-    {
-      items: [
-        { label: "Dashboard", href: "/manager/dashboard", icon: Home },
-        { label: "Team", href: "/my-team", icon: Users },
-        { label: "Attendance", href: "/attendance", icon: Clock },
-        { label: "Leave", href: "/leaves", icon: Calendar },
-        { label: "Performance", href: "/performance", icon: Target },
-        { label: "Tasks", href: "/tasks", icon: ClipboardList },
-        { label: "Approvals", href: "/work-inbox", icon: FileCheck },
-        { label: "Recruitment", href: "/ats/dashboard", icon: Briefcase },
-        { label: "Reports", href: "/reports", icon: BarChart3 },
-        { label: "Documents", href: "/employee-docs", icon: Files },
-        { label: "Settings", href: "/settings", icon: Settings },
-      ],
-    },
-    { items: [{ label: "System Logs", href: "/audit-log", icon: Server }] },
+    { label: "Dashboard", href: "/manager/dashboard", icon: Home },
+    { label: "Team", href: "/my-team", icon: Users },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Leave", href: "/leaves", icon: Calendar },
+    { label: "Performance", href: "/performance", icon: Target },
+    { label: "Tasks", href: "/tasks", icon: ClipboardList },
+    { label: "Approvals", href: "/work-inbox", icon: FileCheck },
+    { label: "Recruitment", href: "/ats/dashboard", icon: Briefcase },
+    { label: "Reports", href: "/reports", icon: BarChart3 },
+    { label: "Documents", href: "/employee-docs", icon: Files },
   ],
   super_admin: [
-    {
-      items: [
-        { label: "Dashboard", href: "/super-admin/dashboard", icon: Home },
-        { label: "User Management", href: "/settings/access-control", icon: Users },
-        { label: "Organization", href: "/org-masters", icon: Building2 },
-        { label: "Employees", href: "/employees", icon: User },
-        { label: "Attendance", href: "/attendance", icon: Clock },
-        { label: "Leave", href: "/leaves", icon: Calendar },
-        { label: "Payroll", href: "/payroll", icon: CreditCard },
-        { label: "Recruitment", href: "/ats/dashboard", icon: Briefcase },
-        { label: "Performance", href: "/performance", icon: Target },
-        { label: "Training", href: "/lms", icon: GraduationCap },
-        { label: "Reports", href: "/reports", icon: BarChart3 },
-        { label: "Compliance", href: "/compliance/statutory", icon: ShieldCheck },
-        { label: "Settings", href: "/settings", icon: Settings },
-        { label: "System Logs", href: "/audit-log", icon: Server },
-      ],
-    },
+    { label: "Dashboard", href: "/super-admin/dashboard", icon: Home },
+    { label: "User Management", href: "/settings/access-control", icon: Users },
+    { label: "Organization", href: "/org-masters", icon: Building2 },
+    { label: "Employees", href: "/employees", icon: User },
+    { label: "Attendance", href: "/attendance", icon: Clock },
+    { label: "Leave", href: "/leaves", icon: Calendar },
+    { label: "Payroll", href: "/payroll", icon: CreditCard },
+    { label: "Recruitment", href: "/ats/dashboard", icon: Briefcase },
+    { label: "Performance", href: "/performance", icon: Target },
+    { label: "Training", href: "/lms", icon: GraduationCap },
+    { label: "Reports", href: "/reports", icon: BarChart3 },
+    { label: "Compliance", href: "/compliance/statutory", icon: ShieldCheck },
+    { label: "System Logs", href: "/audit-log", icon: Server },
   ],
 };
 
@@ -186,10 +186,6 @@ const ROLE_LABEL: Record<RoleDashboardVariant, string> = {
   super_admin: "System Administrator",
 };
 
-function shellMode(variant: RoleDashboardVariant): ShellMode {
-  return ["employee", "wfm", "hr", "ceo"].includes(variant) ? "corporate" : "product";
-}
-
 function initials(value: string): string {
   return value
     .split(/\s+/)
@@ -201,38 +197,55 @@ function initials(value: string): string {
 
 function isActiveLocation(pathname: string, search: string, href: string): boolean {
   const [path, query = ""] = href.split("?");
-  if (query) return pathname === path && new URLSearchParams(search).get("view") === new URLSearchParams(query).get("view");
-  if (href === "/dashboard") return pathname === "/dashboard";
+  if (query) {
+    const expected = new URLSearchParams(query).get("view");
+    return pathname === path && new URLSearchParams(search).get("view") === expected;
+  }
+  if (path === "/dashboard") return pathname === "/dashboard";
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
-function SidebarLink({ item, active, compact = false, onNavigate }: { item: NavigationItem; active: boolean; compact?: boolean; onNavigate: () => void }) {
+function SidebarLink({ item, active, onNavigate }: { item: NavigationItem; active: boolean; onNavigate: () => void }) {
   const Icon = item.icon;
   return (
     <Link
       to={item.href}
       onClick={onNavigate}
-      className={cn("reference-shell-nav-link", compact && "reference-shell-nav-link--compact", active && "is-active")}
+      className={cn("reference-shell-nav-link", active && "is-active")}
       aria-current={active ? "page" : undefined}
     >
-      <Icon className={compact ? "h-[17px] w-[17px]" : "h-[18px] w-[18px]"} aria-hidden="true" />
-      <span>{item.label}</span>
-      {!compact && !active && ["Onboarding", "Attendance", "Leave", "Payroll", "Performance", "Quality", "Learning", "Incentives", "Reports"].includes(item.label) ? (
-        <ChevronDown className="ml-auto h-3.5 w-3.5 -rotate-90 opacity-80" aria-hidden="true" />
-      ) : null}
+      <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {!active ? <ChevronDown className="h-3.5 w-3.5 shrink-0 -rotate-90 opacity-70" aria-hidden="true" /> : null}
     </Link>
   );
 }
 
-function CorporateSidebar({ variant, pathname, search, onNavigate, name, role, avatarUrl }: { variant: RoleDashboardVariant; pathname: string; search: string; onNavigate: () => void; name: string; role: string; avatarUrl?: string }) {
-  const mainItems = variant === "wfm"
-    ? CORPORATE_MAIN.map((item) => item.label === "Attendance" ? { ...item, href: "/wfm/dashboard?view=attendance" } : item)
-    : CORPORATE_MAIN;
-  const groups: NavigationGroup[] = [
-    { label: "MAIN", items: mainItems },
-    { label: "ADMIN", items: CORPORATE_ADMIN },
-    { label: "SUPPORT", items: CORPORATE_SUPPORT },
-  ];
+function UnifiedSidebar({
+  variant,
+  pathname,
+  search,
+  onNavigate,
+  name,
+  role,
+  avatarUrl,
+}: {
+  variant: RoleDashboardVariant;
+  pathname: string;
+  search: string;
+  onNavigate: () => void;
+  name: string;
+  role: string;
+  avatarUrl?: string;
+}) {
+  const groups = useMemo<NavigationGroup[]>(() => {
+    const result: NavigationGroup[] = [{ label: "MAIN", items: NAV_BY_VARIANT[variant] }];
+    if (["hr", "ceo", "payroll", "super_admin"].includes(variant)) {
+      result.push({ label: "ADMIN", items: ADMIN_ITEMS });
+    }
+    result.push({ label: "SUPPORT", items: SUPPORT_ITEMS });
+    return result;
+  }, [variant]);
 
   return (
     <div className="reference-corporate-sidebar-inner">
@@ -240,24 +253,36 @@ function CorporateSidebar({ variant, pathname, search, onNavigate, name, role, a
         <img src="/mcn-logo.png?v=999" alt="Mas Callnet India Pvt Ltd" />
         <div><strong>Mas Callnet</strong><span>India Pvt Ltd</span></div>
       </div>
+
       <nav className="reference-shell-nav" aria-label="Primary navigation">
         {groups.map((group) => (
           <div key={group.label} className="reference-shell-nav-group">
-            {group.label ? <p className="reference-shell-nav-heading">{group.label}</p> : null}
+            <p className="reference-shell-nav-heading">{group.label}</p>
             <div className="space-y-0.5">
-              {group.items.map((item) => <SidebarLink key={item.label} item={item} active={isActiveLocation(pathname, search, item.href)} onNavigate={onNavigate} />)}
+              {group.items.map((item) => (
+                <SidebarLink
+                  key={`${group.label}-${item.label}`}
+                  item={item}
+                  active={isActiveLocation(pathname, search, item.href)}
+                  onNavigate={onNavigate}
+                />
+              ))}
             </div>
           </div>
         ))}
       </nav>
+
       <div className="reference-corporate-profile-wrap">
         <Link to="/profile" onClick={onNavigate} className="reference-corporate-profile">
           <Avatar className="h-9 w-9 border border-white/70">
             <AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
             <AvatarFallback className="bg-white text-xs font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback>
           </Avatar>
-          <div className="min-w-0 flex-1"><p className="truncate text-[12px] font-bold text-white">{name}</p><p className="truncate text-[10px] text-[#a8c0df]">{role}</p></div>
-          <ChevronDown className="h-4 w-4 text-[#a8c0df]" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-bold text-white">{name}</p>
+            <p className="truncate text-[10px] text-[#a8c0df]">{role}</p>
+          </div>
+          <ChevronDown className="h-4 w-4 shrink-0 text-[#a8c0df]" />
         </Link>
         <div className="reference-corporate-version"><span>HRMS2</span><span>v2.6.1</span><i /></div>
       </div>
@@ -265,54 +290,31 @@ function CorporateSidebar({ variant, pathname, search, onNavigate, name, role, a
   );
 }
 
-function ProductSidebar({ variant, pathname, search, onNavigate }: { variant: "wfm_attendance" | "payroll" | "manager" | "super_admin"; pathname: string; search: string; onNavigate: () => void }) {
-  return (
-    <div className="reference-product-sidebar-inner">
-      <Link to="/dashboard" onClick={onNavigate} className="reference-product-brand"><span className="reference-product-logo-mark">H</span><strong>HRMS2</strong></Link>
-      <nav className="reference-shell-nav reference-shell-nav--product" aria-label="Primary navigation">
-        {PRODUCT_NAV[variant].map((group, groupIndex) => (
-          <div key={groupIndex} className={cn("reference-shell-nav-group", groupIndex > 0 && "reference-product-nav-divider")}>
-            {group.items.map((item) => <SidebarLink key={item.label} item={item} active={isActiveLocation(pathname, search, item.href)} compact onNavigate={onNavigate} />)}
-          </div>
-        ))}
-      </nav>
-      <div className="reference-product-footer"><Link to="/helpdesk" onClick={onNavigate} className="reference-product-help"><HelpCircle className="h-4 w-4" />Help & Support</Link></div>
-    </div>
-  );
-}
-
-function CorporateTopbar({ onMenu, name, role, avatarUrl }: { onMenu: () => void; name: string; role: string; avatarUrl?: string }) {
+function UnifiedTopbar({ onMenu, name, role, avatarUrl }: { onMenu: () => void; name: string; role: string; avatarUrl?: string }) {
   return (
     <header className="reference-corporate-topbar">
       <button type="button" onClick={onMenu} className="reference-shell-icon-button lg:hidden" aria-label="Open navigation"><Menu className="h-5 w-5" /></button>
-      <button type="button" className="reference-shell-icon-button hidden lg:inline-flex" aria-label="Collapse navigation"><Menu className="h-5 w-5" /></button>
-      <label className="reference-corporate-search"><Search className="h-4 w-4 text-[#71809a]" /><input aria-label="Search employees, tickets and reports" placeholder="Search employees, tickets, reports..." /><kbd>⌘ K</kbd></label>
-      <div className="ml-auto flex items-center gap-2.5">
+      <label className="reference-corporate-search">
+        <Search className="h-4 w-4 shrink-0 text-[#71809a]" />
+        <input aria-label="Search employees, tickets and reports" placeholder="Search employees, tickets, reports..." />
+        <kbd>⌘ K</kbd>
+      </label>
+      <div className="ml-auto flex shrink-0 items-center gap-2.5">
         <button className="reference-topbar-alert" type="button" aria-label="Notifications"><Bell className="h-[19px] w-[19px]" /><span>9</span></button>
         <button className="reference-topbar-alert" type="button" aria-label="Messages"><Mail className="h-[19px] w-[19px]" /><span>5</span></button>
         <div className="reference-topbar-profile">
-          <Avatar className="h-8 w-8"><AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} /><AvatarFallback className="bg-[#eaf1fb] text-[10px] font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback></Avatar>
-          <div className="hidden min-w-0 sm:block"><p className="max-w-[130px] truncate text-[11px] font-bold text-[#13213b]">{name}</p><p className="text-[9px] text-[#71809a]">{role}</p></div>
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
+            <AvatarFallback className="bg-[#eaf1fb] text-[10px] font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback>
+          </Avatar>
+          <div className="hidden min-w-0 sm:block">
+            <p className="max-w-[130px] truncate text-[11px] font-bold text-[#13213b]">{name}</p>
+            <p className="text-[9px] text-[#71809a]">{role}</p>
+          </div>
           <ChevronDown className="hidden h-4 w-4 text-[#61708a] sm:block" />
         </div>
       </div>
     </header>
-  );
-}
-
-function ProductHeaderControls({ onMenu, name, role, avatarUrl }: { onMenu: () => void; name: string; role: string; avatarUrl?: string }) {
-  const now = new Date();
-  return (
-    <div className="reference-product-header-controls">
-      <button type="button" onClick={onMenu} className="reference-shell-icon-button lg:hidden" aria-label="Open navigation"><Menu className="h-5 w-5" /></button>
-      <div className="reference-product-date-card"><CalendarDays className="h-4 w-4" /><div><strong>{now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</strong><span>{now.toLocaleDateString("en-GB", { weekday: "long" })}</span></div></div>
-      <button className="reference-product-bell" type="button" aria-label="Notifications"><Bell className="h-5 w-5" /><span>8</span></button>
-      <div className="reference-product-profile">
-        <Avatar className="h-9 w-9"><AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} /><AvatarFallback className="bg-[#eaf1fb] text-[10px] font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback></Avatar>
-        <div className="hidden sm:block"><p>{name}</p><span>{role}</span></div>
-        <ChevronDown className="h-4 w-4 text-[#61708a]" />
-      </div>
-    </div>
   );
 }
 
@@ -321,35 +323,35 @@ export function ReferenceDashboardShell({ variant, children }: { variant: RoleDa
   const location = useLocation();
   const { user } = useAuth();
   const { data: profile } = useEmployeeProfile();
-  const mode = shellMode(variant);
   const name = profile?.full_name || profile?.first_name || user?.email?.split("@")[0] || "HRMS User";
   const role = profile?.designation || ROLE_LABEL[variant];
   const avatarUrl = profile?.avatar_url;
 
-  const sidebar = useMemo(() => {
-    if (mode === "corporate") {
-      return <CorporateSidebar variant={variant} pathname={location.pathname} search={location.search} onNavigate={() => setMobileOpen(false)} name={name} role={role} avatarUrl={avatarUrl} />;
-    }
-    return <ProductSidebar variant={variant as "wfm_attendance" | "payroll" | "manager" | "super_admin"} pathname={location.pathname} search={location.search} onNavigate={() => setMobileOpen(false)} />;
-  }, [avatarUrl, location.pathname, location.search, mode, name, role, variant]);
-
-  const contextValue = useMemo<ReferenceShellContextValue>(() => ({
-    productHeaderControls: mode === "product"
-      ? <ProductHeaderControls onMenu={() => setMobileOpen(true)} name={name} role={role} avatarUrl={avatarUrl} />
-      : null,
-  }), [avatarUrl, mode, name, role]);
+  const sidebar = (
+    <UnifiedSidebar
+      variant={variant}
+      pathname={location.pathname}
+      search={location.search}
+      onNavigate={() => setMobileOpen(false)}
+      name={name}
+      role={role}
+      avatarUrl={avatarUrl}
+    />
+  );
 
   return (
-    <ReferenceShellContext.Provider value={contextValue}>
-      <div className={cn("reference-app-shell", mode === "corporate" ? "reference-app-shell--corporate" : "reference-app-shell--product")}>
+    <ReferenceShellContext.Provider value={{ productHeaderControls: null }}>
+      <div className="reference-app-shell reference-app-shell--unified">
         {mobileOpen ? <button type="button" className="reference-shell-mobile-overlay" onClick={() => setMobileOpen(false)} aria-label="Close navigation" /> : null}
-        <aside className={cn("reference-shell-sidebar hidden lg:block", mode === "corporate" ? "reference-shell-sidebar--corporate" : "reference-shell-sidebar--product")}>{sidebar}</aside>
-        <aside className={cn("reference-shell-mobile-drawer lg:hidden", mobileOpen ? "is-open" : "")}>
+
+        <aside className="reference-shell-sidebar reference-shell-sidebar--unified hidden lg:block">{sidebar}</aside>
+        <aside className={cn("reference-shell-mobile-drawer lg:hidden", mobileOpen && "is-open")}>
           <button type="button" className="reference-shell-mobile-close" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X className="h-5 w-5" /></button>
           {sidebar}
         </aside>
+
         <div className="reference-shell-main">
-          {mode === "corporate" ? <CorporateTopbar onMenu={() => setMobileOpen(true)} name={name} role={role} avatarUrl={avatarUrl} /> : null}
+          <UnifiedTopbar onMenu={() => setMobileOpen(true)} name={name} role={role} avatarUrl={avatarUrl} />
           <div className="reference-shell-content">{children}</div>
         </div>
       </div>
