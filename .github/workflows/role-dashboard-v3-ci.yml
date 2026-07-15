@@ -37,6 +37,10 @@ jobs:
         working-directory: backend
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
+      - name: Dashboard unit tests
+        working-directory: backend
+        run: npx vitest --root .. run src/pages/dashboards/__tests__/roleDashboardAccess.test.ts
+
       - name: Backend build
         working-directory: backend
         run: npm run build
