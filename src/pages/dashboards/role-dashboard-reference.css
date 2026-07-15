@@ -1,3 +1,5 @@
+@import "./reference/reference-dashboard-shell.css";
+
 .role-dashboard-reference {
   --dashboard-navy: #071a3a;
   --dashboard-ink: #0b1f44;
