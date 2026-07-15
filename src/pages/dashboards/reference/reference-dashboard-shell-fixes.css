@@ -1,0 +1,125 @@
+.reference-product-header-controls {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.reference-app-shell--product .reference-header {
+  min-height: 58px;
+  padding-right: 0 !important;
+  align-items: center;
+}
+
+.reference-app-shell--product .reference-header > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.reference-app-shell--product .reference-header > div:last-child {
+  min-width: 0;
+  max-width: min(100%, 430px);
+}
+
+.reference-dashboard-page,
+.reference-dashboard-page > *,
+.reference-panel,
+.reference-panel-body,
+.reference-metric-card,
+.reference-shell-main,
+.reference-shell-content {
+  min-width: 0;
+}
+
+.reference-dashboard-page > .grid,
+.reference-panel-body > .grid {
+  min-width: 0;
+}
+
+.reference-panel {
+  isolation: isolate;
+}
+
+.reference-panel-body {
+  overflow: hidden;
+}
+
+.reference-panel-body .overflow-x-auto {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+}
+
+.reference-metric-card p,
+.reference-list-row p,
+.reference-quick-link span {
+  overflow-wrap: anywhere;
+}
+
+.reference-shell-sidebar,
+.reference-shell-mobile-drawer {
+  contain: layout paint;
+}
+
+.reference-shell-content {
+  overflow-x: clip;
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .reference-app-shell--product .reference-header {
+    align-items: flex-start;
+  }
+
+  .reference-product-header-controls {
+    gap: 8px;
+  }
+
+  .reference-product-date-card {
+    min-width: 122px;
+  }
+
+  .reference-product-profile p {
+    max-width: 92px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .reference-app-shell--product .reference-shell-content {
+    padding-top: 18px !important;
+  }
+
+  .reference-app-shell--product .reference-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reference-product-header-controls {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .reference-product-header-controls .reference-shell-icon-button {
+    margin-right: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .reference-product-header-controls {
+    gap: 5px;
+  }
+
+  .reference-product-bell,
+  .reference-shell-icon-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .reference-panel-body {
+    overflow-x: auto;
+  }
+
+  .reference-list-row {
+    align-items: flex-start;
+  }
+}
