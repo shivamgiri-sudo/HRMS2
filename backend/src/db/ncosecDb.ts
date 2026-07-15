@@ -19,10 +19,18 @@ const legacyConfig: sql.config = {
 };
 
 let legacyPool: sql.ConnectionPool | null = null;
+let legacyPoolHost: string | null = null;
 
 async function getLegacyPool(): Promise<sql.ConnectionPool> {
+  // Invalidate pool if host has changed (e.g. env updated at runtime)
+  if (legacyPool && legacyPoolHost !== env.NCOSEC_DB_HOST) {
+    await legacyPool.close().catch(() => {});
+    legacyPool = null;
+    legacyPoolHost = null;
+  }
   if (legacyPool && legacyPool.connected) return legacyPool;
   legacyPool = await new sql.ConnectionPool(legacyConfig).connect();
+  legacyPoolHost = env.NCOSEC_DB_HOST;
   return legacyPool;
 }
 
