@@ -1,13 +1,11 @@
 import {
   BadgeIndianRupee,
   CalendarDays,
-  CheckCircle2,
   Clock3,
   CreditCard,
   FileCheck2,
   FileText,
   IndianRupee,
-  Landmark,
   ReceiptIndianRupee,
   TriangleAlert,
   Users,
@@ -27,15 +25,16 @@ import {
   arrayAt,
   asNumber,
   formatCurrency,
-  formatValue,
   metricDetail,
   metricValue,
   numberAt,
   read,
   stringAt,
 } from "../reference-dashboard-model";
+import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 
 export function PayrollReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+  const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
   const active = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const ready = metricDetail(m, "payroll", "readyCount") ?? metricValue(m, "payroll");
@@ -74,7 +73,7 @@ export function PayrollReferenceLayout({ data }: { data: ReferenceDashboardData 
 
   return (
     <div className="reference-dashboard-page">
-      <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" />
+      <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={productHeaderControls} />
 
       <ReferenceMetricGrid
         columns={4}
@@ -124,7 +123,7 @@ export function PayrollReferenceLayout({ data }: { data: ReferenceDashboardData 
         </ReferencePanel>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr_1fr]">
+      <div className="grid gap-4 xl:grid-cols-3">
         <ReferencePanel title={`Statutory Summary (${currentMonth})`}>
           <div className="divide-y divide-[#edf1f6]">
             <ReferenceListRow title="Provident Fund (PF)" value={formatCurrency(pf)} tone="green" />
