@@ -516,6 +516,40 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                     <p className="mt-1 font-bold text-blue-900">{renderSensitive(formatCurrency(runningSalary.projected_net || 0))}</p>
                   </div>
                 </div>
+
+                {/* Deduction breakdown */}
+                {(runningSalary.pf_employee > 0 || runningSalary.esic_employee > 0 || runningSalary.professional_tax > 0) && (
+                  <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
+                    <p className="text-xs font-semibold text-slate-700 mb-2">Earned Deductions (Till Date)</p>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      {runningSalary.pf_employee > 0 && (
+                        <div className="flex flex-col">
+                          <span className="text-slate-500">PF</span>
+                          <span className="font-mono font-semibold text-red-600">
+                            {renderSensitive(`-₹${Number(runningSalary.pf_employee).toFixed(2)}`)}
+                          </span>
+                        </div>
+                      )}
+                      {runningSalary.esic_employee > 0 && (
+                        <div className="flex flex-col">
+                          <span className="text-slate-500">ESIC</span>
+                          <span className="font-mono font-semibold text-red-600">
+                            {renderSensitive(`-₹${Number(runningSalary.esic_employee).toFixed(2)}`)}
+                          </span>
+                        </div>
+                      )}
+                      {runningSalary.professional_tax > 0 && (
+                        <div className="flex flex-col">
+                          <span className="text-slate-500">PT</span>
+                          <span className="font-mono font-semibold text-red-600">
+                            {renderSensitive(`-₹${Number(runningSalary.professional_tax).toFixed(2)}`)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-xs text-blue-600 italic">
                   This is a live estimate based on today's attendance. Final payslip will be available after payroll processing.
                 </p>

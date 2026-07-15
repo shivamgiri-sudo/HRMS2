@@ -1658,4 +1658,8 @@ router.post(
   })
 );
 
+// ─── Holiday Debug (diagnostic endpoint) ──────────────────────────────────────
+import { holidayDebugRouter } from "./holiday-debug.routes.js";
+router.use("/holiday-debug", holidayDebugRouter);
+
 export { router as payrollRouter };

@@ -309,6 +309,7 @@ async function getAttendanceOverrides(
   const overrides = new Map<string, AttendanceOverride>();
 
   // --- Holidays (lowest priority — apply first so higher priority can overwrite) ---
+  // Apply branch, cost centre, and designation scope checks (same logic as attendance-engine.service.ts)
   const [holidays] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
        e.id AS employee_id,
@@ -318,7 +319,21 @@ async function getAttendanceOverrides(
      JOIN employees e ON e.id IN (${ph})
        AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id)
      WHERE lhm.holiday_date BETWEEN ? AND ?
-       AND lhm.active_status = 1`,
+       AND lhm.active_status = 1
+       AND (
+         NOT EXISTS (SELECT 1 FROM holiday_cost_centre_map WHERE holiday_id = lhm.id)
+         OR EXISTS (
+           SELECT 1 FROM holiday_cost_centre_map hccm
+           WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = e.cost_centre_id
+         )
+       )
+       AND (
+         NOT EXISTS (SELECT 1 FROM holiday_designation_map WHERE holiday_id = lhm.id)
+         OR EXISTS (
+           SELECT 1 FROM holiday_designation_map hdm
+           WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = e.designation_id
+         )
+       )`,
     [...employeeIds, fromDate, toDate],
   );
   for (const row of holidays as any[]) {
