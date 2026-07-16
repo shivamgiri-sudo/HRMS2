@@ -1,0 +1,70 @@
+name: Assessment Candidate Runtime Fix
+
+on:
+  push:
+    branches:
+      - feat/ats-candidate-assessment-engine
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ats-candidate-assessment-engine
+          fetch-depth: 0
+      - name: Fix candidate portal rendering and typing draft recovery
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          page = Path('backend/src/modules/ats-assessment/assessment.page.ts')
+          text = page.read_text(encoding='utf-8')
+
+          old = '''+(existing===option?"checked":"")+">'+esc(option)+"</label>"'''
+          new = '''+(existing===option?"checked":"")+'>'+esc(option)+"</label>"'''
+          if old not in text:
+              raise SystemExit('Single-choice render patch point not found')
+          text = text.replace(old, new, 1)
+
+          old = '''+(Array.isArray(existing)&&existing.includes(option)?"checked":"")+">'+esc(option)+"</label>"'''
+          new = '''+(Array.isArray(existing)&&existing.includes(option)?"checked":"")+'>'+esc(option)+"</label>"'''
+          if old not in text:
+              raise SystemExit('Multi-choice render patch point not found')
+          text = text.replace(old, new, 1)
+
+          old = '''$("typingInput").addEventListener("input",liveMetrics);$("typingSubmit").onclick=()=>submitTyping(false);$("typingInput").focus();liveMetrics();typingTimer=setInterval(liveMetrics,500)}'''
+          new = '''const draftKey="ats_typing_draft_"+typingState.id;$("typingInput").value=localStorage.getItem(draftKey)||"";$("typingInput").addEventListener("input",event=>{localStorage.setItem(draftKey,event.target.value);liveMetrics()});$("typingSubmit").onclick=()=>submitTyping(false);$("typingInput").focus();liveMetrics();typingTimer=setInterval(liveMetrics,500)}'''
+          if old not in text:
+              raise SystemExit('Typing input listener patch point not found')
+          text = text.replace(old, new, 1)
+
+          old = '''const result=await api("/assessment/session/"+encodeURIComponent(token)+"/typing/"+encodeURIComponent(typingState.id)+"/submit",{method:"POST",body:JSON.stringify({typedText:$("typingInput")?.value||"",backspaceCount:typingState.backspaceCount||0,pasteAttempts:typingState.pasteAttempts||0})});renderTypingResult(result,automatic);'''
+          new = '''const result=await api("/assessment/session/"+encodeURIComponent(token)+"/typing/"+encodeURIComponent(typingState.id)+"/submit",{method:"POST",body:JSON.stringify({typedText:$("typingInput")?.value||"",backspaceCount:typingState.backspaceCount||0,pasteAttempts:typingState.pasteAttempts||0})});localStorage.removeItem("ats_typing_draft_"+typingState.id);renderTypingResult(result,automatic);'''
+          if old not in text:
+              raise SystemExit('Typing submit cleanup patch point not found')
+          text = text.replace(old, new, 1)
+          page.write_text(text, encoding='utf-8')
+
+          service = Path('backend/src/modules/ats-assessment/assessment.service.ts')
+          source = service.read_text(encoding='utf-8')
+          old = '''        await connection.commit();\n        throw appError("Assessment assignment has expired", 410, "ASSESSMENT_EXPIRED");'''
+          new = '''        await safeAudit(\n          attempt.id,\n          "ASSESSMENT_EXPIRED_BEFORE_START",\n          {},\n          { ...meta, actorType: "system" },\n          executor,\n        );\n        await connection.commit();\n        return loadSessionData(await attemptByToken(token));'''
+          if old not in source:
+              raise SystemExit('Expired assessment transaction patch point not found')
+          service.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/assessment-candidate-runtime-fix.yml
+      - name: Commit runtime fixes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/modules/ats-assessment/assessment.page.ts backend/src/modules/ats-assessment/assessment.service.ts .github/workflows/assessment-candidate-runtime-fix.yml
+          git commit -m 'fix(ats-assessment): render candidate options and resume typing'
+          git push origin HEAD:feat/ats-candidate-assessment-engine
