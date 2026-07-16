@@ -499,37 +499,97 @@ export function useOnboardingFull(token: string) {
   const verifyPan = async () => {
     const panCheck = bgv?.checks?.find((c: any) => c.check_type === "pan");
     if (panCheck?.status === "verified" && panCheck?.provider_key === "digilocker") {
-      setError("PAN already verified via DigiLocker — no additional verification needed.");
+      setError("✓ PAN already verified via DigiLocker in Step 3 — no additional verification needed.");
+      return;
+    }
+    if (!employee.panNumber || employee.panNumber.trim().length !== 10) {
+      setError("Please enter your 10-character PAN number in Step 3 (DigiLocker & KYC) before verification.");
       return;
     }
     setSaving(true);
-    try { await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber }); await load(); }
+    try {
+      await hrmsApi.post(`${BGV}/verify/pan`, { token, panNumber: employee.panNumber });
+      await load();
+      setError(""); // Clear error on success
+    }
     catch (e: any) { setError(extractBgvError(e, "PAN verification failed")); }
     finally { setSaving(false); }
   };
 
   const verifyBank = async () => {
+    // Check if account number is available in form state
+    if (!bank.accountNo || bank.accountNo.trim() === '') {
+      setError(
+        "Account number required for verification. For security, we don't store your raw account number. " +
+        "Please re-enter your account number in the Bank Details section (Step 6) above, then try verification again."
+      );
+      return;
+    }
     // PAN must be saved in Step 3 before bank verification (Luckpay penny-drop requires PAN).
     const panSaved = Boolean((status as any)?.token?.saved_profile?.pan_number_masked);
     if (!panSaved) {
-      setError("Please save your PAN number in Step 3 (KYC & Address) before verifying your bank account.");
+      setError("Please save your PAN number in Step 3 (DigiLocker & KYC) before verifying your bank account.");
       return;
     }
     setSaving(true);
-    try { await hrmsApi.post(`${BGV}/verify/bank`, { token, accountNo: bank.accountNo, ifscCode: bank.ifscCode, accountHolderName: bank.accountHolderName }); await load(); }
-    catch (e: any) { setError(extractBgvError(e, "Bank verification failed")); }
+    try {
+      await hrmsApi.post(`${BGV}/verify/bank`, {
+        token,
+        accountNo: bank.accountNo,
+        ifscCode: bank.ifscCode,
+        accountHolderName: bank.accountHolderName
+      });
+      await load();
+      setError(""); // Clear error on success
+    }
+    catch (e: any) {
+      const errorMsg = extractBgvError(e, "Bank verification failed");
+
+      // Specific handling for account number missing error
+      if (errorMsg.includes("Raw account number is required")) {
+        setError(
+          "Account number not available for verification. " +
+          "Please re-enter your account number in Step 6 above and try again. " +
+          "(We don't store raw account numbers for security)"
+        );
+      } else if (errorMsg.includes("IP") && errorMsg.includes("whitelist")) {
+        setError(
+          "Bank verification service is temporarily unavailable. " +
+          "Your bank details have been saved and HR will verify manually after submission. " +
+          "This does not block your onboarding."
+        );
+      } else {
+        setError(errorMsg);
+      }
+    }
     finally { setSaving(false); }
   };
 
   const verifyAadhaar = async () => {
     const aadhaarCheck = bgv?.checks?.find((c: any) => c.check_type === "aadhaar");
     if (aadhaarCheck?.status === "verified" && aadhaarCheck?.provider_key === "digilocker") {
-      setError("Aadhaar already verified via DigiLocker — no additional verification needed.");
+      setError("✓ Aadhaar already verified via DigiLocker in Step 3 — no additional verification needed.");
+      return;
+    }
+    if (!employee.aadhaarNumber || employee.aadhaarNumber.trim().length !== 12) {
+      setError("Please enter your 12-digit Aadhaar number in Step 3 (DigiLocker & KYC) before verification.");
       return;
     }
     const doc = status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar"));
+    if (!doc) {
+      setError("Please upload your Aadhaar document in Step 4 (Documents) before verification. Offline verification requires the uploaded document.");
+      return;
+    }
     setSaving(true);
-    try { await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, { token, documentId: doc?.id, aadhaarLast4: employee.aadhaarNumber.slice(-4) }); await load(); }
+    try {
+      await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, {
+        token,
+        documentId: doc?.id,
+        aadhaarLast4: employee.aadhaarNumber.slice(-4)
+      });
+      await load();
+      setError(""); // Clear error on success
+    }
     catch (e: any) { setError(extractBgvError(e, "Aadhaar verification failed")); }
     finally { setSaving(false); }
   };

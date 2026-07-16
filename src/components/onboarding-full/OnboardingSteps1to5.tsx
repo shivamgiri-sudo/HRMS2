@@ -702,9 +702,10 @@ export function Step4Documents({
               <input
                 key={fileKey}
                 type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.webp"
+                accept="image/*,.pdf"
+                capture="environment"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="sr-only"
+                className="hidden"
               />
             </label>
             {file && (
@@ -862,6 +863,35 @@ export function Step5Bgv({
           </Button>
         </div>
 
+        {/* Cross-step navigation hints */}
+        {consentAccepted && (
+          <div className="rounded-xl border-2 border-blue-100 bg-blue-50 px-4 py-3">
+            <p className="text-xs font-bold text-blue-900 mb-2">Quick Status Check:</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                {status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                )}
+                <span className={status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? "text-emerald-700" : "text-amber-700"}>
+                  Aadhaar doc: {status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? "Uploaded ✓" : "Upload in Step 4"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {status?.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                )}
+                <span className={status?.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? "text-emerald-700" : "text-amber-700"}>
+                  PAN doc: {status?.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? "Uploaded ✓" : "Optional"}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* BGV stats */}
         {(bgv || consentAccepted) && (
           <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
@@ -884,8 +914,11 @@ export function Step5Bgv({
           <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-2">Additional Verifications</p>
           <InfoBox variant="info">
             <p className="text-xs">
-              <strong>Optional verifications:</strong> Use these buttons if you need to verify specific details.
-              If you connected DigiLocker in Step 3, your Aadhaar and PAN are already fetched.
+              <strong>Prerequisites for verification:</strong>
+              {' '}Aadhaar requires document upload in Step 4.
+              {' '}PAN requires number entry in Step 3.
+              {' '}Bank requires account number from Step 6.
+              {' '}DigiLocker-verified documents don't need manual verification.
             </p>
           </InfoBox>
           <div className="grid gap-2 grid-cols-2 mt-3">
@@ -1137,6 +1170,19 @@ export function Step6Bank({
                 disabled={!bank.accountNo || !bank.ifscCode || mismatch}
               />
             </div>
+          </div>
+        )}
+
+        {bankPreviouslySaved && !bank.accountNo && (
+          <div className="mt-4 rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3">
+            <p className="text-sm font-bold text-blue-900 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" /> Security Notice
+            </p>
+            <p className="text-xs text-blue-800 mt-1">
+              Your account number is securely hashed and cannot be displayed again.
+              To verify your account with penny drop (Step 5), you'll need to re-enter your account number above.
+              This is a security feature to protect your banking information.
+            </p>
           </div>
         )}
 

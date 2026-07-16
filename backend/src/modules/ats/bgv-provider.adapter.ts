@@ -1058,16 +1058,26 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   }
 
   private toLuckpayError(error: unknown): Error {
+    const errorCode = (error as { code?: string })?.code;
     const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
     const responseData = (error as { response?: { data?: unknown } })?.response?.data;
     const sanitized = sanitizeProviderPayload(responseData) as Record<string, unknown> | null;
     const providerMessage = sanitized && typeof sanitized === "object"
       ? String(sanitized.message ?? sanitized.error ?? sanitized.status ?? "")
       : "";
+
+    // Check for IP whitelist errors
+    const isIpWhitelistError =
+      (providerMessage && (providerMessage.toLowerCase().includes('ip') && providerMessage.toLowerCase().includes('whitelist'))) ||
+      (providerMessage && providerMessage.toLowerCase().includes('not authorized')) ||
+      errorCode === 'ECONNREFUSED';
+
     const message = providerMessage || "Luckpay provider request failed";
+
     return Object.assign(new Error(`Luckpay provider request failed: ${message}`), {
-      statusCode: status >= 400 && status < 600 ? status : 502,
+      statusCode: isIpWhitelistError ? 503 : (status >= 400 && status < 600 ? status : 502),
       providerPayload: sanitized,
+      isIpWhitelistError,
     });
   }
 
@@ -1199,6 +1209,23 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       );
     } catch (error: any) {
       const msg = error?.response?.data?.message ?? error?.message ?? "Befisc Aadhaar check failed";
+
+      // Handle network/DNS errors gracefully — fall back to manual review instead of blocking
+      if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ECONNRESET') {
+        console.error(`[BGV] Befisc provider unavailable (${error.code}): ${msg}`);
+        return {
+          status: "manual_review",
+          providerKey: this.providerKey,
+          providerRequestId: requestId,
+          providerReferenceId: requestId,
+          matchScore: null,
+          matchedName: input.candidateName ?? null,
+          resultSummary: "Aadhaar verification service temporarily unavailable. HR will verify manually after submission.",
+          riskFlags: ['PROVIDER_UNAVAILABLE'],
+          raw: { mode: "provider_error_fallback", error_code: error.code, error_message: msg },
+        };
+      }
+
       throw new Error(msg);
     }
     const raw = res.data?.data ?? res.data ?? {};

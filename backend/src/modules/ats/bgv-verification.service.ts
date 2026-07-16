@@ -266,7 +266,28 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   if (!accountNo) throw Object.assign(new Error("Raw account number is required for digital verification"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
-  const result = await adapter.verifyBank({ candidateName: candidate.employee_name ?? candidate.full_name, accountHolderName, accountNo, ifscCode });
+  let result;
+  try {
+    result = await adapter.verifyBank({ candidateName: candidate.employee_name ?? candidate.full_name, accountHolderName, accountNo, ifscCode });
+  } catch (error: any) {
+    // If IP whitelist or provider unavailable, fall back to manual_review
+    if (error.statusCode === 503 || error.isIpWhitelistError) {
+      console.error(`[BGV] Bank verification provider unavailable: ${error.message}`);
+      result = {
+        status: "manual_review" as const,
+        providerKey: "luckpay",
+        providerRequestId: randomUUID(),
+        providerReferenceId: randomUUID(),
+        matchScore: null,
+        matchedName: null,
+        resultSummary: "Bank verification service temporarily unavailable. Bank details saved for manual HR review.",
+        riskFlags: ['PROVIDER_UNAVAILABLE'],
+        raw: { mode: "provider_error_fallback", error_message: error.message },
+      };
+    } else {
+      throw error;
+    }
+  }
   const checkId = await createOrUpdateCheck(candidateId, "bank", result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,
