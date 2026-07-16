@@ -102,7 +102,7 @@ async function refreshSession(){if(!token)return;try{session=await api("/assessm
 async function recordIntegrity(eventType,details){if(!token||!session||session.assessment.status!=="in_progress")return;try{await api("/assessment/session/"+encodeURIComponent(token)+"/integrity",{method:"POST",body:JSON.stringify({eventType,details})})}catch{}}
 
 $("openBtn").onclick=openAssessment;$("startBtn").onclick=startAssessment;$("submitAssessment").onclick=()=>finalSubmit(false);$("mobile").oninput=event=>event.target.value=event.target.value.replace(/\D/g,"").slice(0,10);$("mobile").onkeydown=event=>{if(event.key==="Enter")openAssessment()};$("queueToken").onkeydown=event=>{if(event.key==="Enter")openAssessment()};document.addEventListener("visibilitychange",()=>{if(document.hidden&&session?.assessment?.status==="in_progress"){visibilityEvents+=1;recordIntegrity("tab_hidden",{count:visibilityEvents})}});window.addEventListener("blur",()=>{if(session?.assessment?.status==="in_progress")recordIntegrity("window_blur",{})});window.addEventListener("beforeunload",event=>{if(session?.assessment?.status==="in_progress"){event.preventDefault();event.returnValue=""}});
-const savedToken=new URLSearchParams(location.hash.slice(1)).get("token")||localStorage.getItem("ats_candidate_assessment_token");if(savedToken){token=savedToken;storeToken(savedToken);refreshSession()}
+const queueFromQuery=new URLSearchParams(location.search).get("queueToken");if(queueFromQuery)$("queueToken").value=queueFromQuery;const savedToken=new URLSearchParams(location.hash.slice(1)).get("token")||localStorage.getItem("ats_candidate_assessment_token");if(savedToken){token=savedToken;storeToken(savedToken);refreshSession()}
 })();
 </script>
 </body>

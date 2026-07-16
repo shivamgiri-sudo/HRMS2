@@ -87,6 +87,7 @@ type SubmitResponse = {
   recruiterMobile?: string;
   recruiterEmail?: string;
   branch?: string;
+  tokenNumber?: string;
 };
 
 type FieldConfig = {
@@ -972,7 +973,7 @@ export default function NativeATSCandidateRegistration() {
         referredBy:               coreData.sourceType === "Reference" ? (coreData.referredBy || null) : null,
         ...(preferredRecruiterId ? { preferredRecruiterId } : {}),
       };
-      const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; recruiter?: any; message?: string; data?: any }>(
+      const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; tokenNumber?: string | null; recruiter?: any; message?: string; data?: any }>(
         "/api/ats/registration/submit-enhanced",
         payload
       );
@@ -984,6 +985,7 @@ export default function NativeATSCandidateRegistration() {
         candidateId: apiRes.candidate_code ?? apiRes.data?.candidate_code ?? apiRes.candidateId ?? "",
         recruiterName: apiRes.recruiter?.name || coreData.recruiterName || "",
         branch: apiRes.branchName ?? coreData.branch ?? "",
+        tokenNumber: apiRes.tokenNumber ?? apiRes.data?.tokenNumber ?? "",
       };
 
       if (!res.success) throw new Error(res.message || "Submission failed. Please try again.");
@@ -1880,6 +1882,22 @@ export default function NativeATSCandidateRegistration() {
           {uploadStatus === "uploading" && <div className="native-ats-us-spin" />}
           <span>{uploadMessage}</span>
         </div>
+        {result?.tokenNumber && (
+          <div className="native-ats-rec-card" style={{ borderColor: "#99f6e4", background: "#f0fdfa" }}>
+            <div className="native-ats-rec-sec-title">Complete Assessment While You Wait</div>
+            <div className="native-ats-rec-name">Queue Token: {result.tokenNumber}</div>
+            <div className="native-ats-rec-row">📝 <span>Your process-specific assessment is available before the HR interview.</span></div>
+            <div className="native-ats-rec-row">⏱️ <span>The assessment attempt is available only once. Typing sections allow a maximum of two attempts.</span></div>
+            <div className="native-ats-rec-actions">
+              <a
+                className="native-ats-rec-btn"
+                href={`/api/ats-ext/assessment?queueToken=${encodeURIComponent(result.tokenNumber)}`}
+              >
+                Start Assessment
+              </a>
+            </div>
+          </div>
+        )}
         <div className="native-ats-rec-card">
           <div className="native-ats-rec-sec-title">Your Recruiter</div>
           <div className="native-ats-rec-name">{result?.recruiterName || ""}</div>
