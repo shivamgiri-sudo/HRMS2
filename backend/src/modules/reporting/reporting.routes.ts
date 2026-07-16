@@ -3,10 +3,18 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { reportingService } from './reporting.service.js';
 import { reportingAnalyticsV2Service } from './reporting.analytics-v2.service.js';
+import { reportSuiteScopeRouter } from "./report-suite-scope.middleware.js";
+import { reportSuiteReferenceFormatRouter } from "./report-suite-reference-format.routes.js";
+import { reportSuiteAccuracyRouter } from "./report-suite-accuracy.routes.js";
 import { reportSuiteHighRiskRouter } from "./report-suite-highrisk.routes.js";
 import { reportSuiteRouter } from "./report-suite.routes.js";
 
 const router = Router();
+// Scope enforcement runs before all suite builders. Reference-format and accuracy-first
+// routes intentionally shadow legacy handlers; unknown codes fall through safely.
+router.use("/suite", reportSuiteScopeRouter);
+router.use("/suite", reportSuiteReferenceFormatRouter);
+router.use("/suite", reportSuiteAccuracyRouter);
 router.use("/suite", reportSuiteHighRiskRouter);
 router.use("/suite", reportSuiteRouter);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
