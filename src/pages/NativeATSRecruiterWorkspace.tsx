@@ -87,6 +87,30 @@ type Config = {
   skillVocOptions: string[];
 };
 
+type AssessmentSummary = {
+  id: string;
+  templateName?: string | null;
+  process?: string | null;
+  role?: string | null;
+  status?: string | null;
+  result?: string | null;
+  percentage?: number | string | null;
+  score?: number | string | null;
+  maxScore?: number | string | null;
+  manualReviewRequired?: boolean;
+  reviewRemarks?: string | null;
+  recommendation?: { decision?: string | null; advisoryOnly?: boolean } | null;
+  integrityFlags?: unknown[];
+  typing?: {
+    attemptNo?: number;
+    grossWpm?: number | string | null;
+    netWpm?: number | string | null;
+    accuracy?: number | string | null;
+    score?: number | string | null;
+    passedBenchmark?: boolean;
+  } | null;
+};
+
 type Form = {
   processName: string;
   finalDecision: string;
@@ -342,6 +366,8 @@ export default function NativeATSRecruiterWorkspace() {
   const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [selected, setSelected] = useState<CandidateRow | null>(null);
+  const [assessmentSummary, setAssessmentSummary] = useState<AssessmentSummary | null>(null);
+  const [assessmentLoading, setAssessmentLoading] = useState(false);
   const [interviewers, setInterviewers] = useState<Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }>>([]);
   const [interviewerSearch, setInterviewerSearch] = useState("");
   const [interviewerDropOpen, setInterviewerDropOpen] = useState(false);
@@ -566,6 +592,15 @@ export default function NativeATSRecruiterWorkspace() {
 
   const openFormDirect = (c: CandidateRow, resubmit = false, h?: HistoryRow, isSubstitute = false) => {
     setSelected(c);
+    setAssessmentSummary(null);
+    setAssessmentLoading(true);
+    void hrmsApi
+      .get<{ success: boolean; data: AssessmentSummary | null }>(
+        `/api/ats-ext/assessment-admin/candidates/${encodeURIComponent(c.candidateId)}/summary`,
+      )
+      .then((response) => setAssessmentSummary(response.data ?? null))
+      .catch(() => setAssessmentSummary(null))
+      .finally(() => setAssessmentLoading(false));
     setSubstituteMode(isSubstitute);
     const asBool = (value: unknown) => value === 1 || value === "1" || value === true || value === "true" || value === "yes";
     setForm({
@@ -1244,11 +1279,103 @@ export default function NativeATSRecruiterWorkspace() {
         {screen === "form" && selected && (
           <div className="rw-card">
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
-              <button className="btn-ghost" onClick={() => setScreen("workspace")} style={{ width: "auto", padding: "8px 16px" }}>← Back</button>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setScreen("workspace");
+                  setAssessmentSummary(null);
+                  setAssessmentLoading(false);
+                }}
+                style={{ width: "auto", padding: "8px 16px" }}
+              >
+                ← Back
+              </button>
               <div>
                 <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Update Candidate</h2>
                 <p className="rw-muted" style={{ margin: "2px 0 0" }}><b>{selected.fullName}</b> · {selected.mobile}</p>
               </div>
+            </div>
+
+            <div
+              className="form-section"
+              style={{
+                marginBottom: 12,
+                borderColor: assessmentSummary ? "#99f6e4" : "#e2e8f0",
+                background: assessmentSummary ? "#f0fdfa" : "#f8fafc",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div>
+                  <div className="sec-title" style={{ color: "#0f766e" }}>Pre-employment Assessment — Read Only</div>
+                  <div className="rw-muted">
+                    Assessment information is advisory and does not change this interview form, queue status, or final decision.
+                  </div>
+                </div>
+                <a
+                  href="/api/ats-ext/assessment-admin"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-ghost btn-sm"
+                  style={{ textDecoration: "none", display: "inline-block" }}
+                >
+                  Open Assessment Control
+                </a>
+              </div>
+
+              {assessmentLoading ? (
+                <div className="rw-muted" style={{ marginTop: 10 }}>Loading assessment summary…</div>
+              ) : assessmentSummary ? (
+                <div className="rw-grid rw-3" style={{ marginTop: 10 }}>
+                  <div>
+                    <label>Template</label>
+                    <div style={{ fontWeight: 700 }}>{assessmentSummary.templateName || "—"}</div>
+                    <div className="rw-muted">{assessmentSummary.process || "—"} / {assessmentSummary.role || "—"}</div>
+                  </div>
+                  <div>
+                    <label>Status & Result</label>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <DecisionBadge value={assessmentSummary.status || "Not started"} />
+                      {assessmentSummary.result && <DecisionBadge value={assessmentSummary.result} />}
+                    </div>
+                    {assessmentSummary.manualReviewRequired && (
+                      <div className="rw-muted" style={{ marginTop: 4 }}>Written response review pending</div>
+                    )}
+                  </div>
+                  <div>
+                    <label>Assessment Score</label>
+                    <div style={{ fontWeight: 800, fontSize: 18 }}>
+                      {assessmentSummary.percentage == null ? "—" : `${Number(assessmentSummary.percentage).toFixed(1)}%`}
+                    </div>
+                    <div className="rw-muted">{assessmentSummary.recommendation?.decision || "No final recommendation yet"}</div>
+                  </div>
+                  <div>
+                    <label>Typing</label>
+                    <div style={{ fontWeight: 700 }}>
+                      {assessmentSummary.typing
+                        ? `${Number(assessmentSummary.typing.netWpm || 0).toFixed(1)} net WPM`
+                        : "Not applicable / not completed"}
+                    </div>
+                    {assessmentSummary.typing && (
+                      <div className="rw-muted">
+                        {Number(assessmentSummary.typing.accuracy || 0).toFixed(1)}% accuracy · Attempt {assessmentSummary.typing.attemptNo || "—"}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label>Integrity Events</label>
+                    <div style={{ fontWeight: 700 }}>{assessmentSummary.integrityFlags?.length || 0}</div>
+                    <div className="rw-muted">Review details before using the result</div>
+                  </div>
+                  <div>
+                    <label>Assessment Attempt ID</label>
+                    <div className="rw-muted" style={{ wordBreak: "break-all" }}>{assessmentSummary.id}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rw-muted" style={{ marginTop: 10 }}>
+                  No assessment is assigned or the assessment feature is disabled. The existing interview flow remains fully available.
+                </div>
+              )}
             </div>
 
             <div className="form-sections-grid">

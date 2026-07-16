@@ -4,12 +4,24 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requisitionService, bgvService, offerService, duplicateService, sourcingAnalyticsService } from "./ats-ext.service.js";
+import { assessmentProtectedRouter, assessmentPublicRouter } from "../ats-assessment/assessment.routes.js";
+import {
+  assessmentBuilderProtectedRouter,
+  assessmentBuilderPublicRouter,
+} from "../ats-assessment/assessment.template-builder.routes.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
 const h = (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
   void fn(req as AuthenticatedRequest | Request, res).catch(next);
 };
+
+// ── PUBLIC: Candidate pre-employment assessment ───────────────────────────────
+// Builder routes are mounted first so the enhanced admin shell and builder page
+// are served without replacing any ATS business route.
+router.use(assessmentBuilderPublicRouter);
+// Mounted before requireAuth. Assessment data is isolated from ATS queue/lifecycle statuses.
+router.use(assessmentPublicRouter);
 
 // ── PUBLIC: Offer Digital Acceptance ─────────────────────────────────────────
 router.post("/offers/:id/respond", h(async (req: Request, res: Response) => {
@@ -22,6 +34,13 @@ router.post("/offers/:id/respond", h(async (req: Request, res: Response) => {
 }));
 
 router.use(requireAuth);
+
+// Protected builder save is mounted before the generic template endpoint so
+// strict custom-template validation is always applied.
+router.use(assessmentBuilderProtectedRouter);
+// Protected assessment summaries/configuration. Authentication and role checks
+// are additive and do not change any existing ATS route behaviour.
+router.use(assessmentProtectedRouter);
 
 // ── Manpower Requisitions ─────────────────────────────────────────────────────
 router.get("/requisitions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
