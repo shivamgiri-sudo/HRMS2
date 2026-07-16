@@ -1,0 +1,53 @@
+name: Assessment Portal Escape Fix
+
+on:
+  push:
+    branches:
+      - feat/ats-candidate-assessment-engine
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ats-candidate-assessment-engine
+          fetch-depth: 0
+      - name: Preserve JavaScript escapes in generated portal pages
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          candidate = Path('backend/src/modules/ats-assessment/assessment.page.ts')
+          text = candidate.read_text(encoding='utf-8')
+          original = text
+          text = text.replace('  return `<!doctype html>', '  return String.raw`<!doctype html>', 1)
+          # String.raw preserves backslashes, so regex literals need one source
+          # backslash rather than the two required by a normal template string.
+          text = text.replace(r'/\\D/g', r'/\D/g')
+          if text == original:
+              raise SystemExit('Candidate portal escape patch did not apply')
+          candidate.write_text(text, encoding='utf-8')
+
+          admin = Path('backend/src/modules/ats-assessment/assessment.admin.page.ts')
+          text = admin.read_text(encoding='utf-8')
+          original = text
+          text = text.replace('  return `<!doctype html>', '  return String.raw`<!doctype html>', 1)
+          if text == original:
+              raise SystemExit('Admin portal escape patch did not apply')
+          admin.write_text(text, encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/assessment-portal-escape-fix.yml
+      - name: Commit portal escape fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/modules/ats-assessment/assessment.page.ts backend/src/modules/ats-assessment/assessment.admin.page.ts .github/workflows/assessment-portal-escape-fix.yml
+          git commit -m 'fix(ats-assessment): preserve portal script escaping'
+          git push origin HEAD:feat/ats-candidate-assessment-engine
