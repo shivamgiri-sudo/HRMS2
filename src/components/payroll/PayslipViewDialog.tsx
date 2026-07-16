@@ -102,7 +102,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const hra            = record.hra            ?? 0;
   const specialAllow   = record.specialAllowance ?? 0;
   const incentiveTotal = record.incentiveTotal  ?? 0;
-  const grossSalary    = record.basic + record.allowances;
+  const grossSalary    = record.grossSalary || (record.basic + record.totalAllowances);
 
   // MoM delta
   const thisRunMonth = `${record.year}-${String(record.monthNum).padStart(2, "0")}`;
@@ -150,7 +150,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
   // Helper to get deduction amount by component code
   const getDeduction = (code: string): number => {
-    const comp = record.deductions?.find(d =>
+    const comp = record.deductionComponents?.find(d =>
       d.component_code.toUpperCase() === code.toUpperCase()
     );
     return Number(comp?.amount ?? 0);
@@ -375,11 +375,11 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                               </td>
                             </tr>
                           )}
-                          {hra === 0 && specialAllow === 0 && incentiveTotal === 0 && record.allowances > 0 && (
+                          {hra === 0 && specialAllow === 0 && incentiveTotal === 0 && record.totalAllowances > 0 && (
                             <tr className="border-b">
                               <td className="py-1.5 text-muted-foreground">Total Allowances</td>
                               <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
-                                +{fmt(record.allowances)}
+                                +{fmt(record.totalAllowances)}
                               </td>
                             </tr>
                           )}
@@ -409,8 +409,8 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                     </colgroup>
                     <tbody>
                       {/* Dynamically render all deduction components */}
-                      {record.deductions && record.deductions.length > 0 ? (
-                        record.deductions
+                      {record.deductionComponents && record.deductionComponents.length > 0 ? (
+                        record.deductionComponents
                           .filter(d => Number(d.amount) > 0)
                           .map((comp) => (
                             <tr key={comp.component_code} className="border-b">
@@ -481,11 +481,11 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                           )}
                           {pfEmployee === 0 && esicEmployee === 0 && professionalTax === 0 &&
                            tdsAmount === 0 && lwpDeduction === 0 && advanceRecovery === 0 &&
-                           otherDeductions === 0 && record.deductions > 0 && (
+                           otherDeductions === 0 && record.totalDeductions > 0 && (
                             <tr className="border-b">
                               <td className="py-1.5 text-muted-foreground">Deductions</td>
                               <td className="py-1.5 text-right font-mono font-semibold text-destructive">
-                                -{fmt(record.deductions)}
+                                -{fmt(record.totalDeductions)}
                               </td>
                             </tr>
                           )}
@@ -494,7 +494,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
                       <tr className="font-semibold">
                         <td className="py-1.5">Total Deductions</td>
-                        <td className="py-1.5 text-right font-mono text-destructive">-{fmt(record.deductions)}</td>
+                        <td className="py-1.5 text-right font-mono text-destructive">-{fmt(record.totalDeductions)}</td>
                       </tr>
                     </tbody>
                   </table>

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -39,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Edit, Trash2, IndianRupee, Search } from "lucide-react";
+import { Plus, Edit, Trash2, IndianRupee, Search, FileStack, Users } from "lucide-react";
 import { toast } from "sonner";
 import {
   useSalaryStructures,
@@ -319,8 +320,60 @@ export function SalaryStructureManager() {
     </div>
   );
 
+  const uniqueTemplates = (() => {
+    const map = new Map<string, { basic: number; hra: number; other: number; count: number }>();
+    for (const s of structures) {
+      const key = `${s.basicSalary}-${s.hra}-${s.otherAllowances}`;
+      const existing = map.get(key);
+      if (existing) { existing.count++; } else { map.set(key, { basic: s.basicSalary, hra: s.hra, other: s.otherAllowances, count: 1 }); }
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  })();
+
   return (
-    <div className="space-y-4">
+    <Tabs defaultValue="assignments" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="assignments" className="gap-2"><Users className="h-4 w-4" />Employee Assignments</TabsTrigger>
+        <TabsTrigger value="templates" className="gap-2"><FileStack className="h-4 w-4" />Salary Templates</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="templates" className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Salary Structure Templates</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {uniqueTemplates.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No salary structures defined yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Basic</TableHead>
+                    <TableHead>HRA</TableHead>
+                    <TableHead>Other Allowances</TableHead>
+                    <TableHead>Gross (Template)</TableHead>
+                    <TableHead className="text-right">Employees</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {uniqueTemplates.map((t, i) => (
+                    <TableRow key={i}>
+                      <TableCell>{formatCurrency(t.basic)}</TableCell>
+                      <TableCell>{formatCurrency(t.hra)}</TableCell>
+                      <TableCell>{formatCurrency(t.other)}</TableCell>
+                      <TableCell className="font-medium">{formatCurrency(t.basic + t.hra + t.other)}</TableCell>
+                      <TableCell className="text-right"><Badge variant="secondary">{t.count}</Badge></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="assignments" className="space-y-4">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative flex-1 max-w-md">
@@ -512,6 +565,7 @@ export function SalaryStructureManager() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }

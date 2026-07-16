@@ -164,6 +164,42 @@ router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "pay
 }));
 router.get("/overview", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getPayrollOverview));
 
+// ─── Cascading filter options for payroll workspace dropdowns ──
+router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
+
+  const [branches] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT b.id, b.branch_name FROM branches b
+     JOIN employees e ON e.branch_id = b.id
+     JOIN salary_prep_line spl ON spl.employee_id = e.id
+     ORDER BY b.branch_name`
+  );
+
+  let processQuery = `SELECT DISTINCT p.id, p.process_name FROM processes p
+     JOIN employees e ON e.process_id = p.id
+     JOIN salary_prep_line spl ON spl.employee_id = e.id`;
+  const processParams: string[] = [];
+  if (branchId) {
+    processQuery += ` WHERE e.branch_id = ?`;
+    processParams.push(branchId);
+  }
+  processQuery += ` ORDER BY p.process_name`;
+  const [processes] = await db.execute<RowDataPacket[]>(processQuery, processParams);
+
+  let deptQuery = `SELECT DISTINCT d.id, d.dept_name FROM departments d
+     JOIN employees e ON e.department_id = d.id
+     JOIN salary_prep_line spl ON spl.employee_id = e.id`;
+  const deptParams: string[] = [];
+  if (branchId) {
+    deptQuery += ` WHERE e.branch_id = ?`;
+    deptParams.push(branchId);
+  }
+  deptQuery += ` ORDER BY d.dept_name`;
+  const [departments] = await db.execute<RowDataPacket[]>(deptQuery, deptParams);
+
+  res.json({ success: true, data: { branches, processes, departments } });
+}));
+
 // ─── Attendance summary for a specific payroll line (used in payslip dialog) ──
 router.get("/lines/:lineId/attendance", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
   const { lineId } = req.params;
@@ -235,6 +271,25 @@ router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "
 
 router.patch("/runs/:id/status", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateRunStatus));
 router.get("/runs/:id/lines", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listLines));
+
+// Action-level capabilities for current user
+router.get("/capabilities", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  const role = req.authUser?.role ?? "";
+  const adminRoles = new Set(["admin", "super_admin", "finance", "payroll"]);
+  const hrRoles = new Set(["admin", "super_admin", "hr", "finance", "payroll"]);
+  res.json({
+    success: true,
+    data: {
+      canViewPayroll: hrRoles.has(role),
+      canEditLine: adminRoles.has(role),
+      canChangeStatus: adminRoles.has(role),
+      canApprove: role === "super_admin" || role === "finance",
+      canDisburse: role === "super_admin" || role === "finance",
+      canExport: hrRoles.has(role),
+      canManageStructures: adminRoles.has(role),
+    },
+  });
+}));
 
 // E1.1: Branch breakdown for payroll dashboard
 router.get("/runs/:id/branch-breakdown", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {

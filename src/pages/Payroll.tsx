@@ -169,7 +169,7 @@ const Payroll = () => {
     page: currentPage,
     limit: currentPageSize,
   }), [monthFilter, currentMonth, currentYear, debouncedSearchQuery, currentStatus, currentBranchId, currentDeptId, currentProcessId, currentPage, currentPageSize]);
-  const { data: recordsPage, isLoading } = usePayrollRecords(currentMonthFilters);
+  const { data: recordsPage, isLoading, error: recordsError, isPlaceholderData } = usePayrollRecords(currentMonthFilters);
   const currentRecords = recordsPage?.records ?? [];
   const currentTotalItems = recordsPage?.total ?? 0;
   const currentTotalPages = Math.max(1, Math.ceil(currentTotalItems / currentPageSize));
@@ -328,24 +328,30 @@ const Payroll = () => {
       "Status",
     ];
 
+    const sanitizeCell = (val: string | number | null | undefined): string => {
+      const s = String(val ?? "").replace(/"/g, '""');
+      if (/^[=+\-@\t\r]/.test(s)) return `"'${s}"`;
+      return `"${s}"`;
+    };
+
     const csvContent = [
       headers.join(","),
       ...dataToExport.map((record) =>
         [
-          `"${record.employeeCode}"`,
-          `"${record.employee.name}"`,
-          `"${record.employee.email}"`,
-          `"${record.branch ?? ""}"`,
-          `"${record.process ?? ""}"`,
-          `"${record.department ?? ""}"`,
-          `"${record.designation ?? ""}"`,
-          `"${record.month}"`,
-          `"${record.year}"`,
-          `"${record.basic}"`,
-          `"${record.allowances}"`,
-          `"${record.deductions}"`,
-          `"${record.netSalary}"`,
-          `"${record.status}"`,
+          sanitizeCell(record.employeeCode),
+          sanitizeCell(record.employee.name),
+          sanitizeCell(record.employee.email),
+          sanitizeCell(record.branch),
+          sanitizeCell(record.process),
+          sanitizeCell(record.department),
+          sanitizeCell(record.designation),
+          sanitizeCell(record.month),
+          sanitizeCell(record.year),
+          sanitizeCell(record.basic),
+          sanitizeCell(record.totalAllowances),
+          sanitizeCell(record.totalDeductions),
+          sanitizeCell(record.netSalary),
+          sanitizeCell(record.status),
         ].join(",")
       ),
     ].join("\n");
@@ -431,8 +437,8 @@ const Payroll = () => {
         record.month,
         record.year,
         formatCurrency(record.basic),
-        formatCurrency(record.allowances),
-        formatCurrency(record.deductions),
+        formatCurrency(record.totalAllowances),
+        formatCurrency(record.totalDeductions),
         formatCurrency(record.netSalary),
         record.status.charAt(0).toUpperCase() + record.status.slice(1),
       ]),
@@ -482,13 +488,13 @@ const Payroll = () => {
         onSuccess: () => {
           toast({
             title: "Status Updated",
-            description: `Payroll for ${record.employee.name} marked as processed.`,
+            description: `Payroll run for ${record.month} ${record.year} marked as processed.`,
           });
         },
-        onError: () => {
+        onError: (error) => {
           toast({
             title: "Update Failed",
-            description: "Failed to update payroll status.",
+            description: error instanceof Error ? error.message : "Failed to update payroll status.",
             variant: "destructive",
           });
         },
@@ -503,13 +509,13 @@ const Payroll = () => {
         onSuccess: () => {
           toast({
             title: "Status Updated",
-            description: `Payroll for ${record.employee.name} marked as paid.`,
+            description: `Payroll run for ${record.month} ${record.year} marked as paid.`,
           });
         },
-        onError: () => {
+        onError: (error) => {
           toast({
             title: "Update Failed",
-            description: "Failed to update payroll status.",
+            description: error instanceof Error ? error.message : "Failed to update payroll status.",
             variant: "destructive",
           });
         },
@@ -518,19 +524,27 @@ const Payroll = () => {
   };
 
   const handleRevertToPending = (record: PayrollRecord) => {
+    if (record.status === "paid") {
+      toast({
+        title: "Action Blocked",
+        description: "Disbursed payroll cannot be reverted. Use a correction workflow instead.",
+        variant: "destructive",
+      });
+      return;
+    }
     updateStatus.mutate(
       { id: record.runId, status: "draft" },
       {
         onSuccess: () => {
           toast({
             title: "Status Updated",
-            description: `Payroll for ${record.employee.name} reverted to pending.`,
+            description: `Payroll run reverted to pending.`,
           });
         },
-        onError: () => {
+        onError: (error) => {
           toast({
             title: "Update Failed",
-            description: "Failed to update payroll status.",
+            description: error instanceof Error ? error.message : "Failed to update payroll status.",
             variant: "destructive",
           });
         },
@@ -1041,7 +1055,14 @@ const Payroll = () => {
                 </div>
               </div>
 
-              {isLoading ? (
+              {recordsError ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center">
+                  <p className="font-medium text-destructive">Failed to load payroll records</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {recordsError instanceof Error ? recordsError.message : "An unexpected error occurred. Please try again."}
+                  </p>
+                </div>
+              ) : isLoading ? (
                 <div className="space-y-3">
                   {[1, 2, 3, 4, 5].map((item) => (
                     <Skeleton key={item} className="h-16 rounded-xl" />
@@ -1079,7 +1100,7 @@ const Payroll = () => {
                       <span className="font-semibold">{currentTotalItems}</span> result{currentTotalItems !== 1 ? 's' : ''} found for "{searchQuery.trim()}"
                     </div>
                   )}
-                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  <div className={`overflow-hidden rounded-xl border border-slate-200 bg-white${isPlaceholderData ? " opacity-70 transition-opacity" : ""}`}>
                     <PayrollTable
                       records={currentRecords}
                       onView={handleView}
@@ -1517,7 +1538,7 @@ function BranchBreakdownDialog({
     queryKey: ["payroll-branch-breakdown", runId],
     queryFn: async () => {
       if (!runId) return [];
-      const response = await hrmsApi.get(`/payroll/runs/${runId}/branch-breakdown`);
+      const response = await hrmsApi.get(`/api/payroll/runs/${runId}/branch-breakdown`);
       return response.data.data ?? [];
     },
     enabled: open && !!runId,
