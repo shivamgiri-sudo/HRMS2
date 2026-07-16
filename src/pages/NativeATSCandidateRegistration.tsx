@@ -378,6 +378,7 @@ export default function NativeATSCandidateRegistration() {
   const [loadingStep, setLoadingStep] = useState(1);
   const [submitError, setSubmitError] = useState("");
   const [result, setResult] = useState<SubmitResponse | null>(null);
+  const [assessmentEnabled, setAssessmentEnabled] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "done" | "failed">("idle");
   const [uploadMessage, setUploadMessage] = useState("Preparing file upload…");
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -941,6 +942,7 @@ export default function NativeATSCandidateRegistration() {
     setLoadingStep(1);
     setScreen("submitting");
     setSubmitError("");
+    setAssessmentEnabled(false);
 
     const step2 = window.setTimeout(() => setLoadingStep(2), 700);
     const step3 = window.setTimeout(() => setLoadingStep(3), 1400);
@@ -992,6 +994,13 @@ export default function NativeATSCandidateRegistration() {
 
       setResult(res);
       setScreen("success");
+
+      // Assessment availability is checked separately and must never affect
+      // the successful candidate registration flow.
+      void hrmsApi
+        .get<{ success: boolean; data?: { status?: string } }>("/api/ats-ext/assessment/health")
+        .then((health) => setAssessmentEnabled(health.data?.status === "enabled"))
+        .catch(() => setAssessmentEnabled(false));
 
       // Record DPDP consent (non-blocking)
       try {
@@ -1882,7 +1891,7 @@ export default function NativeATSCandidateRegistration() {
           {uploadStatus === "uploading" && <div className="native-ats-us-spin" />}
           <span>{uploadMessage}</span>
         </div>
-        {result?.tokenNumber && (
+        {result?.tokenNumber && assessmentEnabled && (
           <div className="native-ats-rec-card" style={{ borderColor: "#99f6e4", background: "#f0fdfa" }}>
             <div className="native-ats-rec-sec-title">Complete Assessment While You Wait</div>
             <div className="native-ats-rec-name">Queue Token: {result.tokenNumber}</div>
