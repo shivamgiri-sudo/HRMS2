@@ -69,3 +69,17 @@ CREATE TABLE IF NOT EXISTS sensitive_data_access_log (
 -- 6. Also add encrypted column to ats_candidate for bank
 ALTER TABLE ats_candidate
   ADD COLUMN bank_account_no_encrypted TEXT NULL AFTER bank_account_no_hash;
+
+-- 7. Add file_missing status to document_status enum
+ALTER TABLE candidate_onboarding_document
+  MODIFY COLUMN document_status ENUM('uploaded','verification_pending','verified','mismatch','failed','manual_review','waived','deleted','file_missing') DEFAULT 'uploaded';
+
+-- 8. Mark documents with unreachable file paths (dev machines, wiped dist/ folder)
+UPDATE candidate_onboarding_document
+SET document_status = 'file_missing'
+WHERE deleted_at IS NULL
+  AND (
+    file_path LIKE 'C:%'
+    OR file_path LIKE '/home/shuvam%'
+    OR file_path LIKE '/var/www/HRMS2/backend/dist/%'
+  );
