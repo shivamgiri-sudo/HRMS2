@@ -37,6 +37,20 @@ Recruiter / HR assessment control portal:
 /api/ats-ext/assessment-admin
 ```
 
+Assessment template builder:
+
+```text
+/api/ats-ext/assessment-admin/template-builder
+```
+
+Legacy template-builder URL:
+
+```text
+/api/ats-ext/assessment-template-builder
+```
+
+The legacy URL redirects to the canonical template-builder route for backward compatibility.
+
 The candidate uses the existing queue token and registered mobile number. Process and role cannot be selected or overridden by the candidate. HRMS resolves them from the candidate record or an approved assessment mapping.
 
 ## Candidate journey
