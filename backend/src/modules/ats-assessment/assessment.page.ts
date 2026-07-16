@@ -1,5 +1,5 @@
 export function candidateAssessmentPage(): string {
-  return `<!doctype html>
+  return String.raw`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
