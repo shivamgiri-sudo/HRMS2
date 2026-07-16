@@ -24,10 +24,10 @@ function noStore(res: Response) {
 
 function enhancedAdminPage() {
   const html = assessmentAdminPage();
-  if (html.includes("/api/ats-ext/assessment-template-builder")) return html;
+  if (html.includes("/api/ats-ext/assessment-admin/template-builder")) return html;
   return html.replace(
     '<button id="syncTemplates" class="btn">Sync Built-in Templates</button>',
-    '<a class="btn secondary" href="/api/ats-ext/assessment-template-builder">Create Custom Template</a><button id="syncTemplates" class="btn">Sync Built-in Templates</button>',
+    '<a class="btn secondary" href="/api/ats-ext/assessment-admin/template-builder">Create Custom Template</a><button id="syncTemplates" class="btn">Sync Built-in Templates</button>',
   );
 }
 
@@ -36,9 +36,14 @@ assessmentBuilderPublicRouter.get("/assessment-admin", (_req, res) => {
   return res.type("html").send(enhancedAdminPage());
 });
 
-assessmentBuilderPublicRouter.get("/assessment-template-builder", (_req, res) => {
+assessmentBuilderPublicRouter.get("/assessment-admin/template-builder", (_req, res) => {
   noStore(res);
   return res.type("html").send(assessmentTemplateBuilderPage());
+});
+
+assessmentBuilderPublicRouter.get("/assessment-template-builder", (_req, res) => {
+  noStore(res);
+  return res.redirect(308, "/api/ats-ext/assessment-admin/template-builder");
 });
 
 assessmentBuilderProtectedRouter.post(
