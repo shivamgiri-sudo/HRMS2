@@ -136,7 +136,20 @@ router.post("/verify/court", bgvVerifyLimiter, h(async (req, res) => {
 router.post("/digilocker/start", bgvSensitiveLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
   if (!token) return res.status(400).json({ success: false, message: "token required" });
-  return res.json({ success: true, data: await startDigilockerByToken(token, Array.isArray(req.body.requestedDocuments) ? req.body.requestedDocuments : [], meta(req)) });
+  try {
+    return res.json({ success: true, data: await startDigilockerByToken(token, Array.isArray(req.body.requestedDocuments) ? req.body.requestedDocuments : [], meta(req)) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Provide a user-friendly error instead of raw provider error
+    if (msg.toLowerCase().includes("luckpay") || msg.toLowerCase().includes("provider") || msg.toLowerCase().includes("connection")) {
+      return res.status(503).json({
+        success: false,
+        message: "DigiLocker is temporarily unavailable. Please upload your Aadhaar and PAN documents manually instead.",
+        provider_error: msg,
+      });
+    }
+    throw err; // Re-throw unexpected errors
+  }
 }));
 
 // CI-BGV-01: HMAC-SHA256 signature validation

@@ -474,6 +474,17 @@ export const managementService = {
       };
     });
 
+    // Calculate system uptime
+    const uptimeSeconds = Math.floor(process.uptime());
+    const uptimeDays = Math.floor(uptimeSeconds / 86400);
+    const uptimeHours = Math.floor((uptimeSeconds % 86400) / 3600);
+    const uptimeMinutes = Math.floor((uptimeSeconds % 3600) / 60);
+    const uptimeFormatted = uptimeDays > 0
+      ? `${uptimeDays}d ${uptimeHours}h`
+      : uptimeHours > 0
+        ? `${uptimeHours}h ${uptimeMinutes}m`
+        : `${uptimeMinutes}m`;
+
     return {
       metrics: {
         totalUsers: numberValue(usersRows[0][0]?.total),
@@ -483,13 +494,24 @@ export const managementService = {
         activeIntegrations: numberValue(integrationRows[0][0]?.active),
         configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
         systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
+        uptime: uptimeFormatted,
       },
       modules,
       activities: activityRows[0],
     };
   },
 
-  async getWorkforceDashboard() {
+  async getWorkforceDashboard(branchId?: string, processId?: string, scopeLevel?: string) {
+    // Build scope WHERE fragment for employee table
+    const scopeConds: string[] = [];
+    const scopeParams: unknown[] = [];
+    if (branchId) { scopeConds.push("branch_id = ?"); scopeParams.push(branchId); }
+    if (processId) { scopeConds.push("process_id = ?"); scopeParams.push(processId); }
+    const empScopeWhere = scopeConds.length ? " AND " + scopeConds.join(" AND ") : "";
+    const empScopeJoinWhere = scopeConds.length
+      ? " AND " + scopeConds.map(c => "e." + c).join(" AND ")
+      : "";
+
     const [
       workforceResult,
       departmentResult,
@@ -515,40 +537,45 @@ export const managementService = {
            SUM(active_status = 1 AND department_id IS NULL) AS missing_department,
            SUM(active_status = 1 AND process_id IS NULL) AS missing_process,
            SUM(active_status = 1 AND (bank_account_number IS NULL OR bank_account_number = '')) AS missing_bank_details
-         FROM employees`,
+         FROM employees WHERE 1=1${empScopeWhere}`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT COALESCE(d.dept_name, 'Unassigned') AS label, COUNT(*) AS value
            FROM employees e
            LEFT JOIN department_master d ON d.id = e.department_id
-          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()${empScopeJoinWhere}
           GROUP BY d.dept_name
           ORDER BY value DESC
           LIMIT 10`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT COALESCE(b.branch_name, 'Unassigned') AS label, COUNT(*) AS value
            FROM employees e
            LEFT JOIN branch_master b ON b.id = e.branch_id
-          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()
+          WHERE e.active_status = 1 AND e.date_of_joining <= CURDATE()${empScopeJoinWhere}
           GROUP BY b.branch_name
           ORDER BY value DESC
           LIMIT 8`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT
            COALESCE(NULLIF(employee_category, ''), NULLIF(employment_type, ''), 'Unspecified') AS label,
            COUNT(*) AS value
          FROM employees
-         WHERE active_status = 1 AND date_of_joining <= CURDATE()
+         WHERE active_status = 1 AND date_of_joining <= CURDATE()${empScopeWhere}
          GROUP BY COALESCE(NULLIF(employee_category, ''), NULLIF(employment_type, ''), 'Unspecified')
          ORDER BY value DESC`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT DATE_FORMAT(date_of_joining, '%Y-%m') AS period, COUNT(*) AS value
            FROM employees
-          WHERE date_of_joining BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()
+          WHERE date_of_joining BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()${empScopeWhere}
           GROUP BY DATE_FORMAT(date_of_joining, '%Y-%m')`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -556,8 +583,9 @@ export const managementService = {
            COUNT(*) AS value
          FROM employees
          WHERE COALESCE(date_of_leaving, resignation_date, date_of_exit)
-           BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()
+           BETWEEN DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01') AND CURDATE()${empScopeWhere}
          GROUP BY DATE_FORMAT(COALESCE(date_of_leaving, resignation_date, date_of_exit), '%Y-%m')`,
+        scopeParams,
       ),
       db.execute<RowDataPacket[]>(
         `SELECT COALESCE(NULLIF(current_stage, ''), 'Unspecified') AS stage, COUNT(*) AS value
@@ -687,8 +715,106 @@ export const managementService = {
     const analystsInTraining =
       numberValue(training.ats_training) + numberValue(training.training_stage_candidates);
 
+    // Add missing fields for dashboard
+    const [onLeaveResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) as count
+       FROM leave_request
+       WHERE status = 'approved'
+         AND CURDATE() BETWEEN start_date AND end_date`
+    );
+    const onLeaveCount = numberValue(onLeaveResult[0]?.count);
+
+    const [branchCountResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
+    );
+    const totalBranches = numberValue(branchCountResult[0]?.count);
+
+    const [leaveSummaryResult] = await db.execute<RowDataPacket[]>(
+      `SELECT status, COUNT(*) as count
+       FROM leave_request
+       WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+       GROUP BY status`
+    );
+
+    const [recentJoinersResult] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code, full_name as employee_name, designation_id, date_of_joining as joining_date
+       FROM employees
+       WHERE employment_status = 'active'
+         AND date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       ORDER BY date_of_joining DESC
+       LIMIT 10`
+    );
+
+    const [branchSnapshotResult] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         b.id,
+         b.branch_name as name,
+         COUNT(DISTINCT e.id) as employee_count,
+         ROUND(
+           COUNT(DISTINCT s.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0),
+           2
+         ) as present_pct,
+         COUNT(DISTINCT s.employee_id) as present_count
+       FROM branch_master b
+       LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
+       LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
+         AND DATE(s.session_date) = CURDATE()
+         AND s.current_status IN ('Logged In','Active','Login','Rostered')
+       WHERE b.active_status = 1
+       GROUP BY b.id, b.branch_name
+       HAVING employee_count > 0
+       ORDER BY employee_count DESC
+       LIMIT 15`
+    );
+
+    // Calculate leave balance usage percentage
+    const [leaveUsageResult] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT lr.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0) as usage_pct
+       FROM employees e
+       LEFT JOIN leave_request lr ON lr.employee_id = e.id
+         AND lr.status = 'approved'
+         AND YEAR(lr.start_date) = YEAR(CURDATE())
+       WHERE e.employment_status = 'active'`
+    );
+    const leaveBalanceUsagePct = leaveUsageResult[0]?.usage_pct
+      ? Number(Number(leaveUsageResult[0].usage_pct).toFixed(2))
+      : null;
+
+    // Manager-specific: expense claims, work items
+    const [expenseResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM expense_claim WHERE status = 'pending'`
+    ).catch(() => [[{ count: 0 }]] as any);
+
+    const [overtaskResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
+    ).catch(() => [[{ overdue: 0 }]] as any);
+
+    // Team members snapshot for Manager dashboard roster panel
+    const [teamMembersResult] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id, e.employee_code, e.full_name as employee_name,
+         e.designation_id, e.employment_status,
+         b.branch_name,
+         COALESCE(
+           (SELECT adr.attendance_status FROM attendance_daily_record adr
+            WHERE adr.employee_id = e.id AND adr.record_date = CURDATE() LIMIT 1),
+           'not_marked'
+         ) as today_status
+       FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       WHERE e.employment_status = 'active'
+       ORDER BY e.full_name ASC
+       LIMIT 20`
+    ).catch(() => [[]] as any);
+
     return {
       generated_at: new Date().toISOString(),
+      scope: {
+        level: scopeLevel ?? "ORG_ALL",
+        branch_id: branchId ?? null,
+        process_id: processId ?? null,
+      },
       summary: {
         active_headcount: activeHeadcount,
         new_joiners_30d: numberValue(workforce.new_joiners_30d),
@@ -703,6 +829,38 @@ export const managementService = {
           ? Number(((productiveEquivalent / attendanceTotal) * 100).toFixed(2))
           : null,
       },
+      on_leave: onLeaveCount,
+      total_branches: totalBranches,
+      pending_leave_requests: numberValue(approvals.pending_leave_approvals),
+      pending_expense_claims: numberValue(expenseResult[0]?.count),
+      projects_at_risk: 0,
+      overdue_tasks: numberValue(overtaskResult[0]?.overdue),
+      team_members: teamMembersResult.map((row: RowDataPacket) => ({
+        id: String(row.id),
+        employee_code: String(row.employee_code),
+        employee_name: String(row.employee_name),
+        branch_name: row.branch_name ? String(row.branch_name) : null,
+        today_status: String(row.today_status),
+      })),
+      leave_balance_usage_pct: leaveBalanceUsagePct,
+      leave_summary: leaveSummaryResult.map((row) => ({
+        status: String(row.status),
+        count: numberValue(row.count),
+      })),
+      recent_joiners: recentJoinersResult.map((row) => ({
+        id: String(row.id),
+        employee_code: String(row.employee_code),
+        employee_name: String(row.employee_name),
+        designation_id: row.designation_id ? String(row.designation_id) : null,
+        joining_date: row.joining_date,
+      })),
+      branches: branchSnapshotResult.map((row) => ({
+        id: String(row.id),
+        branch_name: String(row.name),
+        employee_count: numberValue(row.employee_count),
+        present_count: numberValue(row.present_count),
+        present_pct: row.present_pct !== null ? Number(row.present_pct) : null,
+      })),
       movement,
       headcount_by_department: departmentResult[0].map((row) => ({
         label: String(row.label),
@@ -733,6 +891,43 @@ export const managementService = {
         training_needs_in_progress: numberValue(training.training_needs_in_progress),
         lms_in_progress: numberValue(training.lms_in_progress),
         onboarding_in_progress: numberValue(training.onboarding_in_progress),
+        // LMS live data (async, non-blocking)
+        certified_learners: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT SUM(certification_status IN ('certified','Certified')) AS cnt FROM trainee_master WHERE status != 'archived'`
+            );
+            return Number(rows[0]?.cnt ?? 0);
+          } catch { return null; }
+        })(),
+        lms_total_trainees: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT COUNT(*) AS cnt FROM trainee_master WHERE status != 'archived'`
+            );
+            return Number(rows[0]?.cnt ?? 0);
+          } catch { return null; }
+        })(),
+        lms_high_risk: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT COUNT(*) AS cnt FROM training_risk_log WHERE status = 'Open' AND severity IN ('HIGH','CRITICAL')`
+            );
+            return Number(rows[0]?.cnt ?? 0);
+          } catch { return null; }
+        })(),
+        lms_avg_completion: await (async () => {
+          try {
+            const { lmsDb } = await import("../../db/lms-mysql.js");
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT ROUND(AVG(course_completion_pct),1) AS avg_pct FROM trainee_master WHERE status != 'archived'`
+            );
+            return Number(rows[0]?.avg_pct ?? 0);
+          } catch { return null; }
+        })(),
       },
       actions: {
         pending_leave_approvals: numberValue(approvals.pending_leave_approvals),

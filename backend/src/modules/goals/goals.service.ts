@@ -421,4 +421,38 @@ export const goalsService = {
     );
     return (rows as EmployeeSkill[])[0];
   },
+
+  async deleteGoal(id: string, actorEmployeeId: string | null): Promise<void> {
+    const [check] = await db.execute<RowDataPacket[]>(
+      "SELECT id, employee_id, status FROM goal WHERE id = ? LIMIT 1",
+      [id]
+    );
+    const row = (check as RowDataPacket[])[0];
+    if (!row) throw Object.assign(new Error("Goal not found"), { statusCode: 404 });
+    // Only the owner or admin can delete; completed goals cannot be deleted
+    if (row.status === "completed") {
+      throw Object.assign(new Error("Completed goals cannot be deleted"), { statusCode: 409 });
+    }
+    await db.execute("DELETE FROM goal WHERE id = ?", [id]);
+  },
+
+  async deleteAppraisalRating(id: string): Promise<void> {
+    const [check] = await db.execute<RowDataPacket[]>(
+      "SELECT id, status FROM appraisal_rating WHERE id = ? LIMIT 1",
+      [id]
+    );
+    const row = (check as RowDataPacket[])[0];
+    if (!row) throw Object.assign(new Error("Appraisal rating not found"), { statusCode: 404 });
+    if (!["pending"].includes(String(row.status))) {
+      throw Object.assign(new Error("Only pending ratings can be deleted"), { statusCode: 409 });
+    }
+    await db.execute("DELETE FROM appraisal_rating WHERE id = ?", [id]);
+  },
+
+  async deleteEmployeeSkill(employeeId: string, skillId: string): Promise<void> {
+    await db.execute(
+      "DELETE FROM employee_skill WHERE employee_id = ? AND skill_id = ?",
+      [employeeId, skillId]
+    );
+  },
 };

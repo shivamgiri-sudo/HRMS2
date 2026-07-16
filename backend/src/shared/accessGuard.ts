@@ -49,16 +49,30 @@ export async function getEmployeeForUser(userId: string): Promise<{ id: string; 
 }
 
 /**
- * Check if user holds any of the given roles in MySQL user_roles.
+ * Check whether the user holds any requested role. Role assignments may come
+ * from user_roles or from an active scoped assignment; both are authoritative
+ * MySQL access records and must be evaluated together.
  */
 export async function hasRole(userId: string, ...roles: string[]): Promise<boolean> {
+  const normalizedRequested = new Set(roles.map((role) => String(role).trim().toLowerCase()));
+  if (normalizedRequested.size === 0) return false;
+
   const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
+     UNION
+     SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
+    [userId, userId],
+  ).catch(async () => db.execute<RowDataPacket[]>(
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-    [userId]
-  );
-  const userRoles = (rows as { role_key: string }[]).map((r) => r.role_key);
-  if (userRoles.includes("super_admin")) return true;
-  return roles.some((r) => userRoles.includes(r));
+    [userId],
+  ));
+
+  const userRoles = (rows as { role_key: string }[])
+    .map((row) => String(row.role_key ?? "").trim().toLowerCase())
+    .filter(Boolean);
+
+  if (userRoles.includes("super_admin") || userRoles.includes("admin")) return true;
+  return userRoles.some((role) => normalizedRequested.has(role));
 }
 
 /**

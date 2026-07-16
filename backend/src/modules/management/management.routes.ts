@@ -6,6 +6,8 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { managementService } from "./management.service.js";
 import { db } from "../../db/mysql.js";
+import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,8 +91,17 @@ router.get("/dashboard", requireRole("admin", "hr", "manager", "branch_head", "c
   ) });
 }));
 
-router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  res.json({ data: await managementService.getWorkforceDashboard() });
+router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager", "wfm", "payroll", "payroll_hr", "payroll_head", "finance_head", "ho_hr", "ho_payroll", "ho_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const ctx = await getUserRoleContext(req.authUser!.id);
+  const scope = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
+  // Allow ORG_ALL roles to override scope via query params
+  const branchId = scope.level === "ORG_ALL"
+    ? (req.query.branchId as string | undefined)
+    : (scope.branchIds[0] ?? undefined);
+  const processId = scope.level === "ORG_ALL"
+    ? (req.query.processId as string | undefined)
+    : (scope.processIds[0] ?? undefined);
+  res.json({ data: await managementService.getWorkforceDashboard(branchId, processId, scope.level) });
 }));
 
 router.get("/system-dashboard", requireRole("admin"), h(async (_req: AuthenticatedRequest, res: Response) => {

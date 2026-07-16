@@ -1153,12 +1153,35 @@ export async function submitInterviewUpdate(
     if ((raw.proxySubmission === true || raw.proxySubmission === "true") && actorUserId) {
       await conn.execute(
         `INSERT INTO ats_interview_submission_audit (id, submission_id, action, actor_user_id, snapshot)
-         VALUES (?, ?, 'UPDATE', ?, CAST(? AS JSON))`,
+         VALUES (?, ?, 'PROXY_SUBMISSION', ?, CAST(? AS JSON))`,
         [
           randomUUID(),
           submissionId,
           actorUserId,
           JSON.stringify({ proxySubmission: true, recruiterCode: recruiterProfile.recruiterCode, recruiterName: recruiterProfile.name }),
+        ]
+      );
+    }
+
+    // Audit substitute submissions in ats_sensitive_action_log
+    if (input.substituteFlag && input.substituteReason && actorUserId) {
+      await conn.execute(
+        `INSERT INTO ats_sensitive_action_log
+           (id, actor_user_id, action_type, entity_type, entity_id, action_details, created_at)
+         VALUES (?, ?, 'SUBSTITUTE_INTERVIEW_SUBMISSION', 'ats_interview_submission', ?, CAST(? AS JSON), NOW())`,
+        [
+          randomUUID(),
+          actorUserId,
+          submissionId,
+          JSON.stringify({
+            candidate_id: candidate.id,
+            candidate_code: candidate.candidate_code,
+            original_recruiter_name: candidate.recruiter_assigned_name,
+            substitute_recruiter_code: recruiterProfile.recruiterCode,
+            substitute_recruiter_name: recruiterProfile.name,
+            substitute_reason: input.substituteReason,
+            final_decision: finalDecision,
+          }),
         ]
       );
     }

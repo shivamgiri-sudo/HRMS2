@@ -114,12 +114,16 @@ const NativeBGVEnhanced = lazy(() => import("./pages/NativeBGVEnhanced"));
 const NativeBGVReport = lazy(() => import("./pages/NativeBGVReport"));
 const NativeBGVReportView = lazy(() => import("./pages/NativeBGVReportView"));
 const NativeBGVAPIMonitor = lazy(() => import("./pages/NativeBGVAPIMonitor"));
+const NativeReconciliationDashboard = lazy(() => import("./pages/NativeReconciliationDashboard"));
 const NativeEmployeeBGVStatus = lazy(() => import("./pages/NativeEmployeeBGVStatus"));
 
 const NativeLMSMyLearning = lazy(() => import("./pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator = lazy(() => import("./pages/NativeLMSCoordinator"));
 const LMSIntegrationAdmin = lazy(() => import("./pages/LMSIntegrationAdmin"));
-const NativePlaceholderPage = lazy(() => import("./pages/NativePlaceholderPage"));
+
+const NativeTATMatrix = lazy(() => import("./pages/NativeTATMatrix"));
+const NativeTATDashboard = lazy(() => import("./pages/NativeTATDashboard"));
+const NativeATSNameConsistency = lazy(() => import("./pages/NativeATSNameConsistency"));
 const NativeOperationsDashboard = lazy(() => import("./pages/NativeOperationsDashboard"));
 const NativeQualityDashboard = lazy(() => import("./pages/NativeQualityDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("./pages/NativeAgentPerformanceDashboard"));
@@ -200,6 +204,8 @@ const NativeBenefitsClaims          = lazy(() => import("./pages/NativeBenefitsC
 const NativeCareerPlanning          = lazy(() => import("./pages/NativeCareerPlanning"));
 const NativeERP                     = lazy(() => import("./pages/NativeERP"));
 const NativeVendorPaymentTracking   = lazy(() => import("./pages/NativeVendorPaymentTracking"));
+const NativeVendorManagement        = lazy(() => import("./pages/NativeVendorManagement"));
+const NativeProcurementPage         = lazy(() => import("./pages/NativeProcurementPage"));
 const ProcessPnlPage                = lazy(() => import("./pages/finance/ProcessPnlPage"));
 const ProcessPnlDetailPage          = lazy(() => import("./pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage   = lazy(() => import("./pages/finance/ProcessPnlConfigurationPage"));
@@ -292,6 +298,8 @@ const NativeCosecSyncMonitoring     = lazy(() => import("./pages/NativeCosecSync
 const NativeWorkforcePlanning       = lazy(() => import("./pages/NativeWorkforcePlanning"));
 const NativeITProvisioningTracker   = lazy(() => import("./pages/NativeITProvisioningTracker"));
 const NativeControlTower            = lazy(() => import("./pages/NativeControlTower"));
+const NativePIPManagement           = lazy(() => import("./pages/NativePIPManagement"));
+const NativeJobsPage                = lazy(() => import("./pages/NativeJobsPage"));
 const NativeBiometricCommandCenter  = lazy(() => import("./pages/NativeBiometricCommandCenter"));
 const NativeRTABoard                = lazy(() => import("./pages/NativeRTABoard"));
 const NativeWalkinQueue             = lazy(() => import("./pages/NativeWalkinQueueEnhanced"));
@@ -395,7 +403,7 @@ const App = () => (
               <Route path="/profile" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
               <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
-              <Route path="/reviews-management" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/reviews-management" element={<Navigate to="/performance-feedback/assignments" replace />} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
               <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
               <Route path="/attendance/regularizations" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
@@ -442,6 +450,7 @@ const App = () => (
               <Route path="/ats/bgv-report" element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
               <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr']}><NativeBGVReportView /></ProtectedRoute>} />
               <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
+              <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><NativeReconciliationDashboard /></ProtectedRoute>} />
               {/* Employee Reactivation */}
               <Route path="/employees/reactivation" element={<ProtectedRoute roles={['hr','admin','super_admin','branch_head','payroll_head']}><NativeEmployeeReactivation /></ProtectedRoute>} />
               {/* Employee self-view BGV status */}
@@ -538,24 +547,26 @@ const App = () => (
               <Route path="/org-masters/locations-policies" element={<ProtectedRoute><Gate pageCode="ORG_MASTERS"><NativeLocationPolicyMasters /></Gate></ProtectedRoute>} />
               <Route path="/workflow-admin" element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
               <Route path="/management/dashboard" element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
-              <Route path="/management/ceo-command-center" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/management/ceo-command-center" element={<Navigate to="/ceo/dashboard" replace />} />
               <Route path="/benefits" element={<ProtectedRoute><Gate pageCode="BENEFITS"><NativeBenefitsClaims /></Gate></ProtectedRoute>} />
               <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
-              <Route path="/pip-management" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
               <Route path="/erp" element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
+              <Route path="/vendors" element={<ProtectedRoute roles={['admin','super_admin','finance','manager']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
+              <Route path="/procurement" element={<ProtectedRoute><Gate pageCode="PROCUREMENT"><NativeProcurementPage /></Gate></ProtectedRoute>} />
               <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeVendorPaymentTracking /></ProtectedRoute>} />
               <Route path="/finance/grn" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeGRNManagement /></ProtectedRoute>} />
               <Route path="/finance/process-pnl" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/period-close" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><PnlPeriodClosePage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/:processId" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlDetailPage /></ProtectedRoute>} />
-              <Route path="/goals" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/goals" element={<Navigate to="/performance" replace />} />
               <Route path="/work-inbox" element={<ProtectedRoute><Gate pageCode="WORK_INBOX"><NativeWorkInbox /></Gate></ProtectedRoute>} />
               <Route path="/settings/ai-providers" element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
               <Route path="/peopleos/copilot" element={<ProtectedRoute><PeopleOSCopilot /></ProtectedRoute>} />
               <Route path="/mobility" element={<ProtectedRoute><Gate pageCode="MOBILITY"><NativeMobilityManagement /></Gate></ProtectedRoute>} />
               <Route path="/salary-increment" element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><NativeSalaryIncrement /></Gate></ProtectedRoute>} />
-              <Route path="/jobs" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/jobs" element={<ProtectedRoute><Gate pageCode="JOBS"><NativeJobsPage /></Gate></ProtectedRoute>} />
               <Route path="/advanced-reports" element={<Navigate to="/reports" replace />} />
               <Route path="/compliance/statutory" element={<ProtectedRoute><Gate pageCode="STATUTORY_COMPLIANCE"><NativeStatutoryCompliance /></Gate></ProtectedRoute>} />
               <Route path="/compliance/labour" element={<ProtectedRoute><Gate pageCode="LABOUR_COMPLIANCE"><NativeLabourCompliance /></Gate></ProtectedRoute>} />
@@ -627,7 +638,7 @@ const App = () => (
               <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
               <Route path="/wfm/auto-roster" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
-              <Route path="/control-tower" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/control-tower" element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><NativeControlTower /></ProtectedRoute>} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
               <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
@@ -659,11 +670,11 @@ const App = () => (
               <Route path="/compliance/dpdp-withdrawal-admin" element={<ProtectedRoute><Gate pageCode="DPDP_WITHDRAWAL_ADMIN"><NativeDPDPWithdrawalAdmin /></Gate></ProtectedRoute>} />
 
               {/* Governance / TAT */}
-              <Route path="/governance/tat-matrix" element={<ProtectedRoute><Gate pageCode="TAT_MATRIX"><NativePlaceholderPage title="TAT Matrix" module="Governance" /></Gate></ProtectedRoute>} />
-              <Route path="/governance/tat-dashboard" element={<ProtectedRoute><Gate pageCode="TAT_DASHBOARD"><NativePlaceholderPage title="TAT Dashboard" module="Governance" /></Gate></ProtectedRoute>} />
+              <Route path="/governance/tat-matrix" element={<ProtectedRoute roles={['admin','hr','super_admin']}><Gate pageCode="TAT_MATRIX"><NativeTATMatrix /></Gate></ProtectedRoute>} />
+              <Route path="/governance/tat-dashboard" element={<ProtectedRoute><Gate pageCode="TAT_DASHBOARD"><NativeTATDashboard /></Gate></ProtectedRoute>} />
 
               {/* ATS name consistency */}
-              <Route path="/ats/name-consistency" element={<ProtectedRoute><Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativePlaceholderPage title="Name Consistency Matrix" module="ATS" /></Gate></ProtectedRoute>} />
+              <Route path="/ats/name-consistency" element={<ProtectedRoute roles={['admin','hr','super_admin','recruiter']}><Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativeATSNameConsistency /></Gate></ProtectedRoute>} />
 
               {/* Appointment e-sign */}
               <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativeAppointmentEsign /></Gate></ProtectedRoute>} />
@@ -672,7 +683,7 @@ const App = () => (
 
               {/* Exit / Resignation */}
               <Route path="/exit/resignation" element={<ProtectedRoute><Gate pageCode="RESIGNATION_MY_REQUEST"><NativeMyResignation /></Gate></ProtectedRoute>} />
-              <Route path="/exit/resignation-command-center" element={<ProtectedRoute><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativePlaceholderPage title="Resignation Command Center" module="Exit Management" /></Gate></ProtectedRoute>} />
+              <Route path="/exit/resignation-command-center" element={<ProtectedRoute roles={['admin','hr','manager','finance','payroll','super_admin']}><Gate pageCode="RESIGNATION_COMMAND_CENTER"><NativeExitCommandCenter /></Gate></ProtectedRoute>} />
 
               {/* Public kiosk display — no auth required */}
               <Route path="/break-management/devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />

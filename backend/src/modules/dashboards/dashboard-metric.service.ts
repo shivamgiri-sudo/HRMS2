@@ -69,7 +69,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS active FROM employees WHERE status = 'active' AND ${scopeSql}`,
+      `SELECT COUNT(*) AS active FROM employees WHERE employment_status = 'active' AND ${scopeSql}`,
       scopeParams
     );
     const active = Number((rows[0] as any)?.active ?? 0);
@@ -100,7 +100,10 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
       availScopeParams
     ).catch(() => [[{ available_hc: null }]] as any);
 
-    const required = reqRows[0] != null ? Number((reqRows[0] as any).required_hc ?? 0) || null : null;
+    // Use scheduled/mandated HC, fall back to active headcount as baseline
+    const required = reqRows[0] != null
+      ? (Number((reqRows[0] as any).required_hc ?? 0) || active || null)
+      : (active || null);
     const available = availRows[0] != null ? Number((availRows[0] as any).available_hc ?? 0) : null;
     const short = required != null && available != null ? required - available : null;
 
@@ -149,27 +152,49 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
 
+    // Use live WFM attendance sessions for real-time present count
+    const [liveRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT s.employee_id) AS live_present
+       FROM wfm_attendance_session s
+       JOIN employees e ON e.id = s.employee_id
+       WHERE DATE(s.session_date) = ${IST_DATE_EXPR}
+         AND s.current_status IN ('Logged In', 'Active', 'Login', 'Rostered')
+         AND ${buildScopeWhere(scope, "e.branch_id", "e.process_id").sql}`,
+      buildScopeWhere(scope, "e.branch_id", "e.process_id").params
+    ).catch(() => [[{ live_present: 0 }]] as any);
+
+    // Get processed attendance records for detailed breakdown
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS present,
          SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
          SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS late,
-         SUM(CASE WHEN attendance_status = 'missed_punch' THEN 1 ELSE 0 END) AS missedPunch,
+         SUM(CASE WHEN attendance_status IN ('missing_punch', 'missed_punch') THEN 1 ELSE 0 END) AS missedPunch,
          COUNT(*) AS total
-       FROM wfm_attendance_session
-       WHERE DATE(session_date) = ${IST_DATE_EXPR} AND ${scopeSql}`,
+       FROM attendance_daily_record
+       WHERE record_date = ${IST_DATE_EXPR} AND ${scopeSql}`,
       scopeParams
     ).catch(() => [[null]] as any);
 
-    if (!rows[0]) return nullResult("ATTENDANCE");
+    // Get total active employees for attendance rate calculation
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total_employees FROM employees WHERE employment_status = 'active' AND ${scopeSql}`,
+      scopeParams
+    ).catch(() => [[{ total_employees: 0 }]] as any);
 
+    const livePresent = Number((liveRows[0] as any)?.live_present ?? 0);
+    const totalEmployees = Number((empRows[0] as any)?.total_employees ?? 0);
+
+    // Prefer live data, fall back to processed data
     const r = rows[0] as any;
-    const present = Number(r.present ?? 0);
-    const absent = Number(r.absent ?? 0);
-    const late = Number(r.late ?? 0);
-    const missedPunch = Number(r.missedPunch ?? 0);
-    const total = Number(r.total ?? 0);
-    const attendanceRate = total > 0 ? Math.round((present / total) * 100) : null;
+    const processedPresent = Number(r?.present ?? 0);
+    const absent = Number(r?.absent ?? 0);
+    const late = Number(r?.late ?? 0);
+    const missedPunch = Number(r?.missedPunch ?? 0);
+
+    // Use live present count if available, otherwise use processed
+    const present = livePresent > 0 ? livePresent : processedPresent;
+    const attendanceRate = totalEmployees > 0 ? Math.round((present / totalEmployees) * 100) : null;
 
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";

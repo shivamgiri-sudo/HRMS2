@@ -150,4 +150,55 @@ router.put("/rating-config/:processId", requireRole("admin", "hr"), h(async (req
   res.json({ success: true });
 }));
 
+// GET /api/kpi/org-summary?period=YYYY-MM — org-wide KPI summary for CEO dashboard
+router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const period = String(req.query.period ?? "").trim() || new Date().toISOString().slice(0, 7);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       ROUND(AVG(kda.score_pct), 2) AS org_avg_score,
+       COUNT(DISTINCT kda.employee_id) AS employees_scored,
+       COUNT(DISTINCT kda.process_id) AS processes_covered,
+       MAX(kda.score_pct) AS best_score,
+       MIN(kda.score_pct) AS lowest_score,
+       SUM(CASE WHEN kda.score_pct >= 90 THEN 1 ELSE 0 END) AS high_performers,
+       SUM(CASE WHEN kda.score_pct < 60 THEN 1 ELSE 0 END) AS needs_attention
+     FROM kpi_daily_actual kda
+     WHERE DATE_FORMAT(kda.record_date, '%Y-%m') = ?`,
+    [period]
+  ).catch(() => [[{}]] as any);
+
+  const [processRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       pm.process_name AS label,
+       ROUND(AVG(kda.score_pct), 2) AS avg_score,
+       COUNT(DISTINCT kda.employee_id) AS agents
+     FROM kpi_daily_actual kda
+     JOIN process_master pm ON pm.id = kda.process_id
+     WHERE DATE_FORMAT(kda.record_date, '%Y-%m') = ?
+     GROUP BY kda.process_id, pm.process_name
+     ORDER BY avg_score DESC
+     LIMIT 10`,
+    [period]
+  ).catch(() => [[]] as any);
+
+  const [trendRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(record_date, '%Y-%m') AS period, ROUND(AVG(score_pct), 2) AS avg_score
+     FROM kpi_daily_actual
+     WHERE record_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+     GROUP BY DATE_FORMAT(record_date, '%Y-%m')
+     ORDER BY period ASC`,
+    []
+  ).catch(() => [[]] as any);
+
+  return res.json({
+    success: true,
+    data: {
+      period,
+      summary: rows[0] ?? {},
+      by_process: processRows,
+      trend: trendRows,
+    },
+  });
+}));
+
 export { router as kpiRouter };
