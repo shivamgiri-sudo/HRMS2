@@ -1001,8 +1001,15 @@ export async function startAssessment(token: string, meta: Meta = {}) {
            WHERE id = ?`,
           [attempt.id],
         );
+        await safeAudit(
+          attempt.id,
+          "ASSESSMENT_EXPIRED_BEFORE_START",
+          {},
+          { ...meta, actorType: "system" },
+          executor,
+        );
         await connection.commit();
-        throw appError("Assessment assignment has expired", 410, "ASSESSMENT_EXPIRED");
+        return loadSessionData(await attemptByToken(token));
       }
       const durationSeconds = Number(template.duration_minutes) * 60 + ASSESSMENT_GRACE_SECONDS;
       await connection.execute(
