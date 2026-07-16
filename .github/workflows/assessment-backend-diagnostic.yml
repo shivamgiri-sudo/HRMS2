@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feat/ats-candidate-assessment-engine
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -31,7 +34,7 @@ jobs:
           npm run typecheck > ../assessment-backend-typecheck.log 2>&1
           code=$?
           echo "$code" > ../assessment-backend-typecheck.exit
-          tail -n 250 ../assessment-backend-typecheck.log
+          cat ../assessment-backend-typecheck.log
           exit 0
       - name: Capture focused tests
         working-directory: backend
@@ -41,7 +44,7 @@ jobs:
           npx vitest run src/modules/ats-assessment > ../assessment-backend-tests.log 2>&1
           code=$?
           echo "$code" > ../assessment-backend-tests.exit
-          tail -n 250 ../assessment-backend-tests.log
+          cat ../assessment-backend-tests.log
           exit 0
       - uses: actions/upload-artifact@v4
         with:
