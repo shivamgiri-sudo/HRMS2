@@ -109,5 +109,22 @@ jobs:
           await connection.end();
           NODE
       - name: Run MySQL lifecycle test
+        id: lifecycle
         working-directory: backend
-        run: npx vitest run src/modules/ats-assessment/__tests__/assessment.mysql.integration.test.ts
+        shell: bash
+        run: |
+          set +e
+          npx vitest run src/modules/ats-assessment/__tests__/assessment.mysql.integration.test.ts \
+            > ../assessment-mysql-lifecycle.log 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat ../assessment-mysql-lifecycle.log
+          exit 0
+      - name: Upload lifecycle diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: assessment-mysql-lifecycle-diagnostics
+          path: assessment-mysql-lifecycle.log
+          retention-days: 2
+      - name: Enforce lifecycle result
+        run: test "${{ steps.lifecycle.outputs.exit_code }}" = "0"
