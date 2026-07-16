@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          npx vitest run src/modules/ats-assessment > ../assessment-backend-tests.log 2>&1
+          npx vitest run src/modules/ats-assessment/__tests__ > ../assessment-backend-tests.log 2>&1
           code=$?
           echo "$code" > ../assessment-backend-tests.exit
           cat ../assessment-backend-tests.log
