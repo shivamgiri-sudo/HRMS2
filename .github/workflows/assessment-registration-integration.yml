@@ -1,0 +1,70 @@
+name: Assessment Registration Integration
+
+on:
+  push:
+    branches:
+      - feat/ats-candidate-assessment-engine
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ats-candidate-assessment-engine
+          fetch-depth: 0
+      - name: Add assessment launch to registration success
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          registration = Path('src/pages/NativeATSCandidateRegistration.tsx')
+          text = registration.read_text(encoding='utf-8')
+
+          old = '''  recruiterEmail?: string;\n  branch?: string;\n};'''
+          new = '''  recruiterEmail?: string;\n  branch?: string;\n  tokenNumber?: string;\n};'''
+          if old not in text:
+              raise SystemExit('SubmitResponse insertion point not found')
+          text = text.replace(old, new, 1)
+
+          old = '''const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; recruiter?: any; message?: string; data?: any }>('''
+          new = '''const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; tokenNumber?: string | null; recruiter?: any; message?: string; data?: any }>('''
+          if old not in text:
+              raise SystemExit('Registration API response type not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        recruiterName: apiRes.recruiter?.name || coreData.recruiterName || "",\n        branch: apiRes.branchName ?? coreData.branch ?? "",\n      };'''
+          new = '''        recruiterName: apiRes.recruiter?.name || coreData.recruiterName || "",\n        branch: apiRes.branchName ?? coreData.branch ?? "",\n        tokenNumber: apiRes.tokenNumber ?? apiRes.data?.tokenNumber ?? "",\n      };'''
+          if old not in text:
+              raise SystemExit('Registration result mapping not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        <div className={`native-ats-upload-status ${uploadStatus}`}>\n          {uploadStatus === "uploading" && <div className="native-ats-us-spin" />}\n          <span>{uploadMessage}</span>\n        </div>\n        <div className="native-ats-rec-card">'''
+          new = '''        <div className={`native-ats-upload-status ${uploadStatus}`}>\n          {uploadStatus === "uploading" && <div className="native-ats-us-spin" />}\n          <span>{uploadMessage}</span>\n        </div>\n        {result?.tokenNumber && (\n          <div className="native-ats-rec-card" style={{ borderColor: "#99f6e4", background: "#f0fdfa" }}>\n            <div className="native-ats-rec-sec-title">Complete Assessment While You Wait</div>\n            <div className="native-ats-rec-name">Queue Token: {result.tokenNumber}</div>\n            <div className="native-ats-rec-row">📝 <span>Your process-specific assessment is available before the HR interview.</span></div>\n            <div className="native-ats-rec-row">⏱️ <span>The assessment attempt is available only once. Typing sections allow a maximum of two attempts.</span></div>\n            <div className="native-ats-rec-actions">\n              <a\n                className="native-ats-rec-btn"\n                href={`/api/ats-ext/assessment?queueToken=${encodeURIComponent(result.tokenNumber)}`}\n              >\n                Start Assessment\n              </a>\n            </div>\n          </div>\n        )}\n        <div className="native-ats-rec-card">'''
+          if old not in text:
+              raise SystemExit('Registration success insertion point not found')
+          text = text.replace(old, new, 1)
+          registration.write_text(text, encoding='utf-8')
+
+          candidate_page = Path('backend/src/modules/ats-assessment/assessment.page.ts')
+          page = candidate_page.read_text(encoding='utf-8')
+          old = '''const savedToken=new URLSearchParams(location.hash.slice(1)).get("token")||localStorage.getItem("ats_candidate_assessment_token");if(savedToken){token=savedToken;storeToken(savedToken);refreshSession()}'''
+          new = '''const queueFromQuery=new URLSearchParams(location.search).get("queueToken");if(queueFromQuery)$("queueToken").value=queueFromQuery;const savedToken=new URLSearchParams(location.hash.slice(1)).get("token")||localStorage.getItem("ats_candidate_assessment_token");if(savedToken){token=savedToken;storeToken(savedToken);refreshSession()}'''
+          if old not in page:
+              raise SystemExit('Candidate page query insertion point not found')
+          candidate_page.write_text(page.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/assessment-registration-integration.yml
+      - name: Commit registration integration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/pages/NativeATSCandidateRegistration.tsx backend/src/modules/ats-assessment/assessment.page.ts .github/workflows/assessment-registration-integration.yml
+          git commit -m 'feat(ats-assessment): launch assessment after registration'
+          git push origin HEAD:feat/ats-candidate-assessment-engine
