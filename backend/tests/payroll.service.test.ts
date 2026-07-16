@@ -208,18 +208,24 @@ describe("payrollService.getRun", () => {
 });
 
 describe("payrollService.updateRunStatus", () => {
-  it("advances run status", async () => {
-    exec.mockResolvedValueOnce([[fakeRun], []]); // getRun
+  it("advances run status via valid transition", async () => {
+    exec.mockResolvedValueOnce([[fakeRun], []]); // getRun (status: draft)
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-    exec.mockResolvedValueOnce([[{ ...fakeRun, status: "approved" }], []]); // re-fetch
-    const r = await payrollService.updateRunStatus("run-1", { status: "approved" }, "user-1");
-    expect(r.status).toBe("approved");
+    exec.mockResolvedValueOnce([[{ ...fakeRun, status: "calculating" }], []]); // re-fetch
+    const r = await payrollService.updateRunStatus("run-1", { status: "calculating" }, "user-1");
+    expect(r.status).toBe("calculating");
   });
 
   it("throws when disbursed run tries to change status", async () => {
     exec.mockResolvedValueOnce([[{ ...fakeRun, status: "disbursed" }], []]);
     await expect(payrollService.updateRunStatus("run-1", { status: "locked" }, "user-1"))
-      .rejects.toThrow("disbursed");
+      .rejects.toThrow("terminal");
+  });
+
+  it("rejects invalid transition (draft → approved skip)", async () => {
+    exec.mockResolvedValueOnce([[fakeRun], []]); // getRun (status: draft)
+    await expect(payrollService.updateRunStatus("run-1", { status: "approved" }, "user-1"))
+      .rejects.toThrow("not allowed");
   });
 });
 
@@ -244,8 +250,9 @@ describe("payrollService.listLines", () => {
 });
 
 describe("payrollService.updateLine", () => {
-  it("updates prep line", async () => {
-    exec.mockResolvedValueOnce([[fakeLine], []]); // get
+  it("updates prep line when run is editable", async () => {
+    exec.mockResolvedValueOnce([[fakeLine], []]); // getLine
+    exec.mockResolvedValueOnce([[{ status: "draft" }], []]); // run status check
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
     exec.mockResolvedValueOnce([[{ ...fakeLine, lwp_days: 2 }], []]); // re-fetch
     const r = await payrollService.updateLine("line-1", { lwpDays: 2 }, "user-1");
@@ -255,6 +262,13 @@ describe("payrollService.updateLine", () => {
   it("throws when line not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
     await expect(payrollService.updateLine("nope", {}, "user-1")).rejects.toThrow("Prep line not found");
+  });
+
+  it("throws when run is not editable", async () => {
+    exec.mockResolvedValueOnce([[fakeLine], []]); // getLine
+    exec.mockResolvedValueOnce([[{ status: "locked" }], []]); // run status = locked
+    await expect(payrollService.updateLine("line-1", { lwpDays: 2 }, "user-1"))
+      .rejects.toThrow('Cannot edit line');
   });
 });
 

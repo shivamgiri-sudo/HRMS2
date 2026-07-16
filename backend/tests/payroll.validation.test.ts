@@ -105,6 +105,29 @@ describe("runFiltersSchema", () => {
     const r = runFiltersSchema.parse({ runMonth: "2026-05" });
     expect(r.runMonth).toBe("2026-05");
   });
+  it("accepts month-only filter (independent)", () => {
+    const r = runFiltersSchema.parse({ month: "7" });
+    expect(r.month).toBe(7);
+    expect(r.year).toBeUndefined();
+  });
+  it("accepts year-only filter (independent)", () => {
+    const r = runFiltersSchema.parse({ year: "2026" });
+    expect(r.year).toBe(2026);
+    expect(r.month).toBeUndefined();
+  });
+  it("accepts month + year together", () => {
+    const r = runFiltersSchema.parse({ month: "3", year: "2025" });
+    expect(r.month).toBe(3);
+    expect(r.year).toBe(2025);
+  });
+  it("rejects month out of range", () => {
+    expect(() => runFiltersSchema.parse({ month: "13" })).toThrow();
+    expect(() => runFiltersSchema.parse({ month: "0" })).toThrow();
+  });
+  it("rejects year out of range", () => {
+    expect(() => runFiltersSchema.parse({ year: "1999" })).toThrow();
+    expect(() => runFiltersSchema.parse({ year: "2101" })).toThrow();
+  });
 });
 
 describe("advanceSchema", () => {
