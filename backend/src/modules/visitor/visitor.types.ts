@@ -67,4 +67,3 @@ export const VISIT_TRANSITIONS: Readonly<Record<VisitStatus, readonly VisitStatu
 export function canTransitionVisit(from: VisitStatus, to: VisitStatus): boolean {
   return VISIT_TRANSITIONS[from]?.includes(to) ?? false;
 }
-

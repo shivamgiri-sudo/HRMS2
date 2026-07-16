@@ -338,6 +338,10 @@ const BreakDesk = lazy(() => import("./pages/BreakDesk"));
 const BreakDeskDevices = lazy(() => import("./pages/BreakDeskDevices"));
 const BreakReports = lazy(() => import("./pages/BreakReports"));
 const WaitingRoomDisplay = lazy(() => import("./pages/WaitingRoomDisplay"));
+const VisitorManagement = lazy(() => import("./pages/VisitorManagement"));
+const VisitorApprovals = lazy(() => import("./pages/VisitorApprovals"));
+const VisitorDesk = lazy(() => import("./pages/VisitorDesk"));
+const VisitorSecurityOperations = lazy(() => import("./pages/VisitorSecurityOperations"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -690,6 +694,10 @@ const App = () => (
               <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
               <Route path="/break-reports" element={<ProtectedRoute roles={['super_admin', 'admin', 'hr', 'wfm', 'manager', 'process_manager']}><BreakReports /></ProtectedRoute>} />
               <Route path="/break-desk" element={<BreakDeskErrorBoundary><BreakDesk /></BreakDeskErrorBoundary>} />
+              <Route path="/visitor-management" element={<ProtectedRoute><VisitorManagement /></ProtectedRoute>} />
+              <Route path="/visitor-management/approvals" element={<ProtectedRoute><VisitorApprovals /></ProtectedRoute>} />
+              <Route path="/visitor-management/desk" element={<ProtectedRoute><VisitorDesk /></ProtectedRoute>} />
+              <Route path="/visitor-management/security" element={<ProtectedRoute><VisitorSecurityOperations /></ProtectedRoute>} />
               <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
 
               <Route path="*" element={<NotFound />} />

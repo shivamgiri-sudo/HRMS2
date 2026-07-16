@@ -4,20 +4,21 @@ export function CompanyLogo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 
   return (
     <div style={{
-      width: px,
+      width: px * 2.35,
       height: px,
-      borderRadius: '12px',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      borderRadius: '10px',
+      background: '#ffffff',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      fontWeight: 900,
-      color: 'white',
-      fontSize: px * 0.4,
-      boxShadow: '0 4px 12px rgba(102,126,234,0.3)',
-      fontFamily: 'Nunito, sans-serif'
+      padding: Math.max(4, px * 0.12),
+      boxShadow: '0 4px 14px rgba(15, 23, 42, 0.12)',
     }}>
-      MAS
+      <img
+        src="/mcn-logo.png"
+        alt="MAS Services"
+        style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
+      />
     </div>
   );
 }
