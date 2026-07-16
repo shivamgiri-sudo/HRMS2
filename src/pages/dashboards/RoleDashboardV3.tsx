@@ -884,9 +884,9 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
             <SectionCard title="My Leave Balance" action={<Link to="/leaves" className="inline-flex items-center gap-1 text-xs font-bold text-blue-600">View policy <ArrowRight className="h-3 w-3" /></Link>}>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 {leaveBalances.slice(0, 8).map((balance: any, index) => {
-                  const name = String(balance.leaveType ?? balance.leave_type ?? balance.name ?? `Leave ${index + 1}`);
-                  const remaining = asNumber(balance.balance ?? balance.remaining ?? balance.available);
-                  const total = asNumber(balance.total ?? balance.entitled ?? balance.allocated);
+                  const name = String(balance.leave_name ?? balance.leaveType ?? balance.leave_type ?? balance.name ?? `Leave ${index + 1}`);
+                  const remaining = asNumber(balance.available_days ?? balance.balance ?? balance.remaining ?? balance.available);
+                  const total = asNumber(balance.allocated_days ?? balance.total ?? balance.entitled ?? balance.allocated);
                   return (
                     <div key={`${name}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                       <p className="text-xs font-bold text-slate-500">{name}</p>

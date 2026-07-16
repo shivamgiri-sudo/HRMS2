@@ -25,8 +25,8 @@ import { EmployeeReferenceLayout } from "./reference/EmployeeReferenceLayout";
 import { HrReferenceLayout } from "./reference/HrReferenceLayout";
 import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
-import { ReferenceDashboardShell } from "./reference/ReferenceDashboardShell";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import "./role-dashboard-reference.css";
@@ -125,7 +125,7 @@ const EMPTY_EMPLOYEE: EmployeeDashboardData = {
   sourceErrors: [],
 };
 
-export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashboardVariant }) {
+export default function ReferenceRoleDashboard({ variant, subheader }: { variant: RoleDashboardVariant; subheader?: React.ReactNode }) {
   const { data: roleData, isLoading: roleLoading } = useUserRole();
   const [branchId, setBranchId] = useState("");
   const [processId, setProcessId] = useState("");
@@ -289,15 +289,15 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
 
   if (roleLoading) {
     return (
-      <ReferenceDashboardShell variant={variant}>
+      <DashboardLayout subheader={subheader}>
         <div className="space-y-4 p-2"><Skeleton className="h-12 w-80 max-w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-80 w-full" /></div>
-      </ReferenceDashboardShell>
+      </DashboardLayout>
     );
   }
 
   if (!accessGranted) {
     return (
-      <ReferenceDashboardShell variant={variant}>
+      <DashboardLayout subheader={subheader}>
         <div className="flex min-h-[65vh] items-center justify-center p-6">
           <div className="w-full max-w-md rounded-xl border border-[#ffdadd] bg-white p-8 text-center shadow-sm">
             <ShieldX className="mx-auto h-12 w-12 text-[#ef4444]" />
@@ -305,14 +305,14 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
             <p className="mt-2 text-sm text-[#61708a]">Your assigned roles do not permit access to this dashboard.</p>
           </div>
         </div>
-      </ReferenceDashboardShell>
+      </DashboardLayout>
     );
   }
 
   const employeeName = roleData?.employeeName ?? roleData?.employeeCode ?? "Employee";
 
   return (
-    <ReferenceDashboardShell variant={variant}>
+    <DashboardLayout subheader={subheader}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
@@ -324,6 +324,6 @@ export default function ReferenceRoleDashboard({ variant }: { variant: RoleDashb
         {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} /> : null}
         {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} /> : null}
       </main>
-    </ReferenceDashboardShell>
+    </DashboardLayout>
   );
 }
