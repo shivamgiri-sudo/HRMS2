@@ -46,6 +46,31 @@ jobs:
           echo "$code" > ../assessment-backend-tests.exit
           cat ../assessment-backend-tests.log
           exit 0
+      - name: Extract and check generated portal scripts
+        working-directory: backend
+        shell: bash
+        run: |
+          set +e
+          cat > /tmp/export-assessment-pages.ts <<'TS'
+          import { writeFileSync } from 'node:fs';
+          import { candidateAssessmentPage } from '/home/runner/work/HRMS2/HRMS2/backend/src/modules/ats-assessment/assessment.page.ts';
+          import { assessmentAdminPage } from '/home/runner/work/HRMS2/HRMS2/backend/src/modules/ats-assessment/assessment.admin.page.ts';
+          function script(page: string) {
+            const match = page.match(/<script>([\s\S]*?)<\/script>/i);
+            if (!match) throw new Error('script not found');
+            return match[1];
+          }
+          writeFileSync('/home/runner/work/HRMS2/HRMS2/candidate-assessment-generated.js', script(candidateAssessmentPage()));
+          writeFileSync('/home/runner/work/HRMS2/HRMS2/admin-assessment-generated.js', script(assessmentAdminPage()));
+          TS
+          npx tsx /tmp/export-assessment-pages.ts
+          node --check ../candidate-assessment-generated.js > ../candidate-portal-check.log 2>&1
+          echo "$?" > ../candidate-portal-check.exit
+          node --check ../admin-assessment-generated.js > ../admin-portal-check.log 2>&1
+          echo "$?" > ../admin-portal-check.exit
+          cat ../candidate-portal-check.log
+          cat ../admin-portal-check.log
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: assessment-backend-diagnostics
@@ -54,9 +79,17 @@ jobs:
             assessment-backend-typecheck.exit
             assessment-backend-tests.log
             assessment-backend-tests.exit
+            candidate-assessment-generated.js
+            admin-assessment-generated.js
+            candidate-portal-check.log
+            candidate-portal-check.exit
+            admin-portal-check.log
+            admin-portal-check.exit
           retention-days: 2
       - name: Enforce result
         shell: bash
         run: |
           test "$(cat assessment-backend-typecheck.exit)" = "0"
           test "$(cat assessment-backend-tests.exit)" = "0"
+          test "$(cat candidate-portal-check.exit)" = "0"
+          test "$(cat admin-portal-check.exit)" = "0"
