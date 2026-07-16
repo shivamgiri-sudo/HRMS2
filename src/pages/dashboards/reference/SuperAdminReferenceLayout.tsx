@@ -125,7 +125,7 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
         </ReferencePanel>
 
         <ReferencePanel title="Quick Actions">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <ReferenceQuickLink icon={UserPlus} title="Add Employee" href="/employees" tone="blue" />
             <ReferenceQuickLink icon={Megaphone} title="Create Announcement" href="/communication/dispatch" tone="red" />
             <ReferenceQuickLink icon={Database} title="Bulk Import" href="/bulk-upload" tone="green" />
