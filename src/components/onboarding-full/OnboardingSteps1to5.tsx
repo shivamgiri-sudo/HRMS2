@@ -42,9 +42,9 @@ const REQUIRED_DOCS = [
   { type: "Address Proof", label: "Address Proof", required: true },
   { type: "Cancelled Cheque", label: "Cancelled Cheque / Bank Passbook", required: true },
   { type: "Passport Photo", label: "Passport Size Photo", required: true },
-  { type: "10th Marksheet", label: "10th Marksheet / Certificate (if applicable)", required: false },
-  { type: "12th Marksheet", label: "12th Marksheet (if applicable)", required: false },
-  { type: "Degree Certificate", label: "Degree / Diploma Certificate (if applicable)", required: false },
+  { type: "10th Marksheet", label: "10th Marksheet / Certificate", required: true },
+  { type: "12th Marksheet", label: "12th Marksheet / Diploma Certificate", required: true },
+  { type: "Degree Certificate", label: "Degree / Graduation Certificate (if applicable)", required: false },
   { type: "Experience Letter", label: "Experience Letter (if experienced)", required: false },
   { type: "Relieving Letter", label: "Relieving Letter (if experienced)", required: false },
   { type: "Salary Slip", label: "Last Salary Slip (if experienced)", required: false },
@@ -864,28 +864,28 @@ export function Step5Bgv({
         </div>
 
         {/* Cross-step navigation hints */}
-        {consentAccepted && (
+        {consentAccepted && status?.documents && (
           <div className="rounded-xl border-2 border-blue-100 bg-blue-50 px-4 py-3">
             <p className="text-xs font-bold text-blue-900 mb-2">Quick Status Check:</p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center gap-1.5">
-                {status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? (
+                {status.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                 ) : (
                   <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
                 )}
-                <span className={status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? "text-emerald-700" : "text-amber-700"}>
-                  Aadhaar doc: {status?.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? "Uploaded ✓" : "Upload in Step 4"}
+                <span className={status.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? "text-emerald-700" : "text-amber-700"}>
+                  Aadhaar doc: {status.documents.find((d) => d.doc_type.toLowerCase().includes("aadhaar")) ? "Uploaded ✓" : "Upload in Step 4"}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {status?.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? (
+                {status.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                 ) : (
                   <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
                 )}
-                <span className={status?.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? "text-emerald-700" : "text-amber-700"}>
-                  PAN doc: {status?.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? "Uploaded ✓" : "Optional"}
+                <span className={status.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? "text-emerald-700" : "text-amber-700"}>
+                  PAN doc: {status.documents.find((d) => d.doc_type.toLowerCase().includes("pan")) ? "Uploaded ✓" : "Optional"}
                 </span>
               </div>
             </div>
