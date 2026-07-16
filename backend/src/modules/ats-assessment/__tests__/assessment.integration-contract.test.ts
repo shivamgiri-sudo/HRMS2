@@ -19,11 +19,14 @@ describe("ATS assessment integration contracts", () => {
     expect(routes).toContain('router.get("/requisitions"');
   });
 
-  it("adds the registration launch only when an existing queue token is returned", () => {
+  it("adds the registration launch only when a queue token exists and the feature is enabled", () => {
     const registration = readRepositoryFile("src/pages/NativeATSCandidateRegistration.tsx");
     expect(registration).toContain("tokenNumber?: string");
     expect(registration).toContain("apiRes.tokenNumber ?? apiRes.data?.tokenNumber");
-    expect(registration).toContain("{result?.tokenNumber && (");
+    expect(registration).toContain("const [assessmentEnabled, setAssessmentEnabled] = useState(false)");
+    expect(registration).toContain('/api/ats-ext/assessment/health');
+    expect(registration).toContain('health.data?.status === "enabled"');
+    expect(registration).toContain("{result?.tokenNumber && assessmentEnabled && (");
     expect(registration).toContain("/api/ats-ext/assessment?queueToken=");
     expect(registration).toContain('setScreen("success")');
     expect(registration).toContain("Consent logging failure must not block successful registration");
