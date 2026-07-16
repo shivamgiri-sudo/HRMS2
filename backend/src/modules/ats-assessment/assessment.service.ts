@@ -1274,9 +1274,9 @@ export async function submitTypingAttempt(
     if (!typing) throw appError("Typing attempt not found", 404, "TYPING_ATTEMPT_NOT_FOUND");
 
     if (typing.submitted_at) {
-      const existingResult = parseJson(typing.result_json, null);
+      const existingResult = parseJson<Record<string, unknown>>(typing.result_json, {});
       await connection.commit();
-      return { ...(existingResult as Record<string, unknown>), attemptNo: typing.attempt_no, attemptsRemaining: 2 - typing.attempt_no, alreadySubmitted: true };
+      return { ...existingResult, attemptNo: typing.attempt_no, attemptsRemaining: 2 - typing.attempt_no, alreadySubmitted: true };
     }
 
     const started = dateMs(typing.started_at) ?? Date.now();
