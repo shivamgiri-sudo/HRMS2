@@ -1,0 +1,53 @@
+name: Assessment Migration Wiring
+
+on:
+  push:
+    branches:
+      - feat/ats-candidate-assessment-engine
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ats-candidate-assessment-engine
+          fetch-depth: 0
+      - name: Add migration 408 to canonical runners
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          manifest = Path('backend/src/db/runPendingMigrations.ts')
+          text = manifest.read_text(encoding='utf-8')
+          entry = '  "408_ats_candidate_assessment_engine.sql",\n'
+          if '408_ats_candidate_assessment_engine.sql' not in text:
+              anchor = '  "407_shift_roster_bulk_upload_template.sql",\n'
+              if anchor not in text:
+                  raise SystemExit('Migration 407 anchor not found')
+              text = text.replace(anchor, anchor + entry, 1)
+              manifest.write_text(text, encoding='utf-8')
+
+          run_all = Path('backend/sql/000_run_all.sql')
+          sql = run_all.read_text(encoding='utf-8')
+          source = 'SOURCE sql/408_ats_candidate_assessment_engine.sql;\n'
+          if source not in sql:
+              anchor = 'SOURCE sql/404_payroll_incentive_tracking.sql;\n'
+              if anchor not in sql:
+                  raise SystemExit('Migration 404 anchor not found')
+              sql = sql.replace(anchor, anchor + '\n-- ── ATS candidate assessment engine (408) ───────────────────────────────────\n' + source, 1)
+              run_all.write_text(sql, encoding='utf-8')
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/assessment-migration-wiring.yml
+      - name: Commit wiring
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/db/runPendingMigrations.ts backend/sql/000_run_all.sql .github/workflows/assessment-migration-wiring.yml
+          git commit -m 'chore(ats-assessment): wire migration 408 into runners'
+          git push origin HEAD:feat/ats-candidate-assessment-engine
