@@ -94,6 +94,8 @@ export const updateOvertimeSchema = z.object({
 
 export const runFiltersSchema = z.object({
   runMonth: z.string().regex(MONTH_REGEX).optional(),
+  month: z.coerce.number().int().min(1).max(12).optional(),
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
   status: z.string().optional(),
   branchId: z.string().uuid().optional(),
   processId: z.string().uuid().optional(),

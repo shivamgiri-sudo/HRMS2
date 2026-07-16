@@ -22,8 +22,11 @@ export interface SalaryComponent {
   taxable?: boolean;
 }
 
+export type PayrollDisplayStatus = "pending" | "processing" | "paid" | "cancelled";
+
 export interface PayrollRecord {
   id: string;
+  lineId: string;
   runId: string;
   employeeId: string;
   employeeCode: string;
@@ -35,20 +38,26 @@ export interface PayrollRecord {
   month: string;
   monthNum: number;
   year: number;
+  runMonth: string;
   basic: number;
   hra: number;
   specialAllowance: number;
   incentiveTotal: number;
-  allowances: number;
-  deductions: number;
+  totalAllowances: number;
+  grossSalary: number;
+  totalDeductions: number;
   netSalary: number;
-  status: "pending" | "processing" | "paid";
+  earningComponents: SalaryComponent[];
+  deductionComponents: SalaryComponent[];
+  employerCostComponents: SalaryComponent[];
+  status: PayrollDisplayStatus;
+  runStatus: string;
+  lineStatus: string;
   paidAt?: string;
   designation?: string;
   department?: string;
   branch?: string;
   process?: string;
-  // Attendance breakdown (from salary_prep_line)
   workingDays?: number;
   presentDays?: number;
   leaveDays?: number;
@@ -58,7 +67,6 @@ export interface PayrollRecord {
   eligibleHolidayDays?: number;
   paidWorkingDays?: number;
   finalPayableDays?: number;
-  // Deduction components (from salary_prep_line)
   pfEmployee?: number;
   esicEmployee?: number;
   professionalTax?: number;
@@ -66,10 +74,6 @@ export interface PayrollRecord {
   lwpDeduction?: number;
   advanceRecovery?: number;
   otherDeductions?: number;
-  // Component arrays for detailed breakdown
-  earnings?: SalaryComponent[];
-  deductions?: SalaryComponent[];
-  employer_costs?: SalaryComponent[];
 }
 
 const MONTH_NAMES = [
@@ -82,11 +86,15 @@ const toRunMonth = (month?: number, year?: number) => {
   return `${year}-${String(month).padStart(2, "0")}`;
 };
 
-const normalizePayrollStatus = (runStatus?: string, lineStatus?: string): PayrollRecord["status"] => {
+const normalizePayrollStatus = (runStatus?: string, lineStatus?: string): PayrollDisplayStatus => {
   const run = String(runStatus || "").toLowerCase();
   const line = String(lineStatus || "").toLowerCase();
-  if (["disbursed", "finalized", "finalised", "paid"].includes(run)) return "paid";
-  if (["processing", "reviewed", "approved", "locked"].includes(run) || line === "calculated") return "processing";
+  if (run === "cancelled") return "cancelled";
+  if (["disbursed", "finalized", "finalised", "paid", "reconciled"].includes(run)) return "paid";
+  if (["calculating", "calculated", "under_review", "reviewed", "approved", "locked",
+       "finance_pending", "finance_approved", "bank_file_generated",
+       "disbursement_initiated", "partially_failed", "processing"].includes(run)
+      || line === "calculated") return "processing";
   return "pending";
 };
 
@@ -94,13 +102,14 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
   const [yearStr, monthStr] = String(row.run_month ?? "").split("-");
   const monthNum = Number(monthStr || 0);
   const employeeName = String(row.employee_name ?? "").trim() || row.employee_code || "Unknown Employee";
-  const allowances =
+  const totalAllowances =
     Number(row.hra ?? 0) +
     Number(row.special_allowance ?? 0) +
     Number(row.incentive_total ?? 0);
 
   return {
     id: String(row.id),
+    lineId: String(row.id),
     runId: String(row.run_id ?? ""),
     employeeId: String(row.employee_id ?? ""),
     employeeCode: String(row.employee_code ?? ""),
@@ -112,14 +121,21 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     month: MONTH_NAMES[monthNum - 1] ?? String(row.run_month ?? ""),
     monthNum,
     year: Number(yearStr || 0),
+    runMonth: String(row.run_month ?? ""),
     basic: Number(row.basic ?? 0),
     hra: Number(row.hra ?? 0),
     specialAllowance: Number(row.special_allowance ?? 0),
     incentiveTotal: Number(row.incentive_total ?? 0),
-    allowances,
-    deductions: Number(row.total_deductions ?? 0),
+    totalAllowances,
+    grossSalary: Number(row.gross_salary ?? 0),
+    totalDeductions: Number(row.total_deductions ?? 0),
     netSalary: Number(row.net_salary ?? 0),
+    earningComponents: Array.isArray(row.earnings) ? row.earnings : [],
+    deductionComponents: Array.isArray(row.deductions) ? row.deductions : [],
+    employerCostComponents: Array.isArray(row.employer_costs) ? row.employer_costs : [],
     status: normalizePayrollStatus(row.run_status, row.line_status),
+    runStatus: String(row.run_status ?? ""),
+    lineStatus: String(row.line_status ?? ""),
     paidAt: row.disbursed_at ? String(row.disbursed_at).slice(0, 10) : undefined,
     designation: row.designation_name ?? row.designation ?? undefined,
     department:  row.dept_name ?? row.department_name ?? row.department ?? undefined,
@@ -141,9 +157,6 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,
     advanceRecovery:      row.advance_recovery      !== undefined ? Number(row.advance_recovery)      : undefined,
     otherDeductions:      row.other_deductions      !== undefined ? Number(row.other_deductions)      : undefined,
-    earnings:             row.earnings              || [],
-    deductions:           row.deductions            || [],
-    employer_costs:       row.employer_costs        || [],
   };
 };
 
@@ -151,8 +164,14 @@ export async function fetchPayrollRecordPage(
   f: PayrollRecordFilters
 ): Promise<{ records: PayrollRecord[]; total: number; page: number; limit: number }> {
   const p = new URLSearchParams();
-  if (f.month !== undefined && f.year !== undefined)
+  // Support independent month/year filters (not just combined runMonth)
+  if (f.month !== undefined && f.year !== undefined) {
     p.set("runMonth", toRunMonth(f.month, f.year)!);
+  } else if (f.month !== undefined) {
+    p.set("month", String(f.month));
+  } else if (f.year !== undefined) {
+    p.set("year", String(f.year));
+  }
   if (f.search?.trim()) p.set("search", f.search.trim());
   if (f.branchId)     p.set("branchId",     f.branchId);
   if (f.departmentId) p.set("departmentId", f.departmentId);
@@ -580,10 +599,10 @@ export interface EmployeeSalaryHistoryPoint {
   runMonth: string;
   monthLabel: string;
   basic: number;
-  allowances: number;
-  deductions: number;
+  totalAllowances: number;
+  totalDeductions: number;
   netSalary: number;
-  status: PayrollRecord["status"];
+  status: PayrollDisplayStatus;
 }
 
 export function useEmployeeSalaryHistory(employeeId: string | null | undefined) {
@@ -621,8 +640,8 @@ export function useEmployeeSalaryHistoryByCode(employeeCode: string | null | und
         runMonth: `${r.year}-${String(r.monthNum).padStart(2, "0")}`,
         monthLabel: `${r.month.slice(0, 3)} ${String(r.year).slice(2)}`,
         basic: r.basic,
-        allowances: r.allowances,
-        deductions: r.deductions,
+        totalAllowances: r.totalAllowances,
+        totalDeductions: r.totalDeductions,
         netSalary: r.netSalary,
         status: r.status,
       }));

@@ -43,6 +43,7 @@ type SalaryStructureResponse = {
 
 export interface PayrollRecord {
   id: string;
+  lineId: string;
   runId: string;
   employeeId: string;
   employeeCode: string;
@@ -55,10 +56,11 @@ export interface PayrollRecord {
   monthNum: number;
   year: number;
   basic: number;
-  allowances: number;
-  deductions: number;
+  totalAllowances: number;
+  grossSalary: number;
+  totalDeductions: number;
   netSalary: number;
-  status: "paid" | "pending" | "processing";
+  status: "paid" | "pending" | "processing" | "cancelled";
   paidAt?: string;
   branch?: string;
   process?: string;
@@ -137,7 +139,7 @@ export function PayrollTable({
   const canRevert = selectedRecords.some((r) => r.status === "processing" || r.status === "paid");
 
   const handleBulkProcessed = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "pending").map((r) => r.runId);
+    const eligibleIds = selectedRecords.filter((r) => r.status === "pending").map((r) => r.lineId);
     if (eligibleIds.length > 0) {
       onBulkMarkProcessed?.(eligibleIds);
       clearSelection();
@@ -145,7 +147,7 @@ export function PayrollTable({
   };
 
   const handleBulkPaid = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "pending" || r.status === "processing").map((r) => r.runId);
+    const eligibleIds = selectedRecords.filter((r) => r.status === "pending" || r.status === "processing").map((r) => r.lineId);
     if (eligibleIds.length > 0) {
       onBulkMarkPaid?.(eligibleIds);
       clearSelection();
@@ -153,7 +155,7 @@ export function PayrollTable({
   };
 
   const handleBulkRevert = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "processing" || r.status === "paid").map((r) => r.runId);
+    const eligibleIds = selectedRecords.filter((r) => r.status === "processing" || r.status === "paid").map((r) => r.lineId);
     if (eligibleIds.length > 0) {
       onBulkRevertToPending?.(eligibleIds);
       clearSelection();
@@ -177,14 +179,6 @@ export function PayrollTable({
     setDownloadingId(record.id);
 
     try {
-      console.log("Starting payslip download for:", record.employee.name);
-
-      // Fetch salary structure for detailed breakdown
-      const structureResponse = await hrmsApi.get<SalaryStructureResponse>("/api/payroll/structures");
-      const salaryStructure = structureResponse.data;
-
-      console.log("Salary structure fetched:", salaryStructure);
-
       const monthName = MONTH_NAMES[record.monthNum - 1] || "";
 
       const payslipData = {
@@ -196,24 +190,13 @@ export function PayrollTable({
         status: record.status,
         paidAt: record.paidAt,
         basicSalary: record.basic,
-        allowances: record.allowances,
-        deductions: record.deductions,
+        allowances: record.totalAllowances,
+        deductions: record.totalDeductions,
         netSalary: record.netSalary,
-        salaryBreakdown: salaryStructure ? {
-          hra: salaryStructure.hra ?? undefined,
-          transport_allowance: salaryStructure.transport_allowance ?? undefined,
-          medical_allowance: salaryStructure.medical_allowance ?? undefined,
-          other_allowances: salaryStructure.other_allowances ?? undefined,
-          tax_deduction: salaryStructure.tax_deduction ?? undefined,
-          other_deductions: salaryStructure.other_deductions ?? undefined,
-        } : undefined,
+        salaryBreakdown: undefined,
       };
 
-      console.log("Calling downloadPayslip with data:", payslipData);
-
       downloadPayslip(payslipData, `Payslip_${record.employeeCode}_${monthName}_${record.year}.pdf`);
-
-      console.log("Payslip download completed successfully");
 
       toast({
         title: "Payslip Downloaded",
@@ -320,11 +303,11 @@ export function PayrollTable({
               </div>
               <div>
                 <p className="text-[var(--text-muted)]">Allowances</p>
-                <p className="mt-1 font-semibold text-[var(--status-present)]"><AmountCell amount={record.allowances} prefix="+" /></p>
+                <p className="mt-1 font-semibold text-[var(--status-present)]"><AmountCell amount={record.totalAllowances} prefix="+" /></p>
               </div>
               <div>
                 <p className="text-[var(--text-muted)]">Deductions</p>
-                <p className="mt-1 font-semibold text-[var(--status-absent)]"><AmountCell amount={record.deductions} prefix="-" /></p>
+                <p className="mt-1 font-semibold text-[var(--status-absent)]"><AmountCell amount={record.totalDeductions} prefix="-" /></p>
               </div>
               <div>
                 <p className="text-[var(--text-muted)]">Net Salary</p>
@@ -390,10 +373,10 @@ export function PayrollTable({
                   ₹{record.basic.toLocaleString('en-IN')}
                 </TableCell>
                 <TableCell className="text-right text-emerald-600">
-                  +₹{record.allowances.toLocaleString('en-IN')}
+                  +₹{record.totalAllowances.toLocaleString('en-IN')}
                 </TableCell>
                 <TableCell className="text-right text-destructive">
-                  -₹{record.deductions.toLocaleString('en-IN')}
+                  -₹{record.totalDeductions.toLocaleString('en-IN')}
                 </TableCell>
                 <TableCell className="text-right font-semibold text-foreground">
                   ₹{record.netSalary.toLocaleString('en-IN')}

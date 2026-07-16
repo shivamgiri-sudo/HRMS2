@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
 import { leaveService } from "../leave/leave.service.js";
+import { validateTransition, canEdit, type RunStatus } from "./payroll-lifecycle.js";
 import type {
   BulkAssignInput,
   BulkAssignResult,
@@ -324,11 +325,9 @@ export const payrollService = {
 
   async updateRunStatus(id: string, input: UpdateRunStatusInput, userId: string): Promise<SalaryPrepRun> {
     const run = await this.getRun(id);
-    if (run.status === "disbursed") {
-      throw new Error("Run is disbursed — cannot change status");
-    }
-    if (run.status === "locked" && input.status !== "disbursed") {
-      throw new Error("locked run can only move to disbursed");
+    const result = validateTransition(run.status as RunStatus, input.status as RunStatus);
+    if (!result.valid) {
+      throw new Error(result.reason!);
     }
 
     const sets = ["status = ?"];
@@ -413,7 +412,12 @@ export const payrollService = {
   },
 
   async updateLine(id: string, input: UpdatePrepLineInput, _userId: string): Promise<SalaryPrepLine> {
-    await this.getLine(id);
+    const line = await this.getLine(id);
+    const [runRows] = await db.execute<RowDataPacket[]>("SELECT status FROM salary_prep_run WHERE id = ? LIMIT 1", [(line as any).run_id]);
+    const runStatus = (runRows as any[])[0]?.status as RunStatus | undefined;
+    if (runStatus && !canEdit(runStatus)) {
+      throw new Error(`Cannot edit line — run is in "${runStatus}" status`);
+    }
     const sets: string[] = [];
     const params: unknown[] = [];
     if (input.presentDays  !== undefined) { sets.push("present_days = ?");  params.push(input.presentDays); }
@@ -552,9 +556,9 @@ export const payrollService = {
   },
 
   async listPayrollRecords(filters: {
-    page?: number; limit?: number; runMonth?: string; search?: string;
-    status?: string; branchId?: string; processId?: string; departmentId?: string;
-    scopeFilter?: { sql: string; params: unknown[] };
+    page?: number; limit?: number; runMonth?: string; month?: number; year?: number;
+    search?: string; status?: string; branchId?: string; processId?: string;
+    departmentId?: string; scopeFilter?: { sql: string; params: unknown[] };
   }): Promise<{ data: any[]; total: number; page: number; limit: number }> {
     const page = Math.max(1, filters.page ?? 1);
     const limit = Math.min(1000, filters.limit ?? 50);
@@ -562,7 +566,19 @@ export const payrollService = {
     const innerParams: any[] = [];
     const innerConds: string[] = [];
 
-    if (filters.runMonth) { innerConds.push("spr.run_month = ?"); innerParams.push(filters.runMonth); }
+    // Support independent month/year filters as well as combined runMonth
+    if (filters.runMonth) {
+      innerConds.push("spr.run_month = ?"); innerParams.push(filters.runMonth);
+    } else if (filters.month !== undefined && filters.year !== undefined) {
+      innerConds.push("spr.run_month = ?");
+      innerParams.push(`${filters.year}-${String(filters.month).padStart(2, "0")}`);
+    } else if (filters.month !== undefined) {
+      innerConds.push("CAST(SUBSTRING(spr.run_month, 6, 2) AS UNSIGNED) = ?");
+      innerParams.push(filters.month);
+    } else if (filters.year !== undefined) {
+      innerConds.push("LEFT(spr.run_month, 4) = ?");
+      innerParams.push(String(filters.year));
+    }
     if (filters.status) {
       const normalizedStatus = String(filters.status).trim().toLowerCase();
       if (normalizedStatus === "paid") {
@@ -580,11 +596,13 @@ export const payrollService = {
     if (filters.processId){ innerConds.push("e.process_id = ?");  innerParams.push(filters.processId); }
     if (filters.departmentId) { innerConds.push("e.department_id = ?"); innerParams.push(filters.departmentId); }
     if (filters.search) {
+      // Escape SQL LIKE wildcards to prevent injection via search terms
+      const escaped = filters.search.replace(/[%_\\]/g, ch => "\\" + ch);
       innerConds.push(
-        "(e.employee_code LIKE ? OR e.full_name LIKE ? OR e.email LIKE ?" +
-        " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ?)"
+        "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\' OR e.email LIKE ? ESCAPE '\\\\'" +
+        " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
       );
-      const s = `%${filters.search}%`;
+      const s = `%${escaped}%`;
       innerParams.push(s, s, s, s);
     }
 
@@ -661,26 +679,48 @@ export const payrollService = {
       allParams
     );
 
-    // Fetch component breakdown for each payroll line
-    for (const line of rows as any[]) {
-      const [components] = await db.execute<RowDataPacket[]>(
-        `SELECT component_code, component_name, component_type, amount, taxable
+    // Batch-fetch component breakdown for all payroll lines (eliminates N+1 queries)
+    const lineIds = (rows as any[]).map((r: any) => r.id).filter(Boolean);
+    if (lineIds.length > 0) {
+      const placeholders = lineIds.map(() => "?").join(",");
+      const [allComponents] = await db.execute<RowDataPacket[]>(
+        `SELECT line_id, component_code, component_name, component_type, amount, taxable
          FROM salary_prep_line_component
-         WHERE line_id = ?
-         ORDER BY
+         WHERE line_id IN (${placeholders})
+         ORDER BY line_id,
            CASE component_type
              WHEN 'earning' THEN 1
              WHEN 'deduction' THEN 2
              ELSE 3
            END,
            component_code`,
-        [line.id]
+        lineIds
       );
 
-      // Split components by type
-      line.earnings = (components as any[]).filter(c => c.component_type === 'earning');
-      line.deductions = (components as any[]).filter(c => c.component_type === 'deduction');
-      line.employer_costs = (components as any[]).filter(c => c.component_type === 'employer_cost');
+      const componentsByLine = new Map<string, { earnings: any[]; deductions: any[]; employer_costs: any[] }>();
+      for (const comp of allComponents as any[]) {
+        const lineId = String(comp.line_id);
+        if (!componentsByLine.has(lineId)) {
+          componentsByLine.set(lineId, { earnings: [], deductions: [], employer_costs: [] });
+        }
+        const group = componentsByLine.get(lineId)!;
+        if (comp.component_type === "earning") group.earnings.push(comp);
+        else if (comp.component_type === "deduction") group.deductions.push(comp);
+        else group.employer_costs.push(comp);
+      }
+
+      for (const line of rows as any[]) {
+        const comps = componentsByLine.get(String(line.id)) || { earnings: [], deductions: [], employer_costs: [] };
+        line.earnings = comps.earnings;
+        line.deductions = comps.deductions;
+        line.employer_costs = comps.employer_costs;
+      }
+    } else {
+      for (const line of rows as any[]) {
+        line.earnings = [];
+        line.deductions = [];
+        line.employer_costs = [];
+      }
     }
 
     return {

@@ -280,8 +280,8 @@ export function PayrollSummaryReport() {
                           <TableCell>{record.costCentre}</TableCell>
                           <TableCell>{record.department}</TableCell>
                           <TableCell className="text-right">{formatCurrency(record.basicSalary)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(record.allowances)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(record.deductions)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(record.totalAllowances)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(record.totalDeductions)}</TableCell>
                           <TableCell className="text-right font-medium">{formatCurrency(record.netSalary)}</TableCell>
                           <TableCell>{getStatusBadge(record.status)}</TableCell>
                         </TableRow>
