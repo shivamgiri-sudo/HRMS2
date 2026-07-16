@@ -548,6 +548,277 @@ async function triggerBgvAfterOnboardingSubmit(candidateId: string, meta?: { ip?
   );
 }
 
+/**
+ * Trigger real BGV checks asynchronously after onboarding submission
+ *
+ * Uses the configured BGV provider (befisc_luckpay / infinity_ai / digio)
+ * from org_settings — set via Super Admin > BGV Config
+ *
+ * Flow:
+ * 1. Get candidate identity data (PAN, Aadhaar, bank, UAN)
+ * 2. Call provider APIs for each available field
+ * 3. Store results in candidate_bgv_check (both normalized + raw JSON)
+ * 4. Failed/manual checks appear in HR BGV Review queue
+ */
+async function triggerRealBgvChecksAsync(
+  candidateId: string,
+  meta?: { ip?: string; userAgent?: string }
+): Promise<void> {
+  // Fetch candidate identity data
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       c.full_name, c.mobile, c.email,
+       COALESCE(p.pan_number, c.pan_number) AS pan_number,
+       COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number,
+       COALESCE(p.uan_number, c.uan_number) AS uan_number,
+       p.account_number, p.ifsc_code, p.account_holder_name,
+       c.date_of_birth, c.father_name, c.current_address
+     FROM ats_candidate c
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+     LEFT JOIN candidate_onboarding_bank_detail b ON b.candidate_id = c.id
+     WHERE c.id = ? LIMIT 1`,
+    [candidateId]
+  );
+
+  if (!rows.length) {
+    console.error('[BGV] Candidate not found for BGV trigger:', candidateId);
+    return;
+  }
+
+  const cand = rows[0] as any;
+
+  // Get bank details separately (dedicated table)
+  const [bankRows] = await db.execute<RowDataPacket[]>(
+    `SELECT account_number, ifsc_code, account_holder_name
+     FROM candidate_onboarding_bank_detail
+     WHERE candidate_id = ? LIMIT 1`,
+    [candidateId]
+  );
+  const bank = (bankRows[0] as any) ?? {};
+
+  let adapter;
+  try {
+    adapter = await getConfiguredBgvProviderAdapter();
+  } catch (err) {
+    console.warn('[BGV] Provider not configured — checks queued for manual review:', err instanceof Error ? err.message : String(err));
+    await createPendingBgvChecks(candidateId);
+    return;
+  }
+
+  const actorMeta = { actorType: 'system' as const, actorId: null, ip: meta?.ip, userAgent: meta?.userAgent };
+
+  // PAN verification
+  const pan = String(cand.pan_number ?? '').trim().toUpperCase();
+  if (pan && /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) {
+    try {
+      const result = await adapter.verifyPan({
+        panNumber: pan,
+        candidateName: cand.full_name ?? null,
+        mobileNumber: cand.mobile ?? null,
+        dateOfBirth: cand.date_of_birth ?? null,
+      });
+      await storeBgvCheckResult(candidateId, 'pan', result, adapter.providerKey);
+      console.log(`[BGV] PAN check for ${candidateId}: ${result.status}`);
+    } catch (err) {
+      await storeBgvCheckError(candidateId, 'pan', adapter.providerKey, err);
+    }
+  }
+
+  // Bank (Penny Drop) verification
+  const accountNo = String(bank.account_number ?? cand.account_number ?? '').trim();
+  const ifscCode = String(bank.ifsc_code ?? cand.ifsc_code ?? '').trim();
+  if (accountNo && ifscCode) {
+    try {
+      const result = await adapter.verifyBank({
+        accountNo,
+        ifscCode,
+        accountHolderName: bank.account_holder_name ?? cand.full_name ?? null,
+        candidateName: cand.full_name ?? null,
+      });
+      await storeBgvCheckResult(candidateId, 'bank', result, adapter.providerKey);
+      console.log(`[BGV] Bank check for ${candidateId}: ${result.status}`);
+    } catch (err) {
+      await storeBgvCheckError(candidateId, 'bank', adapter.providerKey, err);
+    }
+  }
+
+  // UAN/Employment verification (skip for freshers without UAN)
+  const uan = String(cand.uan_number ?? '').trim();
+  if (uan && /^\d{12}$/.test(uan) && adapter.verifyUan) {
+    try {
+      const result = await adapter.verifyUan({
+        uanNumber: uan,
+        candidateName: cand.full_name ?? null,
+      });
+      await storeBgvCheckResult(candidateId, 'employment', result, adapter.providerKey);
+      console.log(`[BGV] UAN/Employment check for ${candidateId}: ${result.status}`);
+    } catch (err) {
+      await storeBgvCheckError(candidateId, 'employment', adapter.providerKey, err);
+    }
+  }
+
+  // Aadhaar offline verification (uses DigiLocker or manual)
+  const aadhaar = String(cand.aadhar_number ?? '').trim();
+  if (aadhaar) {
+    try {
+      const result = await adapter.verifyAadhaarOffline({
+        candidateName: cand.full_name ?? null,
+        aadhaarLast4: aadhaar.slice(-4),
+        documentId: null,
+      });
+      await storeBgvCheckResult(candidateId, 'aadhaar_offline', result, adapter.providerKey);
+      console.log(`[BGV] Aadhaar check for ${candidateId}: ${result.status}`);
+    } catch (err) {
+      await storeBgvCheckError(candidateId, 'aadhaar_offline', adapter.providerKey, err);
+    }
+  }
+
+  // Sync all checks to overall BGV report
+  await syncBgvReport(candidateId, adapter.providerKey);
+}
+
+/**
+ * Store a successful BGV check result
+ */
+async function storeBgvCheckResult(
+  candidateId: string,
+  checkType: string,
+  result: { status: string; providerKey: string; providerRequestId: string; providerReferenceId: string; matchScore?: number | null; matchedName?: string | null; resultSummary: string; raw?: Record<string, unknown> },
+  providerKey: string
+): Promise<void> {
+  const verifiedAt = result.status === 'verified' ? new Date() : null;
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
+    [candidateId, checkType]
+  );
+
+  if ((existing as any[]).length > 0) {
+    await db.execute(
+      `UPDATE candidate_bgv_check
+       SET status = ?, provider_key = ?, provider_request_id = ?, provider_reference_id = ?,
+           match_score = ?, matched_name = ?, result_summary = ?, result_json = ?,
+           verified_at = ?, is_auto_approved = 0, updated_at = NOW()
+       WHERE candidate_id = ? AND check_type = ?`,
+      [
+        result.status, providerKey, result.providerRequestId, result.providerReferenceId,
+        result.matchScore ?? null, result.matchedName ?? null, result.resultSummary,
+        result.raw ? JSON.stringify(result.raw) : null,
+        verifiedAt,
+        candidateId, checkType,
+      ]
+    );
+  } else {
+    await db.execute(
+      `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, provider_key, status, provider_request_id,
+          provider_reference_id, match_score, matched_name, result_summary, result_json,
+          verified_at, is_auto_approved)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      [
+        randomUUID(), candidateId, checkType, providerKey, result.status,
+        result.providerRequestId, result.providerReferenceId,
+        result.matchScore ?? null, result.matchedName ?? null, result.resultSummary,
+        result.raw ? JSON.stringify(result.raw) : null,
+        verifiedAt,
+      ]
+    );
+  }
+}
+
+/**
+ * Store a BGV check that errored — marks as manual_review
+ */
+async function storeBgvCheckError(
+  candidateId: string,
+  checkType: string,
+  providerKey: string,
+  err: unknown
+): Promise<void> {
+  const errMsg = err instanceof Error ? err.message : String(err);
+  console.error(`[BGV] ${checkType} check failed for ${candidateId}:`, errMsg);
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
+    [candidateId, checkType]
+  );
+
+  const errorSummary = `Check failed - manual review required: ${errMsg.slice(0, 200)}`;
+
+  if ((existing as any[]).length > 0) {
+    await db.execute(
+      `UPDATE candidate_bgv_check
+       SET status = 'manual_review', provider_key = ?, result_summary = ?, is_auto_approved = 0, updated_at = NOW()
+       WHERE candidate_id = ? AND check_type = ?`,
+      [providerKey, errorSummary, candidateId, checkType]
+    );
+  } else {
+    await db.execute(
+      `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, provider_key, status, result_summary, is_auto_approved)
+       VALUES (?, ?, ?, ?, 'manual_review', ?, 0)`,
+      [randomUUID(), candidateId, checkType, providerKey, errorSummary]
+    );
+  }
+}
+
+/**
+ * Create pending BGV checks when provider is not configured
+ */
+async function createPendingBgvChecks(candidateId: string): Promise<void> {
+  const checks = ['pan', 'aadhaar_offline', 'bank', 'employment', 'criminal'];
+  for (const checkType of checks) {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
+      [candidateId, checkType]
+    );
+    if ((existing as any[]).length === 0) {
+      await db.execute(
+        `INSERT INTO candidate_bgv_check
+           (id, candidate_id, check_type, provider_key, status, result_summary, is_auto_approved)
+         VALUES (?, ?, ?, NULL, 'pending', 'Awaiting BGV provider configuration', 0)`,
+        [randomUUID(), candidateId, checkType]
+      );
+    }
+  }
+}
+
+/**
+ * Sync all checks to the overall BGV report
+ */
+async function syncBgvReport(candidateId: string, providerKey: string): Promise<void> {
+  const [checks] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM candidate_bgv_check WHERE candidate_id = ?`,
+    [candidateId]
+  );
+
+  const statuses = (checks as any[]).map(c => c.status);
+  const allVerified = statuses.length > 0 && statuses.every(s => s === 'verified');
+  const anyFailed = statuses.some(s => s === 'failed');
+  const anyManualReview = statuses.some(s => s === 'manual_review');
+
+  const overallStatus = allVerified ? 'clear'
+    : anyFailed ? 'negative'
+    : anyManualReview ? 'refer'
+    : 'in_progress';
+
+  const score = allVerified ? 100 : anyFailed ? 0 : 50;
+
+  await db.execute(
+    `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, is_auto_approved, hr_remarks)
+     VALUES (?, ?, ?, ?, 0, ?)
+     ON DUPLICATE KEY UPDATE
+       overall_status = VALUES(overall_status),
+       bgv_score = VALUES(bgv_score),
+       is_auto_approved = 0,
+       hr_remarks = VALUES(hr_remarks),
+       updated_at = NOW()`,
+    [
+      randomUUID(), candidateId, overallStatus, score,
+      `BGV checks via ${providerKey} — ${statuses.join(', ')}`,
+    ]
+  );
+}
+
 export async function validateOnboardingToken(token: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT b.candidate_id, b.onboarding_token_expires_at,
@@ -1034,11 +1305,18 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
      VALUES (UUID(), ?, 'Onboarding Link Sent', 'Profile Submitted', 'Candidate completed onboarding profile', NULL)`,
     [candidateId]
   );
-  await triggerBgvAfterOnboardingSubmit(candidateId, meta);
+
+  // Trigger real BGV checks asynchronously — fire-and-forget after submission commits
+  // Uses configured provider (befisc_luckpay / infinity_ai / digio) from org_settings
+  // Failures are logged and visible in BGV review queue — do NOT throw here
+  triggerRealBgvChecksAsync(candidateId, meta).catch((err: unknown) => {
+    console.error('[onboarding] BGV async trigger failed for', candidateId, ':', err instanceof Error ? err.message : String(err));
+  });
+
   await db.execute(
     `INSERT INTO ats_candidate_stage_log
        (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-     VALUES (UUID(), ?, 'Profile Submitted', 'BGV In Progress', 'BGV checks auto-created after onboarding profile submission', NULL)`,
+     VALUES (UUID(), ?, 'Profile Submitted', 'BGV In Progress', 'Real BGV provider checks initiated', NULL)`,
     [candidateId]
   );
   await logCandidateAction(candidateId, "SUBMIT_ONBOARDING", null, meta);
@@ -1046,25 +1324,35 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
 }
 
 const MAGIC_BYTES: Record<string, Uint8Array[]> = {
-  pdf: [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
-  jpg: [new Uint8Array([0xFF, 0xD8, 0xFF])],
+  pdf:  [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
+  jpg:  [new Uint8Array([0xFF, 0xD8, 0xFF])],
   jpeg: [new Uint8Array([0xFF, 0xD8, 0xFF])],
-  png: [new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])],
-  webp: [new Uint8Array([0x52, 0x49, 0x46, 0x46]), new Uint8Array([0x57, 0x45, 0x42, 0x50])],
+  png:  [new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])],
+  // WebP: RIFF at offset 0 AND WEBP at offset 8 — checked together, not as alternatives
+  webp: [new Uint8Array([0x52, 0x49, 0x46, 0x46])], // Only RIFF at 0; WEBP@8 verified separately
 };
 
 function validateFileMagicBytes(filePath: string, ext: string): boolean {
-  const signatures = MAGIC_BYTES[ext.toLowerCase()];
-  if (!signatures) return true;
+  const normalExt = ext.toLowerCase();
   const fd = fs.openSync(filePath, "r");
   try {
     const buf = Buffer.alloc(16);
     const bytesRead = fs.readSync(fd, buf, 0, 16, 0);
+
+    if (normalExt === "webp") {
+      // WebP requires: bytes 0-3 = RIFF, bytes 8-11 = WEBP
+      if (bytesRead < 12) return false;
+      const riff = [0x52, 0x49, 0x46, 0x46];
+      const webp = [0x57, 0x45, 0x42, 0x50];
+      return riff.every((b, i) => buf[i] === b) && webp.every((b, i) => buf[8 + i] === b);
+    }
+
+    const signatures = MAGIC_BYTES[normalExt];
+    if (!signatures) return true; // Unknown extension — allow (validated by ext filter already)
     if (bytesRead < signatures[0].length) return false;
     for (const sig of signatures) {
       if (sig.length > bytesRead) continue;
-      const matches = sig.every((b, i) => buf[i] === b);
-      if (matches) return true;
+      if (sig.every((b, i) => buf[i] === b)) return true;
     }
     return false;
   } finally {

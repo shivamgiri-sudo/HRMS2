@@ -28,6 +28,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
   ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
+  AlertCircle, TrendingDown,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -90,7 +91,18 @@ interface ITForm {
 
 interface AdminForm {
   biometricEnrolled: boolean;
+  cosecUserId: string;
   idCardPrinted: boolean;
+  idCardNumber: string;
+  evidenceNote: string;
+}
+
+interface WfmForm {
+  processId: string;
+  shiftId: string;
+  rosterEffectiveDate: string;
+  weekOffDay: string;
+  attendanceEffectiveDate: string;
   evidenceNote: string;
 }
 
@@ -425,6 +437,19 @@ function AdminTaskForm({ form, setForm, disabled }: {
         />
         <span className="font-medium text-sm">Biometric enrollment completed</span>
       </label>
+      {form.biometricEnrolled && (
+        <div>
+          <Label htmlFor="admin-cosec-id">Cosec User ID <span className="text-slate-400 font-normal">(optional — auto-uses employee code if blank)</span></Label>
+          <Input
+            id="admin-cosec-id"
+            value={form.cosecUserId}
+            onChange={e => setForm(f => ({ ...f, cosecUserId: e.target.value }))}
+            placeholder="e.g. MAS12345"
+            disabled={disabled}
+            className="mt-1"
+          />
+        </div>
+      )}
       <label className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${form.idCardPrinted ? "border-emerald-300 bg-emerald-50" : "hover:bg-slate-50"}`}>
         <Checkbox
           checked={form.idCardPrinted}
@@ -433,6 +458,19 @@ function AdminTaskForm({ form, setForm, disabled }: {
         />
         <span className="font-medium text-sm">Employee ID card printed and issued</span>
       </label>
+      {form.idCardPrinted && (
+        <div>
+          <Label htmlFor="admin-card-number">ID Card Number <span className="text-slate-400 font-normal">(optional)</span></Label>
+          <Input
+            id="admin-card-number"
+            value={form.idCardNumber}
+            onChange={e => setForm(f => ({ ...f, idCardNumber: e.target.value }))}
+            placeholder="e.g. MAS-2024-0123"
+            disabled={disabled}
+            className="mt-1"
+          />
+        </div>
+      )}
       <div>
         <Label htmlFor="admin-notes">Notes <span className="text-slate-400 font-normal">(optional)</span></Label>
         <Textarea
@@ -443,6 +481,91 @@ function AdminTaskForm({ form, setForm, disabled }: {
           rows={2}
           disabled={disabled}
           className="mt-1"
+        />
+      </div>
+    </div>
+  );
+}
+
+function WfmTaskForm({ form, setForm, disabled }: {
+  form: WfmForm;
+  setForm: React.Dispatch<React.SetStateAction<WfmForm>>;
+  disabled: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-slate-600">Enter WFM alignment details:</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="wfm-process-id">Process ID <span className="text-red-500">*</span></Label>
+          <Input
+            id="wfm-process-id"
+            value={form.processId}
+            onChange={e => setForm(f => ({ ...f, processId: e.target.value }))}
+            placeholder="Process UUID or code"
+            disabled={disabled}
+            className="mt-1"
+          />
+        </div>
+        <div>
+          <Label htmlFor="wfm-shift-id">Shift ID <span className="text-slate-400 font-normal">(optional)</span></Label>
+          <Input
+            id="wfm-shift-id"
+            value={form.shiftId}
+            onChange={e => setForm(f => ({ ...f, shiftId: e.target.value }))}
+            placeholder="Shift UUID"
+            disabled={disabled}
+            className="mt-1"
+          />
+        </div>
+        <div>
+          <Label htmlFor="wfm-roster-date">Roster Effective Date <span className="text-red-500">*</span></Label>
+          <Input
+            id="wfm-roster-date"
+            type="date"
+            value={form.rosterEffectiveDate}
+            onChange={e => setForm(f => ({ ...f, rosterEffectiveDate: e.target.value }))}
+            disabled={disabled}
+            className="mt-1"
+          />
+        </div>
+        <div>
+          <Label htmlFor="wfm-attendance-date">Attendance Effective Date <span className="text-red-500">*</span></Label>
+          <Input
+            id="wfm-attendance-date"
+            type="date"
+            value={form.attendanceEffectiveDate}
+            onChange={e => setForm(f => ({ ...f, attendanceEffectiveDate: e.target.value }))}
+            disabled={disabled}
+            className="mt-1"
+          />
+        </div>
+        <div>
+          <Label htmlFor="wfm-week-off">Week Off Day <span className="text-slate-400 font-normal">(optional)</span></Label>
+          <select
+            id="wfm-week-off"
+            value={form.weekOffDay}
+            onChange={e => setForm(f => ({ ...f, weekOffDay: e.target.value }))}
+            disabled={disabled}
+            className="mt-1 w-full min-h-[44px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">Not specified</option>
+            {['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map(d => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <Label htmlFor="wfm-notes">Notes <span className="text-slate-400 font-normal">(optional)</span></Label>
+        <Textarea
+          id="wfm-notes"
+          value={form.evidenceNote}
+          onChange={e => setForm(f => ({ ...f, evidenceNote: e.target.value }))}
+          placeholder="Additional WFM alignment notes..."
+          rows={2}
+          disabled={disabled}
+          className="mt-1 resize-none"
         />
       </div>
     </div>
@@ -477,13 +600,36 @@ export default function NativeITProvisioningTracker() {
   const [page, setPage]                 = useState(1);
   const LIMIT = 50;
 
+  // SLA summary data
+  const { data: slaSummaryData } = useQuery({
+    queryKey: ["it-provisioning-sla-summary"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/it-provisioning/sla/summary");
+      return (res as any)?.data ?? [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: slaViolationsData } = useQuery({
+    queryKey: ["it-provisioning-sla-violations"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/it-provisioning/sla/violations");
+      return (res as any)?.data ?? [];
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const slaViolations: any[] = slaViolationsData ?? [];
+  const slaSummary: any[] = slaSummaryData ?? [];
+
   // Dialogs
   const [actionDialog, setActionDialog] = useState<{ open: boolean; request: ProvisioningRequest | null; mode: "action" | "waive" | "confirm" }>({
     open: false, request: null, mode: "action",
   });
   const [evidenceNote, setEvidenceNote] = useState("");
   const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "" });
-  const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, idCardPrinted: false, evidenceNote: "" });
+  const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
+  const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   const [reportTaskId, setReportTaskId] = useState<string | null>(null);
   const [reportOpen, setReportOpen]     = useState(false);
   const [bulkOpen, setBulkOpen]         = useState(false);
@@ -556,7 +702,8 @@ export default function NativeITProvisioningTracker() {
   function resetForms() {
     setEvidenceNote("");
     setItForm({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "" });
-    setAdminForm({ biometricEnrolled: false, idCardPrinted: false, evidenceNote: "" });
+    setAdminForm({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
+    setWfmForm({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   }
 
   function openDialog(request: ProvisioningRequest, mode: "action" | "waive" | "confirm") {
@@ -599,9 +746,24 @@ export default function NativeITProvisioningTracker() {
         };
       } else if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD") {
         body = {
-          biometric_enrolled: adminForm.biometricEnrolled ? 1 : 0,
-          id_card_printed: adminForm.idCardPrinted ? 1 : 0,
+          biometric_enrolled: adminForm.biometricEnrolled,
+          cosec_user_id: adminForm.cosecUserId.trim() || null,
+          id_card_printed: adminForm.idCardPrinted,
+          id_card_number: adminForm.idCardNumber.trim() || null,
           evidence_note: adminForm.evidenceNote.trim() || `Biometric: ${adminForm.biometricEnrolled ? "done" : "pending"}, ID Card: ${adminForm.idCardPrinted ? "issued" : "pending"}`,
+        };
+      } else if (request.task_code === "WFM_PROCESS_ALIGNMENT") {
+        if (!wfmForm.processId.trim() || !wfmForm.rosterEffectiveDate || !wfmForm.attendanceEffectiveDate) {
+          toast.error("Process, Roster Effective Date, and Attendance Effective Date are required");
+          return;
+        }
+        body = {
+          process_id: wfmForm.processId.trim(),
+          shift_id: wfmForm.shiftId.trim() || null,
+          roster_effective_date: wfmForm.rosterEffectiveDate,
+          week_off_day: wfmForm.weekOffDay || null,
+          attendance_effective_date: wfmForm.attendanceEffectiveDate,
+          evidence_note: wfmForm.evidenceNote.trim() || `Process aligned: ${wfmForm.processId}`,
         };
       } else {
         body = { evidence_note: evidenceNote.trim() || "Completed from provisioning queue" };
@@ -624,6 +786,7 @@ export default function NativeITProvisioningTracker() {
   const currentTaskCode = actionDialog.request?.task_code ?? "";
   const isITTask    = currentTaskCode === "IT_EMAIL_DOMAIN_ASSET";
   const isAdminTask = currentTaskCode === "ADMIN_BIOMETRIC_ID_CARD";
+  const isWfmTask   = currentTaskCode === "WFM_PROCESS_ALIGNMENT";
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -653,6 +816,96 @@ export default function NativeITProvisioningTracker() {
         <HrmsBentoTile title="Actioned"       value={stats.actioned} detail="Completed, waiting for lock or confirmation" icon={<CheckCircle   className="h-5 w-5 text-sky-600" />}     accentClassName="from-sky-500 to-blue-500" />
         <HrmsBentoTile title="Locked Evidence" value={stats.locked}  detail="Immutable audit trail records"               icon={<ShieldCheck   className="h-5 w-5 text-emerald-600" />} accentClassName="from-emerald-500 to-teal-500" />
       </div>
+
+      {/* SLA Compliance Panel */}
+      {(slaViolations.length > 0 || slaSummary.length > 0) && (
+        <div className="space-y-3">
+          {/* SLA Violations Alert */}
+          {slaViolations.length > 0 && (
+            <Card className="rounded-xl border-red-200 bg-red-50 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold text-red-800 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  {slaViolations.length} SLA Violation{slaViolations.length > 1 ? 's' : ''} — Overdue &gt;24h
+                </CardTitle>
+                <CardDescription className="text-xs text-red-600">
+                  These employees have active but unresolved provisioning tasks past the 24-hour SLA deadline.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-red-200 text-red-700 font-semibold">
+                        <th className="text-left py-1.5 px-2">Employee</th>
+                        <th className="text-left py-1.5 px-2">Task</th>
+                        <th className="text-left py-1.5 px-2">Joining Date</th>
+                        <th className="text-left py-1.5 px-2">SLA Deadline</th>
+                        <th className="text-left py-1.5 px-2">Overdue By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-red-100">
+                      {slaViolations.slice(0, 10).map((v: any, i: number) => (
+                        <tr key={i} className="text-red-800">
+                          <td className="py-1.5 px-2 font-semibold">{v.employeeCode}</td>
+                          <td className="py-1.5 px-2">{v.taskName}</td>
+                          <td className="py-1.5 px-2">{v.joiningDate ? formatISTDate(v.joiningDate) : '—'}</td>
+                          <td className="py-1.5 px-2">{v.slaDeadline ? formatISTDate(v.slaDeadline) : '—'}</td>
+                          <td className="py-1.5 px-2 font-bold text-red-700">
+                            {v.hoursOverdue > 24
+                              ? `${Math.floor(v.hoursOverdue / 24)}d ${v.hoursOverdue % 24}h`
+                              : `${v.hoursOverdue}h`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {slaViolations.length > 10 && (
+                    <p className="text-xs text-red-600 mt-2 font-medium">+ {slaViolations.length - 10} more violations</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* SLA Summary by Task Code */}
+          {slaSummary.length > 0 && (
+            <Card className="rounded-xl border-slate-200 bg-white shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <TrendingDown className="h-4 w-4 text-slate-500" />
+                  30-Day SLA Performance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  {slaSummary.map((s: any) => {
+                    const completionRate = s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0;
+                    return (
+                      <div key={s.task_code} className={`rounded-lg border p-3 ${s.overdue > 0 ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">
+                          {s.task_code?.replace(/_/g, ' ')}
+                        </p>
+                        <div className="flex items-end justify-between">
+                          <span className={`text-xl font-bold ${completionRate >= 90 ? 'text-emerald-700' : completionRate >= 70 ? 'text-amber-700' : 'text-red-700'}`}>
+                            {completionRate}%
+                          </span>
+                          <div className="text-right">
+                            <p className="text-[10px] text-slate-500">{s.completed}/{s.total} done</p>
+                            {s.overdue > 0 && <p className="text-[10px] font-bold text-red-600">{s.overdue} overdue</p>}
+                            {s.unassigned > 0 && <p className="text-[10px] font-bold text-amber-600">{s.unassigned} unassigned</p>}
+                            {s.avg_completion_hours && <p className="text-[10px] text-slate-400">avg {Math.round(s.avg_completion_hours)}h</p>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Filters */}
       <Card className="rounded-xl border-slate-200 bg-white shadow-sm">
@@ -865,7 +1118,7 @@ export default function NativeITProvisioningTracker() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {actionDialog.mode === "action"  && (isITTask ? "Submit IT Provisioning Details" : isAdminTask ? "Record Admin Actions" : "Mark Request as Actioned")}
+              {actionDialog.mode === "action"  && (isITTask ? "Submit IT Provisioning Details" : isAdminTask ? "Record Admin Actions" : isWfmTask ? "Submit WFM Alignment" : "Mark Request as Actioned")}
               {actionDialog.mode === "waive"   && "Waive Provisioning Request"}
               {actionDialog.mode === "confirm" && "Lock Request as Evidence"}
             </DialogTitle>
@@ -896,6 +1149,8 @@ export default function NativeITProvisioningTracker() {
                 <ITTaskForm form={itForm} setForm={setItForm} disabled={actionMutation.isPending} />
               ) : isAdminTask ? (
                 <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} />
+              ) : isWfmTask ? (
+                <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />
               ) : (
                 <div className="space-y-2">
                   <Label htmlFor="evidence_note">Evidence note (optional)</Label>
@@ -926,7 +1181,7 @@ export default function NativeITProvisioningTracker() {
             >
               {actionMutation.isPending && <Loader2 className="animate-spin h-4 w-4 mr-1" aria-hidden="true" />}
               {actionMutation.isPending ? "Saving..." : (
-                actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : "Confirm Action") :
+                actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : isWfmTask ? "Submit WFM Alignment" : "Confirm Action") :
                 actionDialog.mode === "waive"   ? "Waive Request" : "Lock Evidence"
               )}
             </Button>

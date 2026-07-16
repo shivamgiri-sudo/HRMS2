@@ -62,7 +62,7 @@ atsPublicRouter.post(
   candidateUpload.single("file"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
-    const { type } = req.body; // "resume" or "selfie"
+    const { type, mobile } = req.body; // "resume" or "selfie" + mobile for ownership proof
 
     if (!type || !["resume", "selfie"].includes(type)) {
       return res.status(400).json({ success: false, message: "type must be 'resume' or 'selfie'" });
@@ -73,7 +73,7 @@ atsPublicRouter.post(
     // is always stamped NOW() by the registration route when a candidate walks in.
     const { db } = await import("../../db/mysql.js");
     const [rows] = await db.execute(
-      `SELECT id, updated_at FROM ats_candidate WHERE id = ?`,
+      `SELECT id, updated_at, mobile FROM ats_candidate WHERE id = ?`,
       [id]
     );
 
@@ -81,7 +81,17 @@ atsPublicRouter.post(
       return res.status(404).json({ success: false, message: "Candidate not found" });
     }
 
-    const candidate = rows[0];
+    const candidate = rows[0] as { id: string; updated_at: string; mobile: string | null };
+
+    // Ownership check: mobile sent by caller must match the registered candidate mobile
+    if (mobile && candidate.mobile) {
+      const normalizedInput    = String(mobile).replace(/\D/g, "").slice(-10);
+      const normalizedStored   = String(candidate.mobile).replace(/\D/g, "").slice(-10);
+      if (normalizedInput !== normalizedStored) {
+        return res.status(403).json({ success: false, message: "Mobile number does not match candidate record" });
+      }
+    }
+
     // dateStrings:true returns bare "YYYY-MM-DD HH:mm:ss" — append T and Z for safe UTC parse
     const registeredAt = new Date((candidate.updated_at as string).replace(" ", "T") + "Z");
     const now = new Date();
@@ -96,6 +106,23 @@ atsPublicRouter.post(
 
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    // Magic-byte validation — prevent disguised executable files
+    const MAGIC: Record<string, number[][]> = {
+      ".pdf":  [[0x25, 0x50, 0x44, 0x46]],
+      ".jpg":  [[0xFF, 0xD8, 0xFF]],
+      ".jpeg": [[0xFF, 0xD8, 0xFF]],
+      ".png":  [[0x89, 0x50, 0x4E, 0x47]],
+    };
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const sigs = MAGIC[ext];
+    if (sigs) {
+      const head = req.file.buffer;
+      const valid = sigs.some(sig => sig.every((b, i) => head[i] === b));
+      if (!valid) {
+        return res.status(400).json({ success: false, message: "File content does not match declared type" });
+      }
     }
 
     const uploaded = await persistCandidateFile({
@@ -461,22 +488,40 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
   }
 
   const { db } = await import("../../db/mysql.js");
-  // Check if employee has an onboarding record
+  // Check if employee has an onboarding record — table may not exist yet
   const [rows] = await db.execute(
     `SELECT onboarding_status, offer_accepted_at, documents_submitted_at, bgv_cleared_at, joining_date
      FROM ats_onboarding WHERE employee_id = ? LIMIT 1`,
     [emp.id]
-  );
+  ).catch(() => [[]] as any);
 
   const record = (rows as any[])[0];
   if (!record) {
-    return res.json({ success: true, data: { status: "completed" } }); // No onboarding record = already onboarded
+    // No onboarding record = already onboarded, return completed status with steps
+    return res.json({
+      success: true,
+      data: {
+        status: "completed",
+        stage: "Joining Completion",
+        percentComplete: 100,
+        completedSteps: 4,
+        totalSteps: 4,
+        offer_accepted: true,
+        documents_submitted: true,
+        bgv_cleared: true,
+        joining_date: (emp as any).date_of_joining ?? null,
+      }
+    });
   }
 
   return res.json({
     success: true,
     data: {
       status: record.onboarding_status,
+      stage: "Joining Completion",
+      percentComplete: record.bgv_cleared_at ? 100 : record.documents_submitted_at ? 75 : record.offer_accepted_at ? 50 : 25,
+      completedSteps: [record.offer_accepted_at, record.documents_submitted_at, record.bgv_cleared_at].filter(Boolean).length + 1,
+      totalSteps: 4,
       offer_accepted: !!record.offer_accepted_at,
       documents_submitted: !!record.documents_submitted_at,
       bgv_cleared: !!record.bgv_cleared_at,

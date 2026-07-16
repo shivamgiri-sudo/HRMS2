@@ -298,13 +298,33 @@ aiInsightsRouter.post('/explain', h(async (req, res) => {
     return res.status(400).json(apiError('VALIDATION_ERROR', 'entity_type and entity_id are required', 400));
   }
 
-  // For now, redirect to /ask with specific context
-  // Full entity explanation integration to be completed
-  return res.json(apiSuccess({
-    message: 'Entity explanation not yet fully implemented. Use /api/ai/ask with context_type and entity_id.',
-    entity_type,
-    entity_id,
-  }));
+  const userId = req.authUser!.id;
+  const roleKeys = (req as any).userRoles || ['employee'];
+
+  const provider = await aiProviderRegistry.getDefault();
+  const config = await aiProviderConfigService.getByKey(provider.key, true);
+  const rawContext = { user_id: userId, user_role: roleKeys[0], context_type: entity_type, entity_id };
+  const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
+
+  const request: AiGenerateRequest = {
+    userId,
+    roleKeys,
+    providerKey: provider.key,
+    model: config?.modelName,
+    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, entity_type),
+    userQuestion: `Explain this ${entity_type} record (ID: ${entity_id}) in plain language. What does it represent and what actions might be needed?`,
+    sanitizedContext: sanitizationResult.sanitizedContext,
+    temperature: 0.2,
+    maxOutputTokens: 512,
+    requestSource: 'explain',
+    entityType: entity_type,
+    entityId: entity_id,
+  };
+
+  const response = await provider.generateText(request);
+  await aiAuditService.logUsage(request, response);
+
+  return res.json(apiSuccess({ ...response, entity_type, entity_id }));
 }));
 
 /**
@@ -313,18 +333,46 @@ aiInsightsRouter.post('/explain', h(async (req, res) => {
 aiInsightsRouter.get('/role-insights', h(async (req, res) => {
   const userId = req.authUser!.id;
   const roleKeys = (req as any).userRoles || ['employee'];
+  const role = roleKeys[0] ?? 'employee';
 
-  // For now, return role-based placeholder insights
-  // Full integration with peopleos.service.ts to follow
-  const insights = {
-    role: roleKeys[0],
-    insights: [
-      { key: 'placeholder', label: 'Role insights coming soon', severity: 'low' as const },
-    ],
-    actions: [],
+  const provider = await aiProviderRegistry.getDefault();
+
+  // Build role-specific question for the AI provider
+  const rolePromptMap: Record<string, string> = {
+    payroll_hr: 'What are the top payroll readiness issues I should act on today? Focus on salary lock status, validation blockers, and overdue tasks.',
+    hr: 'What are the top onboarding and joining actions I should prioritize today? Highlight any blocked candidates or overdue provisioning.',
+    branch_head: 'What approval actions are pending for my branch today? Summarize any offers needing approval and new joiners.',
+    wfm: 'What roster and shift alignment tasks need my attention today? Highlight unassigned employees or missing WFM data.',
+    it: 'What IT provisioning tasks are overdue or unassigned today? Highlight employees who cannot login yet.',
+    admin: 'What admin provisioning tasks (biometric, ID card) are pending today?',
+    super_admin: 'Give me a summary of data anomalies, security flags, and system health issues that need attention.',
+    manager: 'What team attendance, leave, and performance items need my action today?',
+    employee: 'What tasks or actions do I need to complete today? Check joining documents, onboarding steps, or leave requests.',
   };
 
-  return res.json(apiSuccess(insights));
+  const question = rolePromptMap[role] ?? `What actions should I take today as a ${role}?`;
+
+  const rawContext = { user_id: userId, user_role: role, context_type: 'role_insights', timestamp: new Date().toISOString() };
+  const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
+
+  const config = await aiProviderConfigService.getByKey(provider.key, true);
+  const request: AiGenerateRequest = {
+    userId,
+    roleKeys,
+    providerKey: provider.key,
+    model: config?.modelName,
+    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, 'role_insights'),
+    userQuestion: question,
+    sanitizedContext: sanitizationResult.sanitizedContext,
+    temperature: 0.3,
+    maxOutputTokens: 512,
+    requestSource: 'role_insights',
+  };
+
+  const response = await provider.generateText(request);
+  await aiAuditService.logUsage(request, response);
+
+  return res.json(apiSuccess({ role, ...response }));
 }));
 
 /**

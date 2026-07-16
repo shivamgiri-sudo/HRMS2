@@ -44,7 +44,7 @@ import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
 
-type Props = { children: ReactNode };
+type Props = { children: ReactNode; subheader?: ReactNode };
 
 const companyLogo = "/mcn-logo.png?v=999";
 
@@ -58,7 +58,7 @@ const BOTTOM_NAV = [
   { label: "Me",      href: "/profile",    icon: <User className="h-5 w-5" /> },
 ];
 
-export function DashboardLayout({ children }: Props) {
+export function DashboardLayout({ children, subheader }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [logoError, setLogoError] = useState(false);
@@ -330,6 +330,13 @@ export function DashboardLayout({ children }: Props) {
 
         {/* Read-only banner for inactive employees */}
         <ReadOnlyBanner />
+
+        {/* Optional subheader slot — rendered below topbar, above page content, full-width */}
+        {subheader ? (
+          <div className="border-b border-slate-200 bg-white">
+            {subheader}
+          </div>
+        ) : null}
 
         {/* Page content */}
         <main className="flex-1 px-4 py-5 sm:px-5 lg:px-6 lg:py-6">

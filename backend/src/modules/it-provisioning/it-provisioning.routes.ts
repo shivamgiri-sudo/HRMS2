@@ -14,6 +14,7 @@ import {
   confirmAndLockRequest,
   OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
+import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -295,26 +296,34 @@ router.patch('/tasks/:id', requireRole(...PROVISIONING_ROLES), h(async (req: Aut
 }));
 
 router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  // Validate mandatory fields for IT tasks before marking complete
+  const taskId = req.params.id;
+  const actorUserId = req.authUser!.id;
+  const body = req.body as Record<string, unknown>;
+
+  // Dispatch to role-specific handler that syncs master data
+  // IT: syncs employees.official_email + creates auth_user
+  // Admin: creates biometric + ID card records
+  // WFM: updates employees.process_id + creates roster config
+  // Others: falls through to existing actionProvisioningRequest
+  await dispatchTaskCompletion(taskId, body, actorUserId);
+
+  // Always persist structured fields to task record and mark actioned
+  // (dispatchTaskCompletion marks actioned for IT/Admin/WFM;
+  //  this handles APPOINTMENT_LETTER and any other task codes)
   const [taskRows] = await db.execute<RowDataPacket[]>(
-    `SELECT task_code FROM it_provisioning_request WHERE id = ? LIMIT 1`,
-    [req.params.id],
+    `SELECT task_code, status FROM it_provisioning_request WHERE id = ? LIMIT 1`,
+    [taskId],
   );
   const taskCode: string = (taskRows as RowDataPacket[])[0]?.task_code ?? '';
-  if (taskCode === 'IT_EMAIL_DOMAIN_ASSET') {
-    const officialEmail = String(req.body.official_email ?? '').trim();
-    const domainAccount = String(req.body.domain_account ?? '').trim();
-    if (!officialEmail || !domainAccount) {
-      return res.status(400).json({ success: false, message: 'official_email and domain_account are required for IT tasks' });
-    }
-    if (!OFFICIAL_EMAIL_REGEX.test(officialEmail)) {
-      return res.status(400).json({ success: false, message: 'official_email must end with @teammas.in or @teammas.co.in' });
-    }
+  const alreadyActioned = (taskRows as RowDataPacket[])[0]?.status === 'actioned';
+
+  if (!alreadyActioned) {
+    await persistStructuredFields(taskId, body);
+    await actionProvisioningRequest({ requestId: taskId, actionedBy: actorUserId, evidenceNote: String(body.evidence_note ?? 'Completed from provisioning queue') });
   }
-  await persistStructuredFields(req.params.id, req.body);
-  await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: req.body.evidence_note ?? 'Completed from provisioning queue' });
-  const data = await getProvisioningRequest(req.params.id);
-  return res.json({ success: true, data });
+
+  const data = await getProvisioningRequest(taskId);
+  return res.json({ success: true, data, taskCode });
 }));
 
 // ── PATCH /api/it-provisioning/requests/:id/waive ────────────────────────────
@@ -441,6 +450,36 @@ router.post('/tasks/bulk-complete', requireRole('it', 'branch_it', 'admin', 'sup
 
   const okCount = results.filter(r => r.status === 'ok').length;
   return res.json({ success: true, processed: results.length, completed: okCount, results });
+}));
+
+// ── SLA Violations Dashboard ──────────────────────────────────────────────────
+router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr'), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const { findSlaViolations } = await import('../employees/employee-activation.service.js');
+  const violations = await findSlaViolations();
+  return res.json({ success: true, data: violations, count: violations.length });
+}));
+
+router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [summary] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       task_code,
+       COUNT(*) AS total,
+       SUM(CASE WHEN status IN ('actioned','verified','waived') THEN 1 ELSE 0 END) AS completed,
+       SUM(CASE WHEN sla_due_at IS NOT NULL AND sla_due_at < NOW()
+                 AND status NOT IN ('actioned','verified','waived','cancelled') THEN 1 ELSE 0 END) AS overdue,
+       SUM(CASE WHEN assignment_exception = 1 THEN 1 ELSE 0 END) AS unassigned,
+       AVG(CASE
+         WHEN sla_due_at IS NOT NULL AND status IN ('actioned','verified')
+         THEN TIMESTAMPDIFF(HOUR, created_at, actioned_at)
+       END) AS avg_completion_hours
+     FROM it_provisioning_request
+     WHERE request_type = 'join'
+       AND created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+     GROUP BY task_code
+     ORDER BY task_code`,
+    []
+  );
+  return res.json({ success: true, data: summary });
 }));
 
 export { router as itProvisioningRouter };

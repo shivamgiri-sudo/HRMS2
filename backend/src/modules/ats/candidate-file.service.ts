@@ -1,12 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID, createHash } from "crypto";
-import { fileURLToPath } from "url";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const CANDIDATE_FILES_ROOT = path.resolve(__dirname, "../../../private/ats-candidate-files");
+// Use process.cwd() (backend/ working directory) — works correctly in both dev and production
+export const CANDIDATE_FILES_ROOT = path.resolve(process.cwd(), "private/ats-candidate-files");
 
 fs.mkdirSync(CANDIDATE_FILES_ROOT, { recursive: true });
 

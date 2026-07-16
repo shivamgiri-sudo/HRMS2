@@ -19,6 +19,9 @@ import {
   Loader2,
   Search,
   Send,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 
@@ -46,8 +49,38 @@ interface OnboardingRequest {
   employee_code?: string;
 }
 
-interface BgvCheckItem { check_type: string; status: string; result_summary?: string; }
-interface BgvData { score?: number; checks?: BgvCheckItem[]; overall_status?: string; }
+interface BgvCheckItem { check_type: string; status: string; result_summary?: string; is_auto_approved?: number; }
+interface BgvData { score?: number; checks?: BgvCheckItem[]; overall_status?: string; is_auto_approved?: number; }
+
+interface BgvQueueItem {
+  candidate_id: string;
+  candidate_code: string;
+  full_name: string;
+  branch_name: string;
+  process_name?: string;
+  bgv_status?: string;
+  bgv_score?: number;
+  is_auto_approved?: number;
+  // From listBgvQueueScoped
+  issue_count?: number;
+  verified_count?: number;
+  last_check_at?: string;
+  // Aliases for convenience
+  checks_pending?: number;
+  checks_failed?: number;
+  checks_manual?: number;
+  submitted_at?: string;
+}
+
+type BgvManualAction = 'verified' | 'mismatch' | 'failed' | 'manual_review';
+
+interface BgvReviewState {
+  candidateId: string;
+  checkId?: string;
+  status: BgvManualAction;
+  remarks: string;
+  uploading: boolean;
+}
 interface MasterItem { id: string; name: string; code?: string; }
 interface SalaryBand { id: string; band_code: string; band_name: string; min_ctc: number; max_ctc: number; }
 interface SalaryPreview {
@@ -216,6 +249,19 @@ export default function NativeHROnboardingRequests() {
   const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(k));
   const canChangePfEsi = roleKeys.some(k => ['payroll_hr', 'admin', 'super_admin', 'hr'].includes(k));
 
+  // ── Main view tab
+  const [mainTab, setMainTab] = useState<'onboarding' | 'bgv_review'>('onboarding');
+
+  // ── BGV Review queue state
+  const [bgvQueue, setBgvQueue] = useState<BgvQueueItem[]>([]);
+  const [bgvQueueLoading, setBgvQueueLoading] = useState(false);
+  const [bgvQueueError, setBgvQueueError] = useState<string | null>(null);
+  const [bgvReviewState, setBgvReviewState] = useState<BgvReviewState | null>(null);
+  const [bgvReviewSaving, setBgvReviewSaving] = useState(false);
+  const [bgvReviewError, setBgvReviewError] = useState<string | null>(null);
+  const [bgvDetailCandidate, setBgvDetailCandidate] = useState<string | null>(null);
+  const [bgvDetailChecks, setBgvDetailChecks] = useState<BgvCheckItem[]>([]);
+
   // ── List state
   const [rows, setRows] = useState<OnboardingRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -334,6 +380,56 @@ export default function NativeHROnboardingRequests() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // ── Load BGV review queue
+  const loadBgvQueue = useCallback(async () => {
+    setBgvQueueLoading(true);
+    setBgvQueueError(null);
+    try {
+      const r = await hrmsApi.get<any>('/api/ats/bgv/queue?status=manual_review,failed,pending');
+      const items = Array.isArray(r) ? r : (r?.data ?? []);
+      setBgvQueue(items as BgvQueueItem[]);
+    } catch (e: any) {
+      setBgvQueueError(e?.message || 'Unable to load BGV review queue.');
+    } finally {
+      setBgvQueueLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mainTab === 'bgv_review') void loadBgvQueue();
+  }, [mainTab, loadBgvQueue]);
+
+  // ── Load BGV checks for a candidate
+  const loadBgvDetail = useCallback(async (candidateId: string) => {
+    setBgvDetailCandidate(candidateId);
+    try {
+      const r = await hrmsApi.get<any>(`/api/ats/bgv/status/${candidateId}`);
+      setBgvDetailChecks(r?.checks ?? []);
+    } catch {
+      setBgvDetailChecks([]);
+    }
+  }, []);
+
+  // ── Submit BGV manual review action
+  const submitBgvManualAction = useCallback(async (state: BgvReviewState) => {
+    setBgvReviewSaving(true);
+    setBgvReviewError(null);
+    try {
+      await hrmsApi.post(`/api/ats/bgv/manual-review/${state.candidateId}`, {
+        checkId: state.checkId,
+        status: state.status,
+        remarks: state.remarks,
+      });
+      setBgvReviewState(null);
+      void loadBgvQueue();
+      if (bgvDetailCandidate === state.candidateId) void loadBgvDetail(state.candidateId);
+    } catch (e: any) {
+      setBgvReviewError(e?.message || 'Failed to save review decision.');
+    } finally {
+      setBgvReviewSaving(false);
+    }
+  }, [loadBgvQueue, bgvDetailCandidate, loadBgvDetail]);
 
   // ── Resend onboarding link
   const resendLink = useCallback(async (row: OnboardingRequest, e: React.MouseEvent) => {
@@ -687,12 +783,38 @@ export default function NativeHROnboardingRequests() {
                 <h1 className="text-2xl font-bold text-slate-900">Onboarding Requests</h1>
                 <p className="text-sm text-slate-500">Review candidate profiles, push back corrections, and create offers.</p>
               </div>
-              <div className="relative w-full sm:w-72">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search candidates…" className={`${SEL} pl-9`} />
-              </div>
+              {mainTab === 'onboarding' && (
+                <div className="relative w-full sm:w-72">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search candidates…" className={`${SEL} pl-9`} />
+                </div>
+              )}
             </div>
 
+            {/* ── Main tabs ── */}
+            <div className="flex gap-2 border-b border-slate-200 pb-0">
+              <button
+                type="button"
+                onClick={() => setMainTab('onboarding')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${mainTab === 'onboarding' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              >
+                <FileCheck className="h-4 w-4" /> Onboarding Requests
+              </button>
+              <button
+                type="button"
+                onClick={() => setMainTab('bgv_review')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${mainTab === 'bgv_review' ? 'border-amber-600 text-amber-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              >
+                <ShieldAlert className="h-4 w-4" /> BGV Review
+                {bgvQueue.filter(q => (q.issue_count ?? 0) > 0).length > 0 && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                    {bgvQueue.filter(q => (q.issue_count ?? 0) > 0).length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {mainTab === 'onboarding' && (
             <div className="flex flex-wrap gap-2">
               <select className={`${SEL} w-auto min-w-[160px]`} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                 <option value="">All Statuses</option>
@@ -705,6 +827,219 @@ export default function NativeHROnboardingRequests() {
                 {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
+            )}
+
+            {/* ── BGV REVIEW TAB ──────────────────────────────────────── */}
+            {mainTab === 'bgv_review' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-800">BGV Review Queue</h2>
+                    <p className="text-sm text-slate-500">Candidates with failed, pending, or auto-approved BGV checks requiring HR action.</p>
+                  </div>
+                  <Button variant="outline" onClick={() => void loadBgvQueue()} className="min-h-[44px]">
+                    {bgvQueueLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
+                  </Button>
+                </div>
+
+                {bgvQueueLoading && (
+                  <div className="flex h-40 items-center justify-center rounded-xl border bg-white">
+                    <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                  </div>
+                )}
+                {bgvQueueError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{bgvQueueError}</div>}
+                {!bgvQueueLoading && bgvQueue.length === 0 && !bgvQueueError && (
+                  <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-16 text-center">
+                    <ShieldCheck className="h-12 w-12 text-emerald-400 mb-3" />
+                    <p className="font-semibold text-slate-700">All BGV checks are clear</p>
+                    <p className="text-sm text-slate-400 mt-1">No candidates require BGV review at this time.</p>
+                  </div>
+                )}
+
+                {bgvQueue.length > 0 && (
+                  <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+                    <table className="w-full text-sm">
+                      <thead className="border-b bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3 text-left">Candidate</th>
+                          <th className="px-4 py-3 text-left">Branch</th>
+                          <th className="px-4 py-3 text-left">BGV Status</th>
+                          <th className="px-4 py-3 text-left">Score</th>
+                          <th className="px-4 py-3 text-left">Issues</th>
+                          <th className="px-4 py-3 text-left">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {bgvQueue.map((q) => (
+                          <tr key={q.candidate_id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-4 py-3">
+                              <p className="font-semibold text-slate-800">{q.full_name}</p>
+                              <p className="text-xs text-slate-400">{q.candidate_code}</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600">{q.branch_name}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                (q.issue_count ?? 0) === 0 && (q.verified_count ?? 0) > 0 ? 'bg-emerald-50 text-emerald-700'
+                                : (q.issue_count ?? 0) > 0 ? 'bg-red-50 text-red-700'
+                                : 'bg-slate-100 text-slate-500'
+                              }`}>
+                                {(q.issue_count ?? 0) === 0 ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
+                                {(q.issue_count ?? 0) > 0 ? `${q.issue_count} issue${(q.issue_count ?? 0) > 1 ? 's' : ''}` : (q.verified_count ?? 0) > 0 ? 'checks passed' : 'pending'}
+                                {q.is_auto_approved ? ' · Auto-Approved' : ''}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {(q.verified_count ?? 0) > 0 || (q.issue_count ?? 0) > 0 ? (
+                                <span className={`font-bold text-sm ${(q.issue_count ?? 0) === 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {q.verified_count ?? 0}/{((q.verified_count ?? 0) + (q.issue_count ?? 0))} checks
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1">
+                                {(q.issue_count ?? 0) > 0 && (
+                                  <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">{q.issue_count} issue{(q.issue_count ?? 0) > 1 ? 's' : ''}</span>
+                                )}
+                                {(q.verified_count ?? 0) > 0 && (
+                                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{q.verified_count} verified</span>
+                                )}
+                                {q.is_auto_approved ? (
+                                  <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-700">Auto-approved</span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="min-h-[36px] text-xs"
+                                  onClick={() => void loadBgvDetail(q.candidate_id)}
+                                >
+                                  <Eye className="h-3 w-3 mr-1" /> View Checks
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="min-h-[36px] text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                                  onClick={() => setBgvReviewState({
+                                    candidateId: q.candidate_id,
+                                    status: 'verified',
+                                    remarks: '',
+                                    uploading: false,
+                                  })}
+                                >
+                                  <Shield className="h-3 w-3 mr-1" /> Review
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* BGV Check Detail Panel */}
+                {bgvDetailCandidate && bgvDetailChecks.length > 0 && (
+                  <div className="rounded-xl border bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold text-slate-800">BGV Check Details</h3>
+                      <button type="button" onClick={() => setBgvDetailCandidate(null)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+                    </div>
+                    <div className="space-y-2">
+                      {bgvDetailChecks.map((c, i) => (
+                        <div key={i} className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2">
+                          <div>
+                            <span className="font-semibold text-slate-700 text-sm capitalize">{c.check_type?.replace(/_/g, ' ')}</span>
+                            {c.result_summary && <p className="text-xs text-slate-500 mt-0.5">{c.result_summary}</p>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {c.is_auto_approved ? <span className="text-[10px] font-bold text-orange-600 bg-orange-50 rounded-full px-2 py-0.5">Auto-approved</span> : null}
+                            <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${
+                              c.status === 'verified' ? 'bg-emerald-50 text-emerald-700'
+                              : c.status === 'failed' ? 'bg-red-50 text-red-700'
+                              : c.status === 'manual_review' ? 'bg-amber-50 text-amber-700'
+                              : 'bg-slate-100 text-slate-500'
+                            }`}>{c.status}</span>
+                            <Button
+                              type="button" size="sm" variant="outline"
+                              className="min-h-[32px] text-xs"
+                              onClick={() => setBgvReviewState({ candidateId: bgvDetailCandidate, checkId: undefined, status: 'verified', remarks: '', uploading: false })}
+                            >Override</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* BGV Manual Review Modal */}
+                {bgvReviewState && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+                      <div className="flex items-center justify-between border-b px-5 py-4">
+                        <h3 className="font-bold text-slate-800">BGV Manual Review Decision</h3>
+                        <button type="button" onClick={() => { setBgvReviewState(null); setBgvReviewError(null); }}><X className="h-4 w-4 text-slate-400" /></button>
+                      </div>
+                      <div className="p-5 space-y-4">
+                        {bgvReviewError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{bgvReviewError}</div>}
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 mb-1.5">Decision</label>
+                          <div className="flex flex-wrap gap-2">
+                            {(['verified', 'manual_review', 'mismatch', 'failed'] as BgvManualAction[]).map(s => (
+                              <button
+                                key={s}
+                                type="button"
+                                onClick={() => setBgvReviewState(p => p ? { ...p, status: s } : p)}
+                                className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${bgvReviewState.status === s
+                                  ? s === 'verified' ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                    : s === 'failed' ? 'border-red-500 bg-red-50 text-red-700'
+                                    : 'border-amber-500 bg-amber-50 text-amber-700'
+                                  : 'border-slate-200 text-slate-600 hover:border-slate-400'}`}
+                              >
+                                {s === 'verified' ? '✓ Verified (Manual)' : s === 'failed' ? '✗ Failed' : s === 'mismatch' ? '⚠ Mismatch' : '⏳ Manual Review'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-600 mb-1.5">Remarks / Evidence Reference <span className="text-red-500">*</span></label>
+                          <textarea
+                            rows={3}
+                            value={bgvReviewState.remarks}
+                            onChange={e => setBgvReviewState(p => p ? { ...p, remarks: e.target.value } : p)}
+                            placeholder="Document reference, manual verification notes, or waiver reason…"
+                            className={`${SEL} resize-none`}
+                          />
+                        </div>
+
+                        <div className="flex gap-3 pt-2">
+                          <Button
+                            type="button"
+                            className="flex-1 min-h-[44px]"
+                            disabled={bgvReviewSaving || !bgvReviewState.remarks.trim()}
+                            onClick={() => void submitBgvManualAction(bgvReviewState)}
+                          >
+                            {bgvReviewSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                            Save Decision
+                          </Button>
+                          <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => { setBgvReviewState(null); setBgvReviewError(null); }}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── ONBOARDING TAB content guard ── */}
+            {mainTab === 'onboarding' && <>
 
             <ErrorBanner message={loadError} onRetry={() => void load()} />
 
@@ -793,6 +1128,7 @@ export default function NativeHROnboardingRequests() {
                 </table>
               </div>
             )}
+            </> /* end onboarding tab */}
           </div>
         )}
 

@@ -196,9 +196,10 @@ const candidateSubmitLimiter = rateLimit({
   message: { success: false, message: "Too many submission attempts, please wait" },
 });
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = path.resolve(__dirname, "../../../private-storage/onboarding-documents");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+// Use process.cwd() (always the backend/ working directory) instead of __dirname
+// which resolves differently in dev (src/) vs production (dist/src/)
+const uploadDir = path.resolve(process.cwd(), "private-storage/onboarding-documents");
+fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, uploadDir),

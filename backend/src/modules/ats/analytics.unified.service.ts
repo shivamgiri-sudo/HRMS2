@@ -2,18 +2,10 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 
 /**
- * ATS Unified Analytics Service
- * Combines data from current system + old database for comprehensive analytics
+ * ATS Analytics Service
+ * Real queries against ats_candidate, ats_interview_submission, ats_recruiter_roster.
+ * Old-system cross-DB queries removed — mas_hrms is the single source of truth.
  */
-
-// ── Configuration ──────────────────────────────────────────────────────────────
-
-const OLD_DB_CONFIG = {
-  // TODO: Update with actual old database name
-  database: 'Shivamgiri', // or db_audit, db_external
-  candidatesTable: 'candidates', // TODO: Update table name
-  interviewsTable: 'interviews', // TODO: Update table name
-};
 
 interface CountRow extends RowDataPacket {
   count: number;
@@ -88,38 +80,16 @@ interface MinMaxRow extends RowDataPacket {
  */
 export async function getUnifiedCandidateCount(): Promise<{
   total: number;
-  from_new_system: number;
-  from_old_system: number;
   date_range: { earliest: string; latest: string };
 }> {
-  // Current system count
-  const [newCount] = await db.execute<CountRow[]>(
+  const [rows] = await db.execute<CountRow[]>(
     'SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest FROM ats_candidate WHERE active_status = 1'
   );
-
-  // Old system count (adjust query based on actual schema)
-  let oldCountValue = 0;
-  let oldEarliest: string | null = null;
-  try {
-    const [oldCount] = await db.execute<CountRow[]>(
-      `SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest
-       FROM ${OLD_DB_CONFIG.database}.${OLD_DB_CONFIG.candidatesTable}
-       WHERE status != 'deleted'`
-    );
-    oldCountValue = oldCount[0]?.count || 0;
-    oldEarliest = oldCount[0]?.earliest || null;
-  } catch {
-    oldCountValue = 0;
-    oldEarliest = null;
-  }
-
   return {
-    total: (newCount[0]?.count || 0) + oldCountValue,
-    from_new_system: newCount[0]?.count || 0,
-    from_old_system: oldCountValue,
+    total: rows[0]?.count || 0,
     date_range: {
-      earliest: oldEarliest || newCount[0]?.earliest || new Date().toISOString(),
-      latest: newCount[0]?.latest || new Date().toISOString(),
+      earliest: rows[0]?.earliest || new Date().toISOString(),
+      latest: rows[0]?.latest || new Date().toISOString(),
     },
   };
 }
@@ -133,7 +103,6 @@ export async function getHiringTrends(months: number = 12): Promise<{
   registrations: number;
   interviews: number;
   selections: number;
-  source: 'new' | 'old';
 }[]> {
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - months);
@@ -155,16 +124,12 @@ export async function getHiringTrends(months: number = 12): Promise<{
     [startDateStr]
   );
 
-  // TODO: Add old system data query when schema is known
-  // const [oldData] = await db.execute(...);
-
   return newData.map(row => ({
     month: row.month_year,
     year: row.year,
     registrations: row.registrations,
     interviews: row.interviews,
     selections: row.selections,
-    source: 'new' as const,
   }));
 }
 
@@ -192,8 +157,6 @@ export async function getSourceChannelROI(): Promise<{
     GROUP BY sourcing_channel
     ORDER BY total_candidates DESC`
   );
-
-  // TODO: Merge with old system data
 
   return newData.map((row) => ({
     source_channel: row.source_channel,
@@ -280,10 +243,22 @@ export async function getPredictiveAnalytics(): Promise<{
     WHERE current_stage = 'joined'`
   );
 
+  // Calculate actual peak months from data (top 3 months by hire volume)
+  const [peakMonths] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(created_at, '%M') AS month_name, COUNT(*) AS cnt
+     FROM ats_candidate
+     WHERE profile_status IN ('onboarded', 'selected')
+       AND created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
+     GROUP BY DATE_FORMAT(created_at, '%M')
+     ORDER BY cnt DESC
+     LIMIT 3`
+  );
+  const peakMonthNames = (peakMonths as any[]).map(r => r.month_name as string);
+
   return {
-    forecasted_hires_next_month: Math.round(avgHires * 1.1), // 10% growth assumption
-    recommended_recruiters_needed: Math.ceil(avgHires / 20), // 1 recruiter per 20 hires
-    peak_hiring_months: ['January', 'July', 'October'], // TODO: Calculate from data
+    forecasted_hires_next_month: Math.round(avgHires * 1.1),
+    recommended_recruiters_needed: Math.max(1, Math.ceil(avgHires / 20)),
+    peak_hiring_months: peakMonthNames.length > 0 ? peakMonthNames : ['Data insufficient'],
     bottleneck_stage: bottleneck[0]?.current_stage || 'None',
     avg_candidate_journey_days: Math.round(journeyTime[0]?.avg_days || 0),
   };

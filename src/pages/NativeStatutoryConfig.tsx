@@ -591,7 +591,7 @@ export default function NativeStatutoryConfig() {
   const tdsOldSlabs = rows.filter((r) => r.config_key.startsWith("tds_old_slab_"));
 
   const handleSaveConfig = async (key: string, newValue: string, reason: string) => {
-    await apiPatch(`/api/payroll/statutory-config/${key}`, { config_value: Number(newValue), reason: reason || undefined });
+    await apiPatch(`/api/payroll/statutory-config/${key}`, { value: Number(newValue), reason: reason || undefined });
     setRows((prev) => prev.map((r) => r.config_key === key ? { ...r, config_value: newValue } : r));
     showToast(`${key} updated — takes effect in next payroll run.`, "success");
   };

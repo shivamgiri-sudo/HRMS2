@@ -129,7 +129,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   // Approved leave counts as present for weekoff eligibility
   // payable = present + approved_leave + eligible_weekoff + eligible_holiday − lwp
   const finalPayableDays = record.finalPayableDays ??
-    (attPresent + attLeave + eligibleWeekoff + eligibleHoliday - attLwp) || paidWorkingDays;
+    ((attPresent + attLeave + eligibleWeekoff + eligibleHoliday - attLwp) || paidWorkingDays);
 
   // Deduction components from salary_prep_line
   const pfEmployee     = record.pfEmployee     ?? 0;

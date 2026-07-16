@@ -14,6 +14,7 @@ import { TeamReviewsManager } from "@/components/performance/TeamReviewsManager"
 import { TeamAnalytics } from "@/components/performance/TeamAnalytics";
 import { AprSection } from "@/components/performance/AprSection";
 import { TeamKpiView } from "@/components/performance/TeamKpiView";
+import { MyLiveKpiView } from "@/components/performance/MyLiveKpiView";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 export interface TeamMember {

@@ -61,15 +61,17 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
 }
 
 export async function getMyWorkItems(userId: string, role: string, limit = 50, offset = 0) {
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+  const safeOffset = Math.max(0, Number(offset) || 0);
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT wi.*, e.employee_name as assigned_employee_name
+    `SELECT wi.*, e.full_name as assigned_employee_name
      FROM work_item wi
      LEFT JOIN employees e ON e.auth_user_id = wi.assigned_to_user_id
      WHERE (wi.assigned_to_user_id = ? OR wi.assigned_to_role = ?)
        AND wi.status NOT IN ('completed', 'cancelled')
      ORDER BY FIELD(wi.priority,'critical','high','medium','low'), wi.due_at ASC
-     LIMIT ? OFFSET ?`,
-    [userId, role, limit, offset]
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    [userId, role]
   );
   return rows;
 }

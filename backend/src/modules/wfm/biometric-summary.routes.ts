@@ -72,21 +72,82 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
   await injectScopeIfNeeded(req);
   const params: any[] = [];
   const where = commonWhere(req.query, params);
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS mandate_agent_days,
             SUM(adr.attendance_status = 'present') AS present_days,
             SUM(adr.attendance_status = 'half_day') AS half_days,
             SUM(adr.attendance_status = 'absent') AS absent_days,
             SUM(adr.late_mark = 1) AS late_days,
+            SUM(adr.work_mode IN ('wfh','remote')) AS wfh_days,
             ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS adherence_pct,
             ROUND(SUM(adr.late_mark = 1) * 100.0 / NULLIF(COUNT(*), 0), 2) AS late_pct,
-            ROUND(SUM(adr.attendance_status = 'absent') * 100.0 / NULLIF(COUNT(*), 0), 2) AS shrinkage_pct
+            ROUND(SUM(adr.attendance_status = 'absent') * 100.0 / NULLIF(COUNT(*), 0), 2) AS shrinkage_pct,
+            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_in_pct,
+            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_out_pct,
+            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS weekly_compliance_pct,
+            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS biometric_compliance_pct,
+            SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_out,
+            SUM(CASE WHEN adr.clock_in_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_in,
+            SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NOT NULL THEN 1 ELSE 0 END) AS valid_punch,
+            0 AS multiple_punch,
+            0 AS invalid_punch,
+            SUM(CASE WHEN adr.late_by_minutes > 30 THEN 1 ELSE 0 END) AS variance_0_1,
+            SUM(CASE WHEN adr.late_by_minutes > 60 AND adr.late_by_minutes <= 240 THEN 1 ELSE 0 END) AS variance_1_4,
+            SUM(CASE WHEN adr.late_by_minutes > 240 THEN 1 ELSE 0 END) AS variance_4_plus,
+            ROUND(SUM(COALESCE(adr.raw_minutes,0)) / 60, 2) AS total_ot_hours,
+            COUNT(DISTINCT CASE WHEN adr.raw_minutes > 480 THEN adr.employee_id END) AS overtime_employees,
+            ROUND((SUM(CASE WHEN adr.raw_minutes > 480 THEN adr.raw_minutes - 480 ELSE 0 END)) / 60, 2) AS overtime_hours
        FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
       WHERE ${where}`,
     params,
   );
-  return res.json({ success: true, data: rows[0] ?? {} });
+
+  // Live counts: on_leave and working_remotely (today only)
+  const [liveRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       (SELECT COUNT(DISTINCT employee_id) FROM leave_request
+        WHERE status = 'approved' AND CURDATE() BETWEEN start_date AND end_date) AS on_leave,
+       (SELECT COUNT(DISTINCT adr2.employee_id) FROM attendance_daily_record adr2
+        WHERE adr2.record_date = CURDATE() AND adr2.work_mode IN ('wfh','remote')) AS working_remotely`,
+    []
+  ).catch(() => [[{ on_leave: 0, working_remotely: 0 }]] as any);
+
+  // Regularization summary (pending/approved/rejected/cancelled)
+  const [regRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       SUM(status = 'pending') AS pending,
+       SUM(status = 'approved') AS approved,
+       SUM(status = 'rejected') AS rejected,
+       SUM(status = 'cancelled') AS cancelled,
+       SUM(request_type = 'late_in') AS late_in,
+       SUM(request_type = 'early_out') AS early_out,
+       SUM(request_type IN ('missed_punch','missing_punch')) AS missed_punch
+     FROM attendance_regularization_request`,
+    []
+  ).catch(() => [[{}]] as any);
+
+  const summary = rows[0] ?? {};
+  const live = liveRows[0] ?? {};
+  const reg = regRows[0] ?? {};
+
+  return res.json({
+    success: true,
+    data: {
+      ...summary,
+      ...live,
+      regularization_summary: {
+        pending: Number(reg.pending ?? 0),
+        approved: Number(reg.approved ?? 0),
+        rejected: Number(reg.rejected ?? 0),
+        cancelled: Number(reg.cancelled ?? 0),
+        late_in: Number(reg.late_in ?? 0),
+        early_out: Number(reg.early_out ?? 0),
+        missed_punch: Number(reg.missed_punch ?? 0),
+      },
+    },
+  });
 }));
 
 biometricSummaryRouter.get("/agent-view", roleGuard, h(async (req: any, res: any) => {

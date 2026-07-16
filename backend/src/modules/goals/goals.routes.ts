@@ -405,3 +405,54 @@ goalsRouter.post(
     return res.status(200).json({ success: true, data: empSkill });
   })
 );
+
+// DELETE /goals/:id — owner or admin/hr only; completed goals cannot be deleted
+goalsRouter.delete(
+  "/goals/:id",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const { id } = req.params;
+    const privileged = await hasRole(userId, "admin", "hr");
+    if (!privileged) {
+      const emp = await getEmployeeForUser(userId);
+      const [rows] = await import("../../db/mysql.js").then(m =>
+        m.db.execute<import("mysql2").RowDataPacket[]>("SELECT employee_id FROM goal WHERE id = ? LIMIT 1", [id])
+      );
+      const goalRow = (rows as import("mysql2").RowDataPacket[])[0];
+      if (!emp || !goalRow || goalRow.employee_id !== emp.id) {
+        return res.status(403).json({ success: false, error: "Forbidden — you can only delete your own goals" });
+      }
+    }
+    await goalsService.deleteGoal(id, null);
+    return res.json({ success: true });
+  })
+);
+
+// DELETE /appraisal/ratings/:id — admin/hr only
+goalsRouter.delete(
+  "/appraisal/ratings/:id",
+  requireRole("admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    await goalsService.deleteAppraisalRating(req.params.id);
+    return res.json({ success: true });
+  })
+);
+
+// DELETE /skills/employee/:employeeId/:skillId — owner or admin/hr
+goalsRouter.delete(
+  "/skills/employee/:employeeId/:skillId",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    const { employeeId, skillId } = req.params;
+    const privileged = await hasRole(userId, "admin", "hr");
+    if (!privileged) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp || emp.id !== employeeId) {
+        return res.status(403).json({ success: false, error: "Forbidden" });
+      }
+    }
+    await goalsService.deleteEmployeeSkill(employeeId, skillId);
+    return res.json({ success: true });
+  })
+);
+

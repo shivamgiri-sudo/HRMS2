@@ -3,7 +3,6 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
-import { fileURLToPath } from "url";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -16,8 +15,8 @@ import {
   findCandidateFileById,
 } from "../ats/candidate-file.service.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const UPLOADS_ROOT = path.resolve(__dirname, "../../../../uploads");
+// Use process.cwd() — resolves to backend/ in both dev and production (avoids dist/ path issue)
+export const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
 // Ensure uploads root exists on startup
 fs.mkdirSync(UPLOADS_ROOT, { recursive: true });

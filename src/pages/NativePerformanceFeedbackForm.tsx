@@ -96,7 +96,7 @@ export default function NativePerformanceFeedbackForm() {
         development_areas: developmentAreas || undefined,
       };
 
-      await hrmsApi.post("/api/performance-feedback/requests", payload);
+      await hrmsApi.post(`/api/performance-feedback/requests/${requestId}/submit`, payload);
       navigate("/performance-feedback/my-assignments");
     } catch (error) {
       console.error("Failed to submit feedback:", error);

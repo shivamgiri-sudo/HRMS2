@@ -84,6 +84,7 @@ import { rtaRouter } from "./modules/rta/rta.routes.js";
 import { accountControlRouter } from "./modules/account-control/account.control.routes.js";
 import { workforceMandateRouter } from "./modules/workforce-mandate/workforce.mandate.routes.js";
 import { lmsRouter } from "./modules/lms/lms.routes.js";
+import { lmsIntegrationRouter } from "./modules/lms-integration/lms-integration.routes.js";
 import { benefitsRouter } from "./modules/benefits/benefits.routes.js";
 import { careerRouter } from "./modules/career/career.routes.js";
 import { erpRouter } from "./modules/erp/erp.routes.js";
@@ -357,6 +358,7 @@ app.use("/api/rta", rtaRouter);
 app.use("/api/account-control", accountControlRouter);
 app.use("/api/workforce-mandate", workforceMandateRouter);
 app.use("/api/lms", lmsRouter);
+app.use("/api/lms", lmsIntegrationRouter);
 app.use("/api/benefits", benefitsRouter);
 app.use("/api/career", careerRouter);
 app.use("/api/erp", erpRouter);
@@ -434,6 +436,10 @@ app.use("/api/ats/interview", interviewRouter);
 app.use("/api/ats/bgv-enhanced", bgvEnhancedRouter);
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
 app.use("/api/ats/super-admin", superAdminRouter);
+
+// Reconciliation — data anomaly detection for BGV, salary, lifecycle, provisioning
+import { reconciliationRouter } from "./modules/ats/reconciliation.routes.js";
+app.use("/api/ats/reconciliation", reconciliationRouter);
 
 // ── AI Insights (Gemini-powered, role-aware, sanitized) ────────────────────
 import { aiInsightsRouter } from "./modules/ai/ai-insights.routes.js";

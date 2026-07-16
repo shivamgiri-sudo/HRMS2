@@ -435,7 +435,52 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
 
 // ── Branch Head: Approve ──────────────────────────────────────────────────────
 
+import { createEmployeeFromCandidate } from '../employees/employee-creation-orchestrator.service.js';
+
 export async function approveOffer(offerId: string, approverId: string, remarks?: string) {
+  // CHANGED: Delegate to Employee Creation Orchestrator (Phase 2)
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT candidate_id FROM ats_employment_offer WHERE id = ? LIMIT 1`,
+    [offerId]
+  );
+
+  if (offerRows.length === 0) {
+    throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
+  }
+
+  const candidateId = (offerRows[0] as any).candidate_id;
+
+  // Use orchestrator with all business rules
+  const result = await createEmployeeFromCandidate({
+    candidateId,
+    offerId,
+    approverId,
+  });
+
+  if (!result.success) {
+    throw Object.assign(
+      new Error(`Employee creation failed: ${result.blockers.map(b => b.reason).join(', ')}`),
+      {
+        statusCode: 400,
+        blockers: result.blockers,
+        warnings: result.warnings,
+      }
+    );
+  }
+
+  // Return result with metadata
+  return {
+    employeeId: result.employeeId,
+    employeeCode: result.employeeCode,
+    alreadyExisted: result.alreadyExisted,
+    warnings: result.warnings,
+    bgvStatus: result.bgvStatus,
+    provisioningDispatched: result.provisioningStatus.dispatched,
+  };
+}
+
+// LEGACY: Old approveOffer logic preserved below for reference (DO NOT USE)
+export async function approveOfferLegacy(offerId: string, approverId: string, remarks?: string) {
   const [offerRows] = await db.execute<RowDataPacket[]>(
     `SELECT o.*, o.onboarding_request_id,
             c.full_name, c.email, c.mobile, c.applied_for_branch,
@@ -477,21 +522,19 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
   );
   if (!allowed) throw Object.assign(new Error('Access denied'), { statusCode: 403 });
 
-  // Pre-compute the one-time password credential. The raw value is never logged.
-  const { temporaryPassword, passwordHash } = await createTemporaryPasswordCredential();
+  // CHANGED: No password creation here - IT will create auth_user with official email
+  // Employee cannot login until IT provisioning completes
 
   const nameParts: string[] = ((offer.full_name as string) ?? '').trim().split(/\s+/);
   const firstName = nameParts[0] ?? '';
   const lastName = nameParts.slice(1).join(' ') || firstName;
 
   const employeeId = randomUUID();
-  const authUserId = randomUUID();
 
   // All DB writes inside a single transaction — partial failures roll back cleanly
   const conn: PoolConnection = await db.getConnection();
   let employeeCode = '';
-  let resolvedAuthUserId = authUserId;
-  let passwordRecipientEmail = '';
+  let resolvedAuthUserId = null; // No auth_user at creation
 
   try {
     await conn.beginTransaction();
@@ -554,16 +597,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       employeeCode = `${entityPrefix}${nextSeq}`;
     }
 
-    await conn.execute(
-      `INSERT INTO auth_user (id, email, password_hash, must_change_password)
-       VALUES (?, ?, ?, 1)
-       ON DUPLICATE KEY UPDATE must_change_password = 1`,
-      [authUserId, offer.email, passwordHash],
-    );
-    const [existingAuth] = await conn.execute<RowDataPacket[]>(
-      `SELECT id FROM auth_user WHERE email = ?`, [offer.email],
-    );
-    resolvedAuthUserId = (existingAuth as RowDataPacket[])[0]?.id ?? authUserId;
+    // CHANGED: Do NOT create auth_user here - IT provisioning will create it with official email
+    // Employee cannot login until IT completes provisioning and creates domain account
+    resolvedAuthUserId = null; // No auth account until IT provisioning
 
     // salary_start_date: use date_of_salary if set (some processes have unpaid training post-joining)
     const salaryStartDate: string | null = (offer.date_of_salary as string | null) ?? (offer.date_of_joining as string | null) ?? null;
@@ -596,8 +632,12 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       aadhar_number?: string | null;
       uan_number?: string | null;
     };
-    passwordRecipientEmail = String(candRow?.personal_email ?? '').trim();
 
+    // CHANGED:
+    // - email: personal email for initial contact
+    // - official_email: NULL (IT will set this when creating domain account)
+    // - active_status: 0 (will auto-activate on joining date)
+    // - user_id: NULL (IT will create auth_user with official email)
     await conn.execute(
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, official_email, mobile,
@@ -606,17 +646,19 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
           branch_id, process_id, department_id, designation_id,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
       [
         employeeId, employeeCode, firstName, lastName,
-        offer.email, offer.email, offer.mobile,
-        candRow?.personal_email ?? null, candRow?.personal_phone ?? null, candRow?.alternate_mobile ?? null,
+        candRow?.personal_email ?? offer.email, // Use personal email for contact
+        offer.mobile,
+        candRow?.personal_email ?? offer.email, // Store in personal_email column
+        candRow?.personal_phone ?? null, candRow?.alternate_mobile ?? null,
         candRow?.gender ?? null, candRow?.date_of_birth ?? null, candRow?.current_address ?? null, null, null,
         offer.resolved_branch_id ?? null, offer.resolved_process_id ?? null,
         offer.department_id ?? null, offer.designation_id ?? null,
         offer.date_of_joining, salaryStartDate, offer.emp_type,
         offer.reporting_manager_id ?? null,
-        resolvedAuthUserId,
+        // resolvedAuthUserId removed - no auth_user at creation
       ],
     );
 
@@ -817,18 +859,20 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
     console.error('[onboarding] Journey log failed for employee', employeeId, ':', err instanceof Error ? err.message : String(err));
   });
 
+  // CHANGED: No auth_user or password creation at this stage
+  // IT provisioning will create auth_user with official email
   await logSensitiveAction({
     actor_user_id: approverId,
-    action_type: 'employee_temp_password_created',
+    action_type: 'employee_created_preboarding',
     module_key: 'ats',
-    entity_type: 'auth_user',
-    entity_id: resolvedAuthUserId,
+    entity_type: 'employee',
+    entity_id: employeeId,
     employee_id: employeeId,
     change_summary: {
       candidate_id: candidateId,
       employee_code: employeeCode,
-      must_change_password: true,
-      delivery_channel: 'personal_email',
+      active_status: 0,
+      awaiting_it_provisioning: true,
     },
   });
 
@@ -842,6 +886,7 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       branchId: branchIdForProvisioning,
       actorUserId: approverId,
       triggerEventId: offerId,
+      joiningDate: offer.date_of_joining as string | null, // For 24h SLA calculation
     });
     console.log(`[approveOffer] IT provisioning tasks dispatched successfully for ${employeeCode}`);
   } catch (err: unknown) {
@@ -862,19 +907,9 @@ export async function approveOffer(offerId: string, approverId: string, remarks?
       });
     });
 
-  // Send welcome email after transaction commits — email failure should not roll back employee creation
+  // CHANGED: No welcome email sent here - IT will send credentials after provisioning
+  // Employee cannot login until IT creates official email and auth_user account
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
-  if (passwordRecipientEmail) {
-    await sendWelcomeEmail({
-      candidateId,
-      to: passwordRecipientEmail,
-      candidateName: offer.full_name,
-      employeeCode,
-      loginEmail: offer.email,
-      tempPassword: temporaryPassword,
-      loginUrl: baseUrl,
-    });
-  }
 
   // Notify Payroll HR to issue joining documents
   try {

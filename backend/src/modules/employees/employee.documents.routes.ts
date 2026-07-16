@@ -3,7 +3,6 @@ import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { fileURLToPath } from "url";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -12,8 +11,8 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { selfOrAdminHr } from "../../shared/accessGuard.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
+// Use process.cwd() — resolves to backend/ in both dev and production
+const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
 const ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
 
@@ -53,8 +52,8 @@ router.get("/:employeeId", selfOrAdminHr("employeeId"), h(async (req: Authentica
   res.json({ success: true, data: rows });
 }));
 
-// POST /api/employee-docs/:employeeId/upload — multipart upload (admin/hr or self-service)
-router.post("/:employeeId/upload", (req: any, res: any, next: any) => {
+// POST /api/employee-docs/:employeeId/upload — multipart upload (self or admin/hr only)
+router.post("/:employeeId/upload", selfOrAdminHr("employeeId"), (req: any, res: any, next: any) => {
   empDocUpload.single("file")(req, res, (err) => {
     if (err instanceof multer.MulterError) return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
     if (err) return res.status(400).json({ success: false, message: err.message });
@@ -100,6 +99,62 @@ router.post("/:employeeId", requireRole("admin", "hr"), h(async (req: Authentica
   );
   const [rows] = await db.execute<RowDataPacket[]>("SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1", [id]);
   res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
+
+// PATCH /api/employee-docs/:employeeId/:docId/verify — verify or reject a document
+router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { action, remarks } = req.body as { action: "verified" | "rejected"; remarks?: string };
+  if (!action || !["verified", "rejected"].includes(action)) {
+    return res.status(400).json({ success: false, message: "action must be 'verified' or 'rejected'" });
+  }
+
+  const [check] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
+    [req.params.docId, req.params.employeeId]
+  );
+  if (!(check as RowDataPacket[]).length) {
+    return res.status(404).json({ success: false, message: "Document not found" });
+  }
+
+  const verified = action === "verified" ? 1 : 0;
+  await db.execute(
+    `UPDATE employee_documents
+     SET verified = ?, verified_by = ?, verification_date = NOW(),
+         verification_remarks = ?, updated_at = NOW()
+     WHERE id = ? AND employee_id = ?`,
+    [verified, req.authUser!.id, remarks ?? null, req.params.docId, req.params.employeeId]
+  );
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, verification_remarks, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1",
+    [req.params.docId]
+  );
+  res.json({ success: true, data: (rows as RowDataPacket[])[0] });
+}));
+
+// GET /api/employee-docs/:employeeId/:docId/download — download with original filename
+router.get("/:employeeId/:docId/download", selfOrAdminHr("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT doc_name, file_url FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
+    [req.params.docId, req.params.employeeId]
+  );
+  const doc = (rows as RowDataPacket[])[0];
+  if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
+
+  // Resolve physical file path from the stored URL
+  const filename = path.basename(String(doc.file_url ?? ""));
+  const filePath = path.join(UPLOADS_ROOT, "employee-documents", filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, message: "File not found on disk" });
+  }
+
+  const originalName = String(doc.doc_name ?? filename);
+  const ext = path.extname(filename);
+  const safeOriginalName = originalName.endsWith(ext) ? originalName : `${originalName}${ext}`;
+
+  res.setHeader("Content-Disposition", `attachment; filename="${safeOriginalName}"`);
+  res.sendFile(filePath);
 }));
 
 // DELETE /api/employee-docs/:employeeId/:docId

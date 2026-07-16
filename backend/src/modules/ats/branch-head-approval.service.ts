@@ -227,7 +227,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         message: approval.offer_id
           ? 'Approval successful. Employee conversion completed through canonical offer approval.'
           : 'Approval recorded. Submit an employment offer to complete canonical employee conversion.',
-        employee_code: conversion?.employeeCode,
+        employee_code: conversion?.employeeCode ?? undefined,
       };
     } else {
       await connection.execute(

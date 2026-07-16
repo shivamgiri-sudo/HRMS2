@@ -177,12 +177,21 @@ async function createRequest(params: {
   assignedUserId?: string | null;
   triggerEventId?: string | null;
   actorUserId: string;
+  assignmentException?: boolean; // True if no users found for role
+  joiningDate?: string | null; // For SLA calculation
 }): Promise<string> {
+  // Calculate 24h SLA deadline from joining date
+  let slaDeadline: Date | null = null;
+  if (params.joiningDate) {
+    const joining = new Date(params.joiningDate);
+    slaDeadline = new Date(joining.getTime() + 24 * 60 * 60 * 1000); // +24 hours
+  }
+
   const [result] = await db.execute(
     `INSERT INTO it_provisioning_request
        (employee_id, request_type, task_code, assigned_role, assigned_user_id,
-        trigger_event_id, status, locked)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', 0)`,
+        trigger_event_id, status, locked, assignment_exception, sla_due_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
     [
       params.employeeId,
       params.requestType,
@@ -190,6 +199,9 @@ async function createRequest(params: {
       params.assignedRole,
       params.assignedUserId ?? null,
       params.triggerEventId ?? null,
+      params.assignmentException ? 'pending_unassigned' : 'pending', // Different status for unassigned
+      params.assignmentException ? 1 : 0,
+      slaDeadline,
     ],
   );
   const insertId = (result as any).insertId;
@@ -265,14 +277,16 @@ export async function dispatchJoinProvisioningTasks(params: {
   branchId: string | null;
   actorUserId: string;
   triggerEventId?: string | null;
+  joiningDate?: string | null; // For 24h SLA calculation
 }): Promise<void> {
-  const { employeeId, employeeCode, employeeName, branchId, actorUserId, triggerEventId } = params;
+  const { employeeId, employeeCode, employeeName, branchId, actorUserId, triggerEventId, joiningDate } = params;
 
   console.log('[dispatchJoinProvisioningTasks] Starting join provisioning dispatch:', {
     employeeId,
     employeeCode,
     employeeName,
     branchId,
+    joiningDate,
     tasksCount: JOIN_TASKS.length,
   });
 
@@ -286,9 +300,12 @@ export async function dispatchJoinProvisioningTasks(params: {
       users: users.map(u => ({ userId: u.userId, email: u.email })),
     });
 
-    if (users.length === 0) {
-      console.warn(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole}, skipping task ${task.taskCode}`);
-      continue;
+    // CHANGED: Create unassigned task instead of skipping
+    // This ensures all mandatory tasks are visible for admin reassignment
+    const isUnassigned = users.length === 0;
+
+    if (isUnassigned) {
+      console.error(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole} - creating unassigned task for ${task.taskCode}`);
     }
 
     const title = task.titleFn(employeeName, employeeCode);
@@ -299,19 +316,25 @@ export async function dispatchJoinProvisioningTasks(params: {
       requestType: 'join',
       taskCode: task.taskCode,
       assignedRole: task.assignedRole,
-      assignedUserId: users[0]?.userId ?? null,
+      assignedUserId: isUnassigned ? null : (users[0]?.userId ?? null),
       triggerEventId: triggerEventId ?? null,
       actorUserId,
+      assignmentException: isUnassigned, // Flag for dashboard visibility
+      joiningDate: joiningDate ?? null, // For 24h SLA deadline calculation
     });
 
     console.log('[dispatchJoinProvisioningTasks] Created provisioning request:', {
       requestId,
       taskCode: task.taskCode,
       role: task.assignedRole,
-      assignedTo: users[0]?.userId,
+      assignedTo: isUnassigned ? 'UNASSIGNED' : users[0]?.userId,
+      assignmentException: isUnassigned,
     });
 
-    await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
+    // Only send notifications if users are assigned
+    if (!isUnassigned) {
+      await dispatchNotifications(users, 'it_provisioning', title, desc, requestId, task.actionUrl);
+    }
 
     console.log(`[dispatchJoinProvisioningTasks] Dispatched notifications for ${task.taskCode}:`, {
       notificationsSent: users.length,

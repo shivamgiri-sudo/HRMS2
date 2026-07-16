@@ -16,6 +16,7 @@ import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/
 import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
 import { startITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
+import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./employee-lifecycle.worker.js";
 import { startPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
 import { startBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
@@ -97,6 +98,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "dpdp-breach-sla",
     start: () => { startBreachSlaCron(); return Promise.resolve(); },
   },
+  {
+    name: "employee-lifecycle",
+    start: () => { startEmployeeLifecycleWorker(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -127,6 +132,7 @@ function shutdown(): void {
   stopCommunicationCleanup();
   stopAttendanceEngineScheduler();
   stopCosecSyncWorker();
+  stopEmployeeLifecycleWorker();
   legacySyncWorker.stop();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

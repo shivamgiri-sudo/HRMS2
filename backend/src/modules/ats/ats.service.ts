@@ -341,12 +341,37 @@ export const atsService = {
       by_source[key] = Number(row.count);
     }
 
+    // Add open positions count (count candidates in early stages as open pipeline)
+    const [openPosRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT applied_for_process) as count
+       FROM ats_candidate
+       WHERE active_status = 1
+         AND current_stage NOT IN ('converted', 'rejected', 'Onboarded', 'Selected', 'declined')`, []
+    );
+    const openPositions = Number(openPosRows[0]?.count ?? 0);
+
+    // Selected candidates (last 30 days)
+    const selectedCount = (by_stage["selected"] ?? 0) + (by_stage["Selected"] ?? 0) +
+      (by_stage["Onboarded"] ?? 0) + (by_stage["converted"] ?? 0);
+    // Previous 30 days for trend comparison
+    const [prevRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM ats_candidate
+       WHERE active_status = 1
+         AND current_stage IN ('selected','Selected','Onboarded','converted')
+         AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+         AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+      []
+    ).catch(() => [[{ cnt: 0 }]] as any);
+
     return {
       total_candidates: totalCount,
       by_stage,
       by_source,
       conversion_rate: totalCount > 0 ? Math.round((convertedCount / totalCount) * 1000) / 10 : 0,
       time_to_hire_avg: Number(timeRows[0]?.avg_days ?? 0),
+      open_positions: openPositions,
+      selected_candidates: selectedCount,
+      previous_selected: Number(prevRows[0]?.cnt ?? 0),
     };
   },
 
