@@ -15,6 +15,8 @@ describe("ATS assessment integration contracts", () => {
     expect(publicMount).toBeGreaterThan(-1);
     expect(authBoundary).toBeGreaterThan(publicMount);
     expect(protectedMount).toBeGreaterThan(authBoundary);
+    expect(routes).toContain('router.use(assessmentBuilderPublicRouter)');
+    expect(routes).toContain('router.use(assessmentBuilderProtectedRouter)');
     expect(routes).toContain('router.post("/offers/:id/respond"');
     expect(routes).toContain('router.get("/requisitions"');
   });
@@ -51,6 +53,21 @@ describe("ATS assessment integration contracts", () => {
     expect(workspace).toContain('/api/ats-full-parity/recruiter-submission');
     expect(workspace).toContain("skillTestTyping: form.skillTypingScore");
     expect(workspace).toContain("skillTestAi: form.skillAiScore");
+  });
+
+  it("keeps the public health endpoint and template-builder URL canonical", () => {
+    const assessmentRoutes = readRepositoryFile("backend/src/modules/ats-assessment/assessment.routes.ts");
+    const builderRoutes = readRepositoryFile("backend/src/modules/ats-assessment/assessment.template-builder.routes.ts");
+    const readme = readRepositoryFile("backend/src/modules/ats-assessment/README.md");
+
+    expect(assessmentRoutes).toContain('assessmentPublicRouter.get("/assessment/health"');
+    expect(assessmentRoutes).toContain("queueLifecycleIsolated: true");
+    expect(builderRoutes).toContain('assessmentBuilderPublicRouter.get("/assessment-admin/template-builder"');
+    expect(builderRoutes).toContain('assessmentBuilderPublicRouter.get("/assessment-template-builder"');
+    expect(builderRoutes).toContain('res.redirect(308, "/api/ats-ext/assessment-admin/template-builder")');
+    expect(builderRoutes).toContain('href="/api/ats-ext/assessment-admin/template-builder"');
+    expect(readme).toContain('/api/ats-ext/assessment-admin/template-builder');
+    expect(readme).toContain('/api/ats-ext/assessment-template-builder');
   });
 
   it("keeps migration 408 isolated to assessment-owned tables", () => {
