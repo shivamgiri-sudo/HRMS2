@@ -252,16 +252,24 @@ export async function verifyBankByToken(token: string, input: { accountNo?: stri
 export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
-  const accountNo = String(input.accountNo ?? "").trim();
+  let accountNo = String(input.accountNo ?? "").trim();
   let ifscCode = String(input.ifscCode ?? "").trim().toUpperCase();
   let accountHolderName = input.accountHolderName;
   if (!accountNo || !ifscCode) {
     const [bankRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-    const bank = bankRows[0] as RowDataPacket & { ifsc_code?: string | null; account_holder_name?: string | null } | undefined;
+    const bank = bankRows[0] as RowDataPacket & { ifsc_code?: string | null; account_holder_name?: string | null; account_no_encrypted?: string | null } | undefined;
     if (!bank) throw Object.assign(new Error("Bank details are required before verification"), { statusCode: 400 });
     ifscCode = ifscCode || String(bank.ifsc_code ?? "");
     accountHolderName = accountHolderName || String(bank.account_holder_name ?? "");
-    // Raw account is intentionally not recoverable once hashed. Candidate must enter raw account for verification.
+    // Try to decrypt stored encrypted account number (no re-entry needed)
+    if (!accountNo && bank.account_no_encrypted) {
+      try {
+        const { decrypt } = await import("../../utils/encryption.js");
+        accountNo = decrypt(bank.account_no_encrypted);
+      } catch (e) {
+        console.error("[BGV] Failed to decrypt account number:", (e as Error).message);
+      }
+    }
   }
   if (!accountNo) throw Object.assign(new Error("Raw account number is required for digital verification"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();

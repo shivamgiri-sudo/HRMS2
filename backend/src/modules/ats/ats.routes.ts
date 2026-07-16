@@ -10,6 +10,7 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import onboardingRouter from "./ats.onboarding.routes.js";
 import onboardingFullRouter from "./onboarding-full.routes.js";
 import bgvVerificationRouter from "./bgv-verification.routes.js";
+import fraudAlertsRouter from "./fraud-alerts.routes.js";
 import { recruiterHiringRouter } from "./recruiter-hiring.routes.js";
 import multer from "multer";
 import path from "path";
@@ -35,6 +36,7 @@ atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
 // â”€â”€ PUBLIC â€” candidate onboarding with token (no auth required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 atsRouter.use("/onboarding-full", onboardingFullRouter);
 atsRouter.use("/bgv", bgvVerificationRouter);
+atsRouter.use("/fraud-alerts", fraudAlertsRouter);
 // Keep onboarding mounted before recruiterHiringRouter; that router installs
 // root-level auth/role middleware and can otherwise intercept /onboarding/*.
 atsRouter.use("/onboarding", onboardingRouter);

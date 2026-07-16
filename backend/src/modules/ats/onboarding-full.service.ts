@@ -9,6 +9,20 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
+import { encrypt, decrypt } from "../../utils/encryption.js";
+import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
+// face-match loaded lazily — requires @tensorflow/tfjs-node which may not be installed
+let _faceMatchModule: typeof import("./face-match.service.js") | null = null;
+async function getFaceMatch() {
+  if (_faceMatchModule === null) {
+    try {
+      _faceMatchModule = await import("./face-match.service.js");
+    } catch {
+      _faceMatchModule = undefined as any;
+    }
+  }
+  return _faceMatchModule || null;
+}
 
 type ActorType = "candidate" | "hr" | "system";
 type AuthenticatedUser = NonNullable<AuthenticatedRequest["authUser"]>;
@@ -271,6 +285,32 @@ const maskAccount = (value: unknown) => {
   if (!account) return null;
   return `XXXXXX${account.slice(-4)}`;
 };
+
+async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieDocId: string) {
+  const faceMatch = await getFaceMatch();
+  if (!faceMatch) {
+    console.warn("[FaceMatch] Module not available — skipping for", candidateId);
+    return;
+  }
+  const available = await faceMatch.isModelAvailable();
+  if (!available) {
+    console.warn("[FaceMatch] Models not loaded — skipping face match for", candidateId);
+    return;
+  }
+  // Find an uploaded Aadhaar or PAN image to compare against
+  const [docs] = await db.execute<RowDataPacket[]>(
+    `SELECT id, file_path, doc_type FROM candidate_onboarding_document
+     WHERE candidate_id = ? AND deleted_at IS NULL
+       AND mime_type LIKE 'image/%'
+       AND LOWER(doc_type) IN ('aadhaar', 'pan card', 'passport photo')
+     ORDER BY FIELD(LOWER(doc_type), 'aadhaar', 'pan card', 'passport photo')
+     LIMIT 1`,
+    [candidateId]
+  );
+  if (!docs[0]) return;
+  const idDoc = docs[0] as { id: string; file_path: string; doc_type: string };
+  await faceMatch.compareFaces(candidateId, selfiePath, idDoc.file_path, selfieDocId, idDoc.id);
+}
 
 async function logCandidateAction(candidateId: string, actionType: string, payload?: unknown, meta?: { ip?: string; userAgent?: string; actorType?: ActorType; actorId?: string | null }) {
   await db.execute(
@@ -1084,6 +1124,14 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
     ]
   ).catch(() => { /* columns may not exist on older schema — safe to ignore */ });
 
+  // Fraud detection: check for duplicates (non-blocking)
+  if (panHash) {
+    checkDuplicates(candidateId, "pan", panHash).catch(e => console.error("[Fraud] PAN duplicate check error:", e.message));
+  }
+  if (aadhaarHash) {
+    checkDuplicates(candidateId, "aadhaar", aadhaarHash).catch(e => console.error("[Fraud] Aadhaar duplicate check error:", e.message));
+  }
+
   await logCandidateAction(candidateId, "SAVE_EMPLOYEE_DETAILS", { fields: Object.keys(input) }, meta);
   return getFullOnboardingStatus(token);
 }
@@ -1094,14 +1142,18 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
   const accountNo = input.accountNo ?? input.bank_account_no ?? input.account_no;
   const id = randomUUID();
 
+  // Encrypt account number for later penny drop verification (reversible, unlike hash)
+  const accountNoEncrypted = accountNo ? encrypt(String(accountNo).trim()) : null;
+
   await db.execute(
     `INSERT INTO candidate_onboarding_bank_detail
        (id, candidate_id, bank_name, branch_name, account_holder_name, account_no_masked,
-        account_no_hash, ifsc_code, account_type, cancelled_cheque_document_id, name_on_cheque, verification_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
+        account_no_hash, account_no_encrypted, ifsc_code, account_type, cancelled_cheque_document_id, name_on_cheque, verification_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started')
      ON DUPLICATE KEY UPDATE
        bank_name = VALUES(bank_name), branch_name = VALUES(branch_name), account_holder_name = VALUES(account_holder_name),
-       account_no_masked = VALUES(account_no_masked), account_no_hash = VALUES(account_no_hash), ifsc_code = VALUES(ifsc_code),
+       account_no_masked = VALUES(account_no_masked), account_no_hash = VALUES(account_no_hash),
+       account_no_encrypted = VALUES(account_no_encrypted), ifsc_code = VALUES(ifsc_code),
        account_type = VALUES(account_type), cancelled_cheque_document_id = VALUES(cancelled_cheque_document_id),
        name_on_cheque = VALUES(name_on_cheque),
        updated_at = NOW()`,
@@ -1113,6 +1165,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       input.accountHolderName ?? null,
       maskAccount(accountNo),
       hashValue(accountNo),
+      accountNoEncrypted,
       String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
       input.accountType ?? null,
       input.cancelledChequeDocumentId ?? null,
@@ -1131,6 +1184,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
        bank_ifsc = ?,
        bank_account_no = COALESCE(?, bank_account_no),
        bank_account_no_hash = COALESCE(?, bank_account_no_hash),
+       bank_account_no_encrypted = COALESCE(?, bank_account_no_encrypted),
        updated_at = NOW()
      WHERE id = ?`,
     [
@@ -1138,9 +1192,16 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       input.ifscCode ?? input.bank_ifsc ?? null,
       maskAccount(accountNo),
       hashValue(accountNo),
+      accountNoEncrypted,
       candidateId,
     ]
   );
+
+  // Fraud detection: check for duplicate bank account (non-blocking)
+  const bankHash = hashValue(accountNo);
+  if (bankHash) {
+    checkDuplicates(candidateId, "bank", bankHash).catch(e => console.error("[Fraud] Bank duplicate check error:", e.message));
+  }
 
   // Cheque name validation: compare name_on_cheque against account_holder_name.
   // Mismatch is queued for Payroll HO review — onboarding is NEVER blocked.
@@ -1391,6 +1452,30 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
     ]
   );
   await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: input.docType ?? input.doc_type }, meta);
+
+  // Async OCR extraction and cross-validation (non-blocking — never delays upload response)
+  const docType = String(input.docType ?? input.doc_type ?? "").toLowerCase();
+  const isIdentityDoc = docType.includes("aadhaar") || docType.includes("aadhar") || docType.includes("pan") || docType.includes("cheque") || docType.includes("passbook") || docType.includes("bank");
+  if (isIdentityDoc && file.mimetype.startsWith("image/")) {
+    extractFromDocument(file.path, docType)
+      .then(ocrResult => crossValidateDocument(candidateId, id, docType, ocrResult))
+      .catch(e => {
+        console.error("[OCR] Extraction failed for document", id, ":", e.message);
+        db.execute(
+          `UPDATE candidate_onboarding_document SET ocr_extraction_status = 'failed' WHERE id = ?`,
+          [id]
+        ).catch(() => {});
+      });
+  }
+
+  // Face matching: when a live selfie is uploaded, compare against Aadhaar/PAN photo
+  const isLiveSelfie = docType.includes("selfie") || docType.includes("live");
+  if (isLiveSelfie && file.mimetype.startsWith("image/")) {
+    triggerFaceMatch(candidateId, file.path, id).catch(e =>
+      console.error("[FaceMatch] Failed for candidate", candidateId, ":", e.message)
+    );
+  }
+
   return {
     id,
     fileUrl: buildOnboardingDocumentUrl(id, { token }),

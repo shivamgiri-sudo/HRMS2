@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   AlertCircle, Camera, CheckCircle2, ChevronDown, ChevronUp,
   FileUp, Info, Loader2, ShieldCheck, Trash2, Upload, WifiOff,
 } from "lucide-react";
+import { LiveSelfieCapture } from "./LiveSelfieCapture";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -553,8 +554,21 @@ export function Step4Documents({
   const [err, setErr] = useState("");
   const [showChecklist, setShowChecklist] = useState(true);
   const [fileKey, setFileKey] = useState(0);
+  const [selfieUploading, setSelfieUploading] = useState(false);
 
   const uploadedTypes = new Set((status?.documents || []).map((d) => d.doc_type));
+  const selfieUploaded = uploadedTypes.has("Live Selfie");
+
+  const handleSelfieCapture = useCallback(async (selfieFile: File) => {
+    setSelfieUploading(true);
+    try {
+      await onUpload(selfieFile, "Live Selfie", "Live Selfie (Identity Verification)", "");
+    } catch (e: any) {
+      setErr(e.message || "Selfie upload failed");
+    } finally {
+      setSelfieUploading(false);
+    }
+  }, [onUpload]);
 
   const upload = async () => {
     if (!file) { setErr("Please select a file first"); return; }
@@ -645,6 +659,13 @@ export function Step4Documents({
             </div>
           )}
         </div>
+
+        {/* Live Selfie — fraud prevention: verifies uploader matches ID documents */}
+        <LiveSelfieCapture
+          onCapture={handleSelfieCapture}
+          captured={selfieUploaded}
+          disabled={saving || selfieUploading}
+        />
 
         {err && (
           <div className="rounded-xl border-2 border-red-200 bg-red-50 p-3 flex items-start gap-2">
