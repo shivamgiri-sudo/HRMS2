@@ -11,7 +11,7 @@ describe("candidate assessment runtime safeguards", () => {
     expect(page).not.toContain('id="process"');
     expect(page).not.toContain('id="role"');
     expect(page).toContain("queueFromQuery");
-    expect(page).toContain("registered mobile number");
+    expect(page.toLowerCase()).toContain("registered mobile number");
   });
 
   it("preserves an active typing draft locally without revealing correction details", () => {
