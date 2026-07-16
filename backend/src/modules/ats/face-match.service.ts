@@ -1,19 +1,29 @@
 import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
+import * as tf from "@tensorflow/tfjs";
+import "@tensorflow/tfjs-backend-wasm";
+import * as faceapi from "@vladmandic/face-api/dist/face-api.node-wasm.js";
+import { Canvas, Image, ImageData, loadImage } from "canvas";
 import { db } from "../../db/mysql.js";
 
-let faceapi: any = null;
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData } as any);
+
 let modelsLoaded = false;
-const MODELS_PATH = path.resolve(process.cwd(), "face-models");
+let runtimeReady = false;
+const MODELS_PATH = path.resolve(process.env.FACE_MODELS_PATH ?? path.join(process.cwd(), "face-models"));
+
+async function ensureRuntime() {
+  if (runtimeReady) return;
+  await tf.setBackend("wasm");
+  await tf.ready();
+  runtimeReady = true;
+}
 
 async function ensureModels() {
   if (modelsLoaded) return;
 
-  if (!faceapi) {
-    const tfjs = await import("@tensorflow/tfjs-node");
-    faceapi = await import("@vladmandic/face-api");
-  }
+  await ensureRuntime();
 
   if (!fs.existsSync(MODELS_PATH)) {
     fs.mkdirSync(MODELS_PATH, { recursive: true });
@@ -33,11 +43,8 @@ async function ensureModels() {
 async function getDescriptor(imagePath: string): Promise<Float32Array | null> {
   try {
     await ensureModels();
-    const tf = await import("@tensorflow/tfjs-node");
-    const buffer = fs.readFileSync(imagePath);
-    const tensor = tf.node.decodeImage(buffer, 3);
-    const detection = await faceapi.detectSingleFace(tensor as any).withFaceLandmarks().withFaceDescriptor();
-    (tensor as any).dispose();
+    const image = await loadImage(imagePath);
+    const detection = await faceapi.detectSingleFace(image as any).withFaceLandmarks().withFaceDescriptor();
     return detection?.descriptor ?? null;
   } catch (e: any) {
     console.error("[FaceMatch] Descriptor extraction failed:", e.message);
