@@ -73,6 +73,7 @@ assessmentPublicRouter.post('/assessment/lookup', h(async (req, res) => {
 assessmentPublicRouter.get('/assessment/session/:token', h(async (req, res) => {
   try {
     const data = await assessmentService.getAssessmentSession(req.params.token);
+    (data as any).assessment.template = (data as any).template;
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ success: true, data });
   } catch (error) {
@@ -83,6 +84,7 @@ assessmentPublicRouter.get('/assessment/session/:token', h(async (req, res) => {
 assessmentPublicRouter.post('/assessment/session/:token/start', h(async (req, res) => {
   try {
     const data = await assessmentService.startAssessment(req.params.token, meta(req));
+    (data as any).assessment.template = (data as any).template;
     return res.json({ success: true, data });
   } catch (error) {
     return responseError(res, error);
