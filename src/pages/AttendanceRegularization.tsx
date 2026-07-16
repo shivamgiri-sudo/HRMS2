@@ -742,6 +742,35 @@ export default function AttendanceRegularization() {
                       )}
                     />
                   </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="text-xs font-medium text-slate-700">Shift In Time</label>
+                      <Input
+                        type="time"
+                        value={attendancePreviewQuery.data?.suggestedLoginTime || ""}
+                        readOnly
+                        placeholder="No shift"
+                        className="mt-1 h-9 border-slate-200 bg-white text-sm"
+                      />
+                      {!attendancePreviewQuery.data?.suggestedLoginTime && attendancePreviewQuery.data && (
+                        <p className="mt-1 text-xs text-amber-600">No shift start configured</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-slate-700">Shift Out Time</label>
+                      <Input
+                        type="time"
+                        value={attendancePreviewQuery.data?.suggestedLogoutTime || ""}
+                        readOnly
+                        placeholder="No shift"
+                        className="mt-1 h-9 border-slate-200 bg-white text-sm"
+                      />
+                      {!attendancePreviewQuery.data?.suggestedLogoutTime && attendancePreviewQuery.data && (
+                        <p className="mt-1 text-xs text-amber-600">No shift end configured</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
               {/* Divider */}
