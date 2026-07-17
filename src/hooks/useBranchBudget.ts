@@ -42,6 +42,7 @@ export interface BranchBudgetSummary {
   base_budget_amount: number;
   tax_budget_amount: number;
   gross_budget_amount: number;
+  pnl_budget_amount?: number;
   reserved_amount: number;
   consumed_amount: number;
   line_count: number;
@@ -99,5 +100,6 @@ export function useBranchBudgets(filters: { period?: string; branchId?: string; 
       hrmsApi.post(`/api/finance/pnl/budgets/${id}/review`, { decision, remarks }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["branch-budgets"] }),
   });
-  return { budgetsQuery, saveBudget, submitBudget, reviewBudget };
+  const budgetDetail = (id: string) => hrmsApi.get<{ success: boolean; data: unknown }>(`/api/finance/pnl/budgets/${id}`);
+  return { budgetsQuery, saveBudget, submitBudget, reviewBudget, budgetDetail };
 }

@@ -48,6 +48,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,10 @@ const STATUS_CONFIG: Record<
     badge: "bg-amber-50 text-amber-700 border-amber-200",
     label: "Submitted",
   },
+  branch_head_approved: { dot: "bg-blue-500", badge: "bg-blue-50 text-blue-700 border-blue-200", label: "Branch Head Approved" },
+  pending_accounts_payment: { dot: "bg-violet-500", badge: "bg-violet-50 text-violet-700 border-violet-200", label: "Pending Accounts Payment" },
+  partially_paid: { dot: "bg-amber-500", badge: "bg-amber-50 text-amber-700 border-amber-200", label: "Partially Paid" },
+  paid: { dot: "bg-emerald-500", badge: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Paid" },
   approved: {
     dot: "bg-emerald-500",
     badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -827,8 +832,10 @@ function CreateGrnTab() {
 const STATUS_TABS = [
   { value: "_all", label: "All" },
   { value: "draft", label: "Draft" },
-  { value: "submitted", label: "Submitted" },
-  { value: "approved", label: "Approved" },
+  { value: "submitted", label: "Branch Head Queue" },
+  { value: "branch_head_approved", label: "Finance Head Queue" },
+  { value: "pending_accounts_payment", label: "Accounts Payment" },
+  { value: "paid", label: "Paid" },
   { value: "rejected", label: "Rejected" },
   { value: "cancelled", label: "Cancelled" },
 ];
@@ -1067,7 +1074,7 @@ function ApprovalQueueTab() {
                           <Send className="size-3" /> Submit
                         </Button>
                       )}
-                      {r.status === "submitted" && (
+                      {["submitted", "branch_head_approved"].includes(r.status) && (
                         <Button
                           size="sm"
                           className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
@@ -1235,8 +1242,7 @@ function ApprovalQueueTab() {
                   <div className="flex items-start gap-2.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
                     <AlertCircle className="size-4 text-blue-600 mt-0.5 shrink-0" />
                     <p className="text-xs text-blue-800">
-                      Approving this vendor GRN will automatically create a
-                      payment tracking entry in Vendor Payment Tracking.
+                      Branch Head approval reserves the budget. Finance Head approval consumes it and creates the Accounts payment task.
                     </p>
                   </div>
                 )}
@@ -1343,7 +1349,7 @@ export default function NativeGRNManagement() {
             </TabsList>
 
             <TabsContent value="create">
-              <CreateGrnTab />
+              <BudgetLinkedGrnForm />
             </TabsContent>
             <TabsContent value="queue">
               <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6">

@@ -329,8 +329,12 @@ SOURCE sql/403_payroll_run_signoff.sql;
 -- ── Bug fixes: B6 incentive tracking (404) ───────────────────────────────────
 SOURCE sql/404_payroll_incentive_tracking.sql;
 
--- ── ATS candidate assessment engine (408) ───────────────────────────────────
+-- ── Finance attribution, P&L controls and budget-linked GRN (405–411) ────────
+SOURCE sql/405_finance_grn_vendor_cost_attribution.sql;
+SOURCE sql/406_process_pnl_financial_controls.sql;
 SOURCE sql/408_ats_candidate_assessment_engine.sql;
+SOURCE sql/409_visitor_management_foundation.sql;
+SOURCE sql/411_branch_budget_grn_approval_flow.sql;
 
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;

@@ -7,7 +7,7 @@ import { grnService } from "./grn.service.js";
 
 const GRN_WRITE_ROLES = ["accounts_head", "finance_head", "super_admin", "admin", "branch_head", "branch_admin"];
 const GRN_READ_ROLES  = [...GRN_WRITE_ROLES, "finance", "hr_admin"];
-const GRN_REVIEW_ROLES = ["accounts_head", "finance_head", "super_admin"];
+const GRN_REVIEW_ROLES = ["branch_head", "finance_head", "super_admin"];
 
 const UPLOAD_DIR = "uploads/grn-attachments";
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });

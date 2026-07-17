@@ -3,6 +3,7 @@ import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../.
 import { requireRole } from "../../middleware/requireRole.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
+import { branchBudgetService } from "./branch-budget.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -34,7 +35,53 @@ const PNL_SIGNOFF_ROLES = [
   "coo",
 ] as const;
 
+const BUDGET_READ_ROLES = ["super_admin","admin","branch_admin","branch_head","finance","finance_head","accounts_head"] as const;
+const BUDGET_CREATE_ROLES = ["super_admin","admin","branch_admin"] as const;
+const BUDGET_REVIEW_ROLES = ["branch_head","finance_head","accounts_head"] as const;
+
 router.use(requireAuth);
+
+router.get("/pnl/budgets", requireRole(...BUDGET_READ_ROLES), h(async (req, res) => {
+  const data = await branchBudgetService.list({
+    period: req.query.period ? String(req.query.period) : undefined,
+    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    status: req.query.status ? String(req.query.status) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/budgets/:id", requireRole(...BUDGET_READ_ROLES), h(async (req, res) => {
+  const data = await branchBudgetService.get(req.params.id);
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/budget-lines/available", requireRole(...BUDGET_READ_ROLES), h(async (req, res) => {
+  const data = await branchBudgetService.availableLines({
+    branchId: req.query.branchId ? String(req.query.branchId) : "",
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+    costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+    period: req.query.period ? String(req.query.period) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+router.post("/pnl/budgets", requireWriteAccess, requireRole(...BUDGET_CREATE_ROLES), h(async (req, res) => {
+  const data = await branchBudgetService.saveDraft(req.body, req.authUser.id);
+  res.status(201).json({ success: true, data });
+}));
+
+router.post("/pnl/budgets/:id/submit", requireWriteAccess, requireRole(...BUDGET_CREATE_ROLES), h(async (req, res) => {
+  const data = await branchBudgetService.submit(req.params.id, req.authUser.id, String(req.authUser.role ?? "unknown"));
+  res.json({ success: true, data });
+}));
+
+router.post("/pnl/budgets/:id/review", requireWriteAccess, requireRole(...BUDGET_REVIEW_ROLES), h(async (req, res) => {
+  const decision = String(req.body?.decision ?? "") as "approve" | "reject" | "revision";
+  if (!["approve","reject","revision"].includes(decision)) throw new Error("Invalid budget decision");
+  const data = await branchBudgetService.review(req.params.id, decision, req.authUser.id, String(req.authUser.role ?? "unknown"), req.body?.remarks ? String(req.body.remarks) : undefined);
+  res.json({ success: true, data });
+}));
+
 router.use(requireRole(...PNL_READ_ROLES));
 
 function readFilters(req: AuthenticatedRequest) {

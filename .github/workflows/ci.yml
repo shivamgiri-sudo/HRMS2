@@ -17,11 +17,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
       - name: Run ESLint
         run: bun run lint || true
         continue-on-error: true
@@ -32,11 +35,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
       - name: Run TypeScript compiler
         run: bunx tsc --noEmit
 
@@ -47,178 +53,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
       - name: Build application
         run: bun run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build
           path: dist/
           retention-days: 7
-
-  finance-integration:
-    name: Finance integration patch and validation
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/finance-budget-grn-vendor-flow'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Checkout finance feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: feat/finance-budget-grn-vendor-flow
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Detect guarded patch
-        id: patch
-        shell: bash
-        run: |
-          if [[ -f .github/scripts/apply_finance_budget_integration.py ]]; then
-            echo "apply=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "apply=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Set up Node.js
-        if: steps.patch.outputs.apply == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            backend/package-lock.json
-
-      - name: Normalize migration template delimiter
-        if: steps.patch.outputs.apply == 'true'
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('.github/scripts/apply_finance_budget_integration.py')
-          text = path.read_text(encoding='utf-8')
-          opening = "MIGRATION = r'''"
-          closing = "\n'''\n\nBRANCH_BUDGET_SERVICE ="
-          if opening not in text or closing not in text:
-              raise SystemExit('Migration template anchors were not found')
-          path.write_text(text.replace(opening, 'MIGRATION = r"""', 1).replace(closing, '\n"""\n\nBRANCH_BUDGET_SERVICE =', 1), encoding='utf-8')
-          PY
-
-      - name: Apply guarded finance patch
-        id: apply_patch
-        if: steps.patch.outputs.apply == 'true'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          python3 .github/scripts/apply_finance_budget_integration.py > /tmp/finance-patch.log 2>&1
-          code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          tail -80 /tmp/finance-patch.log
-          exit 0
-
-      - name: Normalize budget route actor roles
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('backend/src/modules/process-pnl/process-pnl.routes.ts')
-          text = path.read_text(encoding='utf-8')
-          old_submit = 'branchBudgetService.submit(req.params.id, req.authUser.id, req.authUser.role)'
-          new_submit = 'branchBudgetService.submit(req.params.id, req.authUser.id, String(req.authUser.role ?? "unknown"))'
-          old_review = 'branchBudgetService.review(req.params.id, decision, req.authUser.id, req.authUser.role, req.body?.remarks'
-          new_review = 'branchBudgetService.review(req.params.id, decision, req.authUser.id, String(req.authUser.role ?? "unknown"), req.body?.remarks'
-          if old_submit not in text or old_review not in text:
-              raise SystemExit('Budget route role anchors were not found')
-          path.write_text(text.replace(old_submit, new_submit, 1).replace(old_review, new_review, 1), encoding='utf-8')
-          PY
-
-      - name: Report patch failure
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code != '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          {
-            echo '### Finance integration patch failed'
-            echo
-            echo '```text'
-            tail -80 /tmp/finance-patch.log
-            echo '```'
-          } > /tmp/finance-comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/finance-comment.md
-          exit 1
-
-      - name: Install frontend dependencies
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
-        run: npm ci
-
-      - name: Install backend dependencies
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
-        run: npm --prefix backend ci
-
-      - name: Validate finance integration
-        id: validate
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
-        continue-on-error: true
-        shell: bash
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
-        run: |
-          set +e
-          failed=0
-          : > /tmp/finance-failures.log
-          npm run typecheck > /tmp/frontend-typecheck.log 2>&1
-          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Frontend typecheck ====='; cat /tmp/frontend-typecheck.log; echo; } >> /tmp/finance-failures.log; fi
-          npm --prefix backend run typecheck > /tmp/backend-typecheck.log 2>&1
-          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Backend typecheck ====='; cat /tmp/backend-typecheck.log; echo; } >> /tmp/finance-failures.log; fi
-          npm --prefix backend exec vitest run src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts > /tmp/budget-tests.log 2>&1
-          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Budget tax tests ====='; cat /tmp/budget-tests.log; echo; } >> /tmp/finance-failures.log; fi
-          npm run build:all > /tmp/build-all.log 2>&1
-          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Frontend/backend build ====='; tail -120 /tmp/build-all.log; echo; } >> /tmp/finance-failures.log; fi
-          echo "exit_code=$failed" >> "$GITHUB_OUTPUT"
-          if [[ $failed -eq 0 ]]; then echo 'All finance integration checks passed.'; else cat /tmp/finance-failures.log; fi
-          exit 0
-
-      - name: Report validation failure
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0' && steps.validate.outputs.exit_code != '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          {
-            echo '### Finance integration validation failed'
-            echo
-            echo '```text'
-            cat /tmp/finance-failures.log
-            echo '```'
-          } > /tmp/finance-comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/finance-comment.md
-          exit 1
-
-      - name: Restore standard CI workflow and commit validated code
-        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0' && steps.validate.outputs.exit_code == '0'
-        shell: bash
-        run: |
-          git checkout origin/main -- .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No validated changes to commit"
-            exit 0
-          fi
-          git commit -m "feat: integrate branch budgets with staged GRN vendor flow"
-          git push origin HEAD:feat/finance-budget-grn-vendor-flow

@@ -210,6 +210,7 @@ const ProcessPnlPage                = lazy(() => import("./pages/finance/Process
 const ProcessPnlDetailPage          = lazy(() => import("./pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage   = lazy(() => import("./pages/finance/ProcessPnlConfigurationPage"));
 const PnlPeriodClosePage            = lazy(() => import("./pages/finance/PnlPeriodClosePage"));
+const BranchBudgetManagementPage     = lazy(() => import("./pages/finance/BranchBudgetManagementPage"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
 const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
@@ -559,7 +560,8 @@ const App = () => (
               <Route path="/vendors" element={<ProtectedRoute roles={['admin','super_admin','finance','manager']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
               <Route path="/procurement" element={<ProtectedRoute><Gate pageCode="PROCUREMENT"><NativeProcurementPage /></Gate></ProtectedRoute>} />
               <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeVendorPaymentTracking /></ProtectedRoute>} />
-              <Route path="/finance/grn" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeGRNManagement /></ProtectedRoute>} />
+              <Route path="/finance/grn" element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head','payroll_head']}><NativeGRNManagement /></ProtectedRoute>} />
+              <Route path="/finance/branch-budget" element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><BranchBudgetManagementPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/period-close" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><PnlPeriodClosePage /></ProtectedRoute>} />

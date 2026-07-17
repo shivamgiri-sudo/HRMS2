@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { inboxService } from "../inbox/inbox.service.js";
@@ -280,14 +281,15 @@ export const vendorPaymentService = {
     );
 
     if (existing.grn_request_id) {
+      const normalized = String(paymentStatus);
+      const grnStatus = normalized === "Paid" ? "paid" : normalized === "Partially Paid" ? "partially_paid" : "pending_accounts_payment";
+      const accountsStatus = normalized === "Paid" ? "paid" : normalized === "Partially Paid" ? "partially_paid" : normalized === "On Hold" ? "on_hold" : "pending";
       await db.execute(
         `UPDATE grn_request
-            SET process_id = ?,
-                cost_centre_id = ?,
-                cost_class = ?
-          WHERE id = ?`,
-        [attribution.processId, attribution.costCentreId, attribution.costClass, existing.grn_request_id]
-      ).catch(() => undefined);
+            SET process_id=?, cost_centre_id=?, cost_class=?, status=?, accounts_payment_status=?
+          WHERE id=?`,
+        [attribution.processId, attribution.costCentreId, attribution.costClass, grnStatus, accountsStatus, existing.grn_request_id]
+      );
     }
 
     await writeFinanceAudit("VENDOR_PAYMENT_UPDATED", id, actorUserId, actorRole, {
@@ -385,93 +387,61 @@ export const vendorPaymentService = {
     return rows;
   },
 
-  async createFromGrn(grnId: string, actorUserId: string) {
-    const [rows] = await db.execute<RowDataPacket[]>(
+  async createFromGrn(grnId: string, actorUserId: string, connection?: PoolConnection) {
+    const executor = connection ?? db;
+    const [rows] = await executor.execute<RowDataPacket[]>(
       `SELECT g.*, b.branch_name AS branch_name
          FROM grn_request g
          LEFT JOIN branch_master b ON b.id = g.branch_id
-        WHERE g.id = ?
-          AND g.grn_type = 'vendor'
-          AND g.status = 'approved'
+        WHERE g.id = ? AND g.grn_type = 'vendor'
+          AND g.status IN ('pending_accounts_payment','finance_head_approved','approved')
         LIMIT 1`,
       [grnId]
     );
     const grn = rows[0] as any;
-    if (!grn) throw new Error("Approved vendor GRN not found");
-
-    const [existing] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM vendor_payment_tracking WHERE grn_request_id = ? LIMIT 1",
-      [grnId]
-    );
-    if (existing.length > 0) return null;
+    if (!grn) throw new Error("Finance-approved vendor GRN not found");
+    const [existing] = await executor.execute<RowDataPacket[]>("SELECT id FROM vendor_payment_tracking WHERE grn_request_id = ? LIMIT 1", [grnId]);
+    if (existing.length > 0) return String(existing[0].id);
 
     const id = randomUUID();
-    const dueDate = grn.due_date ?? grn.bill_date ?? null;
-    const fy = grn.financial_year ?? null;
-
-    await db.execute(
+    const dueAmount = Number(grn.amount_with_tax || grn.amount || 0);
+    await executor.execute(
       `INSERT INTO vendor_payment_tracking
-         (id, grn_request_id, grn_number, branch_id, process_id, cost_centre_id, cost_class, vendor_id, vendor_name,
-          head, sub_head, due_amount, due_date, grn_file_name, grn_file_path, grn_file_mime,
-          paid_amount, balance_amount, payment_status, financial_year)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'Payment Pending', ?)`,
-      [
-        id,
-        grnId,
-        grn.grn_number,
-        grn.branch_id,
-        grn.process_id ?? null,
-        grn.cost_centre_id ?? null,
-        grn.cost_class ?? "indirect",
-        grn.vendor_id ?? null,
-        grn.vendor_name ?? null,
-        grn.head,
-        grn.sub_head,
-        grn.amount,
-        dueDate,
-        grn.attachment_original_name ?? grn.attachment_file_name ?? null,
-        grn.attachment_path ?? grn.attachment_file_path ?? null,
-        grn.attachment_mime ?? grn.attachment_file_mime ?? null,
-        grn.amount,
-        fy,
-      ]
+       (id,grn_request_id,grn_number,branch_id,process_id,cost_centre_id,cost_class,vendor_id,vendor_name,head,sub_head,
+        due_amount,due_date,grn_file_name,grn_file_path,grn_file_mime,paid_amount,balance_amount,payment_status,financial_year,
+        budget_id,budget_line_id,amount_without_tax,tax_amount,amount_with_tax)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,'Payment Pending',?,?,?,?,?,?)`,
+      [id,grnId,grn.grn_number,grn.branch_id,grn.process_id??null,grn.cost_centre_id??null,grn.cost_class??"indirect",
+       grn.vendor_id??null,grn.vendor_name??null,grn.head,grn.sub_head,dueAmount,grn.due_date??grn.bill_date??null,
+       grn.attachment_original_name??grn.attachment_file_name??null,grn.attachment_path??grn.attachment_file_path??null,
+       grn.attachment_mime??grn.attachment_file_mime??null,dueAmount,grn.financial_year??null,grn.budget_id??null,
+       grn.budget_line_id??null,Number(grn.amount_without_tax||grn.amount||0),Number(grn.tax_amount||0),dueAmount]
     );
-
-    const [accountsUsers] = await db.execute<RowDataPacket[]>(
-      `SELECT u.id
-         FROM auth_user u
-         JOIN user_role_assignment ura ON ura.user_id = u.id
-        WHERE ura.role_name IN ('accounts_head','finance_head')
-          AND u.active_status = 1
-        LIMIT 20`
-    );
-
-    for (const user of accountsUsers as RowDataPacket[]) {
-      try {
-        await inboxService.createItem({
-          user_id: (user as any).id,
-          type: "VENDOR_PAYMENT_PENDING",
-          title: `Vendor Payment Pending - GRN ${grn.grn_number ?? grnId}`,
-          description: `Branch: ${grn.branch_name ?? grn.branch_id} | Vendor: ${grn.vendor_name ?? "N/A"} | Due: Rs ${Number(grn.amount).toLocaleString("en-IN")} | Due Date: ${dueDate ?? "TBD"}`,
-          entity_type: "vendor_payment_tracking",
-          entity_id: id,
-          action_url: "/finance/vendor-payment-tracking",
-          priority: "high",
-        });
-      } catch {
-        // Non-critical.
-      }
-    }
-
+    await executor.execute(`UPDATE grn_request SET status='pending_accounts_payment', accounts_payment_status='pending' WHERE id=?`, [grnId]);
     await writeFinanceAudit("VENDOR_PAYMENT_ROW_CREATED", id, actorUserId, undefined, {
-      grn_id: grnId,
-      grn_number: grn.grn_number,
-      due_amount: grn.amount,
-      process_id: grn.process_id ?? null,
-      cost_centre_id: grn.cost_centre_id ?? null,
-      cost_class: grn.cost_class ?? "indirect",
+      grn_id: grnId, grn_number: grn.grn_number, due_amount: dueAmount,
+      budget_id: grn.budget_id??null, budget_line_id: grn.budget_line_id??null,
+      process_id: grn.process_id??null, cost_centre_id: grn.cost_centre_id??null,
     });
-
     return id;
   },
+
+  async notifyPaymentPending(id: string) {
+    const payment = await this.getPayment(id);
+    if (!payment) return;
+    const [accountsUsers] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT u.id FROM auth_user u
+       JOIN user_role_assignment ura ON ura.user_id=u.id
+       WHERE ura.role_name='accounts_head' AND u.active_status=1 LIMIT 20`
+    );
+    for (const user of accountsUsers) {
+      await inboxService.createItem({
+        user_id: String(user.id), type: "VENDOR_PAYMENT_PENDING",
+        title: `Vendor Payment Pending - GRN ${payment.grn_number ?? payment.grn_request_id}`,
+        description: `Branch: ${payment.branch_name ?? payment.branch_id} | Vendor: ${payment.vendor_name ?? "N/A"} | Due: Rs ${Number(payment.due_amount).toLocaleString("en-IN")} | Due Date: ${payment.due_date ?? "TBD"}`,
+        entity_type: "vendor_payment_tracking", entity_id: id, action_url: "/finance/vendor-payment-tracking", priority: "high",
+      });
+    }
+  },
+
 };
