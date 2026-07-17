@@ -85,7 +85,13 @@ router.get("/records", requireRole("admin", "hr", "finance", "payroll", "ceo"), 
              COALESCE(spl.net_salary, 0) AS net_salary,
              COALESCE(spl.working_days, 0) AS working_days,
              COALESCE(spl.present_days, 0) AS present_days,
+             COALESCE(spl.leave_days, 0) AS leave_days,
              COALESCE(spl.lwp_days, 0) AS lwp_days,
+             COALESCE(spl.paid_working_days, 0) AS paid_working_days,
+             COALESCE(spl.eligible_weekoff_days, 0) AS eligible_weekoff_days,
+             COALESCE(spl.eligible_holiday_days, 0) AS eligible_holiday_days,
+             COALESCE(spl.final_payable_days, 0) AS final_payable_days,
+             COALESCE(spl.active_calendar_days, 0) AS active_calendar_days,
              ROW_NUMBER() OVER (
                PARTITION BY spr.run_month, spl.employee_id
                ORDER BY spr.created_at DESC, spl.id DESC

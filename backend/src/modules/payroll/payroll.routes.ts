@@ -46,23 +46,19 @@ router.post("/structures", requireRole("admin", "hr", "super_admin", "finance", 
 router.put("/structures/:id", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateStructure));
 router.delete("/structures/:id", requireRole("admin", "super_admin"), h(c.deleteStructure));
 
-// ─── Employee Salaries (per-employee assignment with computed monthly amounts) ─
+// ─── Employee Salaries (per-employee assignment with full CTC breakup from components) ─
 router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        esa.id,
        esa.employee_id,
        esa.ctc_annual,
+       esa.structure_id,
        esa.effective_from,
-       ss.id             AS structure_id,
        ss.structure_code,
        ss.structure_name,
        ss.basic_pct,
        ss.hra_pct,
-       ROUND((esa.ctc_annual / 12) * ss.basic_pct  / 100, 2)                                          AS basic_salary,
-       ROUND((esa.ctc_annual / 12) * ss.hra_pct    / 100, 2)                                          AS hra,
-       ROUND((esa.ctc_annual / 12) - ((esa.ctc_annual / 12) * ss.basic_pct / 100)
-                                   - ((esa.ctc_annual / 12) * ss.hra_pct   / 100), 2)                 AS special_allowance,
        CONCAT_WS(' ', e.first_name, e.last_name)  AS employee_name,
        e.employee_code,
        e.email                                     AS employee_email,
@@ -74,7 +70,60 @@ router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "fina
        AND e.employment_status = 'active'
      ORDER BY e.employee_code`
   );
-  return res.json({ success: true, data: rows });
+
+  // Fetch all components for these structures in one query
+  const structureIds = [...new Set((rows as any[]).map(r => r.structure_id).filter(Boolean))];
+  let componentMap: Record<string, Array<{component_code: string; component_name: string; calc_type: string; value: number}>> = {};
+
+  if (structureIds.length > 0) {
+    const placeholders = structureIds.map(() => '?').join(',');
+    const [compRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ssc.structure_id, scm.component_code, scm.component_name, ssc.calc_type, ssc.value
+         FROM salary_structure_component ssc
+         JOIN salary_component_master scm ON scm.id = ssc.component_id
+        WHERE ssc.structure_id IN (${placeholders})
+          AND ssc.calc_type IN ('fixed', 'pct_of_ctc')
+        ORDER BY ssc.sequence`,
+      structureIds
+    );
+    for (const c of compRows as any[]) {
+      if (!componentMap[c.structure_id]) componentMap[c.structure_id] = [];
+      componentMap[c.structure_id].push({
+        component_code: c.component_code,
+        component_name: c.component_name,
+        calc_type: c.calc_type,
+        value: Number(c.value) || 0,
+      });
+    }
+  }
+
+  // Enrich each row with actual component amounts
+  const enriched = (rows as any[]).map(row => {
+    const comps = componentMap[row.structure_id] || [];
+    const basic = comps.find(c => c.component_code === 'BASIC')?.value || 0;
+    const hra = comps.find(c => c.component_code === 'HRA')?.value || 0;
+    const bonus = comps.find(c => c.component_code === 'BONUS')?.value || 0;
+    const conv = comps.find(c => c.component_code === 'CONV')?.value || 0;
+    const portfolio = comps.find(c => c.component_code === 'PORTFOLIO')?.value || 0;
+    const medical = comps.find(c => c.component_code === 'MEDICAL')?.value || 0;
+    const lta = comps.find(c => c.component_code === 'LTA')?.value || 0;
+    const special = comps.find(c => c.component_code === 'SPECIAL')?.value || 0;
+    const otherAllow = comps.find(c => c.component_code === 'OTHER_ALLOW')?.value || 0;
+    const pli = comps.find(c => c.component_code === 'PLI')?.value || 0;
+    const gross = basic + hra + bonus + conv + portfolio + medical + lta + special + otherAllow + pli;
+
+    return {
+      ...row,
+      basic_salary: basic || Math.round((row.ctc_annual / 12) * (row.basic_pct || 40) / 100 * 100) / 100,
+      hra: hra || Math.round((row.ctc_annual / 12) * (row.hra_pct || 20) / 100 * 100) / 100,
+      bonus, conv, portfolio, medical, lta, special_allowance: special, other_allowance: otherAllow, pli,
+      gross_monthly: gross || Math.round(row.ctc_annual / 12 * 100) / 100,
+      ctc_monthly: Math.round(row.ctc_annual / 12 * 100) / 100,
+      components: comps,
+    };
+  });
+
+  return res.json({ success: true, data: enriched });
 }));
 
 // ─── Components ───────────────────────────────────────────────────────────────
@@ -487,6 +536,8 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             spl.lwp_deduction, spl.advance_recovery,
             spl.pf_employer, spl.esic_employer,
             spl.working_days, spl.present_days, spl.leave_days, spl.lwp_days,
+            spl.paid_working_days, spl.eligible_weekoff_days, spl.eligible_holiday_days,
+            spl.final_payable_days, spl.active_calendar_days,
             spl.status, spl.remarks,
             spr.run_month, spr.disbursed_at AS paid_at, spr.status AS run_status,
             sp.acknowledged_at, sp.file_url, sp.payslip_ref,
