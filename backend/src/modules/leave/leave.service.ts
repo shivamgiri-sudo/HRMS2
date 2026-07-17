@@ -67,6 +67,49 @@ export const leaveService = {
       [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
        input.totalDays, input.reason ?? null]
     );
+
+    // Notify reporting manager — they are Stage 1 approver
+    try {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code,
+                CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
+                e.reporting_manager_id,
+                e.manager_id
+         FROM employees e WHERE e.id = ? LIMIT 1`,
+        [input.employeeId]
+      );
+      const emp = (empRows[0] as any);
+      const managerEmpId = emp?.reporting_manager_id ?? emp?.manager_id ?? null;
+
+      if (managerEmpId) {
+        const [mgRows] = await db.execute<RowDataPacket[]>(
+          `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
+          [managerEmpId]
+        );
+        const managerUserId = (mgRows[0] as any)?.user_id ?? null;
+        if (managerUserId) {
+          const [ltRows] = await db.execute<RowDataPacket[]>(
+            `SELECT leave_name FROM leave_type_master WHERE id = ? LIMIT 1`,
+            [input.leaveTypeId]
+          );
+          const leaveType = (ltRows[0] as any)?.leave_name ?? 'Leave';
+          const { inboxService } = await import('../inbox/inbox.service.js');
+          await inboxService.createItem({
+            user_id: managerUserId,
+            type: 'leave_request',
+            title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
+            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${input.totalDays} day${input.totalDays === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+            entity_type: 'leave',
+            entity_id: input.employeeId,
+            action_url: `/leave/requests`,
+            priority: 'high',
+          });
+        }
+      }
+    } catch {
+      // Non-fatal — notification failure should not block submission
+    }
+
     return this.getRequest(id);
   },
 

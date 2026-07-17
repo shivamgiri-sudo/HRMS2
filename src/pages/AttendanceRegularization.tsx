@@ -15,7 +15,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, CalendarCheck, CheckCircle2, Loader2, RefreshCw, Send } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarCheck,
+  CheckCircle2,
+  ClipboardList,
+  Clock,
+  Layers,
+  Loader2,
+  RefreshCw,
+  Send,
+  Zap,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -156,12 +167,7 @@ type AttendancePreview = {
 };
 
 type ApiErrorLike = {
-  response?: {
-    data?: {
-      error?: string;
-      message?: string;
-    };
-  };
+  response?: { data?: { error?: string; message?: string } };
   message?: string;
 };
 
@@ -169,13 +175,97 @@ type BulkReviewResponse = {
   data?: {
     succeeded?: number;
     failed?: number;
-    data?: Array<{
-      success?: boolean;
-      message?: string;
-      id?: string;
-    }>;
+    data?: Array<{ success?: boolean; message?: string; id?: string }>;
   };
 };
+
+type DateRangeDay = {
+  date: string;
+  currentStatus: string;
+  loginTime: string | null;
+  logoutTime: string | null;
+  lwpValue: number;
+  hasRecord: boolean;
+  alreadyRequested: boolean;
+  selectable: boolean;
+};
+
+type DateRangePreview = {
+  employeeId: string;
+  fromDate: string;
+  toDate: string;
+  days: DateRangeDay[];
+};
+
+type BatchSubmitResult = {
+  data?: {
+    succeeded?: number;
+    failed?: number;
+    data?: Array<{ date: string; success: boolean; id?: string; message?: string }>;
+  };
+};
+
+// ── Request type classification ───────────────────────────────────────────
+
+type RequestCategory = "punch_correction" | "status_change" | "exception";
+
+const EXCEPTION_DISPUTE_TYPES = new Set(["week_off_worked", "holiday_worked"]);
+
+const REQUEST_CATEGORIES: Array<{
+  value: RequestCategory;
+  label: string;
+  icon: ReactNode;
+  description: string;
+  hint: string;
+}> = [
+  {
+    value: "punch_correction",
+    label: "Punch Correction",
+    icon: <Clock className="h-4 w-4" />,
+    description: "Fix wrong/missing login or logout time",
+    hint: "Use when biometric device missed your punch or recorded wrong time.",
+  },
+  {
+    value: "status_change",
+    label: "Status Change",
+    icon: <ClipboardList className="h-4 w-4" />,
+    description: "Change attendance status (absent → present, etc.)",
+    hint: "Use when your attendance status is incorrect and needs correction.",
+  },
+  {
+    value: "exception",
+    label: "Exception Request",
+    icon: <Zap className="h-4 w-4" />,
+    description: "Worked on week-off or holiday — request pay/comp-off",
+    hint: "Use when you worked on a scheduled week-off or public holiday.",
+  },
+];
+
+const PUNCH_DISPUTE_TYPES = [
+  { value: "missing_punch", label: "Missing Punch" },
+  { value: "wrong_punch", label: "Wrong Punch" },
+  { value: "late_mark_dispute", label: "Late Mark Dispute" },
+  { value: "early_logout_dispute", label: "Early Logout Dispute" },
+  { value: "cosec_sync_issue", label: "CosEC Sync Issue" },
+  { value: "manual_punch_correction", label: "Manual Punch Correction" },
+];
+
+const STATUS_DISPUTE_TYPES = [
+  { value: "half_day_dispute", label: "Half Day Dispute" },
+  { value: "absent_wrongly_marked", label: "Absent Wrongly Marked" },
+  { value: "shift_mismatch", label: "Shift Mismatch" },
+];
+
+const EXCEPTION_TYPES = [
+  { value: "week_off_worked", label: "Week-Off Worked" },
+  { value: "holiday_worked", label: "Holiday Worked" },
+];
+
+function disputeTypesForCategory(cat: RequestCategory) {
+  if (cat === "punch_correction") return PUNCH_DISPUTE_TYPES;
+  if (cat === "status_change") return STATUS_DISPUTE_TYPES;
+  return EXCEPTION_TYPES;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -198,14 +288,21 @@ function normalizeRegularizationStatus(status: string): RequestStatus {
 
 function normalizeRegularizationRow(row: WfmRegularizationRow): EmployeeRequest {
   const attendanceDate = String(row.session_date ?? "").slice(0, 10);
+  const disputeType = (row as any).dispute_type ?? null;
+  const requestTypeCode = EXCEPTION_DISPUTE_TYPES.has(disputeType ?? "")
+    ? "exception"
+    : "attendance_regularization";
+
   return {
     id: row.id,
     request_id: row.id,
     request_no: `${row.employee_code ?? "REG"}-${attendanceDate || row.id.slice(0, 8)}`,
     employee_id: row.employee_id,
     submitted_by: row.employee_name ?? row.employee_code ?? null,
-    request_type_code: "attendance_regularization",
-    title: `Attendance regularization for ${attendanceDate || "selected date"}`,
+    request_type_code: requestTypeCode,
+    title: requestTypeCode === "exception"
+      ? `Exception (${disputeType}) for ${attendanceDate}`
+      : `Attendance regularization for ${attendanceDate || "selected date"}`,
     reason: row.reason_label ?? row.reason ?? null,
     current_status: normalizeRegularizationStatus(row.status),
     raw_status: row.status,
@@ -261,8 +358,14 @@ function normalizeRegularizationRow(row: WfmRegularizationRow): EmployeeRequest 
   };
 }
 
-function shouldReplaceSuggestedTime(currentValue: string | undefined, defaultValue: string) {
-  return !currentValue || currentValue === defaultValue;
+function getApiErrorMessage(error: unknown, fallback: string) {
+  const typedError = error as ApiErrorLike;
+  return (
+    typedError?.response?.data?.error ??
+    typedError?.response?.data?.message ??
+    typedError?.message ??
+    fallback
+  );
 }
 
 function formatMinutesLabel(minutes?: number | null) {
@@ -278,49 +381,19 @@ function formatMinutesLabel(minutes?: number | null) {
 function humanizeSource(value?: string | null) {
   const text = String(value ?? "").trim();
   if (!text) return "Attendance record";
-  return text
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  return text.split(/[_\s]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
-
-function getApiErrorMessage(error: unknown, fallback: string) {
-  const typedError = error as ApiErrorLike;
-  return (
-    typedError?.response?.data?.error ??
-    typedError?.response?.data?.message ??
-    typedError?.message ??
-    fallback
-  );
-}
-
-const DISPUTE_TYPES = [
-  { value: "missing_punch", label: "Missing Punch" },
-  { value: "wrong_punch", label: "Wrong Punch" },
-  { value: "late_mark_dispute", label: "Late Mark Dispute" },
-  { value: "early_logout_dispute", label: "Early Logout Dispute" },
-  { value: "half_day_dispute", label: "Half Day Dispute" },
-  { value: "absent_wrongly_marked", label: "Absent Wrongly Marked" },
-  { value: "week_off_worked", label: "Week-Off Worked" },
-  { value: "holiday_worked", label: "Holiday Worked" },
-  { value: "shift_mismatch", label: "Shift Mismatch" },
-  { value: "cosec_sync_issue", label: "CosEC Sync Issue" },
-  { value: "manual_punch_correction", label: "Manual Punch Correction" },
-];
 
 // ── Zod schema ────────────────────────────────────────────────────────────
 
 const regularizationSchema = z
   .object({
+    requestCategory: z.enum(["punch_correction", "status_change", "exception"]),
     attendanceDate: z
       .string()
       .min(1, "Attendance date is required")
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
-      .refine(
-        (d) => new Date(d + "T00:00:00") <= new Date(),
-        "Cannot regularize a future date"
-      ),
+      .refine((d) => new Date(d + "T00:00:00") <= new Date(), "Cannot regularize a future date"),
     currentStatus: z.string().optional(),
     currentLoginTime: z.string().optional(),
     currentLogoutTime: z.string().optional(),
@@ -328,12 +401,22 @@ const regularizationSchema = z
     requestedLogoutTime: z.string().optional(),
     requestedStatus: z.enum(["present", "half_day", "absent"]).nullable().optional(),
     disputeType: z.string().nullable().optional(),
+    exceptionType: z.string().nullable().optional(),
     reason: z.string().max(500, "Reason must be 500 characters or less").optional(),
   })
-  .refine((d) => d.requestedLoginTime || d.requestedLogoutTime, {
-    message: "At least one requested time (login or logout) is required",
-    path: ["requestedLoginTime"],
-  })
+  .refine(
+    (d) => {
+      // status_change requires a target status; exception requires a type
+      // punch_correction: times are optional — reason alone is sufficient
+      if (d.requestCategory === "status_change") return !!d.requestedStatus;
+      if (d.requestCategory === "exception") return !!d.exceptionType;
+      return true;
+    },
+    {
+      message: "Required field missing for this request type",
+      path: ["requestedStatus"],
+    }
+  )
   .refine(
     (d) => {
       if (!d.requestedLoginTime || !d.requestedLogoutTime) return true;
@@ -355,23 +438,34 @@ export default function AttendanceRegularization() {
   const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
+  // Batch mode state
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchFromDate, setBatchFromDate] = useState("");
+  const [batchToDate, setBatchToDate] = useState("");
+  const [batchSelectedDates, setBatchSelectedDates] = useState<Set<string>>(new Set());
+  const [batchRangeQueried, setBatchRangeQueried] = useState(false);
+
   const [searchParams] = useSearchParams();
   const linkedEmployeeId = searchParams.get("employeeId");
 
   const form = useForm<FormValues>({
     resolver: zodResolver(regularizationSchema),
     defaultValues: {
+      requestCategory: "punch_correction",
       attendanceDate: new Date().toISOString().slice(0, 10),
-      currentStatus: "Absent",
+      currentStatus: "",
       currentLoginTime: "",
       currentLogoutTime: "",
-      requestedLoginTime: "09:30",
-      requestedLogoutTime: "18:30",
+      requestedLoginTime: "",
+      requestedLogoutTime: "",
       requestedStatus: null,
       disputeType: null,
+      exceptionType: null,
       reason: "",
     },
   });
+
+  const requestCategory = form.watch("requestCategory");
   const attendanceDate = form.watch("attendanceDate");
   const debouncedAttendanceDate = useDebounce(attendanceDate, 180);
 
@@ -408,6 +502,23 @@ export default function AttendanceRegularization() {
     retry: false,
   });
 
+  const dateRangePreviewQuery = useQuery({
+    queryKey: ["regularization-date-range-preview", batchFromDate, batchToDate, linkedEmployeeId, batchRangeQueried],
+    enabled: batchMode && batchRangeQueried && /^\d{4}-\d{2}-\d{2}$/.test(batchFromDate) && /^\d{4}-\d{2}-\d{2}$/.test(batchToDate) && batchFromDate <= batchToDate,
+    queryFn: async () => {
+      const params = new URLSearchParams({ fromDate: batchFromDate, toDate: batchToDate });
+      if (linkedEmployeeId) params.set("employeeId", linkedEmployeeId);
+      const res = await hrmsApi.get<{ success: boolean; data: DateRangePreview }>(
+        `/api/wfm/regularizations/date-range-preview?${params.toString()}`
+      );
+      // Auto-select all selectable dates
+      const selectableDates = res.data.data.days.filter((d) => d.selectable).map((d) => d.date);
+      setBatchSelectedDates(new Set(selectableDates));
+      return res.data.data;
+    },
+    retry: false,
+  });
+
   async function loadRequests() {
     setIsLoading(true);
     try {
@@ -432,65 +543,74 @@ export default function AttendanceRegularization() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-populate current times from preview; also pre-fill requested times from actual punch data
   useEffect(() => {
     const preview = attendancePreviewQuery.data;
     if (!preview) return;
 
-    form.setValue("currentStatus", preview.currentStatus || "Absent", { shouldDirty: false, shouldValidate: false });
+    form.setValue("currentStatus", preview.currentStatus || "", { shouldDirty: false, shouldValidate: false });
     form.setValue("currentLoginTime", preview.currentLoginTime || "", { shouldDirty: false, shouldValidate: false });
     form.setValue("currentLogoutTime", preview.currentLogoutTime || "", { shouldDirty: false, shouldValidate: false });
 
+    // Auto-fill requested times: use actual punch times if present, else shift defaults
     const dirtyFields = form.formState.dirtyFields;
-    if (!dirtyFields.requestedLoginTime && preview.suggestedLoginTime && shouldReplaceSuggestedTime(form.getValues("requestedLoginTime"), "09:30")) {
-      form.setValue("requestedLoginTime", preview.suggestedLoginTime, { shouldDirty: false, shouldValidate: false });
+    const suggestedIn = preview.currentLoginTime || preview.suggestedLoginTime || "";
+    const suggestedOut = preview.currentLogoutTime || preview.suggestedLogoutTime || "";
+
+    if (!dirtyFields.requestedLoginTime) {
+      form.setValue("requestedLoginTime", suggestedIn, { shouldDirty: false, shouldValidate: false });
     }
-    if (!dirtyFields.requestedLogoutTime && preview.suggestedLogoutTime && shouldReplaceSuggestedTime(form.getValues("requestedLogoutTime"), "18:30")) {
-      form.setValue("requestedLogoutTime", preview.suggestedLogoutTime, { shouldDirty: false, shouldValidate: false });
+    if (!dirtyFields.requestedLogoutTime) {
+      form.setValue("requestedLogoutTime", suggestedOut, { shouldDirty: false, shouldValidate: false });
     }
   }, [attendancePreviewQuery.data, form]);
 
   const submitMutation = useMutation({
     mutationFn: async (values: FormValues) => {
       const geo = await geoCapture();
+      const isException = values.requestCategory === "exception";
+      const disputeType = isException
+        ? (values.exceptionType ?? null)
+        : (values.disputeType ?? null);
+
       return hrmsApi.post("/api/wfm/regularizations", {
         sessionDate: values.attendanceDate,
         oldStatus: values.currentStatus || null,
         oldPunchIn: values.currentLoginTime || null,
         oldPunchOut: values.currentLogoutTime || null,
-        newPunchIn: values.requestedLoginTime || null,
-        newPunchOut: values.requestedLogoutTime || null,
+        newPunchIn: values.requestCategory !== "status_change" ? (values.requestedLoginTime || null) : null,
+        newPunchOut: values.requestCategory !== "status_change" ? (values.requestedLogoutTime || null) : null,
         requestedStatus: values.requestedStatus || null,
-        disputeType: values.disputeType || null,
+        disputeType,
         reason:
           values.reason?.trim() ||
-          `Login: ${values.requestedLoginTime ?? ""} Logout: ${values.requestedLogoutTime ?? ""}`.trim(),
+          (isException
+            ? `Exception: ${disputeType ?? "worked on off-day"} on ${values.attendanceDate}`
+            : `Punch correction: ${values.requestedLoginTime ?? ""} – ${values.requestedLogoutTime ?? ""}`),
         supportingNote: values.reason?.trim() || null,
         latitude: geo.latitude,
         longitude: geo.longitude,
       });
     },
     onSuccess: () => {
-      const preview = attendancePreviewQuery.data;
       form.reset({
+        requestCategory: form.getValues("requestCategory"),
         attendanceDate: new Date().toISOString().slice(0, 10),
-        currentStatus: preview?.currentStatus || "Absent",
-        currentLoginTime: preview?.currentLoginTime || "",
-        currentLogoutTime: preview?.currentLogoutTime || "",
-        requestedLoginTime: preview?.suggestedLoginTime || "09:30",
-        requestedLogoutTime: preview?.suggestedLogoutTime || "18:30",
+        currentStatus: "",
+        currentLoginTime: "",
+        currentLogoutTime: "",
+        requestedLoginTime: "",
+        requestedLogoutTime: "",
         requestedStatus: null,
         disputeType: null,
+        exceptionType: null,
         reason: "",
       });
-      toast({ title: "Request submitted", description: "Your regularization request has been recorded." });
+      toast({ title: "Request submitted", description: "Your regularization request has been recorded. Your manager will receive a notification." });
       loadRequests();
     },
     onError: (err: unknown) =>
-      toast({
-        title: "Submission failed",
-        description: getApiErrorMessage(err, "Failed to submit."),
-        variant: "destructive",
-      }),
+      toast({ title: "Submission failed", description: getApiErrorMessage(err, "Failed to submit."), variant: "destructive" }),
   });
 
   const reviewMutation = useMutation({
@@ -503,11 +623,7 @@ export default function AttendanceRegularization() {
       loadRequests();
     },
     onError: (err: unknown) =>
-      toast({
-        title: "Review failed",
-        description: getApiErrorMessage(err, "Failed to review request."),
-        variant: "destructive",
-      }),
+      toast({ title: "Review failed", description: getApiErrorMessage(err, "Failed to review request."), variant: "destructive" }),
   });
 
   const bulkApproveMutation = useMutation({
@@ -519,11 +635,7 @@ export default function AttendanceRegularization() {
       if (failed > 0) {
         const failedItems = (data?.data ?? []).filter((row) => !row.success);
         const failedDetail = failedItems.slice(0, 3).map((row) => row.message ?? row.id ?? "Unknown").join("; ");
-        toast({
-          title: `${succeeded} approved, ${failed} failed`,
-          description: failedDetail || "Some requests could not be processed. Check individual items.",
-          variant: "destructive",
-        });
+        toast({ title: `${succeeded} approved, ${failed} failed`, description: failedDetail || "Some requests could not be processed.", variant: "destructive" });
       } else {
         toast({ title: "Bulk approval completed", description: `${succeeded} request(s) approved successfully.` });
       }
@@ -531,16 +643,54 @@ export default function AttendanceRegularization() {
       loadRequests();
     },
     onError: (err: unknown) =>
-      toast({
-        title: "Bulk approval failed",
-        description: getApiErrorMessage(err, "Failed to bulk approve."),
-        variant: "destructive",
-      }),
+      toast({ title: "Bulk approval failed", description: getApiErrorMessage(err, "Failed to bulk approve."), variant: "destructive" }),
+  });
+
+  const batchSubmitMutation = useMutation({
+    mutationFn: async (values: FormValues) => {
+      const geo = await geoCapture();
+      const dates = Array.from(batchSelectedDates).sort();
+      const isException = values.requestCategory === "exception";
+      const disputeType = isException ? (values.exceptionType ?? null) : (values.disputeType ?? null);
+      return hrmsApi.post<BatchSubmitResult>("/api/wfm/regularizations/batch", {
+        sessionDates: dates,
+        requestedStatus: values.requestedStatus || null,
+        disputeType,
+        newPunchIn: values.requestCategory !== "status_change" ? (values.requestedLoginTime || null) : null,
+        newPunchOut: values.requestCategory !== "status_change" ? (values.requestedLogoutTime || null) : null,
+        reason: values.reason?.trim() || `Batch ${values.requestCategory === "exception" ? "exception" : "correction"}: ${dates.length} date(s)`,
+        supportingNote: values.reason?.trim() || null,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+      });
+    },
+    onSuccess: (response) => {
+      const d = (response as any)?.data;
+      const succeeded = d?.succeeded ?? 0;
+      const failed = d?.failed ?? 0;
+      if (failed > 0) {
+        const failedItems = ((d?.data ?? []) as any[]).filter((r: any) => !r.success);
+        const msg = failedItems.slice(0, 3).map((r: any) => `${r.date}: ${r.message ?? "failed"}`).join("; ");
+        toast({ title: `${succeeded} submitted, ${failed} skipped`, description: msg, variant: "destructive" });
+      } else {
+        toast({ title: `${succeeded} request(s) submitted`, description: "Manager will receive a notification for all selected dates." });
+      }
+      setBatchSelectedDates(new Set());
+      setBatchRangeQueried(false);
+      setBatchFromDate("");
+      setBatchToDate("");
+      loadRequests();
+    },
+    onError: (err: unknown) =>
+      toast({ title: "Batch submission failed", description: getApiErrorMessage(err, "Failed to submit."), variant: "destructive" }),
   });
 
   function getDetail(request: EmployeeRequest) {
     return request.regularization_request_detail?.[0] || null;
   }
+
+  const preview = attendancePreviewQuery.data;
+  const categoryConfig = REQUEST_CATEGORIES.find((c) => c.value === requestCategory)!;
 
   return (
     <DashboardLayout>
@@ -555,7 +705,7 @@ export default function AttendanceRegularization() {
               <div>
                 <h1 className="text-xl font-black text-slate-950">Attendance Regularization</h1>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Pull the exact record for the selected date, submit the correction, and track approval in one place.
+                  Select request type → pick date → review auto-loaded record → submit. Approval flows to your manager first, then WFM.
                 </p>
               </div>
             </div>
@@ -571,9 +721,7 @@ export default function AttendanceRegularization() {
 
         {linkedEmployeeId && (
           <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Deep-linked from notification — Employee ID:{" "}
-            <span className="font-mono font-bold">{linkedEmployeeId}</span>. The date below has been
-            pre-filled.
+            Deep-linked from notification — Employee ID: <span className="font-mono font-bold">{linkedEmployeeId}</span>
           </div>
         )}
 
@@ -581,102 +729,175 @@ export default function AttendanceRegularization() {
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Total Requests" value={stats.total} />
           <StatCard label="Pending Manager" value={stats.pendingManager} accent="amber" />
-          <StatCard label="Pending Admin" value={stats.pendingAdmin} accent="sky" />
+          <StatCard label="Pending WFM" value={stats.pendingAdmin} accent="sky" />
           <StatCard label="Approved" value={stats.approved} accent="emerald" />
           <StatCard label="High Risk" value={stats.risky} accent="rose" />
         </div>
 
-        {/* Submission Form */}
+        {/* Step 1: Request Type Selection */}
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Step 1</p>
+            <h2 className="text-sm font-semibold text-slate-950">What do you need to fix?</h2>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {REQUEST_CATEGORIES.map((cat) => (
+              <button
+                key={cat.value}
+                type="button"
+                onClick={() => {
+                  form.setValue("requestCategory", cat.value, { shouldDirty: false });
+                  form.setValue("disputeType", null);
+                  form.setValue("exceptionType", null);
+                  form.setValue("requestedStatus", null);
+                }}
+                className={cn(
+                  "flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-all",
+                  requestCategory === cat.value
+                    ? "border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300"
+                    : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                )}
+              >
+                <div className={cn("flex items-center gap-2 font-semibold text-sm", requestCategory === cat.value ? "text-emerald-700" : "text-slate-800")}>
+                  {cat.icon}
+                  {cat.label}
+                </div>
+                <p className="text-xs text-slate-500">{cat.description}</p>
+              </button>
+            ))}
+          </div>
+          {categoryConfig && (
+            <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              {categoryConfig.hint}
+            </div>
+          )}
+        </div>
+
+        {/* Step 2: Form */}
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-950">New Regularization Request</h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Select the date first. The system record loads automatically, and you only enter the correction.
-            </p>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Step 2</p>
+                <h2 className="text-sm font-semibold text-slate-950">
+                  {requestCategory === "exception" ? "Exception Details" : "Correction Details"}
+                </h2>
+              </div>
+              {requestCategory !== "exception" && (
+                <button
+                  type="button"
+                  onClick={() => { setBatchMode((v) => !v); setBatchRangeQueried(false); setBatchSelectedDates(new Set()); }}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                    batchMode
+                      ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                  )}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  {batchMode ? "Batch ON — click to disable" : "Multi-date / Batch"}
+                </button>
+              )}
+            </div>
 
             <Form {...form}>
-              <form
-                onSubmit={form.handleSubmit((v) => submitMutation.mutate(v))}
-                className="mt-3 space-y-4"
-              >
-              {/* Row 1: Date + Dispute Type */}
-              <div className="grid gap-3 md:grid-cols-2">
-                <FormField
-                  control={form.control}
-                  name="attendanceDate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs">
-                        Attendance Date <span className="text-rose-500">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} className="h-9 text-sm" />
-                      </FormControl>
-                      <FormDescription className="text-xs">Cannot be a future date.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              <form onSubmit={form.handleSubmit((v) => submitMutation.mutate(v))} className="space-y-4">
 
-                <FormField
-                  control={form.control}
-                  name="disputeType"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs">
-                        Dispute Type{" "}
-                        <span className="text-slate-400 font-normal text-xs">(optional)</span>
-                      </FormLabel>
-                      <Select
-                        value={field.value ?? "none"}
-                        onValueChange={(v) => field.onChange(v === "none" ? null : v)}
-                      >
+                {/* Date + Dispute/Exception Type */}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="attendanceDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">
+                          Attendance Date <span className="text-rose-500">*</span>
+                        </FormLabel>
                         <FormControl>
-                          <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
-                            <SelectValue placeholder="Select dispute type" />
-                          </SelectTrigger>
+                          <Input type="date" {...field} className="h-9 text-sm" />
                         </FormControl>
-                        <SelectContent className="bg-white !text-slate-900">
-                          <SelectItem value="none">None</SelectItem>
-                          {DISPUTE_TYPES.map((dt) => (
-                            <SelectItem key={dt.value} value={dt.value}>
-                              {dt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                        <FormDescription className="text-xs">Cannot be a future date.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
+                  {requestCategory === "exception" ? (
+                    <FormField
+                      control={form.control}
+                      name="exceptionType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">Exception Type <span className="text-rose-500">*</span></FormLabel>
+                          <Select
+                            value={field.value ?? "none"}
+                            onValueChange={(v) => field.onChange(v === "none" ? null : v)}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
+                                <SelectValue placeholder="Select type" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent className="bg-white !text-slate-900">
+                              <SelectItem value="none">Select type</SelectItem>
+                              {EXCEPTION_TYPES.map((et) => (
+                                <SelectItem key={et.value} value={et.value}>{et.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <FormField
+                      control={form.control}
+                      name="disputeType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">Issue Type <span className="text-slate-400 font-normal">(optional)</span></FormLabel>
+                          <Select
+                            value={field.value ?? "none"}
+                            onValueChange={(v) => field.onChange(v === "none" ? null : v)}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
+                                <SelectValue placeholder="Select issue type" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent className="bg-white !text-slate-900">
+                              <SelectItem value="none">None</SelectItem>
+                              {disputeTypesForCategory(requestCategory).map((dt) => (
+                                <SelectItem key={dt.value} value={dt.value}>{dt.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </div>
+
+                {/* System Record — auto-populated */}
                 <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
-                        System Record
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        This section is auto-filled from the attendance record for the selected date.
-                      </p>
-                    </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">System Record (Auto-loaded)</p>
                     <div className="flex items-center gap-2">
                       {attendancePreviewQuery.isFetching && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700">
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Syncing record
+                          Loading…
                         </span>
                       )}
-                      {attendancePreviewQuery.data && !attendancePreviewQuery.isFetching && (
+                      {preview && !attendancePreviewQuery.isFetching && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          Record loaded
+                          Loaded
                         </span>
                       )}
                     </div>
                   </div>
-
                   <div className="mt-3 grid gap-3 md:grid-cols-3">
                     <FormField
                       control={form.control}
@@ -685,239 +906,360 @@ export default function AttendanceRegularization() {
                         <FormItem>
                           <FormLabel className="text-xs">Current Status</FormLabel>
                           <FormControl>
-                            <Input {...field} readOnly className="h-9 border-slate-200 bg-white text-sm font-medium" />
+                            <Input {...field} readOnly className="h-9 border-slate-200 bg-white text-sm font-medium" placeholder="—" />
                           </FormControl>
-                          <FormMessage />
                         </FormItem>
                       )}
                     />
-
                     <FormField
                       control={form.control}
                       name="currentLoginTime"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-xs">Current Login Time</FormLabel>
+                          <FormLabel className="text-xs">Recorded Login</FormLabel>
                           <FormControl>
-                            <Input
-                              type="time"
-                              {...field}
-                              readOnly
-                              placeholder="No record"
-                              className="h-9 border-slate-200 bg-white text-sm"
-                            />
+                            <Input type="time" {...field} readOnly placeholder="—" className="h-9 border-slate-200 bg-white text-sm" />
                           </FormControl>
-                          {!field.value && (
-                            <FormDescription className="text-xs text-amber-600">
-                              No login time recorded for this date
-                            </FormDescription>
+                          {!field.value && preview && (
+                            <FormDescription className="text-xs text-amber-600">No login recorded</FormDescription>
                           )}
-                          <FormMessage />
                         </FormItem>
                       )}
                     />
-
                     <FormField
                       control={form.control}
                       name="currentLogoutTime"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-xs">Current Logout Time</FormLabel>
+                          <FormLabel className="text-xs">Recorded Logout</FormLabel>
                           <FormControl>
-                            <Input
-                              type="time"
-                              {...field}
-                              readOnly
-                              placeholder="No record"
-                              className="h-9 border-slate-200 bg-white text-sm"
-                            />
+                            <Input type="time" {...field} readOnly placeholder="—" className="h-9 border-slate-200 bg-white text-sm" />
                           </FormControl>
-                          {!field.value && (
-                            <FormDescription className="text-xs text-amber-600">
-                              No logout time recorded for this date
-                            </FormDescription>
+                          {!field.value && preview && (
+                            <FormDescription className="text-xs text-amber-600">No logout recorded</FormDescription>
                           )}
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-dashed border-slate-200" />
+                  </div>
+                  <div className="relative flex justify-center">
+                    <span className="bg-white px-3 text-xs font-bold uppercase tracking-[0.18em] text-emerald-600">
+                      Your Correction
+                    </span>
+                  </div>
+                </div>
+
+                {/* Correction fields — vary by request type */}
+                {requestCategory === "status_change" && (
+                  <FormField
+                    control={form.control}
+                    name="requestedStatus"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Requested Status <span className="text-rose-500">*</span></FormLabel>
+                        <Select
+                          value={field.value ?? "none"}
+                          onValueChange={(v) => field.onChange(v === "none" ? null : v)}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
+                              <SelectValue placeholder="Select correct status" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent className="bg-white !text-slate-900">
+                            <SelectItem value="none">Select status</SelectItem>
+                            <SelectItem value="present">Present</SelectItem>
+                            <SelectItem value="half_day">Half Day</SelectItem>
+                            <SelectItem value="absent">Absent</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription className="text-xs">What should your attendance status be?</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {requestCategory === "exception" && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <p className="font-semibold">Exception Request Flow</p>
+                    <p className="mt-1">
+                      Your request will go to your manager for approval, then to WFM to process compensation
+                      (overtime pay or comp-off). Enter the actual hours worked below so WFM can calculate correctly.
+                    </p>
+                  </div>
+                )}
+
+                {(requestCategory === "punch_correction" || requestCategory === "exception") && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="requestedLoginTime"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">
+                            {requestCategory === "exception" ? "Actual Start Time" : "Correct Login Time"}
+                            <span className="ml-1 font-normal text-slate-400">(optional)</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="time" {...field} className="h-9 text-sm" />
+                          </FormControl>
+                          <FormDescription className="text-xs">
+                            {requestCategory === "exception" ? "When did you actually start work?" : "Leave blank if only the status needs fixing."}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="requestedLogoutTime"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs">
+                            {requestCategory === "exception" ? "Actual End Time" : "Correct Logout Time"}
+                            <span className="ml-1 font-normal text-slate-400">(optional)</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="time" {...field} className="h-9 text-sm" />
+                          </FormControl>
+                          <FormDescription className="text-xs">Must be after login time if both are filled.</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
                   </div>
+                )}
 
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <div>
-                      <label className="text-xs font-medium text-slate-700">Shift In Time</label>
-                      <Input
-                        type="time"
-                        value={attendancePreviewQuery.data?.suggestedLoginTime || ""}
-                        readOnly
-                        placeholder="No shift"
-                        className="mt-1 h-9 border-slate-200 bg-white text-sm"
-                      />
-                      {!attendancePreviewQuery.data?.suggestedLoginTime && attendancePreviewQuery.data && (
-                        <p className="mt-1 text-xs text-amber-600">No shift start configured</p>
-                      )}
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-slate-700">Shift Out Time</label>
-                      <Input
-                        type="time"
-                        value={attendancePreviewQuery.data?.suggestedLogoutTime || ""}
-                        readOnly
-                        placeholder="No shift"
-                        className="mt-1 h-9 border-slate-200 bg-white text-sm"
-                      />
-                      {!attendancePreviewQuery.data?.suggestedLogoutTime && attendancePreviewQuery.data && (
-                        <p className="mt-1 text-xs text-amber-600">No shift end configured</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-              {/* Divider */}
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-dashed border-slate-200" />
-                </div>
-                <div className="relative flex justify-center">
-                  <span className="bg-white px-3 text-xs font-bold uppercase tracking-[0.18em] text-emerald-600">
-                    Requested Correction
-                  </span>
-                </div>
-              </div>
-
-              {/* Requested Correction section */}
-              <div className="grid gap-3 md:grid-cols-3">
+                {/* Reason */}
                 <FormField
                   control={form.control}
-                  name="requestedStatus"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs">Requested Attendance Status</FormLabel>
-                      <Select
-                        value={field.value ?? "none"}
-                        onValueChange={(v) => field.onChange(v === "none" ? null : v)}
-                      >
+                  name="reason"
+                  render={({ field }) => {
+                    const len = field.value?.length ?? 0;
+                    return (
+                      <FormItem>
+                        <FormLabel className="text-xs">
+                          Reason <span className="text-slate-400 font-normal">(optional)</span>
+                        </FormLabel>
                         <FormControl>
-                          <SelectTrigger className="h-9 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
-                            <SelectValue placeholder="Select status" />
-                          </SelectTrigger>
+                          <Textarea
+                            placeholder={
+                              requestCategory === "exception"
+                                ? "Describe the work done, approving manager instruction, etc."
+                                : "Describe why the correction is needed."
+                            }
+                            className="min-h-[64px] text-sm"
+                            {...field}
+                          />
                         </FormControl>
-                        <SelectContent className="bg-white !text-slate-900">
-                          <SelectItem value="none">No change</SelectItem>
-                          <SelectItem value="present">Present</SelectItem>
-                          <SelectItem value="half_day">Half Day</SelectItem>
-                          <SelectItem value="absent">Absent</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormDescription className="text-xs">Use this if the attendance status itself is wrong.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="requestedLoginTime"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs">
-                        Requested Login Time <span className="text-rose-500">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input type="time" {...field} className="h-9 text-sm" />
-                      </FormControl>
-                      <FormDescription className="text-xs">At least one of login or logout is required.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                        <div className="flex items-center justify-between gap-3">
+                          <FormDescription className="text-xs">
+                            Providing a reason speeds up manager approval.
+                          </FormDescription>
+                          <span className={cn("text-xs tabular-nums", len > 450 ? "font-semibold text-rose-500" : "text-slate-400")}>
+                            {len}/500
+                          </span>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="requestedLogoutTime"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs">
-                        Requested Logout Time <span className="text-rose-500">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input type="time" {...field} className="h-9 text-sm" />
-                      </FormControl>
-                      <FormDescription className="text-xs">Must be after login time if both are set.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              {/* Reason */}
-              <FormField
-                control={form.control}
-                name="reason"
-                render={({ field }) => {
-                  const len = field.value?.length ?? 0;
-                  return (
-                    <FormItem>
-                      <FormLabel className="text-xs">
-                        Reason{" "}
-                        <span className="text-slate-400 font-normal text-xs">(optional)</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Example: forgot to punch out because the device was not responding."
-                          className="min-h-[64px] text-sm"
-                          {...field}
+                {/* Batch mode — date range picker and grid */}
+                {batchMode && (
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 space-y-3">
+                    <p className="text-xs font-semibold text-indigo-800">
+                      Multi-date Batch Mode — select a range and pick dates to submit together
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div>
+                        <label className="text-xs font-medium text-slate-700">From Date</label>
+                        <Input
+                          type="date"
+                          value={batchFromDate}
+                          onChange={(e) => { setBatchFromDate(e.target.value); setBatchRangeQueried(false); }}
+                          className="mt-1 h-9 text-sm"
+                          max={new Date().toISOString().slice(0, 10)}
                         />
-                      </FormControl>
-                      <div className="flex items-center justify-between gap-3">
-                        <FormDescription className="text-xs">
-                          If left blank, the requested punch times will be used as the reason text.
-                        </FormDescription>
-                        <span
-                          className={cn(
-                            "text-xs tabular-nums",
-                            len > 450 ? "font-semibold text-rose-500" : "text-slate-400"
-                          )}
-                        >
-                          {len}/500
-                        </span>
                       </div>
-                      <FormMessage />
-                    </FormItem>
-                  );
-                }}
-              />
+                      <div>
+                        <label className="text-xs font-medium text-slate-700">To Date</label>
+                        <Input
+                          type="date"
+                          value={batchToDate}
+                          onChange={(e) => { setBatchToDate(e.target.value); setBatchRangeQueried(false); }}
+                          className="mt-1 h-9 text-sm"
+                          max={new Date().toISOString().slice(0, 10)}
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-9 w-full text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-100"
+                          disabled={!batchFromDate || !batchToDate || batchFromDate > batchToDate || dateRangePreviewQuery.isFetching}
+                          onClick={() => setBatchRangeQueried(true)}
+                        >
+                          {dateRangePreviewQuery.isFetching ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Scanning…</> : "Scan Dates"}
+                        </Button>
+                      </div>
+                    </div>
 
-              <div className="flex justify-end">
-                <Button type="submit" disabled={submitMutation.isPending} className="h-9 w-full sm:w-auto text-sm">
-                  {submitMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Submitting…
-                    </>
+                    {dateRangePreviewQuery.isError && (
+                      <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                        {getApiErrorMessage(dateRangePreviewQuery.error, "Could not load date range.")}
+                      </div>
+                    )}
+
+                    {dateRangePreviewQuery.data && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-semibold text-slate-900">
+                            {dateRangePreviewQuery.data.days.filter((d) => d.selectable).length} selectable ·{" "}
+                            {batchSelectedDates.size} selected
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              className="text-xs text-indigo-600 hover:underline"
+                              onClick={() => setBatchSelectedDates(new Set(dateRangePreviewQuery.data!.days.filter((d) => d.selectable).map((d) => d.date)))}
+                            >
+                              Select all
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs text-slate-500 hover:underline"
+                              onClick={() => setBatchSelectedDates(new Set())}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                          <table className="min-w-full divide-y divide-slate-100 text-xs">
+                            <thead className="bg-slate-50">
+                              <tr>
+                                <th className="px-2 py-2 text-left font-semibold text-slate-500">✓</th>
+                                <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
+                                <th className="px-3 py-2 text-left font-semibold text-slate-500">Day</th>
+                                <th className="px-3 py-2 text-left font-semibold text-slate-500">Current Status</th>
+                                <th className="px-3 py-2 text-left font-semibold text-slate-500">Login</th>
+                                <th className="px-3 py-2 text-left font-semibold text-slate-500">Logout</th>
+                                <th className="px-3 py-2 text-left font-semibold text-slate-500">Note</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {dateRangePreviewQuery.data.days.map((day) => {
+                                const checked = batchSelectedDates.has(day.date);
+                                const dayName = new Date(day.date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short" });
+                                return (
+                                  <tr key={day.date} className={cn("hover:bg-slate-50", !day.selectable && "opacity-50")}>
+                                    <td className="px-2 py-1.5">
+                                      <input
+                                        type="checkbox"
+                                        className="h-3.5 w-3.5 rounded border-slate-300"
+                                        checked={checked}
+                                        disabled={!day.selectable}
+                                        onChange={(e) => {
+                                          setBatchSelectedDates((prev) => {
+                                            const next = new Set(prev);
+                                            if (e.target.checked) next.add(day.date);
+                                            else next.delete(day.date);
+                                            return next;
+                                          });
+                                        }}
+                                      />
+                                    </td>
+                                    <td className="px-3 py-1.5 font-medium text-slate-900">{day.date}</td>
+                                    <td className="px-3 py-1.5 text-slate-500">{dayName}</td>
+                                    <td className="px-3 py-1.5">
+                                      <span className={cn(
+                                        "rounded px-1.5 py-0.5 font-semibold text-[11px]",
+                                        day.currentStatus === "Present" ? "bg-emerald-100 text-emerald-700" :
+                                        day.currentStatus === "Absent" ? "bg-rose-100 text-rose-700" :
+                                        day.currentStatus === "Half Day" ? "bg-amber-100 text-amber-700" :
+                                        "bg-slate-100 text-slate-600"
+                                      )}>
+                                        {day.currentStatus}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-1.5 text-slate-600">{day.loginTime || "—"}</td>
+                                    <td className="px-3 py-1.5 text-slate-600">{day.logoutTime || "—"}</td>
+                                    <td className="px-3 py-1.5 text-slate-400">
+                                      {day.alreadyRequested ? (
+                                        <span className="text-amber-600 font-medium">Request pending</span>
+                                      ) : !day.hasRecord ? (
+                                        <span className="text-slate-400">No record</span>
+                                      ) : null}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-800">Approval flow: </span>
+                  Your request → Reporting Manager (Stage 1) → Branch WFM (Stage 2 / final)
+                </div>
+
+                <div className="flex justify-end">
+                  {batchMode && batchSelectedDates.size > 0 ? (
+                    <Button
+                      type="button"
+                      disabled={batchSubmitMutation.isPending}
+                      onClick={() => form.handleSubmit((v) => batchSubmitMutation.mutate(v))()}
+                      className="h-9 w-full sm:w-auto text-sm bg-indigo-600 hover:bg-indigo-700"
+                    >
+                      {batchSubmitMutation.isPending ? (
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Submitting {batchSelectedDates.size} dates…</>
+                      ) : (
+                        <><Send className="mr-2 h-4 w-4" />Submit {batchSelectedDates.size} date(s)</>
+                      )}
+                    </Button>
                   ) : (
-                    <>
-                      <Send className="mr-2 h-4 w-4" />
-                      Submit Request
-                    </>
+                    <Button type="submit" disabled={submitMutation.isPending || (batchMode && batchSelectedDates.size === 0)} className="h-9 w-full sm:w-auto text-sm">
+                      {submitMutation.isPending ? (
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Submitting…</>
+                      ) : batchMode ? (
+                        <span className="text-slate-400">Select dates above to submit</span>
+                      ) : (
+                        <><Send className="mr-2 h-4 w-4" />Submit Request</>
+                      )}
+                    </Button>
                   )}
-                </Button>
-              </div>
-            </form>
-          </Form>
+                </div>
+              </form>
+            </Form>
           </div>
 
+          {/* Right panel: attendance snapshot */}
           <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-950">Selected Date Snapshot</h3>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Auto-validation preview for the date currently selected in the form.
-                  </p>
+                  <h3 className="text-sm font-semibold text-slate-950">Date Snapshot</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">Auto-pulled for selected date</p>
                 </div>
-                {attendancePreviewQuery.data && (
+                {preview && (
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">
-                    {humanizeSource(attendancePreviewQuery.data.attendanceSource)}
+                    {humanizeSource(preview.attendanceSource)}
                   </span>
                 )}
               </div>
@@ -926,60 +1268,56 @@ export default function AttendanceRegularization() {
                 {attendancePreviewQuery.isLoading || attendancePreviewQuery.isFetching ? (
                   <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Pulling the attendance record for this date...
+                    Pulling record…
                   </div>
                 ) : attendancePreviewQuery.isError ? (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
-                    The system record could not be loaded for this date. You can still submit the request, but the preview needs attention.
+                    Could not load system record for this date. You can still submit, but the reviewer will have less context.
                   </div>
-                ) : attendancePreviewQuery.data ? (
+                ) : preview ? (
                   <div className="space-y-3">
-                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                      <PreviewMetric label="Status" value={attendancePreviewQuery.data.currentStatus} />
-                      <PreviewMetric label="Login Time" value={attendancePreviewQuery.data.currentLoginTime || "Not recorded"} />
-                      <PreviewMetric label="Logout Time" value={attendancePreviewQuery.data.currentLogoutTime || "Not recorded"} />
-                      <PreviewMetric label="Punch Count" value={String(attendancePreviewQuery.data.totalPunches)} />
-                      <PreviewMetric label="Biometric Minutes" value={formatMinutesLabel(attendancePreviewQuery.data.biometricMinutes)} />
-                      <PreviewMetric label="Raw Minutes" value={formatMinutesLabel(attendancePreviewQuery.data.rawMinutes)} />
+                    <div className="grid gap-2">
+                      <PreviewMetric label="Status" value={preview.currentStatus} />
+                      <PreviewMetric label="Login Time" value={preview.currentLoginTime || "Not recorded"} />
+                      <PreviewMetric label="Logout Time" value={preview.currentLogoutTime || "Not recorded"} />
+                      <PreviewMetric label="Punch Count" value={String(preview.totalPunches)} />
+                      <PreviewMetric label="Duration" value={formatMinutesLabel(preview.biometricMinutes || preview.rawMinutes)} />
                     </div>
-                    {(!attendancePreviewQuery.data.currentLoginTime && !attendancePreviewQuery.data.currentLogoutTime) && (
+                    {(!preview.currentLoginTime && !preview.currentLogoutTime) && (
                       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                        <p className="font-semibold">No attendance record found for this date</p>
-                        <p className="mt-1">
-                          This could mean: (1) No punch-in/out recorded, (2) Attendance not yet processed, or (3) Employee was absent.
-                          The requested times below will create a new attendance record.
-                        </p>
+                        <p className="font-semibold">No punch record for this date</p>
+                        <p className="mt-1">No biometric data found. Request will need manual evidence review.</p>
                       </div>
                     )}
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
-                      <p className="font-semibold text-slate-900">Detected Punches</p>
-                      <p className="mt-2 text-slate-600">
-                        {attendancePreviewQuery.data.punches.length > 0
-                          ? attendancePreviewQuery.data.punches.map((punch) => `${punch.ioLabel} ${formatDateTime(punch.punchTime)}`).join(" | ")
-                          : "No punch events were found for this date."}
-                      </p>
-                    </div>
+                    {preview.punches.length > 0 && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                        <p className="font-semibold text-slate-900 mb-1.5">Detected Punches</p>
+                        <div className="space-y-1">
+                          {preview.punches.map((punch, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <span className={cn(
+                                "rounded px-1.5 py-0.5 font-semibold",
+                                punch.ioLabel === "In" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                              )}>
+                                {punch.ioLabel}
+                              </span>
+                              <span className="text-slate-600">{formatDateTime(punch.punchTime)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                      <p className="font-semibold text-slate-900">Suggested Shift Window</p>
-                      <p className="mt-1">
-                        {attendancePreviewQuery.data.suggestedLoginTime || "--:--"} to{" "}
-                        {attendancePreviewQuery.data.suggestedLogoutTime || "--:--"}
-                      </p>
+                      <p className="font-semibold text-slate-900 mb-1">Shift Window</p>
+                      <p>{preview.suggestedLoginTime || "--:--"} → {preview.suggestedLogoutTime || "--:--"}</p>
                     </div>
                   </div>
                 ) : (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-4 text-xs text-slate-500">
-                    Choose a date to load the recorded attendance snapshot.
+                    Choose a date to load the attendance snapshot.
                   </div>
                 )}
               </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs text-slate-600">
-              <p className="font-semibold text-slate-900">Quick note</p>
-              <p className="mt-1">
-                The system record is pulled automatically so the correction request only contains the actual change, not a manually copied attendance snapshot.
-              </p>
             </div>
           </div>
         </div>
@@ -988,12 +1326,9 @@ export default function AttendanceRegularization() {
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-slate-950">Regularization Requests</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Review request status, approval stages, audit trail, and WFM validation evidence.
-              </p>
+              <h2 className="text-sm font-semibold text-slate-950">My Requests</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Track status, view approval stages and evidence.</p>
             </div>
-
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 type="button"
@@ -1028,22 +1363,19 @@ export default function AttendanceRegularization() {
                 Loading requests…
               </div>
             ) : filteredRequests.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-500">
-                No regularization requests found.
-              </div>
+              <div className="p-6 text-center text-xs text-slate-500">No regularization requests found.</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-xs">
                   <thead className="bg-slate-50">
                     <tr>
                       <Th>Select</Th>
-                      <Th>Request No</Th>
+                      <Th>Request</Th>
                       <Th>Date</Th>
+                      <Th>Type</Th>
                       <Th>Status</Th>
-                      <Th>WFM Risk</Th>
                       <Th>Stage</Th>
-                      <Th>Requested Time</Th>
-                      <Th>Payroll</Th>
+                      <Th>Risk</Th>
                       <Th>Actions</Th>
                     </tr>
                   </thead>
@@ -1051,6 +1383,7 @@ export default function AttendanceRegularization() {
                     {filteredRequests.map((request) => {
                       const detail = getDetail(request);
                       const isSelected = selectedIds.includes(request.id);
+                      const isException = request.request_type_code === "exception";
                       return (
                         <tr key={request.id} className="hover:bg-slate-50">
                           <Td>
@@ -1069,31 +1402,27 @@ export default function AttendanceRegularization() {
                           </Td>
                           <Td>
                             <div className="font-semibold text-slate-950">{request.request_no}</div>
-                            {request.submitted_by && (
-                              <div className="text-xs text-slate-500">{request.submitted_by}</div>
-                            )}
-                            <div className="mt-0.5 text-xs text-slate-400">
-                              {formatDateTime(request.created_at)}
-                            </div>
+                            {request.submitted_by && <div className="text-slate-500">{request.submitted_by}</div>}
+                            <div className="mt-0.5 text-slate-400">{formatDateTime(request.created_at)}</div>
                           </Td>
                           <Td>{detail?.attendance_date || "—"}</Td>
                           <Td>
-                            <StatusBadge status={request.current_status} />
+                            <span className={cn(
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                              isException
+                                ? "border-purple-200 bg-purple-50 text-purple-700"
+                                : "border-slate-200 bg-slate-50 text-slate-600"
+                            )}>
+                              {isException ? <Zap className="h-2.5 w-2.5" /> : <Clock className="h-2.5 w-2.5" />}
+                              {isException ? "Exception" : "Regularization"}
+                            </span>
                           </Td>
-                          <Td>
-                            <RiskBadge support={request.decision_support} />
-                          </Td>
+                          <Td><StatusBadge status={request.current_status} /></Td>
                           <Td>
                             <div className="text-slate-900">{request.current_stage_name || "—"}</div>
-                            <div className="text-xs text-slate-400">
-                              {request.current_owner_role || "—"}
-                            </div>
+                            <div className="text-slate-400">{request.current_owner_role || "—"}</div>
                           </Td>
-                          <Td>
-                            <div>In: {detail?.requested_login_time || "—"}</div>
-                            <div>Out: {detail?.requested_logout_time || "—"}</div>
-                          </Td>
-                          <Td>{request.payroll_impact_status}</Td>
+                          <Td><RiskBadge support={request.decision_support} /></Td>
                           <Td>
                             <div className="flex flex-wrap gap-1.5">
                               <button
@@ -1131,26 +1460,16 @@ export default function AttendanceRegularization() {
         </div>
       </div>
 
-      {/* Detail Modal */}
       {selectedRequest && (
         <DetailDialog request={selectedRequest} onClose={() => setSelectedRequest(null)} />
       )}
-
     </DashboardLayout>
   );
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────
 
-function StatCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: number;
-  accent?: "amber" | "sky" | "emerald" | "rose";
-}) {
+function StatCard({ label, value, accent }: { label: string; value: number; accent?: "amber" | "sky" | "emerald" | "rose" }) {
   const accentClass: Record<string, string> = {
     amber: "text-amber-600",
     sky: "text-sky-600",
@@ -1160,18 +1479,16 @@ function StatCard({
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      <p className={cn("mt-1 text-lg font-semibold", accent ? accentClass[accent] : "text-slate-950")}>
-        {value}
-      </p>
+      <p className={cn("mt-1 text-lg font-semibold", accent ? accentClass[accent] : "text-slate-950")}>{value}</p>
     </div>
   );
 }
 
 function PreviewMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
       <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-950">{value}</p>
+      <p className="text-sm font-semibold text-slate-950">{value}</p>
     </div>
   );
 }
@@ -1206,42 +1523,23 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function RiskBadge({ support }: { support?: RegularizationDecisionSupport }) {
-  if (!support) return <span className="text-xs text-slate-400">No evidence</span>;
+  if (!support) return <span className="text-xs text-slate-400">—</span>;
   const tone = support.riskLevel === "high"
     ? "border-rose-200 bg-rose-50 text-rose-700"
     : support.riskLevel === "medium"
       ? "border-amber-200 bg-amber-50 text-amber-700"
       : "border-emerald-200 bg-emerald-50 text-emerald-700";
   return (
-    <div className="space-y-1">
-      <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-bold uppercase", tone)}>
-        {support.riskLevel !== "low" ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
-        {support.riskLevel} · {support.riskScore}
-      </span>
-      {support.flags.length > 0 && (
-        <div className="max-w-[220px] text-xs text-slate-500">
-          {support.flags.slice(0, 2).join(", ")}
-          {support.flags.length > 2 ? ` +${support.flags.length - 2}` : ""}
-        </div>
-      )}
-    </div>
+    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-bold uppercase", tone)}>
+      {support.riskLevel !== "low" ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+      {support.riskLevel} · {support.riskScore}
+    </span>
   );
 }
 
-function DetailDialog({
-  request,
-  onClose,
-}: {
-  request: EmployeeRequest;
-  onClose: () => void;
-}) {
+function DetailDialog({ request, onClose }: { request: EmployeeRequest; onClose: () => void }) {
   const detail = request.regularization_request_detail?.[0] || null;
-  const stages = [...(request.request_approval_stage || [])].sort(
-    (a, b) => a.stage_no - b.stage_no
-  );
-  const logs = [...(request.request_action_log || [])].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
+  const stages = [...(request.request_approval_stage || [])].sort((a, b) => a.stage_no - b.stage_no);
   const support = request.decision_support;
 
   return (
@@ -1249,35 +1547,35 @@ function DetailDialog({
       <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg bg-white p-4 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">
-              Request Detail
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-400">Request Detail</p>
             <h3 className="mt-0.5 text-lg font-semibold text-slate-950">{request.request_no}</h3>
-            <div className="mt-1.5">
+            <div className="mt-1.5 flex items-center gap-2">
               <StatusBadge status={request.current_status} />
+              {request.request_type_code === "exception" && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">
+                  <Zap className="h-3 w-3" />
+                  Exception
+                </span>
+              )}
             </div>
           </div>
-
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-          >
+          <button onClick={onClose} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
             Close
           </button>
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <div className="rounded-lg border border-slate-200 p-3">
-            <h4 className="text-xs font-semibold text-slate-950">Attendance Correction</h4>
+            <h4 className="text-xs font-semibold text-slate-950">Correction Details</h4>
             <div className="mt-3 grid gap-2 text-xs">
-              <InfoRow label="Attendance Date" value={detail?.attendance_date} />
+              <InfoRow label="Date" value={detail?.attendance_date} />
               <InfoRow label="Current Status" value={detail?.current_status} />
               <InfoRow label="Current Login" value={detail?.current_login_time} />
               <InfoRow label="Current Logout" value={detail?.current_logout_time} />
               <InfoRow label="Requested Login" value={detail?.requested_login_time} />
               <InfoRow label="Requested Logout" value={detail?.requested_logout_time} />
               <InfoRow label="Reason" value={request.reason} />
-              <InfoRow label="Payroll Impact" value={request.payroll_impact_status} />
+              <InfoRow label="Payroll Status" value={request.payroll_impact_status} />
             </div>
           </div>
 
@@ -1288,41 +1586,23 @@ function DetailDialog({
                 <div key={stage.id} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-xs font-semibold text-slate-950">
-                        Stage {stage.stage_no}: {stage.stage_name}
-                      </p>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Role: {stage.approver_role || "—"}
-                      </p>
+                      <p className="text-xs font-semibold text-slate-950">Stage {stage.stage_no}: {stage.stage_name}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">Role: {stage.approver_role || "—"}</p>
                     </div>
                     <StatusBadge status={stage.status} />
                   </div>
-                  {stage.remarks && (
-                    <p className="mt-1.5 text-xs text-slate-500">Remarks: {stage.remarks}</p>
-                  )}
-                  {stage.acted_at && (
-                    <p className="mt-1 text-xs text-slate-400">
-                      Acted at: {formatDateTime(stage.acted_at)}
-                    </p>
-                  )}
+                  {stage.remarks && <p className="mt-1.5 text-xs text-slate-500">Remarks: {stage.remarks}</p>}
+                  {stage.acted_at && <p className="mt-1 text-xs text-slate-400">Acted at: {formatDateTime(stage.acted_at)}</p>}
                 </div>
               ))}
-              {stages.length === 0 && (
-                <p className="text-xs text-slate-400">No approval stages recorded yet.</p>
-              )}
             </div>
           </div>
         </div>
 
         {support && (
           <div className="mt-3 rounded-lg border border-slate-200 p-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h4 className="text-xs font-semibold text-slate-950">WFM Validation Evidence</h4>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Use this before final approval. Manager approval is only the first checkpoint.
-                </p>
-              </div>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-xs font-semibold text-slate-950">WFM Validation Evidence</h4>
               <RiskBadge support={support} />
             </div>
             {support.flags.length > 0 ? (
@@ -1342,57 +1622,18 @@ function DetailDialog({
             )}
             <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
               <InfoRow label="Current Attendance" value={support.evidence.currentAttendanceStatus} />
-              <InfoRow label="Current LWP" value={String(support.evidence.currentLwp ?? "")} />
+              <InfoRow label="Current LWP" value={String(support.evidence.currentLwp ?? "—")} />
               <InfoRow label="First Punch" value={support.evidence.firstPunch} />
               <InfoRow label="Last Punch" value={support.evidence.lastPunch} />
               <InfoRow label="Total Punches" value={String(support.evidence.totalPunches)} />
-              <InfoRow label="Biometric Minutes" value={String(support.evidence.biometricMinutes ?? "")} />
+              <InfoRow label="Biometric Minutes" value={String(support.evidence.biometricMinutes ?? "—")} />
               <InfoRow label="Roster Status" value={support.evidence.rosterStatus} />
-              <InfoRow label="Roster Shift" value={`${support.evidence.rosterShiftStart ?? "?"} - ${support.evidence.rosterShiftEnd ?? "?"}`} />
+              <InfoRow label="Shift" value={`${support.evidence.rosterShiftStart ?? "?"} – ${support.evidence.rosterShiftEnd ?? "?"}`} />
               <InfoRow label="Duplicate Requests" value={String(support.evidence.duplicateRequests)} />
-              <InfoRow label="Recent Requests" value={String(support.evidence.recentRequests)} />
+              <InfoRow label="Recent Requests (30d)" value={String(support.evidence.recentRequests)} />
             </div>
           </div>
         )}
-
-        <div className="mt-3 rounded-lg border border-slate-200 p-3">
-          <h4 className="text-xs font-semibold text-slate-950">Audit Log</h4>
-          <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-xs">
-              <thead className="bg-slate-50">
-                <tr>
-                  <Th>Action</Th>
-                  <Th>Old Status</Th>
-                  <Th>New Status</Th>
-                  <Th>Remarks</Th>
-                  <Th>Created At</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {logs.map((log) => (
-                  <tr key={log.id}>
-                    <Td>{log.action}</Td>
-                    <Td>{log.old_status || "—"}</Td>
-                    <Td>{log.new_status || "—"}</Td>
-                    <Td>
-                      <span title={log.remarks ?? undefined} className="block max-w-[200px] truncate">
-                        {log.remarks || "—"}
-                      </span>
-                    </Td>
-                    <Td>{formatDateTime(log.created_at)}</Td>
-                  </tr>
-                ))}
-                {logs.length === 0 && (
-                  <tr>
-                    <td className="p-3 text-center text-xs text-slate-400" colSpan={5}>
-                      No audit entries yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
       </div>
     </div>
   );
