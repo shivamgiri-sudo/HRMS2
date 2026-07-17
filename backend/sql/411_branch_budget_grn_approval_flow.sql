@@ -1,5 +1,5 @@
 -- 411_branch_budget_grn_approval_flow.sql
--- Tax-aware branch budgets, approved-budget GRN linkage and staged vendor-payment flow.
+-- Tax-aware branch budgets, quantity-aware GRN controls and staged vendor payments.
 -- Additive and idempotent for the existing 310/405 finance schema.
 
 CREATE TABLE IF NOT EXISTS finance_budget_header (
@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS finance_budget_header (
   branch_id CHAR(36) NOT NULL,
   period_code CHAR(7) NOT NULL,
   financial_year VARCHAR(10) NOT NULL,
-  status ENUM('draft','submitted','branch_head_approved','finance_head_approved','accounts_head_approved','active','rejected','revision_required','closed') NOT NULL DEFAULT 'draft',
+  status ENUM(
+    'draft','submitted','branch_head_approved','finance_head_approved',
+    'accounts_head_approved','active','rejected','revision_required','closed'
+  ) NOT NULL DEFAULT 'draft',
   base_budget_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
   tax_budget_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
   gross_budget_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
@@ -26,6 +29,7 @@ CREATE TABLE IF NOT EXISTS finance_budget_header (
   created_by CHAR(36) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_budget_branch_period (branch_id, period_code),
   INDEX idx_budget_branch_period (branch_id, period_code),
   INDEX idx_budget_status (status),
   INDEX idx_budget_fy (financial_year)
@@ -58,15 +62,19 @@ CREATE TABLE IF NOT EXISTS finance_budget_line (
   preferred_vendor_id CHAR(36) NULL,
   allocation_driver VARCHAR(60) NULL,
   justification TEXT NOT NULL,
+  reserved_quantity DECIMAL(18,4) NOT NULL DEFAULT 0,
+  consumed_quantity DECIMAL(18,4) NOT NULL DEFAULT 0,
   reserved_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
   consumed_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_budget_line_header FOREIGN KEY (budget_id) REFERENCES finance_budget_header(id) ON DELETE CASCADE,
+  CONSTRAINT fk_budget_line_header
+    FOREIGN KEY (budget_id) REFERENCES finance_budget_header(id) ON DELETE CASCADE,
   INDEX idx_budget_line_budget (budget_id),
   INDEX idx_budget_line_attribution (cost_centre_id, process_id),
   INDEX idx_budget_line_head (head, sub_head),
-  INDEX idx_budget_line_vendor (preferred_vendor_id)
+  INDEX idx_budget_line_vendor (preferred_vendor_id),
+  INDEX idx_budget_line_available (budget_id, reserved_amount, consumed_amount)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS finance_budget_approval_log (
@@ -79,11 +87,49 @@ CREATE TABLE IF NOT EXISTS finance_budget_approval_log (
   actor_role VARCHAR(80) NOT NULL,
   remarks TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_budget_approval_header FOREIGN KEY (budget_id) REFERENCES finance_budget_header(id) ON DELETE CASCADE,
+  CONSTRAINT fk_budget_approval_header
+    FOREIGN KEY (budget_id) REFERENCES finance_budget_header(id) ON DELETE CASCADE,
   INDEX idx_budget_approval_budget (budget_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Add one column per guarded statement. This avoids a partially-applied multi-column ALTER.
+-- Complete a table created by an earlier partial execution of this migration.
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema=DATABASE() AND table_name='finance_budget_line'
+      AND column_name='reserved_quantity')=0,
+  'ALTER TABLE finance_budget_line ADD COLUMN reserved_quantity DECIMAL(18,4) NOT NULL DEFAULT 0 AFTER justification',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema=DATABASE() AND table_name='finance_budget_line'
+      AND column_name='consumed_quantity')=0,
+  'ALTER TABLE finance_budget_line ADD COLUMN consumed_quantity DECIMAL(18,4) NOT NULL DEFAULT 0 AFTER reserved_quantity',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @duplicate_budget_count = (
+  SELECT COUNT(*) FROM (
+    SELECT branch_id, period_code
+    FROM finance_budget_header
+    GROUP BY branch_id, period_code
+    HAVING COUNT(*) > 1
+  ) duplicate_periods
+);
+SET @sql = IF(
+  @duplicate_budget_count = 0
+  AND (SELECT COUNT(*) FROM information_schema.statistics
+    WHERE table_schema=DATABASE() AND table_name='finance_budget_header'
+      AND index_name='uq_budget_branch_period')=0,
+  'ALTER TABLE finance_budget_header ADD UNIQUE KEY uq_budget_branch_period (branch_id, period_code)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- Extend existing GRN table one guarded column at a time.
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='grn_request' AND column_name='budget_id')=0,
   'ALTER TABLE grn_request ADD COLUMN budget_id CHAR(36) NULL AFTER financial_year', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -146,7 +192,11 @@ SET @sql = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schem
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 ALTER TABLE grn_request
-  MODIFY COLUMN status ENUM('draft','submitted','branch_head_approved','finance_head_approved','pending_accounts_payment','payment_scheduled','partially_paid','paid','approved','rejected','cancelled') NOT NULL DEFAULT 'draft';
+  MODIFY COLUMN status ENUM(
+    'draft','submitted','branch_head_approved','finance_head_approved',
+    'pending_accounts_payment','payment_scheduled','partially_paid','paid',
+    'approved','rejected','cancelled'
+  ) NOT NULL DEFAULT 'draft';
 
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='grn_request' AND index_name='idx_grn_budget_line')=0,
   'ALTER TABLE grn_request ADD INDEX idx_grn_budget_line (budget_line_id)', 'SELECT 1');
@@ -155,6 +205,7 @@ SET @sql = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_sc
   'ALTER TABLE grn_request ADD INDEX idx_grn_budget (budget_id)', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Extend existing vendor payment table without replacing its legacy status values.
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='vendor_payment_tracking' AND column_name='budget_id')=0,
   'ALTER TABLE vendor_payment_tracking ADD COLUMN budget_id CHAR(36) NULL', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
@@ -171,6 +222,7 @@ SET @sql = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schem
   'ALTER TABLE vendor_payment_tracking ADD COLUMN amount_with_tax DECIMAL(18,2) NOT NULL DEFAULT 0', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Preserve legacy rows as tax-neutral values until specifically reclassified.
 UPDATE grn_request
    SET amount_without_tax = CASE WHEN amount_without_tax = 0 THEN amount ELSE amount_without_tax END,
        amount_with_tax = CASE WHEN amount_with_tax = 0 THEN amount ELSE amount_with_tax END,
@@ -181,8 +233,12 @@ UPDATE vendor_payment_tracking v
 JOIN grn_request g ON g.id = v.grn_request_id
    SET v.budget_id = COALESCE(v.budget_id, g.budget_id),
        v.budget_line_id = COALESCE(v.budget_line_id, g.budget_line_id),
-       v.amount_without_tax = CASE WHEN v.amount_without_tax = 0 THEN COALESCE(NULLIF(g.amount_without_tax,0), g.amount) ELSE v.amount_without_tax END,
+       v.amount_without_tax = CASE
+         WHEN v.amount_without_tax = 0 THEN COALESCE(NULLIF(g.amount_without_tax,0), g.amount)
+         ELSE v.amount_without_tax END,
        v.tax_amount = CASE WHEN v.tax_amount = 0 THEN COALESCE(g.tax_amount,0) ELSE v.tax_amount END,
-       v.amount_with_tax = CASE WHEN v.amount_with_tax = 0 THEN COALESCE(NULLIF(g.amount_with_tax,0), g.amount) ELSE v.amount_with_tax END;
+       v.amount_with_tax = CASE
+         WHEN v.amount_with_tax = 0 THEN COALESCE(NULLIF(g.amount_with_tax,0), g.amount)
+         ELSE v.amount_with_tax END;
 
 SELECT '411_branch_budget_grn_approval_flow.sql applied' AS migration_status;
