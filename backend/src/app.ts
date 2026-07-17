@@ -191,6 +191,9 @@ import { breakDeskRouter } from "./modules/break-management/break-desk.routes.js
 import { breakManagementRouter } from "./modules/break-management/break-management.routes.js";
 import { candidateOnboardingRouter } from "./modules/candidate-onboarding/candidate-onboarding.routes.js";
 import { orgChartRouter } from "./modules/org-chart/org-chart.routes.js";
+import { visitorRouter } from "./modules/visitor/visitor.routes.js";
+import { visitorPublicRouter } from "./modules/visitor/visitor-public.routes.js";
+import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes.js";
 
 export const app = express();
 
@@ -312,6 +315,7 @@ app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no au
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
 app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
+app.use("/api/visitor/public", visitorPublicRouter); // PUBLIC: token-scoped visitor registration and status only
 app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
@@ -326,6 +330,8 @@ app.use("/api/exit", exitRouter);
 app.use("/api/migration", migrationRouter);
 app.use("/api/access", accessRouter);
 app.use("/api/audit", auditLogRouter);
+app.use("/api/visitor", visitorSecurityRouter);
+app.use("/api/visitor", visitorRouter);
 app.use("/api/org/settings", orgSettingsRouter);
 app.use("/api/org/events", eventsRouter);
 app.use("/api/org", orgRouter);

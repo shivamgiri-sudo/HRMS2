@@ -275,6 +275,7 @@ const MIGRATION_MANIFEST: string[] = [
   "406_process_pnl_financial_controls.sql",
   "407_shift_roster_bulk_upload_template.sql",
   "408_ats_candidate_assessment_engine.sql",
+  "409_visitor_management_foundation.sql",
   ];
 
 export type MigrationHealth = {

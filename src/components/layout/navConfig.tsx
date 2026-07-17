@@ -153,6 +153,15 @@ export const navGroups: NavGroup[] = [
     title: "Workforce",
     items: [
       {
+        label: "Visitor Management", href: "/visitor-management", icon: ic(Users), description: "Visitors, hosts & security",
+        children: [
+          { label: "Command Center", href: "/visitor-management", icon: ic(LayoutDashboard), description: "Visitor register & invitations" },
+          { label: "Host Approvals", href: "/visitor-management/approvals", icon: ic(CheckCircle), description: "Approve expected visitors" },
+          { label: "Guard Desk", href: "/visitor-management/desk", icon: ic(UserPlus), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Walk-ins, badges & gate events" },
+          { label: "Security Operations", href: "/visitor-management/security", icon: ic(ShieldAlert), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Live occupancy & emergency register" },
+        ],
+      },
+      {
         label: "Learning",     href: "/lms/my-learning", icon: ic(GraduationCap), pageCode: "LMS_MY_LEARNING", description: "LMS & training",
         children: [
           { label: "My Learning",    href: "/lms/my-learning",  icon: ic(GraduationCap), pageCode: "LMS_MY_LEARNING",  description: "LMS" },
