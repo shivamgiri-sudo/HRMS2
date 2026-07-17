@@ -134,18 +134,31 @@ export async function getPtFromSlab(
   stateCode: string,
   monthlyIncome: number
 ): Promise<number> {
+  // Match on state_code (abbreviation) OR state_name (full name)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pt_amount FROM pt_slab_master
-      WHERE state_code = ?
+      WHERE (state_code = ? OR state_name = ?)
         AND is_active = 1
         AND income_from <= ?
         AND (income_to IS NULL OR income_to >= ?)
       ORDER BY income_from DESC
       LIMIT 1`,
-    [stateCode, monthlyIncome, monthlyIncome]
+    [stateCode, stateCode, monthlyIncome, monthlyIncome]
   );
   const row = (rows as Array<{ pt_amount: number }>)[0];
-  return row ? Number(row.pt_amount) : 200;
+  if (row) return Number(row.pt_amount);
+
+  // If no slab exists for this state at all, the state has no PT law → return 0
+  const [anyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM pt_slab_master
+      WHERE (state_code = ? OR state_name = ?) AND is_active = 1
+      LIMIT 1`,
+    [stateCode, stateCode]
+  );
+  if ((anyRows as any[]).length === 0) return 0;
+
+  // State has slabs but income is below the lowest bracket → 0
+  return 0;
 }
 
 export interface CalculateResult {
@@ -233,7 +246,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
-            esa.ctc_annual, ss.basic_pct, ss.hra_pct,
+            esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             e.process_id, e.branch_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date
@@ -498,12 +511,37 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         })()
       : daysInMonth;
 
-    // Step 7: Days-based gross calculation — replaces pro-rata multiplier + LWP approach
+    // Step 7: Read fixed component amounts from salary_structure_component
+    const [compRows] = await db.execute<RowDataPacket[]>(
+      `SELECT scm.component_code, ssc.calc_type, ssc.value
+         FROM salary_structure_component ssc
+         JOIN salary_component_master scm ON scm.id = ssc.component_id
+        WHERE ssc.structure_id = ?
+        ORDER BY ssc.sequence`,
+      [(emp as any).structure_id],
+    );
+    const compAmounts: Record<string, number> = {};
+    for (const c of compRows as any[]) {
+      if (c.calc_type === 'fixed' || c.calc_type === 'pct_of_ctc') {
+        compAmounts[c.component_code] = Number(c.value) || 0;
+      }
+    }
+    const hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+    const fixedBasic = compAmounts.BASIC || 0;
+    const fixedHRA = compAmounts.HRA || 0;
+    const fixedGross = hasFixedComponents
+      ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
+         (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
+         (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+      : 0;
+    const monthlyGrossBase = hasFixedComponents ? fixedGross : (emp.ctc_annual / 12);
+
+    // Days-based gross calculation
     const isOnMaternityLeave = maternityExemptIds.has(emp.employee_id);
     // Maternity employees receive full monthly gross (MBA 1961 s.5(1))
     const grossMonthly = isOnMaternityLeave
-      ? (emp.ctc_annual / 12)
-      : (emp.ctc_annual / 12) * (finalPayableDays / daysInMonth);
+      ? monthlyGrossBase
+      : monthlyGrossBase * (finalPayableDays / daysInMonth);
     // No separate LWP deduction needed — absent days just reduce finalPayableDays
     const lwpDeduction = 0;  // absorbed into days-based calculation
     const grossAfterLwp = grossMonthly;
@@ -661,6 +699,13 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const pfOptOut   = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'pf_opt_out');
     const esicOptOut = (overrideRows as Array<{ override_type: string }>).some(r => r.override_type === 'esic_opt_out');
 
+    const effectiveBasicPct = hasFixedComponents
+      ? (fixedBasic / monthlyGrossBase) * 100
+      : (emp.basic_pct ?? 40);
+    const effectiveHraPct = hasFixedComponents
+      ? (fixedHRA / monthlyGrossBase) * 100
+      : (emp.hra_pct ?? 20);
+
     const calc = payrollService.calculateNetSalary({
       grossMonthlyCTC: grossAfterLwp,
       workingDays: att.working_days || defaultWorkingDays,
@@ -671,8 +716,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       pfWageLimit: stat.pf_wage_limit,
       professionalTax,
       tds: tdsMonthly,
-      basicPct: emp.basic_pct ?? 40,
-      hraPct: emp.hra_pct ?? 20,
+      basicPct: effectiveBasicPct,
+      hraPct: effectiveHraPct,
       pfOptOut,
       esicOptOut,
       gratuityPct: statConfig["gratuity_pct"],
@@ -735,19 +780,37 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
 
     // 6b. Insert component-level breakdown for payslip display
-    const { conv, ma, pa } = breakSpecialAllowance(
-      calc.special_allowance,
-      statConfig["conv_allowance_default"],
-      statConfig["medical_allowance_default"],
-    );
-    const components = [
-      { code: "BASIC", name: "Basic Salary", amount: calc.basic },
-      { code: "HRA", name: "House Rent Allowance", amount: calc.hra },
-      { code: "CONV", name: "Conveyance Allowance", amount: conv },
-      { code: "MA", name: "Medical Allowance", amount: ma },
-      { code: "PA", name: "Personal Allowance", amount: pa },
-    ];
-    for (const comp of components) {
+    // Use actual fixed component amounts from salary_structure_component when available
+    const payslipEarnings: Array<{code: string; name: string; amount: number}> = [];
+    if (hasFixedComponents) {
+      const ratio = finalPayableDays / daysInMonth;
+      const compNames: Record<string, string> = {
+        BASIC: "Basic Salary", HRA: "House Rent Allowance", BONUS: "Bonus",
+        CONV: "Conveyance Allowance", PORTFOLIO: "Portfolio Allowance",
+        MEDICAL: "Medical Allowance", LTA: "Leave Travel Allowance",
+        SPECIAL: "Special Allowance", OTHER_ALLOW: "Other Allowance", PLI: "PLI"
+      };
+      for (const [code, val] of Object.entries(compAmounts)) {
+        if (val > 0 && compNames[code]) {
+          payslipEarnings.push({ code, name: compNames[code], amount: Math.round(val * ratio * 100) / 100 });
+        }
+      }
+    } else {
+      const { conv, ma, pa } = breakSpecialAllowance(
+        calc.special_allowance,
+        statConfig["conv_allowance_default"],
+        statConfig["medical_allowance_default"],
+      );
+      payslipEarnings.push(
+        { code: "BASIC", name: "Basic Salary", amount: calc.basic },
+        { code: "HRA", name: "House Rent Allowance", amount: calc.hra },
+        { code: "CONV", name: "Conveyance Allowance", amount: conv },
+        { code: "MA", name: "Medical Allowance", amount: ma },
+        { code: "PA", name: "Personal Allowance", amount: pa },
+      );
+    }
+    for (const comp of payslipEarnings) {
+      if (comp.amount <= 0) continue;
       await conn.execute(
         `INSERT INTO salary_prep_line_component
            (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
