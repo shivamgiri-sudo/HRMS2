@@ -109,6 +109,23 @@ jobs:
             package-lock.json
             backend/package-lock.json
 
+      - name: Normalize migration template delimiter
+        if: steps.patch.outputs.apply == 'true'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/apply_finance_budget_integration.py')
+          text = path.read_text(encoding='utf-8')
+          opening = "MIGRATION = r'''"
+          closing = "\n'''\n\nBRANCH_BUDGET_SERVICE ="
+          if opening not in text or closing not in text:
+              raise SystemExit('Migration template anchors were not found')
+          text = text.replace(opening, 'MIGRATION = r"""', 1)
+          text = text.replace(closing, '\n"""\n\nBRANCH_BUDGET_SERVICE =', 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Apply guarded finance patch
         id: apply_patch
         if: steps.patch.outputs.apply == 'true'
