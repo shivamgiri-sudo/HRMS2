@@ -127,6 +127,23 @@ jobs:
           tail -80 /tmp/finance-patch.log
           exit 0
 
+      - name: Normalize budget route actor roles
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('backend/src/modules/process-pnl/process-pnl.routes.ts')
+          text = path.read_text(encoding='utf-8')
+          old_submit = 'branchBudgetService.submit(req.params.id, req.authUser.id, req.authUser.role)'
+          new_submit = 'branchBudgetService.submit(req.params.id, req.authUser.id, String(req.authUser.role ?? "unknown"))'
+          old_review = 'branchBudgetService.review(req.params.id, decision, req.authUser.id, req.authUser.role, req.body?.remarks'
+          new_review = 'branchBudgetService.review(req.params.id, decision, req.authUser.id, String(req.authUser.role ?? "unknown"), req.body?.remarks'
+          if old_submit not in text or old_review not in text:
+              raise SystemExit('Budget route role anchors were not found')
+          path.write_text(text.replace(old_submit, new_submit, 1).replace(old_review, new_review, 1), encoding='utf-8')
+          PY
+
       - name: Report patch failure
         if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code != '0'
         env:
@@ -163,41 +180,16 @@ jobs:
           set +e
           failed=0
           : > /tmp/finance-failures.log
-
           npm run typecheck > /tmp/frontend-typecheck.log 2>&1
-          code=$?
-          if [[ $code -ne 0 ]]; then
-            failed=1
-            { echo '===== Frontend typecheck ====='; cat /tmp/frontend-typecheck.log; echo; } >> /tmp/finance-failures.log
-          fi
-
+          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Frontend typecheck ====='; cat /tmp/frontend-typecheck.log; echo; } >> /tmp/finance-failures.log; fi
           npm --prefix backend run typecheck > /tmp/backend-typecheck.log 2>&1
-          code=$?
-          if [[ $code -ne 0 ]]; then
-            failed=1
-            { echo '===== Backend typecheck ====='; cat /tmp/backend-typecheck.log; echo; } >> /tmp/finance-failures.log
-          fi
-
+          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Backend typecheck ====='; cat /tmp/backend-typecheck.log; echo; } >> /tmp/finance-failures.log; fi
           npm --prefix backend exec vitest run src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts > /tmp/budget-tests.log 2>&1
-          code=$?
-          if [[ $code -ne 0 ]]; then
-            failed=1
-            { echo '===== Budget tax tests ====='; cat /tmp/budget-tests.log; echo; } >> /tmp/finance-failures.log
-          fi
-
+          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Budget tax tests ====='; cat /tmp/budget-tests.log; echo; } >> /tmp/finance-failures.log; fi
           npm run build:all > /tmp/build-all.log 2>&1
-          code=$?
-          if [[ $code -ne 0 ]]; then
-            failed=1
-            { echo '===== Frontend/backend build ====='; tail -120 /tmp/build-all.log; echo; } >> /tmp/finance-failures.log
-          fi
-
+          code=$?; if [[ $code -ne 0 ]]; then failed=1; { echo '===== Frontend/backend build ====='; tail -120 /tmp/build-all.log; echo; } >> /tmp/finance-failures.log; fi
           echo "exit_code=$failed" >> "$GITHUB_OUTPUT"
-          if [[ $failed -eq 0 ]]; then
-            echo 'All finance integration checks passed.'
-          else
-            cat /tmp/finance-failures.log
-          fi
+          if [[ $failed -eq 0 ]]; then echo 'All finance integration checks passed.'; else cat /tmp/finance-failures.log; fi
           exit 0
 
       - name: Report validation failure
