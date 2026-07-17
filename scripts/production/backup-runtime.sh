@@ -40,6 +40,11 @@ copy_file() {
   local dst="$backup_dir/source/$rel"
 
   [[ -e "$src" ]] || return 0
+  case "$rel" in
+    backend/.env|backend/eng.traineddata|backend/private/ats-candidate-files/*|backend/face-models/*)
+      return 0
+      ;;
+  esac
   mkdir -p "$(dirname "$dst")"
   cp -a "$src" "$dst"
 }
@@ -95,5 +100,24 @@ printf 'health_http_code=%s\n' "${health_code:-unavailable}" > "$backup_dir/meta
 printf 'assessment_health_http_code=%s\n' "${assessment_code:-unavailable}" > "$backup_dir/meta/assessment-health-http-code.txt"
 
 find "$backup_dir/dist" -type f | sed "s#^$backup_dir/dist/##" | sort > "$backup_dir/meta/dist-manifest.txt"
+
+{
+  for rel in \
+    backend/.env \
+    backend/eng.traineddata \
+    backend/private/ats-candidate-files \
+    backend/face-models
+  do
+    path="$PROD_ROOT/$rel"
+    if [[ -e "$path" ]]; then
+      if [[ -d "$path" ]]; then
+        find "$path" -type f -print0 | sort -z | xargs -0 sha256sum
+      else
+        sha256sum "$path"
+      fi
+    fi
+  done
+} > "$backup_dir/meta/protected-hashes.txt"
+
 chmod -R go-rwx "$backup_dir"
 printf '%s\n' "$backup_dir"

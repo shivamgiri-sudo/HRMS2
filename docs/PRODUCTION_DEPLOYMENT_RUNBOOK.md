@@ -12,6 +12,7 @@ It is written for the live server layout that currently serves the ATS Candidate
   - `backend/.env`
   - `backend/private/ats-candidate-files/`
   - `backend/face-models/`
+  - `backend/eng.traineddata`
 
 This workflow is release-identity driven:
 
@@ -74,18 +75,19 @@ The supported deployment path is:
 
 1. Capture the current production `HEAD` as `FROM_SHA`.
 2. Capture the intended release as `TARGET_SHA`.
-3. Create a clean temporary worktree from `TARGET_SHA`.
-4. Build and test in the worktree only.
-5. Compare the release pair with `git diff --name-only FROM_SHA TARGET_SHA` and refuse frontend application changes.
-6. Back up the live source, full compiled runtime, package state, PM2, and health state.
-7. Stop PM2 process `4` before changing runtime dependencies.
-8. Copy the compiled `backend/dist` tree from the worktree to production.
-9. Copy the changed backend source files and package files into production.
-10. Refresh backend dependencies with `npm ci`.
-11. Restart only PM2 process `4`.
-12. Verify the public and protected health routes.
-13. Roll back immediately if any required check fails.
-14. Use `--dry-run` to prove the workflow path without mutating production.
+3. Confirm the release diff only touches allowed paths.
+4. Create a clean temporary worktree from `TARGET_SHA`.
+5. Build and test in the worktree only.
+6. Stage the compiled runtime under `backend/dist.next-<TARGET_SHA>`.
+7. Back up the live source, full compiled runtime, package state, PM2, and protected-hash state.
+8. Stop PM2 process `4`.
+9. Switch the production Git checkout to `TARGET_SHA`.
+10. Rename `backend/dist` to `backend/dist.previous-<timestamp>` and activate `backend/dist.next-<TARGET_SHA>` as `backend/dist`.
+11. Refresh backend dependencies with `npm ci`.
+12. Restart only PM2 process `4`.
+13. Verify the public and protected health routes, listener count, and PM2 online state.
+14. Roll back immediately if any required check fails.
+15. Use `--dry-run` to prove the workflow path without mutating production.
 
 Example:
 
@@ -97,6 +99,7 @@ scripts/production/deploy-backend.sh \
 ```
 
 The deploy script refuses to guess a release identity. It requires both exact SHAs to be supplied.
+It also refuses to deploy if the tracked checkout is dirty, if the release touches unsupported paths, or if the release changes protected runtime files.
 
 For a no-op proof run:
 
@@ -120,8 +123,10 @@ Expected checks:
 - `/api/ats-ext/assessment` -> `200`
 - `/api/ats-ext/assessment-admin/dashboard` -> `401`
 - `/api/ats-ext/assessment-admin/template-builder` -> `200`
-- `/api/ats-ext/assessment-template-builder` -> `308` with a `Location` header pointing to the canonical builder route
+- `/api/ats-ext/assessment-template-builder` -> `308` with a `Location` header exactly equal to `/api/ats-ext/assessment-admin/template-builder`
 - `/api/ats/queue/public-display?branch=NOIDA` -> `200`
+- exactly one listener must be present on port `5055`
+- PM2 process `4` must be online
 
 The expected assessment state can be supplied explicitly:
 
@@ -147,10 +152,13 @@ The backup script stores:
 - current Git SHA
 - the production `FROM_SHA` and target `TARGET_SHA`
 - current health results
+- release file manifests for added, modified, deleted, and total paths
+- protected-path hashes for `backend/.env`, `backend/eng.traineddata`, `backend/private/ats-candidate-files/`, and `backend/face-models/`
 
 Rollback uses only the saved backup directory and restores the full compiled runtime tree plus every backed-up source file.
+It switches the Git checkout back to `FROM_SHA`, removes staged runtime directories, restores the backed-up runtime tree atomically, runs `npm ci`, restarts PM2, verifies listener count and health, and keeps protected runtime data unchanged.
 If a source file was newly introduced by the deploy, rollback deletes it when it is not present in the backup.
-It does not touch uploads, `.env`, database migrations, or face models.
+It does not touch uploads, `.env`, `eng.traineddata`, database migrations, or face models.
 
 Example:
 
@@ -179,17 +187,21 @@ Keep the current backend baseline note here:
 ## Sandbox Validation Matrix
 
 The workflow scripts are validated in a sandbox before any production use.
-The minimum matrix covers these 12 scenarios:
+The minimum matrix now covers these 16 scenarios:
 
 1. `preflight.sh audit` reports the live checkout without mutating anything.
-2. `preflight.sh deploy` requires a single listener on port `5055`.
+2. `preflight.sh deploy` rejects dirty tracked files and requires a single listener on port `5055`.
 3. `deploy-backend.sh --dry-run` exits without mutating production.
 4. Short `FROM_SHA` values are rejected.
 5. Short `TARGET_SHA` values are rejected.
 6. A target commit that is not a descendant of `FROM_SHA` is rejected.
-7. Frontend application changes are rejected.
-8. The compiled `backend/dist` tree is staged from the worktree, not copied from source files alone.
-9. The backup directory captures the complete pre-deploy `backend/dist` tree.
-10. Rollback restores deleted or newly introduced backend files correctly.
-11. Rollback keeps protected uploads, `.env`, and face models untouched.
-12. `rollback-backend.sh --dry-run` reports the planned restore without mutating production.
+7. Unsupported release paths are rejected.
+8. Protected runtime files are rejected from the release diff.
+9. Successful deployment moves Git `HEAD` to `TARGET_SHA` and leaves the tracked checkout clean.
+10. The compiled `backend/dist` tree is staged from the worktree and activated by directory rename.
+11. The backup directory captures the complete pre-deploy `backend/dist` tree.
+12. Deployed checksums match the worktree checksums exactly.
+13. Rollback restores deleted backend files and returns Git `HEAD` to `FROM_SHA`.
+14. A checksum mismatch or `npm ci` failure triggers rollback.
+15. Runtime rename failure triggers rollback.
+16. `rollback-backend.sh --dry-run` reports the planned restore without mutating production.

@@ -195,8 +195,8 @@ check_redirect() {
   fi
 
   location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ { sub(/\r$/, "", $0); sub(/^[^:]+:[[:space:]]*/, "", $0); print; exit }' "$headers")"
-  if [[ -z "$location" || "$location" != *"$expected_location" ]]; then
-    printf 'FAIL %s -> expected Location to end with %s, got %s\n' "$path" "$expected_location" "${location:-missing}" >&2
+  if [[ -z "$location" || "$location" != "$expected_location" ]]; then
+    printf 'FAIL %s -> expected Location exactly %s, got %s\n' "$path" "$expected_location" "${location:-missing}" >&2
     return 1
   fi
 
