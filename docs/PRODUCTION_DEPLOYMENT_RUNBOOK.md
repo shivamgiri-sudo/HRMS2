@@ -88,7 +88,7 @@ The supported deployment path is:
 13. Verify the public and protected health routes, listener count, and PM2 online state.
 14. Roll back immediately if any required check fails.
 15. Use `--dry-run` to prove the workflow path without mutating production.
-    Dry-run stages the runtime outside `PROD_ROOT`, uses deploy preflight, and prints staged checksum values instead of deployed ones.
+    Dry-run stages the runtime outside `PROD_ROOT`, clones a temporary validation repository outside production `.git`, uses deploy preflight, and prints staged checksum values instead of deployed ones.
 
 Example:
 
@@ -162,6 +162,7 @@ It stops PM2 before touching the tracked checkout or backend dependencies, verif
 If a source file was newly introduced by the deploy, rollback deletes it when it is not present in the backup.
 It does not touch uploads, `.env`, `eng.traineddata`, database migrations, or face models.
 Cleanup is limited to the current deployment or rollback identifiers so unrelated `dist.previous-*` directories are preserved.
+If rollback hits an intermediate failure, it continues attempting the remaining service-restoration steps and preserves the current release's temporary runtime directories for diagnosis until recovery fully succeeds.
 
 Example:
 
@@ -190,7 +191,7 @@ Keep the current backend baseline note here:
 ## Sandbox Validation Matrix
 
 The workflow scripts are validated in a sandbox before any production use.
-The minimum matrix now covers these 42 scenarios:
+The minimum matrix now covers these 56 scenarios:
 
 1. `preflight.sh audit` reports the live checkout without mutating anything.
 2. `preflight.sh deploy` rejects dirty tracked files and requires a single listener on port `5055`.
@@ -234,3 +235,17 @@ The minimum matrix now covers these 42 scenarios:
 40. Empty `backend/private/ats-candidate-files/` hashing remains stable.
 41. Empty `backend/face-models/` hashing remains stable.
 42. The full sandbox matrix, including every earlier scenario, still passes.
+43. Rollback continues after a first-step failure and records failed step labels.
+44. Failed Git checkout restoration does not stop later recovery attempts.
+45. Failed dependency restoration still attempts runtime restoration.
+46. Failed runtime restoration still attempts PM2 restart.
+47. Failed runtime restoration preserves diagnostic runtime directories.
+48. Rollback returns non-zero only after all recovery attempts finish.
+49. Dry-run performs no Git fetch through `PROD_ROOT`.
+50. Dry-run creates no production Git worktree metadata.
+51. Dry-run leaves `.git/index` unchanged.
+52. Dry-run leaves `.git/FETCH_HEAD` unchanged.
+53. Dry-run leaves refs unchanged.
+54. Validation clone exists outside `PROD_ROOT`.
+55. Validation clone is removed after dry-run.
+56. The previous 42 sandbox scenarios still pass.

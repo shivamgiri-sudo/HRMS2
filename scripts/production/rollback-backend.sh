@@ -87,13 +87,13 @@ copy_tree() {
 
   if command -v rsync >/dev/null 2>&1; then
     mkdir -p "$dst"
-    rsync -a "$src/" "$dst/"
+    rsync -a "$src/" "$dst/" || return $?
     return 0
   fi
 
   rm -rf "$dst"
   mkdir -p "$dst"
-  cp -a "$src/." "$dst/"
+  cp -a "$src/." "$dst/" || return $?
 }
 
 generate_protected_hashes() {
@@ -128,7 +128,7 @@ restore_runtime_tree() {
   local restore_dir="$PROD_ROOT/backend/dist.restore-$stamp"
 
   rm -rf "$restore_dir"
-  copy_tree "$BACKUP_DIR/dist" "$restore_dir"
+  copy_tree "$BACKUP_DIR/dist" "$restore_dir" || return $?
 
   if [[ -d "$PROD_ROOT/backend/dist" ]]; then
     mv "$PROD_ROOT/backend/dist" "$PROD_ROOT/backend/dist.previous-$stamp"
@@ -175,20 +175,33 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-status=0
+rollback_status=0
+failed_steps=()
+
 attempt() {
-  "$@" || {
-    warn "Rollback step failed: $*"
-    status=1
-    return 1
-  }
+  local label="$1"
+  shift
+
+  if "$@"; then
+    printf 'ROLLBACK PASS: %s\n' "$label"
+    return 0
+  else
+    local rc=$?
+  fi
+
+  rollback_status=1
+  failed_steps+=("$label:$rc")
+  warn "Rollback step failed: $label (exit=$rc)"
+
+  # Continue recovery despite this failure.
+  return 0
 }
 
 pm2_status="$(get_pm2_status)" || die "Unable to determine PM2 status for process $PM2_ID"
 case "$pm2_status" in
   online)
     if ! pm2 stop "$PM2_ID"; then
-      status=1
+      rollback_status=1
       pm2_status_after_stop="$(get_pm2_status)" || die "Unable to determine PM2 status after stop failure for process $PM2_ID"
       [[ "$pm2_status_after_stop" == "stopped" ]] || die "PM2 stop failed and process $PM2_ID is still $pm2_status_after_stop"
       warn "PM2 stop returned non-zero but the process is stopped; continuing rollback"
@@ -207,26 +220,29 @@ case "$pm2_status" in
     ;;
 esac
 
-attempt git -C "$PROD_ROOT" switch --detach "$FROM_SHA"
-attempt test "$(git -C "$PROD_ROOT" rev-parse HEAD)" = "$FROM_SHA"
-attempt test -z "$(git -C "$PROD_ROOT" status --porcelain=v1 --untracked-files=no)"
-attempt cd "$BACKEND_DIR"
-attempt npm ci
-attempt restore_runtime_tree "$DEPLOY_ID"
-attempt cleanup_runtime_dirs
-attempt pm2 restart "$PM2_ID" --update-env
-attempt assert_pm2_online
-attempt assert_listener_count 1
-attempt "$SCRIPT_DIR/verify-health.sh"
-attempt assert_pm2_online
-attempt assert_listener_count 1
-attempt verify_protected_hashes "$BACKUP_DIR/meta/protected-hashes.txt"
-attempt cleanup_runtime_dirs
+attempt "restore git checkout to FROM_SHA" git -C "$PROD_ROOT" switch --detach "$FROM_SHA"
+attempt "verify git checkout at FROM_SHA" bash -c 'test "$(git -C "$1" rev-parse HEAD)" = "$2"' _ "$PROD_ROOT" "$FROM_SHA"
+attempt "verify tracked checkout is clean" bash -c 'test -z "$(GIT_OPTIONAL_LOCKS=0 git -C "$1" status --porcelain=v1 --untracked-files=no)"' _ "$PROD_ROOT"
+attempt "install restored dependencies" bash -c 'cd "$1" && npm ci' _ "$BACKEND_DIR"
+attempt "restore compiled runtime" restore_runtime_tree "$DEPLOY_ID"
+attempt "restart PM2" pm2 restart "$PM2_ID" --update-env
+attempt "verify PM2 online" assert_pm2_online
+attempt "verify one listener" assert_listener_count 1
+attempt "verify health" "$SCRIPT_DIR/verify-health.sh"
+attempt "verify PM2 online after health" assert_pm2_online
+attempt "verify one listener after health" assert_listener_count 1
+attempt "verify protected paths" verify_protected_hashes "$BACKUP_DIR/meta/protected-hashes.txt"
+
+if (( rollback_status == 0 )); then
+  attempt "cleanup runtime directories" cleanup_runtime_dirs
+fi
 
 printf 'rollback_from_sha=%s\n' "$FROM_SHA"
 printf 'rollback_target_sha=%s\n' "${TARGET_SHA:-unknown}"
 printf 'rollback_complete=yes\n'
 
-if (( status != 0 )); then
+if (( rollback_status != 0 )); then
+  printf 'rollback_failed_steps:\n' >&2
+  printf '  - %s\n' "${failed_steps[@]}" >&2
   die "Rollback completed with one or more step failures"
 fi

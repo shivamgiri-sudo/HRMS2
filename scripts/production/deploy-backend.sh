@@ -54,13 +54,13 @@ copy_tree() {
 
   if command -v rsync >/dev/null 2>&1; then
     mkdir -p "$dst"
-    rsync -a "$src/" "$dst/"
+    rsync -a "$src/" "$dst/" || return $?
     return 0
   fi
 
   rm -rf "$dst"
   mkdir -p "$dst"
-  cp -a "$src/." "$dst/"
+  cp -a "$src/." "$dst/" || return $?
 }
 
 checksum_file() {
@@ -196,6 +196,7 @@ mkdir -p "$WORKTREE_ROOT"
 
 DEPLOY_ID="$(date +%Y%m%d-%H%M%S)-${TARGET_SHA:0:12}"
 WORKTREE_DIR="$WORKTREE_ROOT/hrms2-backend-$DEPLOY_ID"
+VALIDATION_REPO=""
 DRY_RUN_STAGE_DIR=""
 if [[ "$DRY_RUN" -eq 1 ]]; then
   DRY_RUN_STAGE_DIR="$WORKTREE_ROOT/dry-run-dist-$DEPLOY_ID"
@@ -210,7 +211,11 @@ SERVICE_MUTATION_STARTED=0
 ROLLBACK_IN_PROGRESS=0
 
 cleanup_worktree() {
-  git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  if [[ -n "$VALIDATION_REPO" ]]; then
+    rm -rf "$VALIDATION_REPO" >/dev/null 2>&1 || true
+  elif [[ "$DRY_RUN" -eq 0 && -n "${REPO_ROOT:-}" ]]; then
+    git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$DRY_RUN_STAGE_DIR" ]]; then
     rm -rf "$DRY_RUN_STAGE_DIR" >/dev/null 2>&1 || true
   fi
@@ -351,19 +356,36 @@ verify_deployed_checksums() {
 
 "$SCRIPT_DIR/preflight.sh" deploy
 
-git -C "$REPO_ROOT" fetch origin --prune
-git -C "$REPO_ROOT" rev-parse --verify "$FROM_SHA^{commit}" >/dev/null
-git -C "$REPO_ROOT" rev-parse --verify "$TARGET_SHA^{commit}" >/dev/null
-git -C "$REPO_ROOT" merge-base --is-ancestor "$FROM_SHA" "$TARGET_SHA" || die "TARGET_SHA must descend from FROM_SHA"
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  origin_url="$(git -C "$PROD_ROOT" remote get-url origin)"
+  VALIDATION_REPO="$WORKTREE_ROOT/dry-run-repo-$DEPLOY_ID"
+  rm -rf "$VALIDATION_REPO"
+  git clone --no-checkout "$origin_url" "$VALIDATION_REPO"
+  REPO_ROOT="$VALIDATION_REPO"
+  WORKTREE_DIR="$VALIDATION_REPO"
+  git -C "$REPO_ROOT" fetch origin --prune
+  git -C "$REPO_ROOT" rev-parse --verify "$FROM_SHA^{commit}" >/dev/null
+  git -C "$REPO_ROOT" rev-parse --verify "$TARGET_SHA^{commit}" >/dev/null
+  git -C "$REPO_ROOT" merge-base --is-ancestor "$FROM_SHA" "$TARGET_SHA" || die "TARGET_SHA must descend from FROM_SHA"
+else
+  git -C "$REPO_ROOT" fetch origin --prune
+  git -C "$REPO_ROOT" rev-parse --verify "$FROM_SHA^{commit}" >/dev/null
+  git -C "$REPO_ROOT" rev-parse --verify "$TARGET_SHA^{commit}" >/dev/null
+  git -C "$REPO_ROOT" merge-base --is-ancestor "$FROM_SHA" "$TARGET_SHA" || die "TARGET_SHA must descend from FROM_SHA"
+fi
 
 LIVE_HEAD="$(git -C "$PROD_ROOT" rev-parse HEAD)"
 [[ "$LIVE_HEAD" == "$FROM_SHA" ]] || die "Production HEAD $LIVE_HEAD does not match FROM_SHA $FROM_SHA"
 
 collect_release_sets
 
-cd "$REPO_ROOT"
-git worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
-git worktree add --detach "$WORKTREE_DIR" "$TARGET_SHA"
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  git -C "$REPO_ROOT" switch --detach "$TARGET_SHA"
+else
+  cd "$REPO_ROOT"
+  git worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  git worktree add --detach "$WORKTREE_DIR" "$TARGET_SHA"
+fi
 
 cd "$WORKTREE_DIR/backend"
 npm ci
@@ -394,7 +416,7 @@ assert_listener_count 0
 
 git -C "$PROD_ROOT" switch --detach "$TARGET_SHA"
 [[ "$(git -C "$PROD_ROOT" rev-parse HEAD)" == "$TARGET_SHA" ]] || die "Production HEAD did not move to TARGET_SHA"
-[[ -z "$(git -C "$PROD_ROOT" status --porcelain=v1 --untracked-files=no)" ]] || die "Production tracked checkout is not clean after switching to TARGET_SHA"
+[[ -z "$(GIT_OPTIONAL_LOCKS=0 git -C "$PROD_ROOT" status --porcelain=v1 --untracked-files=no)" ]] || die "Production tracked checkout is not clean after switching to TARGET_SHA"
 
 if [[ -d "$PROD_ROOT/backend/dist" ]]; then
   mv "$PROD_ROOT/backend/dist" "$PREVIOUS_DIST_DIR"

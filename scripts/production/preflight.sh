@@ -51,7 +51,7 @@ node_major="${node_version#v}"
 node_major="${node_major%%.*}"
 npm_major="${npm_version%%.*}"
 listener_count="$(lsof -nP -iTCP:"$APP_PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { count += 1 } END { print count + 0 }')"
-tracked_status="$(git status --porcelain=v1 --untracked-files=no)"
+tracked_status="$(GIT_OPTIONAL_LOCKS=0 git status --porcelain=v1 --untracked-files=no)"
 
 printf 'mode=%s\n' "$MODE"
 printf 'git_sha=%s\n' "$repo_sha"
@@ -83,7 +83,7 @@ if [[ "$MODE" == "deploy" ]] && (( listener_count != 1 )); then
   die "Deploy preflight requires exactly one listener on port $APP_PORT"
 fi
 
-tracked_changes="$(git status --porcelain=v1 --untracked-files=no)"
+tracked_changes="$(GIT_OPTIONAL_LOCKS=0 git status --porcelain=v1 --untracked-files=no)"
 
 if [[ -n "$tracked_changes" ]]; then
   printf 'tracked_changes:\n%s\n' "$tracked_changes"
