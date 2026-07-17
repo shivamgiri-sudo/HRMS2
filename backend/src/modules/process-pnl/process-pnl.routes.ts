@@ -1,9 +1,17 @@
 import { Router } from "express";
-import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireWriteAccess,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import {
+  assertFinanceRecordBranch,
+  resolveFinanceBranchScope,
+} from "../finance/finance-access-scope.js";
+import { branchBudgetService } from "./branch-budget.service.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
-import { branchBudgetService } from "./branch-budget.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -29,58 +37,155 @@ const PNL_WRITE_ROLES = [
   "payroll_head",
 ] as const;
 
-const PNL_SIGNOFF_ROLES = [
-  ...PNL_WRITE_ROLES,
-  "ceo",
-  "coo",
+const PNL_SIGNOFF_ROLES = [...PNL_WRITE_ROLES, "ceo", "coo"] as const;
+const BUDGET_READ_ROLES = [
+  "super_admin",
+  "admin",
+  "branch_admin",
+  "branch_head",
+  "finance",
+  "finance_head",
+  "accounts_head",
 ] as const;
+const BUDGET_CREATE_ROLES = ["super_admin", "admin", "branch_admin"] as const;
+const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head"] as const;
 
-const BUDGET_READ_ROLES = ["super_admin","admin","branch_admin","branch_head","finance","finance_head","accounts_head"] as const;
-const BUDGET_CREATE_ROLES = ["super_admin","admin","branch_admin"] as const;
-const BUDGET_REVIEW_ROLES = ["branch_head","finance_head","accounts_head"] as const;
+function actor(req: AuthenticatedRequest) {
+  return {
+    id: req.authUser.id,
+    role: String(req.authUser.role ?? req.userRoles?.[0] ?? "unknown"),
+    roles: req.userRoles ?? [],
+  };
+}
+
+async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
+  const user = actor(req);
+  const budget = await branchBudgetService.get(budgetId) as any;
+  await assertFinanceRecordBranch({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    recordBranchId: budget.branch_id,
+  });
+  return budget;
+}
 
 router.use(requireAuth);
 
-router.get("/pnl/budgets", requireRole(...BUDGET_READ_ROLES), h(async (req, res) => {
-  const data = await branchBudgetService.list({
-    period: req.query.period ? String(req.query.period) : undefined,
-    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
-    status: req.query.status ? String(req.query.status) : undefined,
-  });
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/budgets",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    const data = await branchBudgetService.list({
+      period: req.query.period ? String(req.query.period) : undefined,
+      branchId,
+      status: req.query.status ? String(req.query.status) : undefined,
+    });
+    res.json({ success: true, data });
+  })
+);
 
-router.get("/pnl/budgets/:id", requireRole(...BUDGET_READ_ROLES), h(async (req, res) => {
-  const data = await branchBudgetService.get(req.params.id);
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/budgets/:id",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const data = await scopedBudget(req, req.params.id);
+    res.json({ success: true, data });
+  })
+);
 
-router.get("/pnl/budget-lines/available", requireRole(...BUDGET_READ_ROLES), h(async (req, res) => {
-  const data = await branchBudgetService.availableLines({
-    branchId: req.query.branchId ? String(req.query.branchId) : "",
-    processId: req.query.processId ? String(req.query.processId) : undefined,
-    costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
-    period: req.query.period ? String(req.query.period) : undefined,
-  });
-  res.json({ success: true, data });
-}));
+router.get(
+  "/pnl/budget-lines/available",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const data = await branchBudgetService.availableLines({
+      branchId,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+      costCentreId: req.query.costCentreId
+        ? String(req.query.costCentreId)
+        : undefined,
+      period: req.query.period ? String(req.query.period) : undefined,
+    });
+    res.json({ success: true, data });
+  })
+);
 
-router.post("/pnl/budgets", requireWriteAccess, requireRole(...BUDGET_CREATE_ROLES), h(async (req, res) => {
-  const data = await branchBudgetService.saveDraft(req.body, req.authUser.id);
-  res.status(201).json({ success: true, data });
-}));
+router.post(
+  "/pnl/budgets",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.body?.branchId,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const data = await branchBudgetService.saveDraft(
+      { ...req.body, branchId },
+      user.id
+    );
+    res.status(201).json({ success: true, data });
+  })
+);
 
-router.post("/pnl/budgets/:id/submit", requireWriteAccess, requireRole(...BUDGET_CREATE_ROLES), h(async (req, res) => {
-  const data = await branchBudgetService.submit(req.params.id, req.authUser.id, String(req.authUser.role ?? "unknown"));
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/budgets/:id/submit",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.id);
+    const data = await branchBudgetService.submit(
+      req.params.id,
+      user.id,
+      user.role
+    );
+    res.json({ success: true, data });
+  })
+);
 
-router.post("/pnl/budgets/:id/review", requireWriteAccess, requireRole(...BUDGET_REVIEW_ROLES), h(async (req, res) => {
-  const decision = String(req.body?.decision ?? "") as "approve" | "reject" | "revision";
-  if (!["approve","reject","revision"].includes(decision)) throw new Error("Invalid budget decision");
-  const data = await branchBudgetService.review(req.params.id, decision, req.authUser.id, String(req.authUser.role ?? "unknown"), req.body?.remarks ? String(req.body.remarks) : undefined);
-  res.json({ success: true, data });
-}));
+router.post(
+  "/pnl/budgets/:id/review",
+  requireWriteAccess,
+  requireRole(...BUDGET_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.id);
+    const decision = String(req.body?.decision ?? "") as
+      | "approve"
+      | "reject"
+      | "revision";
+    if (!["approve", "reject", "revision"].includes(decision)) {
+      throw new Error("Invalid budget decision");
+    }
+    const data = await branchBudgetService.review(
+      req.params.id,
+      decision,
+      user.id,
+      user.role,
+      req.body?.remarks ? String(req.body.remarks) : undefined
+    );
+    res.json({ success: true, data });
+  })
+);
 
 router.use(requireRole(...PNL_READ_ROLES));
 
@@ -170,7 +275,9 @@ router.get("/pnl/config/rates", h(async (_req, res) => {
 }));
 
 router.get("/pnl/config/monthly-plan", h(async (req, res) => {
-  const data = await processPnlGovernanceService.listMonthlyPlans(req.query.period ? String(req.query.period) : undefined);
+  const data = await processPnlGovernanceService.listMonthlyPlans(
+    req.query.period ? String(req.query.period) : undefined
+  );
   res.json({ success: true, data });
 }));
 
@@ -199,7 +306,10 @@ router.get("/pnl/period-close", h(async (req, res) => {
 router.get("/pnl/export", h(async (req, res) => {
   const csv = await processPnlService.exportCsv(readFilters(req));
   res.setHeader("Content-Type", "text/csv");
-  res.setHeader("Content-Disposition", `attachment; filename="process-pnl-${req.query.period ?? "current"}.csv"`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="process-pnl-${req.query.period ?? "current"}.csv"`
+  );
   res.send(csv);
 }));
 
@@ -224,7 +334,10 @@ router.post("/pnl/adjustments", requireWriteAccess, requireRole(...PNL_WRITE_ROL
 }));
 
 router.post("/pnl/adjustments/:adjustmentId/approve", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.approveAdjustment(req.params.adjustmentId, req.authUser.id);
+  const data = await processPnlGovernanceService.approveAdjustment(
+    req.params.adjustmentId,
+    req.authUser.id
+  );
   res.json({ success: true, data });
 }));
 
@@ -247,7 +360,9 @@ router.post("/pnl/adjustments/:adjustmentId/reverse", requireWriteAccess, requir
 }));
 
 router.post("/pnl/recalculate", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.recalculate(req.body?.period ? String(req.body.period) : undefined);
+  const data = await processPnlGovernanceService.recalculate(
+    req.body?.period ? String(req.body.period) : undefined
+  );
   res.json({ success: true, data });
 }));
 
@@ -263,7 +378,10 @@ router.post("/pnl/period/:periodId/signoff", requireWriteAccess, requireRole(...
 }));
 
 router.post("/pnl/period/:periodId/lock", requireWriteAccess, requireRole(...PNL_SIGNOFF_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.lockPeriod(req.params.periodId, req.authUser.id);
+  const data = await processPnlGovernanceService.lockPeriod(
+    req.params.periodId,
+    req.authUser.id
+  );
   res.json({ success: true, data });
 }));
 
