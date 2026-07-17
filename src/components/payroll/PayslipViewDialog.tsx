@@ -116,17 +116,17 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const attLeave    = attDetail?.approved_leave_days ?? record.leaveDays ?? 0;
   const attLwp      = attDetail ? Number(attDetail.lwp_days) : (record.lwpDays ?? 0);
   const attAbsent   = attDetail?.absent_days   ?? record.absentDays  ?? 0;
-  const attWeekOff  = attDetail?.week_off_days ?? 0;
-  const attHoliday  = attDetail?.holiday_days  ?? 0;
   const attHalfDay  = attDetail?.half_days     ?? 0;
   const attWorking  = attDetail?.working_days  ?? record.workingDays ?? 0;
   const hasAttData  = attWorking > 0 || attPresent > 0 || attDetail !== null;
 
-  // Payable days — from salary_prep_line via record
-  const eligibleWeekoff  = record.eligibleWeekoffDays  ?? 0;
-  const eligibleHoliday  = record.eligibleHolidayDays  ?? 0;
-  const paidWorkingDays  = record.paidWorkingDays       ?? 0;
-  // Approved leave counts as present for weekoff eligibility
+  // Payable days — use payroll-computed eligible counts (slab-based)
+  // attDetail now returns eligible counts from salary_prep_line when available
+  const eligibleWeekoff  = record.eligibleWeekoffDays ?? attDetail?.week_off_days ?? 0;
+  const eligibleHoliday  = record.eligibleHolidayDays ?? attDetail?.holiday_days  ?? 0;
+  const paidWorkingDays  = record.paidWorkingDays     ?? attDetail?.paid_working_days ?? 0;
+  const attWeekOff  = eligibleWeekoff;
+  const attHoliday  = eligibleHoliday;
   // payable = present + approved_leave + eligible_weekoff + eligible_holiday − lwp
   const finalPayableDays = record.finalPayableDays ??
     ((attPresent + attLeave + eligibleWeekoff + eligibleHoliday - attLwp) || paidWorkingDays);

@@ -252,9 +252,12 @@ router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance
 // ─── Attendance summary for a specific payroll line (used in payslip dialog) ──
 router.get("/lines/:lineId/attendance", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
   const { lineId } = req.params;
-  // Resolve employee_id + run_month from the line
+  // Resolve employee_id + run_month + payroll-computed day fields from the line
   const [lineRows] = await db.execute<RowDataPacket[]>(
-    `SELECT spl.employee_id, spr.run_month
+    `SELECT spl.employee_id, spr.run_month,
+            spl.paid_working_days, spl.eligible_weekoff_days,
+            spl.eligible_holiday_days, spl.final_payable_days,
+            spl.active_calendar_days
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.id = ? LIMIT 1`,
@@ -283,6 +286,21 @@ router.get("/lines/:lineId/attendance", requireRole("admin", "hr", "super_admin"
     [line.employee_id, monthStart, monthEnd]
   );
   const summary = (rows as any[])[0] ?? {};
+
+  // Use payroll-computed eligible counts (from slab logic) over raw attendance counts
+  // Raw week_off_days/holiday_days may be 0 if not populated in attendance_daily_record
+  const eligibleWeekoffs = Number(line.eligible_weekoff_days ?? 0);
+  const eligibleHolidays = Number(line.eligible_holiday_days ?? 0);
+  if (eligibleWeekoffs > 0 || Number(summary.week_off_days) === 0) {
+    summary.week_off_days = eligibleWeekoffs;
+  }
+  if (eligibleHolidays > 0 || Number(summary.holiday_days) === 0) {
+    summary.holiday_days = eligibleHolidays;
+  }
+  summary.paid_working_days = Number(line.paid_working_days ?? 0);
+  summary.final_payable_days = Number(line.final_payable_days ?? 0);
+  summary.active_calendar_days = Number(line.active_calendar_days ?? 0);
+
   return res.json({ success: true, data: summary });
 }));
 router.post("/runs",
