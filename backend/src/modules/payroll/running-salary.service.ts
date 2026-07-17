@@ -2,32 +2,9 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2/promise";
 import { resolveHolidaysForEmployee } from "./holiday-work.service.js";
 import { payrollService } from "./payroll.service.js";
+import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 
 // ─── Running salary helpers ───────────────────────────────────────────────────
-
-interface RunningConfig {
-  weekoffEarningRequired: boolean;
-  workingDaysPerWeekoff: number;
-}
-
-async function getRunningConfig(branchId?: string, processId?: string): Promise<RunningConfig> {
-  const fetch = async (key: string): Promise<string> => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT config_value FROM payroll_config_flags
-       WHERE config_key = ?
-         AND (branch_id = ? OR branch_id IS NULL)
-         AND (process_id = ? OR process_id IS NULL)
-       ORDER BY (branch_id IS NOT NULL) DESC, (process_id IS NOT NULL) DESC
-       LIMIT 1`,
-      [key, branchId ?? null, processId ?? null],
-    );
-    return (rows[0] as any)?.config_value ?? "";
-  };
-  return {
-    weekoffEarningRequired: (await fetch("weekoff_earning_required")) !== "false",
-    workingDaysPerWeekoff:  parseInt(await fetch("working_days_required_for_one_weekoff") || "6", 10),
-  };
-}
 
 /**
  * Compute earned salary till today for a payroll line.
@@ -59,6 +36,7 @@ export async function computeRunningSalary(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id, e.process_id,
             esa.ctc_annual,
+            esa.structure_id,
             ss.basic_pct, ss.hra_pct,
             bm.state AS state_code
        FROM employees e
@@ -71,6 +49,31 @@ export async function computeRunningSalary(
   );
   const emp = (empRows[0] as any);
   if (!emp) return _zeroResult();
+
+  // Read fixed component amounts directly from salary_structure_component
+  const [compRows] = await db.execute<RowDataPacket[]>(
+    `SELECT scm.component_code, ssc.calc_type, ssc.value
+       FROM salary_structure_component ssc
+       JOIN salary_component_master scm ON scm.id = ssc.component_id
+      WHERE ssc.structure_id = ?
+      ORDER BY ssc.sequence`,
+    [emp.structure_id],
+  );
+  const compAmounts: Record<string, number> = {};
+  for (const c of compRows as any[]) {
+    if (c.calc_type === 'fixed' || c.calc_type === 'pct_of_ctc') {
+      compAmounts[c.component_code] = Number(c.value) || 0;
+    }
+  }
+  // If fixed components exist, use them directly for Gross calculation
+  const hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+  const fixedBasic = compAmounts.BASIC || 0;
+  const fixedHRA = compAmounts.HRA || 0;
+  const fixedGross = hasFixedComponents
+    ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
+       (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
+       (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+    : 0;
 
   // Statutory config for deductions
   const [statKvRows] = await db.execute<RowDataPacket[]>(
@@ -98,9 +101,8 @@ export async function computeRunningSalary(
   // Professional tax from slab if state is known
   const { getPtFromSlab } = await import("./payrollCalculate.service.js");
 
-  const monthlyGross = emp.ctc_annual / 12;
-
-  const config = await getRunningConfig(emp.branch_id, emp.process_id);
+  // Use fixed component sum as Gross if available, else fall back to CTC/12
+  const monthlyGross = hasFixedComponents ? fixedGross : (emp.ctc_annual / 12);
 
   // Active calendar days (handling mid-month joins/exits)
   const activeCalDays = await _activeCalendarDays(employeeId, runMonth);
@@ -131,14 +133,12 @@ export async function computeRunningSalary(
 
   const paidWorkingDaysTillDate = presentTillDate + paidLeaveTillDate;
 
-  // Eligible week-offs till date
-  let eligibleWeekoffTillDate: number;
-  if (config.weekoffEarningRequired) {
-    const earned = Math.floor(paidWorkingDaysTillDate / config.workingDaysPerWeekoff);
-    eligibleWeekoffTillDate = Math.min(weekoffRosteredTillDate, earned);
-  } else {
-    eligibleWeekoffTillDate = weekoffRosteredTillDate;
-  }
+  // Eligible week-offs till date — use the same slab logic as final payroll
+  const eligibleWeekoffTillDate = await calculateWeekoffEligibility(
+    employeeId,
+    paidWorkingDaysTillDate,
+    runMonth,
+  );
 
   // Eligible holidays till date
   let eligibleHolidaysTillDate = 0;
@@ -161,6 +161,16 @@ export async function computeRunningSalary(
   const ptEarned = emp.state_code
     ? await getPtFromSlab(emp.state_code, earnedSalaryTillDate)
     : defaultPt;
+
+  // When fixed components are available, calculate basic_pct relative to monthlyGross
+  // so that calculateNetSalary derives the correct basic amount
+  const effectiveBasicPct = hasFixedComponents
+    ? (fixedBasic / monthlyGross) * 100
+    : (emp.basic_pct ?? 40);
+  const effectiveHraPct = hasFixedComponents
+    ? (fixedHRA / monthlyGross) * 100
+    : (emp.hra_pct ?? 20);
+
   const earnedCalc = payrollService.calculateNetSalary({
     grossMonthlyCTC: earnedSalaryTillDate,
     workingDays: Math.max(1, cappedEarned),
@@ -168,8 +178,8 @@ export async function computeRunningSalary(
     pfEmployeePct, esicEmployeePct: esicEmpPct, esicWageLimit, pfWageLimit,
     professionalTax: ptEarned,
     tds: 0,
-    basicPct: emp.basic_pct ?? 40,
-    hraPct: emp.hra_pct ?? 20,
+    basicPct: effectiveBasicPct,
+    hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
   });
 
@@ -202,13 +212,12 @@ export async function computeRunningSalary(
   }
 
   const projectedPaidWorkingDays = paidWorkingDaysTillDate + futurePresent;
-  let projectedEligibleWeekoffs: number;
-  if (config.weekoffEarningRequired) {
-    const projEarned = Math.floor(projectedPaidWorkingDays / config.workingDaysPerWeekoff);
-    projectedEligibleWeekoffs = Math.min(weekoffRosteredTillDate + futureWeekoffRostered, projEarned);
-  } else {
-    projectedEligibleWeekoffs = weekoffRosteredTillDate + futureWeekoffRostered;
-  }
+  // Projected week-offs use same slab logic with projected paid base
+  const projectedEligibleWeekoffs = await calculateWeekoffEligibility(
+    employeeId,
+    projectedPaidWorkingDays,
+    runMonth,
+  );
 
   const projectedPayableDaysRaw = presentTillDate + paidLeaveTillDate +
     projectedEligibleWeekoffs + eligibleHolidaysTillDate + futureHolidays +
@@ -240,8 +249,8 @@ export async function computeRunningSalary(
     pfEmployeePct, esicEmployeePct: esicEmpPct, esicWageLimit, pfWageLimit,
     professionalTax: ptProjected,
     tds: 0,
-    basicPct: emp.basic_pct ?? 40,
-    hraPct: emp.hra_pct ?? 20,
+    basicPct: effectiveBasicPct,
+    hraPct: effectiveHraPct,
     pfOptOut, esicOptOut,
   });
 
