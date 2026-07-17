@@ -10,7 +10,7 @@ import type { HubEmployee, HubFilters } from "@/hooks/useAttendanceHub";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
-const ALLOWED_ROLES = ["super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"] as const;
+const ALLOWED_ROLES = ["super_admin", "admin", "hr", "payroll_head", "payroll_admin"] as const;
 
 const DEFAULT_FILTERS: HubFilters = {
   search: "",
@@ -63,7 +63,7 @@ export default function AdminAttendanceView() {
           </div>
           <h2 className="text-xl font-semibold text-slate-900">Access Restricted</h2>
           <p className="text-sm text-slate-500 max-w-sm">
-            You need Super Admin, HR, Payroll Head, WFM, or Payroll Admin role to access People Attendance & Earnings.
+            You need Super Admin, HR, Payroll Head, or Payroll Admin role to access People Attendance & Earnings.
           </p>
           <Button variant="outline" onClick={() => navigate(-1)}>Go Back</Button>
         </div>

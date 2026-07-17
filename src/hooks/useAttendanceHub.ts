@@ -143,13 +143,13 @@ export function useHubEmployees(filters: HubFilters, month: string) {
   if (filters.processId)     params.set("processId", filters.processId);
   if (filters.designationId) params.set("designationId", filters.designationId);
   if (filters.status)        params.set("status", filters.status);
+  if (filters.anomalyOnly)   params.set("anomalyOnly", "1");
 
   return useQuery({
     queryKey: ["hub-employees", filters, month],
     queryFn: async () => {
       const res = await hrmsApi.get<any>(`/api/employees/hr-hub?${params}`);
       const raw: HubEmployee[] = Array.isArray(res) ? res : (res?.data ?? []);
-      if (filters.anomalyOnly) return { data: raw.filter(e => e.has_anomaly), total: raw.filter(e => e.has_anomaly).length };
       return { data: raw, total: Number(res?.total ?? raw.length) };
     },
     staleTime: 60_000,
@@ -201,7 +201,7 @@ export function usePayslipHistory(employeeId: string | null) {
     queryKey: ["payslip-history", employeeId],
     enabled: !!employeeId,
     queryFn: async () => {
-      const res = await hrmsApi.get<any>(`/api/payroll/payslip/my?limit=24`);
+      const res = await hrmsApi.get<any>(`/api/payroll/payslip/history/${employeeId}?limit=24`);
       return (res?.data ?? res ?? []) as PayslipSummary[];
     },
     staleTime: 120_000,

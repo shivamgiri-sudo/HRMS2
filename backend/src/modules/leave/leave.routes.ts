@@ -19,7 +19,7 @@ leaveRouter.use(requireAuth);
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 async function isLeavePrivileged(userId: string): Promise<boolean> {
-  return hasRole(userId, "admin", "hr", "manager");
+  return hasRole(userId, "super_admin", "admin", "hr", "manager", "payroll_head", "payroll_admin");
 }
 
 leaveRouter.get("/types",                         h(leaveController.listLeaveTypes.bind(leaveController)));  // All can view

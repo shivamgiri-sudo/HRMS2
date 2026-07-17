@@ -7,12 +7,15 @@ import type { PayslipSummary } from "@/hooks/useAttendanceHub";
 const INR = (v: number | null | undefined) =>
   `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const today = new Date();
-const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+function getTodayMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 
 const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function RunningMonthCard({ employeeId }: { employeeId: string }) {
+  const currentMonth = getTodayMonth();
   const { data: rs, isLoading } = useRunningSalary(employeeId, currentMonth);
 
   if (isLoading) return <Skeleton className="h-40 rounded-2xl" />;
@@ -27,7 +30,7 @@ function RunningMonthCard({ employeeId }: { employeeId: string }) {
           <p className="text-xs text-slate-500 mt-0.5">Net (after deductions): <span className="font-semibold text-slate-800">{INR(rs.earned_net_till_date)}</span></p>
         </div>
         <div className="rounded-xl bg-[#e8f2fc] px-3 py-1.5 text-xs font-semibold text-[#1B6AB5]">
-          {currentMonth}
+          {getTodayMonth()}
         </div>
       </div>
       <div className="grid grid-cols-3 gap-3 text-center border-t border-indigo-100 pt-4">

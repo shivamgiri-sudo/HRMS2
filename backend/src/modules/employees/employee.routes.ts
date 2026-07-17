@@ -458,7 +458,7 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
 }));
 
 // GET /api/employees/hr-hub — enriched employee list for People Attendance & Earnings Hub
-router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
+router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
   const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ success: false, error: "month must be YYYY-MM" });
@@ -477,9 +477,13 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
   const parsed = employeeFiltersSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { page, limit, status, processId, branchId, departmentId, search } = parsed.data;
+  const { page, status, processId, branchId, departmentId, search } = parsed.data;
   const designationId = parsed.data.designationId;
-  const offset = (page - 1) * limit;
+  const limit = Math.min(200, Math.max(1, Math.trunc(Number(parsed.data.limit) || 50)));
+  const safeOffset = Math.max(0, Math.trunc((page - 1) * limit));
+  const offset = safeOffset;
+
+  const anomalyOnly = req.query.anomalyOnly === "1" || req.query.anomalyOnly === "true";
 
   const conds: string[] = ["e.active_status = 1"];
   const params: unknown[] = [];
@@ -531,14 +535,32 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
        LEFT JOIN designation_master dm  ON dm.id   = e.designation_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
        ${where}
+       ${anomalyOnly ? "HAVING lwp_days > 2 OR missing_punch_count > 0" : ""}
        ORDER BY e.employee_code ASC
        LIMIT ${limit} OFFSET ${offset}`,
     [...params, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd]
   );
 
-  const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM employees e ${where}`, params
-  );
+  const countQuery = anomalyOnly
+    ? `SELECT COUNT(*) AS total FROM (
+         SELECT e.id,
+           (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
+              WHERE adr2.employee_id = e.id
+                AND DATE(CONVERT_TZ(adr2.record_date,'+00:00','+05:30')) BETWEEN ? AND ?) AS lwp_days,
+           (SELECT COUNT(*) FROM attendance_daily_record adr4
+              WHERE adr4.employee_id = e.id
+                AND DATE(CONVERT_TZ(adr4.record_date,'+00:00','+05:30')) BETWEEN ? AND ?
+                AND adr4.attendance_status = 'missing_punch') AS missing_punch_count
+         FROM employees e ${where}
+         HAVING lwp_days > 2 OR missing_punch_count > 0
+       ) AS anomaly_count`
+    : `SELECT COUNT(*) AS total FROM employees e ${where}`;
+
+  const countParams = anomalyOnly
+    ? [...params, monthStart, monthEnd, monthStart, monthEnd, ...params]
+    : params;
+
+  const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
 
   const data = (rows as any[]).map((r: any) => ({
     ...r,
