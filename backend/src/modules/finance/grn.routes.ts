@@ -8,6 +8,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
   assertFinanceRecordBranch,
   resolveFinanceBranchScope,
@@ -24,6 +25,16 @@ const GRN_WRITE_ROLES = [
 ] as const;
 const GRN_READ_ROLES = [...GRN_WRITE_ROLES, "finance", "hr_admin"] as const;
 const GRN_REVIEW_ROLES = ["branch_head", "finance_head", "super_admin"] as const;
+const EXPENSE_MASTER_READ_ROLES = [
+  "super_admin",
+  "admin",
+  "branch_admin",
+  "branch_head",
+  "finance",
+  "finance_head",
+  "accounts_head",
+] as const;
+const EXPENSE_MASTER_WRITE_ROLES = ["super_admin", "finance_head"] as const;
 
 const UPLOAD_DIR = "uploads/grn-attachments";
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -57,6 +68,12 @@ function actor(req: AuthenticatedRequest) {
     role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
     roles: req.userRoles ?? [],
   };
+}
+
+function userHasRole(req: AuthenticatedRequest, role: string) {
+  return [req.authUser?.role, ...(req.userRoles ?? [])]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLowerCase() === role.toLowerCase());
 }
 
 function errorStatus(error: unknown, fallback: number) {
@@ -98,6 +115,79 @@ grNRouterUseAuth(grnRouter);
 
 function grNRouterUseAuth(router: Router) {
   router.use(requireAuth);
+}
+
+// Configurable Head/Sub-Head master used by branch budget, GRN and P&L.
+grNExpenseMasterRoutes(grnRouter);
+
+function grNExpenseMasterRoutes(router: Router) {
+  router.get(
+    "/expense-masters",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const includeInactive =
+          (userHasRole(req, "finance_head") || userHasRole(req, "super_admin"))
+          && String(req.query.includeInactive ?? "false") === "true";
+        const data = await financeExpenseMasterService.list(includeInactive);
+        res.json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to load expense master",
+        });
+      }
+    }
+  );
+
+  router.post(
+    "/expense-heads",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_WRITE_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await financeExpenseMasterService.saveHead(
+          req.body,
+          req.authUser.id
+        );
+        res.status(req.body?.id ? 200 : 201).json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to save expense head",
+        });
+      }
+    }
+  );
+
+  router.post(
+    "/expense-sub-heads",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_WRITE_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const data = await financeExpenseMasterService.saveSubHead(
+          req.body,
+          req.authUser.id
+        );
+        res.status(req.body?.id ? 200 : 201).json({ success: true, data });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to save expense sub-head",
+        });
+      }
+    }
+  );
 }
 
 grnRouter.get(
