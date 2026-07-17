@@ -10,6 +10,19 @@ warn() {
   printf 'WARN: %s\n' "$*" >&2
 }
 
+usage() {
+  cat >&2 <<'EOF'
+Usage: preflight.sh <audit|deploy>
+EOF
+  exit 1
+}
+
+MODE="${1:-}"
+case "$MODE" in
+  audit|deploy) ;;
+  *) usage ;;
+esac
+
 require_var() {
   local name="$1"
   [[ -n "${!name:-}" ]] || die "Missing required environment variable: $name"
@@ -39,6 +52,7 @@ node_major="${node_major%%.*}"
 npm_major="${npm_version%%.*}"
 listener_count="$(lsof -nP -iTCP:"$APP_PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { count += 1 } END { print count + 0 }')"
 
+printf 'mode=%s\n' "$MODE"
 printf 'git_sha=%s\n' "$repo_sha"
 printf 'branch=%s\n' "${branch:-detached}"
 printf 'node=%s\n' "$node_version"
@@ -59,8 +73,8 @@ if ! pm2 describe "$PM2_ID" >/dev/null 2>&1; then
   die "PM2 process $PM2_ID is not available"
 fi
 
-if (( listener_count > 1 )); then
-  die "Port $APP_PORT has more than one listener"
+if [[ "$MODE" == "deploy" ]] && (( listener_count != 1 )); then
+  die "Deploy preflight requires exactly one listener on port $APP_PORT"
 fi
 
 tracked_changes="$(git status --porcelain=v1 --untracked-files=normal | awk '
@@ -81,4 +95,3 @@ printf 'protected_paths:\n'
 printf '  - backend/private/ats-candidate-files (files=%s size=%s)\n' "$candidate_count" "$candidate_size"
 printf '  - backend/face-models (size=%s)\n' "$face_models_size"
 printf '  - backend/.env (present=%s)\n' "$( [[ -f "$BACKEND_DIR/.env" ]] && printf yes || printf no )"
-
