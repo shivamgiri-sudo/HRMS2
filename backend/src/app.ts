@@ -209,6 +209,7 @@ const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
 ]);
 
 function isAllowedOrigin(origin: string): boolean {
+  if (origin === "http://115.241.59.220" || origin === "https://115.241.59.220") return true;
   if (env.NODE_ENV !== "production" && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) return true;
   return ALLOWED_ORIGINS.has(origin);
 }
@@ -273,7 +274,7 @@ app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
 app.use("/api/payroll/readiness", payrollReadinessRouter);
-app.use("/api/payroll", payrollRunLimiter, payrollSecureRouter);
+app.use("/api/payroll", listEndpointLimiter, payrollSecureRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
@@ -457,3 +458,4 @@ app.use("/api/bi", biRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
+

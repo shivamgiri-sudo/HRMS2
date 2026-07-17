@@ -176,7 +176,7 @@ async function getHolidayWorkPolicyForEmployee(employeeId: string): Promise<any>
  */
 async function calculateDailyRate(employeeId: string, basis: string): Promise<number> {
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT esa.ctc_annual, ss.basic_pct, ss.hra_pct
+    `SELECT esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct
      FROM employees e
      JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
      JOIN salary_structure_master ss ON ss.id = esa.structure_id
@@ -188,12 +188,38 @@ async function calculateDailyRate(employeeId: string, basis: string): Promise<nu
   if ((empRows as any[]).length === 0) return 0;
 
   const emp = (empRows as any[])[0];
-  const monthlyGross = emp.ctc_annual / 12;
-  const basic = monthlyGross * (emp.basic_pct / 100);
+
+  // Read fixed component amounts directly
+  const [compRows] = await db.execute<RowDataPacket[]>(
+    `SELECT scm.component_code, ssc.calc_type, ssc.value
+       FROM salary_structure_component ssc
+       JOIN salary_component_master scm ON scm.id = ssc.component_id
+      WHERE ssc.structure_id = ?
+      ORDER BY ssc.sequence`,
+    [emp.structure_id],
+  );
+  const compAmounts: Record<string, number> = {};
+  for (const c of compRows as any[]) {
+    if (c.calc_type === 'fixed' || c.calc_type === 'pct_of_ctc') {
+      compAmounts[c.component_code] = Number(c.value) || 0;
+    }
+  }
+  const hasFixed = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+  const fixedBasic = compAmounts.BASIC || 0;
+  const fixedHRA = compAmounts.HRA || 0;
+  const fixedGross = hasFixed
+    ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
+       (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
+       (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+    : 0;
+
+  const monthlyGross = hasFixed ? fixedGross : (emp.ctc_annual / 12);
+  const basic = hasFixed ? fixedBasic : monthlyGross * (emp.basic_pct / 100);
+  const effectiveBasicPct = hasFixed ? (fixedBasic / monthlyGross) * 100 : emp.basic_pct;
+  const effectiveHraPct = hasFixed ? (fixedHRA / monthlyGross) * 100 : (emp.hra_pct || 0);
 
   switch (basis) {
     case "NET_DAILY": {
-      // Calculate net daily rate after deductions
       const calc = payrollService.calculateNetSalary({
         grossMonthlyCTC: monthlyGross,
         workingDays: 30,
@@ -204,8 +230,8 @@ async function calculateDailyRate(employeeId: string, basis: string): Promise<nu
         pfWageLimit: 15000,
         professionalTax: 200,
         tds: 0,
-        basicPct: emp.basic_pct,
-        hraPct: emp.hra_pct || 0,
+        basicPct: effectiveBasicPct,
+        hraPct: effectiveHraPct,
         pfOptOut: false,
         esicOptOut: false,
       });

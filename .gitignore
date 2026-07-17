@@ -50,3 +50,11 @@ playwright-report/
 playwright-results.json
 test-results/
 .tmp-backend.err
+tools/schema-auditor/dist/
+tools/schema-auditor/logs/
+tools/schema-auditor/reports/*
+!tools/schema-auditor/reports/.gitkeep
+tools/schema-auditor/snapshots/*
+!tools/schema-auditor/snapshots/.gitkeep
+tools/schema-auditor/.env.schema-auditor
+tools/schema-auditor/.env.schema-auditor.local

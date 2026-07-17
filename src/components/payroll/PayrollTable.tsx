@@ -25,7 +25,8 @@ import {
 } from "@/components/ui/tooltip";
 import { Download, Eye, MoreVertical, CheckCircle, Clock, CreditCard, CalendarCheck, Loader2, X } from "lucide-react";
 import { useState } from "react";
-import { downloadPayslip } from "@/lib/payslipPdfGenerator";
+import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
+import { numberToWords } from "@/lib/numberToWords";
 import { useToast } from "@/hooks/use-toast";
 
 type SalaryStructureResponse = {
@@ -66,6 +67,20 @@ export interface PayrollRecord {
   process?: string;
   department?: string;
   designation?: string;
+  // Extended fields from salary_prep_line
+  hra?: number;
+  specialAllowance?: number;
+  pfEmployee?: number;
+  esicEmployee?: number;
+  professionalTax?: number;
+  tdsAmount?: number;
+  lwpDeduction?: number;
+  advanceRecovery?: number;
+  workingDays?: number;
+  presentDays?: number;
+  lwpDays?: number;
+  earningComponents?: Array<{ component_code: string; component_name: string; component_type: string; amount: number }>;
+  deductionComponents?: Array<{ component_code: string; component_name: string; component_type: string; amount: number }>;
 }
 
 interface PayrollTableProps {
@@ -181,22 +196,82 @@ export function PayrollTable({
     try {
       const monthName = MONTH_NAMES[record.monthNum - 1] || "";
 
-      const payslipData = {
-        employeeName: record.employee.name,
-        employeeCode: record.employeeCode,
-        employeeEmail: record.employee.email,
-        monthName,
-        year: record.year,
-        status: record.status,
-        paidAt: record.paidAt,
-        basicSalary: record.basic,
-        allowances: record.totalAllowances,
-        deductions: record.totalDeductions,
-        netSalary: record.netSalary,
-        salaryBreakdown: undefined,
+      // Fetch full payslip data from the API (same source as profile payslips)
+      // Falls back to record fields if no salary_payslip record exists yet
+      let full: any = null;
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: any }>(
+          `/api/payroll/payslip/${record.runId}/${record.employeeId}`
+        );
+        full = res.data;
+      } catch {
+        // No payslip generated yet — use flat record fields as fallback
+        full = null;
+      }
+
+      const earnings   = full?.earnings   || record.earningComponents   || [];
+      const deductions = full?.deductions || record.deductionComponents || [];
+      const getEarning = (code: string) => {
+        const comp = earnings.find((e: any) => e.component_code?.toUpperCase() === code.toUpperCase());
+        return Number(comp?.amount ?? 0);
+      };
+      const getDeduction = (code: string) => {
+        const comp = deductions.find((d: any) => d.component_code?.toUpperCase() === code.toUpperCase());
+        return Number(comp?.amount ?? 0);
       };
 
-      downloadPayslip(payslipData, `Payslip_${record.employeeCode}_${monthName}_${record.year}.pdf`);
+      const basic = getEarning('BASIC') || Number(full?.basic ?? record.basic ?? 0);
+      const hra   = getEarning('HRA')   || Number(full?.hra ?? record.hra ?? 0);
+      const bonus = getEarning('BONUS');
+      const conv  = getEarning('CONVEYANCE') || getEarning('CONV');
+      const pa    = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE');
+      const ma    = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE');
+      const sa    = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE');
+      const arrear    = getEarning('ARREAR');
+      const incentive = getEarning('INCENTIVE');
+      const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive;
+      const oa = Math.max(Number(full?.gross_salary ?? record.grossSalary ?? 0) - knownEarnings, 0);
+
+      const pf    = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(full?.pf_employee ?? record.pfEmployee ?? 0);
+      const esic  = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(full?.esic_employee ?? record.esicEmployee ?? 0);
+      const pt    = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(full?.professional_tax ?? record.professionalTax ?? 0);
+      const tds   = getDeduction('TDS') || Number(full?.tds ?? record.tdsAmount ?? 0);
+      const loan  = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY');
+      const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(full?.advance_recovery ?? record.advanceRecovery ?? 0);
+      const knownDeductions = pf + esic + pt + tds + loan + adDed;
+      const otherDed = Math.max(Number(full?.total_deductions ?? record.totalDeductions ?? 0) - knownDeductions, 0);
+
+      const netSalary = Number(full?.net_salary ?? full?.net_pay ?? record.netSalary ?? 0);
+
+      await downloadMasCallnetPayslip({
+        companyName: "Mas Callnet India Pvt Ltd",
+        monthYear: `${monthName} - ${record.year}`,
+        empName: record.employee.name,
+        empCode: record.employeeCode,
+        designation: full?.designation || record.designation || "N/A",
+        department: full?.department || record.department || "N/A",
+        epfNo: full?.epf_number || "",
+        uanNo: full?.uan_number || "",
+        panNo: full?.pan_number || "",
+        bankAccount: full?.bank_account_masked || "",
+        location: full?.branch_name || full?.location_name || record.branch || "N/A",
+        esiNo: full?.esi_number || "",
+        wDays: Number(full?.working_days ?? record.workingDays ?? 30),
+        earnedDays: Number(full?.present_days ?? record.presentDays ?? full?.working_days ?? 30),
+        lwpDays: Number(full?.lwp_days ?? record.lwpDays ?? 0),
+        totalDaysInMonth: Number(full?.working_days ?? record.workingDays ?? 30),
+        basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
+        pf, esic, pt, tds, lwpDeduction: 0, loan, adDed, otherDed,
+        employerPf: Number(full?.pf_employer ?? 0),
+        employerEsic: Number(full?.esic_employer ?? 0),
+        grossSalary: Number(full?.gross_salary ?? record.grossSalary ?? 0),
+        incomeTax: tds,
+        chequeNo: full?.cheque_no || "",
+        paymentMode: full?.payment_mode || "",
+        paymentDate: full?.payment_date || "",
+        netSalary,
+        netSalaryWords: numberToWords(Math.floor(netSalary)),
+      }, `Payslip_${record.employeeCode}_${monthName}_${record.year}.pdf`);
 
       toast({
         title: "Payslip Downloaded",

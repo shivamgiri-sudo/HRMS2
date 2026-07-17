@@ -39,18 +39,40 @@ router.get("/records", requireRole("admin", "hr", "finance", "payroll", "ceo"), 
   );
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 500) || 500), 1000);
+  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 50) || 50), 1000);
   const offset = (page - 1) * limit;
   const conds: string[] = [];
   const params: unknown[] = [];
 
   if (req.query.runMonth) { conds.push("spr.run_month = ?"); params.push(String(req.query.runMonth)); }
-  if (req.query.status) { conds.push("spr.status = ?"); params.push(String(req.query.status)); }
+  if (req.query.status) {
+    const normalizedStatus = String(req.query.status).trim().toLowerCase();
+    if (normalizedStatus === "paid") {
+      conds.push("LOWER(COALESCE(spr.status, '')) IN ('disbursed', 'finalized', 'finalised', 'paid')");
+    } else if (normalizedStatus === "processing") {
+      conds.push("(LOWER(COALESCE(spr.status, '')) IN ('processing', 'reviewed', 'approved', 'locked') OR LOWER(COALESCE(spl.status, '')) = 'calculated')");
+    } else if (normalizedStatus === "pending") {
+      conds.push("(LOWER(COALESCE(spr.status, '')) NOT IN ('disbursed', 'finalized', 'finalised', 'paid', 'processing', 'reviewed', 'approved', 'locked') AND LOWER(COALESCE(spl.status, '')) <> 'calculated')");
+    } else {
+      conds.push("(LOWER(COALESCE(spr.status, '')) = ? OR LOWER(COALESCE(spl.status, '')) = ?)");
+      params.push(normalizedStatus, normalizedStatus);
+    }
+  }
   if (req.query.branchId) { conds.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
   if (req.query.processId) { conds.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+  if (req.query.departmentId) { conds.push("e.department_id = ?"); params.push(String(req.query.departmentId)); }
   if (req.query.costCentreId || req.query.costCenterId) {
     conds.push("e.cost_centre_id = ?");
     params.push(String(req.query.costCentreId ?? req.query.costCenterId));
+  }
+  if (req.query.search) {
+    const escaped = String(req.query.search).replace(/[%_\\]/g, ch => "\\" + ch);
+    conds.push(
+      "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\' OR e.email LIKE ? ESCAPE '\\\\'" +
+      " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
+    );
+    const s = `%${escaped}%`;
+    params.push(s, s, s, s);
   }
 
   const scopeClause = String(scoped.sql).replace(/^WHERE\s+/i, "").trim();
