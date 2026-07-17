@@ -1,0 +1,243 @@
+import { randomUUID } from "crypto";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+
+export type BudgetTaxTreatment = "inclusive" | "exclusive" | "exempt" | "reverse_charge" | "non_gst";
+export type BudgetStatus =
+  | "draft"
+  | "submitted"
+  | "branch_head_approved"
+  | "finance_head_approved"
+  | "accounts_head_approved"
+  | "active"
+  | "rejected"
+  | "revision_required"
+  | "closed";
+
+export interface BudgetLineInput {
+  id?: string;
+  costCentreId?: string | null;
+  processId?: string | null;
+  head: string;
+  subHead?: string | null;
+  itemName: string;
+  itemDescription?: string | null;
+  quantity: number;
+  unit: string;
+  unitRate: number;
+  taxTreatment: BudgetTaxTreatment;
+  gstRate: number;
+  gstType?: "cgst_sgst" | "igst" | "none";
+  recoverableTaxPct?: number;
+  preferredVendorId?: string | null;
+  allocationDriver?: string | null;
+  justification: string;
+}
+
+export interface SaveBudgetInput {
+  id?: string;
+  branchId: string;
+  periodCode: string;
+  financialYear: string;
+  lines: BudgetLineInput[];
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+export function calculateBudgetLine(line: BudgetLineInput) {
+  const quantity = Number(line.quantity || 0);
+  const unitRate = Number(line.unitRate || 0);
+  const gstRate = Number(line.gstRate || 0);
+  const quoted = roundMoney(quantity * unitRate);
+  let baseAmount = quoted;
+  let taxAmount = 0;
+  let grossAmount = quoted;
+
+  if (line.taxTreatment === "inclusive" && gstRate > 0) {
+    baseAmount = roundMoney(quoted / (1 + gstRate / 100));
+    taxAmount = roundMoney(quoted - baseAmount);
+  } else if (["exclusive", "reverse_charge"].includes(line.taxTreatment) && gstRate > 0) {
+    taxAmount = roundMoney(quoted * gstRate / 100);
+    grossAmount = roundMoney(quoted + taxAmount);
+  }
+
+  if (["exempt", "non_gst"].includes(line.taxTreatment)) {
+    taxAmount = 0;
+    grossAmount = baseAmount;
+  }
+
+  const recoverablePct = Math.max(0, Math.min(100, Number(line.recoverableTaxPct ?? 100)));
+  const recoverableTaxAmount = roundMoney(taxAmount * recoverablePct / 100);
+  const pnlCostAmount = roundMoney(baseAmount + taxAmount - recoverableTaxAmount);
+  const gstType = line.gstType ?? "cgst_sgst";
+  const cgstAmount = gstType === "cgst_sgst" ? roundMoney(taxAmount / 2) : 0;
+  const sgstAmount = gstType === "cgst_sgst" ? roundMoney(taxAmount - cgstAmount) : 0;
+  const igstAmount = gstType === "igst" ? taxAmount : 0;
+
+  return { baseAmount, taxAmount, grossAmount, recoverableTaxAmount, pnlCostAmount, cgstAmount, sgstAmount, igstAmount };
+}
+
+async function budgetNumber(branchId: string, periodCode: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM finance_budget_header WHERE branch_id = ? AND period_code = ?`,
+    [branchId, periodCode]
+  );
+  return `BUD/${periodCode.replace("-", "")}/${String(Number(rows[0]?.total ?? 0) + 1).padStart(3, "0")}`;
+}
+
+async function audit(budgetId: string, action: string, fromStatus: string | null, toStatus: string, actorId: string, actorRole: string, remarks?: string | null) {
+  await db.execute(
+    `INSERT INTO finance_budget_approval_log
+      (id, budget_id, action, from_status, to_status, actor_user_id, actor_role, remarks)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [randomUUID(), budgetId, action, fromStatus, toStatus, actorId, actorRole, remarks ?? null]
+  );
+}
+
+export const branchBudgetService = {
+  async list(filters: { period?: string; branchId?: string; status?: string }) {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filters.period) { where.push("h.period_code = ?"); params.push(filters.period); }
+    if (filters.branchId) { where.push("h.branch_id = ?"); params.push(filters.branchId); }
+    if (filters.status) { where.push("h.status = ?"); params.push(filters.status); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT h.*, bm.branch_name,
+              COUNT(l.id) AS line_count,
+              COALESCE(SUM(l.reserved_amount),0) AS reserved_amount,
+              COALESCE(SUM(l.consumed_amount),0) AS consumed_amount
+       FROM finance_budget_header h
+       LEFT JOIN branch_master bm ON bm.id = h.branch_id
+       LEFT JOIN finance_budget_line l ON l.budget_id = h.id
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       GROUP BY h.id, bm.branch_name
+       ORDER BY h.period_code DESC, h.created_at DESC`,
+      params
+    );
+    return rows;
+  },
+
+  async get(id: string) {
+    const [headers] = await db.execute<RowDataPacket[]>(
+      `SELECT h.*, bm.branch_name FROM finance_budget_header h LEFT JOIN branch_master bm ON bm.id = h.branch_id WHERE h.id = ? LIMIT 1`,
+      [id]
+    );
+    if (!headers[0]) throw new Error("Budget not found");
+    const [lines] = await db.execute<RowDataPacket[]>(
+      `SELECT l.*, pm.process_name, ccm.cost_centre_name
+       FROM finance_budget_line l
+       LEFT JOIN process_master pm ON pm.id = l.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = l.cost_centre_id
+       WHERE l.budget_id = ? ORDER BY l.created_at, l.id`,
+      [id]
+    );
+    const [approvals] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM finance_budget_approval_log WHERE budget_id = ? ORDER BY created_at`,
+      [id]
+    );
+    return { ...headers[0], lines, approvals };
+  },
+
+  async saveDraft(input: SaveBudgetInput, actorId: string) {
+    if (!input.branchId || !input.periodCode || !input.financialYear) throw new Error("Branch, period and financial year are required");
+    if (!input.lines?.length) throw new Error("At least one detailed budget line is required");
+    const id = input.id || randomUUID();
+    const calculated = input.lines.map((line) => ({ line, values: calculateBudgetLine(line) }));
+    const totals = calculated.reduce((acc, item) => ({
+      base: roundMoney(acc.base + item.values.baseAmount),
+      tax: roundMoney(acc.tax + item.values.taxAmount),
+      gross: roundMoney(acc.gross + item.values.grossAmount),
+    }), { base: 0, tax: 0, gross: 0 });
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [existing] = await connection.execute<RowDataPacket[]>(`SELECT status FROM finance_budget_header WHERE id = ? FOR UPDATE`, [id]);
+      if (existing[0] && existing[0].status !== "draft" && existing[0].status !== "revision_required") {
+        throw new Error(`Only draft or revision-required budgets can be edited. Current status: ${existing[0].status}`);
+      }
+      if (!existing[0]) {
+        await connection.execute(
+          `INSERT INTO finance_budget_header
+           (id,budget_number,branch_id,period_code,financial_year,status,base_budget_amount,tax_budget_amount,gross_budget_amount,created_by)
+           VALUES (?,?,?,?,?,'draft',?,?,?,?)`,
+          [id, await budgetNumber(input.branchId, input.periodCode), input.branchId, input.periodCode, input.financialYear, totals.base, totals.tax, totals.gross, actorId]
+        );
+      } else {
+        await connection.execute(
+          `UPDATE finance_budget_header SET branch_id=?, period_code=?, financial_year=?, status='draft', base_budget_amount=?, tax_budget_amount=?, gross_budget_amount=? WHERE id=?`,
+          [input.branchId, input.periodCode, input.financialYear, totals.base, totals.tax, totals.gross, id]
+        );
+        await connection.execute(`DELETE FROM finance_budget_line WHERE budget_id = ?`, [id]);
+      }
+
+      for (const item of calculated) {
+        const l = item.line;
+        const v = item.values;
+        await connection.execute(
+          `INSERT INTO finance_budget_line
+           (id,budget_id,cost_centre_id,process_id,head,sub_head,item_name,item_description,quantity,unit,unit_rate,tax_treatment,gst_rate,cgst_amount,sgst_amount,igst_amount,base_amount,tax_amount,gross_amount,recoverable_tax_amount,pnl_cost_amount,preferred_vendor_id,allocation_driver,justification)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [l.id || randomUUID(), id, l.costCentreId ?? null, l.processId ?? null, l.head, l.subHead ?? null, l.itemName, l.itemDescription ?? null, l.quantity, l.unit, l.unitRate, l.taxTreatment, l.gstRate, v.cgstAmount, v.sgstAmount, v.igstAmount, v.baseAmount, v.taxAmount, v.grossAmount, v.recoverableTaxAmount, v.pnlCostAmount, l.preferredVendorId ?? null, l.allocationDriver ?? null, l.justification]
+        );
+      }
+      await connection.commit();
+      return this.get(id);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  async submit(id: string, actorId: string, actorRole: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT status FROM finance_budget_header WHERE id=? LIMIT 1`, [id]);
+    if (!rows[0]) throw new Error("Budget not found");
+    if (!['draft','revision_required'].includes(rows[0].status)) throw new Error("Only draft budgets can be submitted");
+    await db.execute(`UPDATE finance_budget_header SET status='submitted', submitted_by=?, submitted_at=NOW() WHERE id=?`, [actorId, id]);
+    await audit(id, "SUBMIT", rows[0].status, "submitted", actorId, actorRole);
+    return this.get(id);
+  },
+
+  async review(id: string, decision: "approve" | "reject" | "revision", actorId: string, actorRole: string, remarks?: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT status FROM finance_budget_header WHERE id=? LIMIT 1`, [id]);
+    if (!rows[0]) throw new Error("Budget not found");
+    const current = String(rows[0].status) as BudgetStatus;
+    const role = actorRole.toLowerCase();
+    const expected = role === "branch_head" ? "submitted" : role === "finance_head" ? "branch_head_approved" : role === "accounts_head" ? "finance_head_approved" : null;
+    if (!expected || current !== expected) throw new Error(`Role ${actorRole} cannot review budget in status ${current}`);
+
+    let next: BudgetStatus;
+    if (decision === "reject") next = "rejected";
+    else if (decision === "revision") next = "revision_required";
+    else next = role === "branch_head" ? "branch_head_approved" : role === "finance_head" ? "finance_head_approved" : "active";
+
+    const approvalColumn = role === "branch_head" ? "branch_head_approved" : role === "finance_head" ? "finance_head_approved" : "accounts_head_approved";
+    await db.execute(
+      `UPDATE finance_budget_header SET status=?, ${approvalColumn}_by=?, ${approvalColumn}_at=NOW(), rejection_reason=? WHERE id=?`,
+      [next, actorId, decision === "approve" ? null : remarks ?? null, id]
+    );
+    await audit(id, decision.toUpperCase(), current, next, actorId, actorRole, remarks);
+    return this.get(id);
+  },
+
+  async availableLines(filters: { branchId: string; processId?: string; costCentreId?: string; period?: string }) {
+    const conditions = ["h.branch_id = ?", "h.status = 'active'"];
+    const params: unknown[] = [filters.branchId];
+    if (filters.period) { conditions.push("h.period_code = ?"); params.push(filters.period); }
+    if (filters.processId) { conditions.push("(l.process_id = ? OR l.process_id IS NULL)"); params.push(filters.processId); }
+    if (filters.costCentreId) { conditions.push("(l.cost_centre_id = ? OR l.cost_centre_id IS NULL)"); params.push(filters.costCentreId); }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT l.*, h.budget_number, h.period_code,
+              (l.gross_amount - l.reserved_amount - l.consumed_amount) AS available_gross_amount
+       FROM finance_budget_line l JOIN finance_budget_header h ON h.id=l.budget_id
+       WHERE ${conditions.join(" AND ")}
+       HAVING available_gross_amount > 0
+       ORDER BY l.head,l.sub_head,l.item_name`, params
+    );
+    return rows;
+  },
+};
