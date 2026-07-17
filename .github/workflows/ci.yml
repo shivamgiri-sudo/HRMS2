@@ -80,6 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Checkout finance feature branch
         uses: actions/checkout@v4
@@ -109,38 +110,64 @@ jobs:
             backend/package-lock.json
 
       - name: Apply guarded finance patch
+        id: apply_patch
         if: steps.patch.outputs.apply == 'true'
-        run: python3 .github/scripts/apply_finance_budget_integration.py
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python3 .github/scripts/apply_finance_budget_integration.py > /tmp/finance-patch.log 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "Finance patch exit code: $code"
+          tail -80 /tmp/finance-patch.log
+          exit 0
+
+      - name: Report patch failure
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          {
+            echo '### Finance integration patch failed'
+            echo
+            echo '```text'
+            tail -80 /tmp/finance-patch.log
+            echo '```'
+          } > /tmp/finance-comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/finance-comment.md
+          exit 1
 
       - name: Install frontend dependencies
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         run: npm ci
 
       - name: Install backend dependencies
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         run: npm --prefix backend ci
 
       - name: Frontend typecheck
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         run: npm run typecheck
 
       - name: Backend typecheck
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         run: npm --prefix backend run typecheck
 
       - name: Budget tax tests
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         run: npm --prefix backend exec vitest run src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
 
       - name: Build frontend and backend
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         run: npm run build:all
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
 
       - name: Restore standard CI workflow and commit validated code
-        if: steps.patch.outputs.apply == 'true'
+        if: steps.patch.outputs.apply == 'true' && steps.apply_patch.outputs.exit_code == '0'
         shell: bash
         run: |
           git checkout origin/main -- .github/workflows/ci.yml
