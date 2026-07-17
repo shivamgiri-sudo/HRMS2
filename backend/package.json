@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "verify:face-runtime": "tsx scripts/verify-face-runtime.ts",
     "dashboard:audit": "tsx scripts/dashboard-data-audit.ts",
     "dashboard:audit:mas47814": "tsx scripts/dashboard-data-audit.ts mas47814",
     "seed:demo": "tsx scripts/seed-demo-auth.ts",
@@ -24,6 +25,8 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@pdf-lib/standard-fonts": "^1.0.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@vladmandic/face-api": "^1.7.15",
     "archiver": "^8.0.0",
     "axios": "^1.7.9",

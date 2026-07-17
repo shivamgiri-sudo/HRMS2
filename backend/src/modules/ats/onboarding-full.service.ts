@@ -11,7 +11,7 @@ import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
-// face-match loaded lazily — requires @tensorflow/tfjs-node which may not be installed
+// face-match loaded lazily so onboarding only loads it when needed
 let _faceMatchModule: typeof import("./face-match.service.js") | null = null;
 async function getFaceMatch() {
   if (_faceMatchModule === null) {
