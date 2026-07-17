@@ -88,6 +88,7 @@ The supported deployment path is:
 13. Verify the public and protected health routes, listener count, and PM2 online state.
 14. Roll back immediately if any required check fails.
 15. Use `--dry-run` to prove the workflow path without mutating production.
+    Dry-run stages the runtime outside `PROD_ROOT`, uses deploy preflight, and prints staged checksum values instead of deployed ones.
 
 Example:
 
@@ -100,6 +101,7 @@ scripts/production/deploy-backend.sh \
 
 The deploy script refuses to guess a release identity. It requires both exact SHAs to be supplied.
 It also refuses to deploy if the tracked checkout is dirty, if the release touches unsupported paths, or if the release changes protected runtime files.
+Dry-run still proves the live checkout is eligible for deployment, but it never writes under `PROD_ROOT`, never stops PM2, never switches the production Git checkout, and never runs production `npm ci`.
 
 For a no-op proof run:
 
@@ -156,9 +158,10 @@ The backup script stores:
 - protected-path hashes for `backend/.env`, `backend/eng.traineddata`, `backend/private/ats-candidate-files/`, and `backend/face-models/`
 
 Rollback uses only the saved backup directory and restores the full compiled runtime tree plus every backed-up source file.
-It switches the Git checkout back to `FROM_SHA`, removes staged runtime directories, restores the backed-up runtime tree atomically, runs `npm ci`, restarts PM2, verifies listener count and health, and keeps protected runtime data unchanged.
+It stops PM2 before touching the tracked checkout or backend dependencies, verifies zero listeners, switches the Git checkout back to `FROM_SHA`, runs `npm ci`, restores the backed-up runtime tree atomically, restarts PM2, verifies listener count and health, and keeps protected runtime data unchanged.
 If a source file was newly introduced by the deploy, rollback deletes it when it is not present in the backup.
 It does not touch uploads, `.env`, `eng.traineddata`, database migrations, or face models.
+Cleanup is limited to the current deployment or rollback identifiers so unrelated `dist.previous-*` directories are preserved.
 
 Example:
 
@@ -187,7 +190,7 @@ Keep the current backend baseline note here:
 ## Sandbox Validation Matrix
 
 The workflow scripts are validated in a sandbox before any production use.
-The minimum matrix now covers these 16 scenarios:
+The minimum matrix now covers these 30 scenarios:
 
 1. `preflight.sh audit` reports the live checkout without mutating anything.
 2. `preflight.sh deploy` rejects dirty tracked files and requires a single listener on port `5055`.
@@ -205,3 +208,17 @@ The minimum matrix now covers these 16 scenarios:
 14. A checksum mismatch or `npm ci` failure triggers rollback.
 15. Runtime rename failure triggers rollback.
 16. `rollback-backend.sh --dry-run` reports the planned restore without mutating production.
+17. `deploy-backend.sh --dry-run` creates no path under `PROD_ROOT`.
+18. `deploy-backend.sh --dry-run` leaves the production fingerprint unchanged.
+19. `deploy-backend.sh --dry-run` prints staged checksum names, not deployed ones.
+20. `deploy-backend.sh --dry-run` does not hit an unbound-variable path.
+21. Dirty tracked production causes dry-run rejection.
+22. Wrong listener count causes dry-run rejection.
+23. A failed PM2 stop prevents the Git switch in real deployment.
+24. A failed PM2 stop prevents production `npm ci` in real deployment.
+25. A non-zero listener count after PM2 stop prevents runtime mutation.
+26. Standalone rollback stops PM2 before Git, `npm ci`, and runtime restore mutations.
+27. Standalone rollback verifies zero listeners before mutation.
+28. Standalone rollback continues service restoration after an intermediate failure.
+29. Cleanup removes only the current release's temporary runtime directories.
+30. An unrelated `dist.previous-*` directory remains untouched.

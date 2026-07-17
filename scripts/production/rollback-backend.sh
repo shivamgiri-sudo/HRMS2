@@ -79,7 +79,10 @@ verify_protected_hashes() {
 }
 
 cleanup_runtime_dirs() {
-  find "$PROD_ROOT/backend" -maxdepth 1 -type d \( -name 'dist.next-*' -o -name 'dist.previous-*' -o -name 'dist.restore-*' \) -exec rm -rf {} +
+  rm -rf \
+    "$PROD_ROOT/backend/dist.next-$TARGET_SHA" \
+    "$PROD_ROOT/backend/dist.previous-$DEPLOY_ID" \
+    "$PROD_ROOT/backend/dist.restore-$DEPLOY_ID"
 }
 
 restore_runtime_tree() {
@@ -143,13 +146,18 @@ attempt() {
 
 pm2 describe "$PM2_ID" >/dev/null 2>&1 || die "PM2 process $PM2_ID is not available"
 
+if pm2 describe "$PM2_ID" 2>/dev/null | grep -Eqi 'status[[:space:]]*:?[[:space:]]+online'; then
+  pm2 stop "$PM2_ID"
+fi
+assert_listener_count 0
+
 attempt git -C "$PROD_ROOT" switch --detach "$FROM_SHA"
 attempt test "$(git -C "$PROD_ROOT" rev-parse HEAD)" = "$FROM_SHA"
 attempt test -z "$(git -C "$PROD_ROOT" status --porcelain=v1 --untracked-files=no)"
-attempt cleanup_runtime_dirs
 attempt cd "$BACKEND_DIR"
 attempt npm ci
 attempt restore_runtime_tree "$DEPLOY_ID"
+attempt cleanup_runtime_dirs
 attempt pm2 restart "$PM2_ID" --update-env
 attempt assert_pm2_online
 attempt assert_listener_count 1

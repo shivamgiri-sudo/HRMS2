@@ -84,6 +84,12 @@ assert_pm2_online() {
   fi
 }
 
+assert_pm2_stopped() {
+  if pm2 describe "$PM2_ID" 2>/dev/null | grep -Eqi 'status[[:space:]]*:?[[:space:]]+online'; then
+    die "PM2 process $PM2_ID is still online"
+  fi
+}
+
 generate_protected_hashes() {
   local rel path file
   for rel in backend/.env backend/eng.traineddata backend/private/ats-candidate-files backend/face-models; do
@@ -104,6 +110,22 @@ verify_protected_hashes() {
   diff -u "$baseline_file" <(generate_protected_hashes) >/dev/null || die "Protected runtime data changed during deployment"
 }
 
+print_staged_checksums() {
+  printf 'validated_server_checksum=%s\n' "$VALIDATED_SERVER_CHECKSUM"
+  printf 'staged_server_checksum=%s\n' "$STAGED_SERVER_CHECKSUM"
+  printf 'validated_app_checksum=%s\n' "$VALIDATED_APP_CHECKSUM"
+  printf 'staged_app_checksum=%s\n' "$STAGED_APP_CHECKSUM"
+  printf 'runtime_staging_checksum_match=yes\n'
+}
+
+print_deployed_checksums() {
+  printf 'validated_server_checksum=%s\n' "$VALIDATED_SERVER_CHECKSUM"
+  printf 'deployed_server_checksum=%s\n' "$DEPLOYED_SERVER_CHECKSUM"
+  printf 'validated_app_checksum=%s\n' "$VALIDATED_APP_CHECKSUM"
+  printf 'deployed_app_checksum=%s\n' "$DEPLOYED_APP_CHECKSUM"
+  printf 'runtime_checksum_match=yes\n'
+}
+
 write_list() {
   local file="$1"
   shift
@@ -111,11 +133,9 @@ write_list() {
   printf '%s\n' "$@" | unique_paths > "$file"
 }
 
-mode="run"
 DRY_RUN=0
 if [[ "${1:-}" == "--dry-run" ]]; then
   DRY_RUN=1
-  mode="dry-run"
   shift
 fi
 
@@ -144,7 +164,13 @@ mkdir -p "$WORKTREE_ROOT"
 
 DEPLOY_ID="$(date +%Y%m%d-%H%M%S)-${TARGET_SHA:0:12}"
 WORKTREE_DIR="$WORKTREE_ROOT/hrms2-backend-$DEPLOY_ID"
-STAGING_DIST_DIR="$PROD_ROOT/backend/dist.next-$TARGET_SHA"
+DRY_RUN_STAGE_DIR=""
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  DRY_RUN_STAGE_DIR="$WORKTREE_ROOT/dry-run-dist-$DEPLOY_ID"
+  STAGING_DIST_DIR="$DRY_RUN_STAGE_DIR"
+else
+  STAGING_DIST_DIR="$PROD_ROOT/backend/dist.next-$TARGET_SHA"
+fi
 PREVIOUS_DIST_DIR="$PROD_ROOT/backend/dist.previous-$DEPLOY_ID"
 BACKUP_DIR=""
 PM2_STOPPED=0
@@ -152,6 +178,16 @@ ROLLBACK_IN_PROGRESS=0
 
 cleanup_worktree() {
   git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  if [[ -n "$DRY_RUN_STAGE_DIR" ]]; then
+    rm -rf "$DRY_RUN_STAGE_DIR" >/dev/null 2>&1 || true
+  fi
+}
+
+cleanup_current_release_dirs() {
+  rm -rf \
+    "$PROD_ROOT/backend/dist.next-$TARGET_SHA" \
+    "$PREVIOUS_DIST_DIR" \
+    "$PROD_ROOT/backend/dist.restore-$DEPLOY_ID"
 }
 
 rollback_now() {
@@ -263,6 +299,8 @@ validate_runtime_checksums() {
 
   VALIDATED_SERVER_CHECKSUM="$worktree_server"
   VALIDATED_APP_CHECKSUM="$worktree_app"
+  STAGED_SERVER_CHECKSUM="$staged_server"
+  STAGED_APP_CHECKSUM="$staged_app"
 }
 
 verify_deployed_checksums() {
@@ -278,19 +316,7 @@ verify_deployed_checksums() {
   DEPLOYED_APP_CHECKSUM="$deployed_app"
 }
 
-print_runtime_checksums() {
-  printf 'validated_server_checksum=%s\n' "$VALIDATED_SERVER_CHECKSUM"
-  printf 'deployed_server_checksum=%s\n' "$DEPLOYED_SERVER_CHECKSUM"
-  printf 'validated_app_checksum=%s\n' "$VALIDATED_APP_CHECKSUM"
-  printf 'deployed_app_checksum=%s\n' "$DEPLOYED_APP_CHECKSUM"
-  printf 'runtime_checksum_match=yes\n'
-}
-
-if [[ "$DRY_RUN" -eq 0 ]]; then
-  "$SCRIPT_DIR/preflight.sh" deploy
-else
-  "$SCRIPT_DIR/preflight.sh" audit
-fi
+"$SCRIPT_DIR/preflight.sh" deploy
 
 git -C "$REPO_ROOT" fetch origin --prune
 git -C "$REPO_ROOT" rev-parse --verify "$FROM_SHA^{commit}" >/dev/null
@@ -320,15 +346,17 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   printf 'from_sha=%s\n' "$FROM_SHA"
   printf 'target_sha=%s\n' "$TARGET_SHA"
   printf 'release_files=%s\n' "${#RELEASE_FILES[@]}"
-  print_runtime_checksums
+  print_staged_checksums
   exit 0
 fi
 
 BACKUP_DIR="$("$SCRIPT_DIR/backup-runtime.sh" deploy "$FROM_SHA" "$TARGET_SHA" "${RELEASE_FILES[@]}")"
 write_release_manifests "$BACKUP_DIR"
 
-pm2 stop "$PM2_ID" >/dev/null 2>&1 || true
+pm2 stop "$PM2_ID"
 PM2_STOPPED=1
+assert_listener_count 0
+assert_pm2_stopped
 
 git -C "$PROD_ROOT" switch --detach "$TARGET_SHA"
 [[ "$(git -C "$PROD_ROOT" rev-parse HEAD)" == "$TARGET_SHA" ]] || die "Production HEAD did not move to TARGET_SHA"
@@ -340,15 +368,10 @@ fi
 mv "$STAGING_DIST_DIR" "$PROD_ROOT/backend/dist"
 
 verify_deployed_checksums
-print_runtime_checksums
+print_deployed_checksums
 
 cd "$BACKEND_DIR"
 npm ci
-
-cleanup_runtime_dirs() {
-  rm -rf "$PREVIOUS_DIST_DIR"
-  find "$PROD_ROOT/backend" -maxdepth 1 -type d \( -name 'dist.next-*' -o -name 'dist.previous-*' -o -name 'dist.restore-*' \) -exec rm -rf {} +
-}
 
 pm2 restart "$PM2_ID" --update-env
 assert_pm2_online
@@ -357,7 +380,7 @@ assert_listener_count 1
 assert_pm2_online
 assert_listener_count 1
 verify_protected_hashes "$BACKUP_DIR/meta/protected-hashes.txt"
-cleanup_runtime_dirs
+cleanup_current_release_dirs
 
 printf 'deploy_from_sha=%s\n' "$FROM_SHA"
 printf 'deploy_target_sha=%s\n' "$TARGET_SHA"
