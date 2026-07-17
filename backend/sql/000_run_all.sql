@@ -331,6 +331,8 @@ SOURCE sql/404_payroll_incentive_tracking.sql;
 
 -- ── ATS candidate assessment engine (408) ───────────────────────────────────
 SOURCE sql/408_ats_candidate_assessment_engine.sql;
+SOURCE sql/409_visitor_management_foundation.sql;
+SOURCE sql/410_visitor_configuration_branch_fk.sql;
 
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;

@@ -1,4 +1,4 @@
-﻿name: Deploy to Production
+name: Deploy to Production
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   actions: read
 
 jobs:
-  # â”€â”€ 1. CI Gate (GitHub-hosted) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ── 1. CI Gate (GitHub-hosted) ───────────────────────────────────────────────
   # Runs typecheck + build to catch broken pushes before the deploy runner touches
   # the server.  Uses ubuntu-latest so it doesn't require the server to be online.
   ci-gate:
@@ -66,9 +66,9 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # â”€â”€ 2. Deploy (self-hosted runner on 192.168.11.225) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ── 2. Deploy (self-hosted runner on 192.168.11.225) ─────────────────────────
   # The self-hosted runner runs INSIDE the LAN and has direct access to
-  # /var/www/HRMS2 and pm2.  It connects outbound to GitHub â€” no inbound port
+  # /var/www/HRMS2 and pm2.  It connects outbound to GitHub — no inbound port
   # needs to be opened.
   #
   # Runner setup: see docs/ci-cd/self-hosted-runner-setup.sh
@@ -93,43 +93,169 @@ jobs:
           name: frontend-dist
           path: /tmp/deploy/dist/
 
-      - name: Copy backend dist to serve dir
+      - name: Validate backend artifact
+        shell: bash
         run: |
-          rsync -a --delete /tmp/deploy/backend/dist/ /var/www/HRMS2/backend/dist/
-          echo "Backend files synced"
+          set -euo pipefail
+          ARTIFACT="/tmp/deploy/backend/dist"
+          test -f "$ARTIFACT/src/server.js"
+          test -f "$ARTIFACT/src/modules/visitor/visitor.routes.js"
+          if ! find "$ARTIFACT/src/modules/visitor" -type f -name '*.js' | grep -q .; then
+            echo "Missing compiled visitor files in backend artifact"
+            exit 1
+          fi
+          if find "$ARTIFACT" \( -type d \( -name uploads -o -name private-storage -o -name candidate-files -o -name candidate-documents -o -name ocr-data -o -name node_modules \) -o -type f -name '.env' \) | grep -q .; then
+            echo "Backend artifact contains forbidden runtime files"
+            exit 1
+          fi
+          echo "Backend artifact validated"
 
-      - name: Copy frontend dist to serve dir
+      - name: Validate frontend artifact
+        shell: bash
         run: |
-          rsync -a --delete /tmp/deploy/dist/ /var/www/HRMS2/dist/
-          echo "Frontend files synced"
+          set -euo pipefail
+          ARTIFACT="/tmp/deploy/dist"
+          test -f "$ARTIFACT/index.html"
+          if find "$ARTIFACT" \( -type d \( -name uploads -o -name private-storage -o -name candidate-files -o -name candidate-documents -o -name ocr-data -o -name node_modules \) -o -type f -name '.env' \) | grep -q .; then
+            echo "Frontend artifact contains forbidden runtime files"
+            exit 1
+          fi
+          echo "Frontend artifact validated"
 
-      - name: Restart backend with PM2
+      - name: Deploy backend dist atomically
+        shell: bash
         run: |
+          set -euo pipefail
+          DEPLOY_ROOT="/var/www/HRMS2"
+          ARTIFACT="/tmp/deploy/backend/dist"
+          LIVE_DIR="$DEPLOY_ROOT/backend/dist"
+          STAGE_PARENT="$DEPLOY_ROOT/backend/.deploy-staging"
+          BACKUP_PARENT="$DEPLOY_ROOT/backend/.deploy-backups"
+          STAMP="$(date +%Y%m%d%H%M%S)-$$"
+          STAGE_DIR="$STAGE_PARENT/backend-dist-$STAMP"
+          BACKUP_DIR="$BACKUP_PARENT/backend-dist-$STAMP"
+          mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
+            echo "Backend staging and live directories must be on the same filesystem"
+            exit 1
+          fi
+
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          cp -a "$ARTIFACT"/. "$STAGE_DIR"/
+
+          rollback_backend() {
+            if [[ -d "$LIVE_DIR" ]]; then
+              mv "$LIVE_DIR" "${LIVE_DIR}.failed-$STAMP"
+            fi
+            if [[ -d "$BACKUP_DIR" ]]; then
+              mv "$BACKUP_DIR" "$LIVE_DIR"
+            fi
+            pm2 restart hrms2-backend --update-env --no-color || true
+            sleep 3 || true
+          }
+
+          if [[ -d "$LIVE_DIR" ]]; then
+            mv "$LIVE_DIR" "$BACKUP_DIR"
+          else
+            mkdir -p "$BACKUP_DIR"
+          fi
+
+          mv "$STAGE_DIR" "$LIVE_DIR"
+
           pm2 restart hrms2-backend --update-env --no-color
           sleep 3
+
+          if ! curl -fsS http://127.0.0.1:5055/api/health >/dev/null; then
+            echo "Backend health check failed, restoring previous dist"
+            rollback_backend
+            if ! curl -fsS http://127.0.0.1:5055/api/health >/dev/null; then
+              echo "Backend health still failing after rollback"
+              pm2 logs hrms2-backend --lines 50 --no-color
+            fi
+            exit 1
+          fi
+
+          if ! curl -fsS -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches >/dev/null; then
+            echo "Visitor branches endpoint failed after backend deploy"
+            rollback_backend
+            exit 1
+          fi
+
+          CORS_HEADERS="$(mktemp)"
+          trap 'rm -f "$CORS_HEADERS"' EXIT
+          curl -s -D "$CORS_HEADERS" -o /dev/null -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches
+          grep -qi '^access-control-allow-origin: https://visitor-management-portal.shivam-giri.chatgpt.site' "$CORS_HEADERS"
+          grep -qi '^access-control-allow-credentials: true' "$CORS_HEADERS"
+
+          PROTECTED_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/visitor/visits || echo "000")"
+          if [[ "$PROTECTED_CODE" != "401" ]]; then
+            echo "Expected protected visitor endpoint to return 401, got $PROTECTED_CODE"
+            rollback_backend
+            exit 1
+          fi
+
           pm2 status hrms2-backend --no-color
           pm2 save --no-color
 
-      - name: Restart frontend with PM2
+      - name: Deploy frontend dist atomically
+        shell: bash
         run: |
+          set -euo pipefail
+          DEPLOY_ROOT="/var/www/HRMS2"
+          ARTIFACT="/tmp/deploy/dist"
+          LIVE_DIR="$DEPLOY_ROOT/dist"
+          STAGE_PARENT="$DEPLOY_ROOT/.deploy-staging"
+          BACKUP_PARENT="$DEPLOY_ROOT/.deploy-backups"
+          STAMP="$(date +%Y%m%d%H%M%S)-$$"
+          STAGE_DIR="$STAGE_PARENT/frontend-dist-$STAMP"
+          BACKUP_DIR="$BACKUP_PARENT/frontend-dist-$STAMP"
+          mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
+            echo "Frontend staging and live directories must be on the same filesystem"
+            exit 1
+          fi
+
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          cp -a "$ARTIFACT"/. "$STAGE_DIR"/
+
+          rollback_frontend() {
+            if [[ -d "$LIVE_DIR" ]]; then
+              mv "$LIVE_DIR" "${LIVE_DIR}.failed-$STAMP"
+            fi
+            if [[ -d "$BACKUP_DIR" ]]; then
+              mv "$BACKUP_DIR" "$LIVE_DIR"
+            fi
+            pm2 restart hrms2-frontend --update-env --no-color || true
+            sleep 3 || true
+          }
+
+          if [[ -d "$LIVE_DIR" ]]; then
+            mv "$LIVE_DIR" "$BACKUP_DIR"
+          else
+            mkdir -p "$BACKUP_DIR"
+          fi
+
+          mv "$STAGE_DIR" "$LIVE_DIR"
+
           pm2 restart hrms2-frontend --update-env --no-color
           sleep 3
+
+          if ! curl -fsSI http://127.0.0.1:8085/auth >/dev/null; then
+            echo "Frontend auth route failed after deploy"
+            rollback_frontend
+            exit 1
+          fi
+
+          if ! curl -fsSI http://127.0.0.1:8085/visitor-management >/dev/null; then
+            echo "Frontend visitor management route failed after deploy"
+            rollback_frontend
+            exit 1
+          fi
+
           pm2 status hrms2-frontend --no-color
           pm2 save --no-color
-      - name: Health check
-        run: |
-          for i in $(seq 1 12); do
-            STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/health || echo "000")
-            echo "Attempt $i: HTTP $STATUS"
-            if [ "$STATUS" = "200" ]; then
-              echo "Backend healthy"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Health check failed after 60 s"
-          pm2 logs hrms2-backend --lines 50 --no-color
-          exit 1
 
       - name: Deployment summary
         if: success()
@@ -141,5 +267,3 @@ jobs:
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Server:** 192.168.11.225" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Deployed by:** ${{ github.actor }}" >> "$GITHUB_STEP_SUMMARY"
-
-

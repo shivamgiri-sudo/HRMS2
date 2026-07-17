@@ -25,8 +25,9 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@pdf-lib/standard-fonts": "^1.0.0",
-    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs": "4.22.0",
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-node": "4.22.0",
     "@vladmandic/face-api": "^1.7.15",
     "archiver": "^8.0.0",
     "axios": "^1.7.9",

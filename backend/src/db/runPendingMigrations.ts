@@ -276,6 +276,7 @@ const MIGRATION_MANIFEST: string[] = [
   "407_shift_roster_bulk_upload_template.sql",
   "408_ats_candidate_assessment_engine.sql",
   "409_visitor_management_foundation.sql",
+  "410_visitor_configuration_branch_fk.sql",
   ];
 
 export type MigrationHealth = {
