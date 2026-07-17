@@ -162,7 +162,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, processId, branchId, departmentId, designationId, search, scopeFilter } = filters as typeof filters & { designationId?: string };
+    const { page, limit, status, processId, branchId, departmentId, designationId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = ["e.active_status = 1"];
     const params: unknown[] = [];
