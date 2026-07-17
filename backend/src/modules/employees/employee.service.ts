@@ -162,7 +162,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, processId, branchId, departmentId, search, scopeFilter } = filters;
+    const { page, limit, status, processId, branchId, departmentId, designationId, search, scopeFilter } = filters as typeof filters & { designationId?: string };
     const offset = (page - 1) * limit;
     const conds: string[] = ["e.active_status = 1"];
     const params: unknown[] = [];
@@ -171,6 +171,7 @@ export const employeeService = {
     if (processId)    { conds.push("e.process_id = ?");        params.push(processId); }
     if (branchId)     { conds.push("e.branch_id = ?");         params.push(branchId); }
     if (departmentId) { conds.push("e.department_id = ?");     params.push(departmentId); }
+    if (designationId){ conds.push("e.designation_id = ?");    params.push(designationId); }
     if (search)    { conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ? OR e.email LIKE ? OR e.official_email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
 
     // Apply scope filter from middleware
