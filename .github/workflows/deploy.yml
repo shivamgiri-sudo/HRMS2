@@ -1,4 +1,4 @@
-name: Deploy to Production
+﻿name: Deploy to Production
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   actions: read
 
 jobs:
-  # ── 1. CI Gate (GitHub-hosted) ───────────────────────────────────────────────
+  # â”€â”€ 1. CI Gate (GitHub-hosted) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   # Runs typecheck + build to catch broken pushes before the deploy runner touches
   # the server.  Uses ubuntu-latest so it doesn't require the server to be online.
   ci-gate:
@@ -66,9 +66,9 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # ── 2. Deploy (self-hosted runner on 192.168.11.225) ─────────────────────────
+  # â”€â”€ 2. Deploy (self-hosted runner on 192.168.11.225) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   # The self-hosted runner runs INSIDE the LAN and has direct access to
-  # /var/www/HRMS1 and pm2.  It connects outbound to GitHub — no inbound port
+  # /var/www/HRMS2 and pm2.  It connects outbound to GitHub â€” no inbound port
   # needs to be opened.
   #
   # Runner setup: see docs/ci-cd/self-hosted-runner-setup.sh
@@ -95,25 +95,31 @@ jobs:
 
       - name: Copy backend dist to serve dir
         run: |
-          rsync -a --delete /tmp/deploy/backend/dist/ /var/www/HRMS1/backend/dist/
+          rsync -a --delete /tmp/deploy/backend/dist/ /var/www/HRMS2/backend/dist/
           echo "Backend files synced"
 
       - name: Copy frontend dist to serve dir
         run: |
-          rsync -a --delete /tmp/deploy/dist/ /var/www/HRMS1/dist/
+          rsync -a --delete /tmp/deploy/dist/ /var/www/HRMS2/dist/
           echo "Frontend files synced"
 
       - name: Restart backend with PM2
         run: |
-          pm2 restart hrms-backend --no-color
+          pm2 restart hrms2-backend --update-env --no-color
           sleep 3
-          pm2 status hrms-backend --no-color
+          pm2 status hrms2-backend --no-color
           pm2 save --no-color
 
+      - name: Restart frontend with PM2
+        run: |
+          pm2 restart hrms2-frontend --update-env --no-color
+          sleep 3
+          pm2 status hrms2-frontend --no-color
+          pm2 save --no-color
       - name: Health check
         run: |
           for i in $(seq 1 12); do
-            STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8004/api/health || echo "000")
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/api/health || echo "000")
             echo "Attempt $i: HTTP $STATUS"
             if [ "$STATUS" = "200" ]; then
               echo "Backend healthy"
@@ -122,7 +128,7 @@ jobs:
             sleep 5
           done
           echo "Health check failed after 60 s"
-          pm2 logs hrms-backend --lines 50 --no-color
+          pm2 logs hrms2-backend --lines 50 --no-color
           exit 1
 
       - name: Deployment summary
@@ -135,3 +141,5 @@ jobs:
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Server:** 192.168.11.225" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Deployed by:** ${{ github.actor }}" >> "$GITHUB_STEP_SUMMARY"
+
+
