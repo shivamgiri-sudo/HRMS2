@@ -134,10 +134,10 @@ export async function getPtFromSlab(
   stateCode: string,
   monthlyIncome: number
 ): Promise<number> {
-  // Match on state_code (abbreviation) OR state_name (full name)
+  // Case-insensitive match on state_code (abbreviation) OR state_name (full name)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pt_amount FROM pt_slab_master
-      WHERE (state_code = ? OR state_name = ?)
+      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?))
         AND is_active = 1
         AND income_from <= ?
         AND (income_to IS NULL OR income_to >= ?)
@@ -151,7 +151,7 @@ export async function getPtFromSlab(
   // If no slab exists for this state at all, the state has no PT law → return 0
   const [anyRows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM pt_slab_master
-      WHERE (state_code = ? OR state_name = ?) AND is_active = 1
+      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?)) AND is_active = 1
       LIMIT 1`,
     [stateCode, stateCode]
   );
