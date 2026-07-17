@@ -33,10 +33,48 @@ assert_listener_count() {
   [[ "$actual" == "$expected" ]] || die "Expected $expected listener(s) on port $APP_PORT, found $actual"
 }
 
-assert_pm2_online() {
-  if ! pm2 describe "$PM2_ID" 2>/dev/null | grep -Eqi 'status[[:space:]]*:?[[:space:]]+online'; then
-    die "PM2 process $PM2_ID is not online"
+get_pm2_status() {
+  PM2_TARGET_ID="$PM2_ID" pm2 jlist | PM2_TARGET_ID="$PM2_ID" node -e '
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { input += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const processes = JSON.parse(input);
+        const targetId = String(process.env.PM2_TARGET_ID);
+        const processInfo = processes.find(item => String(item.pm_id) === targetId);
+        if (!processInfo) process.exit(2);
+        process.stdout.write(String(processInfo.pm2_env?.status ?? ""));
+      } catch {
+        process.exit(3);
+      }
+    });
+  '
+}
+
+assert_pm2_status() {
+  local expected="$1"
+  local actual
+  if ! actual="$(get_pm2_status)"; then
+    die "Unable to read PM2 status for process $PM2_ID"
   fi
+  [[ "$actual" == "$expected" ]] || die "Expected PM2 process $PM2_ID to be $expected, found ${actual:-unknown}"
+}
+
+assert_pm2_online() {
+  assert_pm2_status online
+}
+
+assert_pm2_stopped() {
+  assert_pm2_status stopped
+}
+
+assert_pm2_stopping() {
+  assert_pm2_status stopping
+}
+
+assert_pm2_errored() {
+  assert_pm2_status errored
 }
 
 checksum_file() {
@@ -123,7 +161,9 @@ DEPLOY_ID="$(basename "$BACKUP_DIR")"
 [[ -d "$BACKUP_DIR" ]] || die "Backup directory not found: $BACKUP_DIR"
 [[ -d "$BACKUP_DIR/source" ]] || die "Missing backup source tree: $BACKUP_DIR/source"
 [[ -d "$BACKUP_DIR/dist" ]] || die "Missing backup dist tree: $BACKUP_DIR/dist"
-[[ -n "$FROM_SHA" && "$FROM_SHA" =~ ^[0-9a-f]{40}$ ]] || die "Missing or invalid from-sha in backup metadata"
+[[ "$FROM_SHA" =~ ^[0-9a-f]{40}$ ]] || die "Missing or invalid from-sha in backup metadata"
+[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || die "Missing or invalid target-sha in backup metadata"
+[[ "$DEPLOY_ID" =~ ^[A-Za-z0-9._-]+$ ]] || die "Unsafe backup deployment identifier"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   printf 'dry_run=1\n'
@@ -144,12 +184,28 @@ attempt() {
   }
 }
 
-pm2 describe "$PM2_ID" >/dev/null 2>&1 || die "PM2 process $PM2_ID is not available"
-
-if pm2 describe "$PM2_ID" 2>/dev/null | grep -Eqi 'status[[:space:]]*:?[[:space:]]+online'; then
-  pm2 stop "$PM2_ID"
-fi
-assert_listener_count 0
+pm2_status="$(get_pm2_status)" || die "Unable to determine PM2 status for process $PM2_ID"
+case "$pm2_status" in
+  online)
+    if ! pm2 stop "$PM2_ID"; then
+      status=1
+      pm2_status_after_stop="$(get_pm2_status)" || die "Unable to determine PM2 status after stop failure for process $PM2_ID"
+      [[ "$pm2_status_after_stop" == "stopped" ]] || die "PM2 stop failed and process $PM2_ID is still $pm2_status_after_stop"
+      warn "PM2 stop returned non-zero but the process is stopped; continuing rollback"
+    fi
+    assert_pm2_stopped
+    assert_listener_count 0
+    ;;
+  stopped)
+    assert_listener_count 0
+    ;;
+  stopping|errored)
+    die "PM2 process $PM2_ID is in unexpected state: $pm2_status"
+    ;;
+  *)
+    die "PM2 process $PM2_ID state is unreadable: ${pm2_status:-unknown}"
+    ;;
+esac
 
 attempt git -C "$PROD_ROOT" switch --detach "$FROM_SHA"
 attempt test "$(git -C "$PROD_ROOT" rev-parse HEAD)" = "$FROM_SHA"

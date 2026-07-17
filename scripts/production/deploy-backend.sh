@@ -78,16 +78,48 @@ assert_listener_count() {
   [[ "$actual" == "$expected" ]] || die "Expected $expected listener(s) on port $APP_PORT, found $actual"
 }
 
-assert_pm2_online() {
-  if ! pm2 describe "$PM2_ID" 2>/dev/null | grep -Eqi 'status[[:space:]]*:?[[:space:]]+online'; then
-    die "PM2 process $PM2_ID is not online"
+get_pm2_status() {
+  PM2_TARGET_ID="$PM2_ID" pm2 jlist | PM2_TARGET_ID="$PM2_ID" node -e '
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", chunk => { input += chunk; });
+    process.stdin.on("end", () => {
+      try {
+        const processes = JSON.parse(input);
+        const targetId = String(process.env.PM2_TARGET_ID);
+        const processInfo = processes.find(item => String(item.pm_id) === targetId);
+        if (!processInfo) process.exit(2);
+        process.stdout.write(String(processInfo.pm2_env?.status ?? ""));
+      } catch {
+        process.exit(3);
+      }
+    });
+  '
+}
+
+assert_pm2_status() {
+  local expected="$1"
+  local actual
+  if ! actual="$(get_pm2_status)"; then
+    die "Unable to read PM2 status for process $PM2_ID"
   fi
+  [[ "$actual" == "$expected" ]] || die "Expected PM2 process $PM2_ID to be $expected, found ${actual:-unknown}"
+}
+
+assert_pm2_online() {
+  assert_pm2_status online
 }
 
 assert_pm2_stopped() {
-  if pm2 describe "$PM2_ID" 2>/dev/null | grep -Eqi 'status[[:space:]]*:?[[:space:]]+online'; then
-    die "PM2 process $PM2_ID is still online"
-  fi
+  assert_pm2_status stopped
+}
+
+assert_pm2_stopping() {
+  assert_pm2_status stopping
+}
+
+assert_pm2_errored() {
+  assert_pm2_status errored
 }
 
 generate_protected_hashes() {
@@ -174,6 +206,7 @@ fi
 PREVIOUS_DIST_DIR="$PROD_ROOT/backend/dist.previous-$DEPLOY_ID"
 BACKUP_DIR=""
 PM2_STOPPED=0
+SERVICE_MUTATION_STARTED=0
 ROLLBACK_IN_PROGRESS=0
 
 cleanup_worktree() {
@@ -201,7 +234,7 @@ rollback_now() {
   ROLLBACK_IN_PROGRESS=1
   trap - ERR INT TERM
 
-  if (( PM2_STOPPED == 1 )) && [[ -n "$BACKUP_DIR" ]]; then
+  if [[ "$SERVICE_MUTATION_STARTED" == 1 && -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
     printf 'Deployment failed after PM2 stop (%s); rolling back from %s.\n' "$reason" "$BACKUP_DIR" >&2
     "$SCRIPT_DIR/rollback-backend.sh" "$BACKUP_DIR" || true
   fi
@@ -353,10 +386,11 @@ fi
 BACKUP_DIR="$("$SCRIPT_DIR/backup-runtime.sh" deploy "$FROM_SHA" "$TARGET_SHA" "${RELEASE_FILES[@]}")"
 write_release_manifests "$BACKUP_DIR"
 
+SERVICE_MUTATION_STARTED=1
 pm2 stop "$PM2_ID"
 PM2_STOPPED=1
-assert_listener_count 0
 assert_pm2_stopped
+assert_listener_count 0
 
 git -C "$PROD_ROOT" switch --detach "$TARGET_SHA"
 [[ "$(git -C "$PROD_ROOT" rev-parse HEAD)" == "$TARGET_SHA" ]] || die "Production HEAD did not move to TARGET_SHA"

@@ -190,7 +190,7 @@ Keep the current backend baseline note here:
 ## Sandbox Validation Matrix
 
 The workflow scripts are validated in a sandbox before any production use.
-The minimum matrix now covers these 30 scenarios:
+The minimum matrix now covers these 42 scenarios:
 
 1. `preflight.sh audit` reports the live checkout without mutating anything.
 2. `preflight.sh deploy` rejects dirty tracked files and requires a single listener on port `5055`.
@@ -222,3 +222,15 @@ The minimum matrix now covers these 30 scenarios:
 28. Standalone rollback continues service restoration after an intermediate failure.
 29. Cleanup removes only the current release's temporary runtime directories.
 30. An unrelated `dist.previous-*` directory remains untouched.
+31. PM2 JSON status detection reports `online` without parsing `pm2 describe`.
+32. PM2 JSON status detection reports `stopped` without parsing `pm2 describe`.
+33. A missing PM2 process ID fails safely while reading JSON status.
+34. Invalid PM2 JSON fails safely while reading JSON status.
+35. A partial PM2 stop failure triggers rollback once service mutation has started.
+36. An active listener after stop blocks Git, npm, and runtime mutation.
+37. Rollback rejects an invalid `FROM_SHA` before cleanup or mutation.
+38. Rollback rejects an invalid `TARGET_SHA` before cleanup or mutation.
+39. Rollback rejects an unsafe deployment identifier before cleanup or mutation.
+40. Empty `backend/private/ats-candidate-files/` hashing remains stable.
+41. Empty `backend/face-models/` hashing remains stable.
+42. The full sandbox matrix, including every earlier scenario, still passes.

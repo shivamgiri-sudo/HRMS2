@@ -111,7 +111,9 @@ find "$backup_dir/dist" -type f | sed "s#^$backup_dir/dist/##" | sort > "$backup
     path="$PROD_ROOT/$rel"
     if [[ -e "$path" ]]; then
       if [[ -d "$path" ]]; then
-        find "$path" -type f -print0 | sort -z | xargs -0 sha256sum
+        while IFS= read -r -d '' file; do
+          sha256sum "$file"
+        done < <(find "$path" -type f -print0 | sort -z)
       else
         sha256sum "$path"
       fi
