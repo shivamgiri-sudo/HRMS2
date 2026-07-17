@@ -350,10 +350,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       /executive/i.test(desig.designation_name ?? '') &&
       /operations/i.test(desig.dept_name ?? '');
 
-    // Check if attendance_daily_record has been populated for this employee+month
+    // Check if attendance_daily_record has been populated for this employee+month.
+    // record_date is stored as UTC datetime; compare in IST (+05:30) to avoid off-by-one on month boundaries.
     const [adrCountRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM attendance_daily_record
-       WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
+       WHERE employee_id = ?
+         AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
       [emp.employee_id, monthStart, monthEnd]
     );
     const hasEngineData = Number((adrCountRows[0] as any).cnt ?? 0) > 0;
@@ -366,7 +368,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         `SELECT
            ? AS employee_id,
            (SELECT COUNT(*) FROM attendance_daily_record
-            WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+            WHERE employee_id = ?
+              AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
               AND attendance_status NOT IN ('week_off','holiday')) AS working_days,
            COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
            COUNT(CASE WHEN adr.attendance_status IN ('leave_approved','half_day') THEN 1 END) AS leave_days,
@@ -375,7 +378,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
            COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
                               THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
          FROM attendance_daily_record adr
-         WHERE adr.employee_id = ? AND adr.record_date BETWEEN ? AND ?`,
+         WHERE adr.employee_id = ?
+           AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
         [emp.employee_id, emp.employee_id, monthStart, monthEnd, emp.employee_id, monthStart, monthEnd]
       );
       att = (attRows as AttendanceRow[])[0] ?? {
@@ -427,7 +431,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
            END
          ), 0) AS paid_base
        FROM attendance_daily_record adr
-       WHERE adr.employee_id = ? AND adr.record_date BETWEEN ? AND ?`,
+       WHERE adr.employee_id = ?
+         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
       [emp.employee_id, monthStart, monthEnd]
     );
     let paidBase = Number((paidBaseRows[0] as any)?.paid_base ?? 0);
@@ -511,7 +516,17 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         })()
       : daysInMonth;
 
-    // Step 7: Read fixed component amounts from salary_structure_component
+    // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
+    // fall back to salary_structure_component via structure_id.
+    const [scaRows] = await db.execute<RowDataPacket[]>(
+      `SELECT basic, hra, conveyance, special_allowance, gross
+         FROM salary_component_assignments
+        WHERE employee_id = ? AND status = 'active'
+        ORDER BY effective_date DESC LIMIT 1`,
+      [emp.employee_id],
+    );
+    const scaRow = (scaRows as any[])[0];
+
     const [compRows] = await db.execute<RowDataPacket[]>(
       `SELECT scm.component_code, ssc.calc_type, ssc.value
          FROM salary_structure_component ssc
@@ -526,14 +541,32 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         compAmounts[c.component_code] = Number(c.value) || 0;
       }
     }
-    const hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
-    const fixedBasic = compAmounts.BASIC || 0;
-    const fixedHRA = compAmounts.HRA || 0;
-    const fixedGross = hasFixedComponents
-      ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
-         (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
-         (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
-      : 0;
+
+    let hasFixedComponents: boolean;
+    let fixedBasic: number;
+    let fixedHRA: number;
+    let fixedGross: number;
+
+    if (scaRow && Number(scaRow.gross) > 0) {
+      hasFixedComponents = true;
+      fixedBasic = Number(scaRow.basic) || 0;
+      fixedHRA   = Number(scaRow.hra)   || 0;
+      fixedGross = Number(scaRow.gross);
+      // Populate compAmounts so payslip component loop works
+      compAmounts.BASIC  = fixedBasic;
+      compAmounts.HRA    = fixedHRA;
+      compAmounts.CONV   = Number(scaRow.conveyance)        || 0;
+      compAmounts.SPECIAL = Number(scaRow.special_allowance) || 0;
+    } else {
+      hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+      fixedBasic = compAmounts.BASIC || 0;
+      fixedHRA   = compAmounts.HRA   || 0;
+      fixedGross = hasFixedComponents
+        ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
+           (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
+           (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+        : 0;
+    }
     const monthlyGrossBase = hasFixedComponents ? fixedGross : (emp.ctc_annual / 12);
 
     // Days-based gross calculation
