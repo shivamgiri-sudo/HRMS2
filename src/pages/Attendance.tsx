@@ -20,6 +20,7 @@ import { format } from "date-fns";
 import { formatISTTime, formatISTDate } from "@/lib/utils";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
+import { resolveAttendanceDisplay } from "@/lib/attendance-live";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import {
@@ -310,16 +311,12 @@ const Attendance = () => {
     useTodayAttendance(currentEmployee?.id);
   const { data: livePunch } = useTodayLivePunch(currentEmployee?.id);
 
-  // If the attendance engine hasn't processed today yet (no todayRecord),
-  // fall back to raw biometric punch data from biometric_attendance_log.
-  const displayClockIn  = todayRecord?.clock_in  ?? todayRecord?.clock_in_time  ?? livePunch?.first_punch_in  ?? null;
-  const displayClockOut = todayRecord?.clock_out ?? todayRecord?.clock_out_time ?? livePunch?.last_punch_out  ?? null;
-  const displayHours    = todayRecord?.total_hours != null
-    ? safeNumber(todayRecord.total_hours)
-    : livePunch?.raw_minutes != null && livePunch.raw_minutes > 0
-      ? Math.round(livePunch.raw_minutes / 60 * 100) / 100
-      : null;
-  const isLiveOnly = !todayRecord && !!livePunch?.first_punch_in;
+  const {
+    clockIn: displayClockIn,
+    clockOut: displayClockOut,
+    hours: displayHours,
+    hasLivePunch,
+  } = resolveAttendanceDisplay(todayRecord, livePunch);
 
   const { data: attendanceRecords, isLoading: recordsLoading, error: recordsError } = useAttendance(
     targetDate,
@@ -648,7 +645,7 @@ const Attendance = () => {
                 <div>
                   <h2 className="text-sm font-semibold tracking-tight text-slate-950 flex items-center gap-2">
                     Today&apos;s Attendance
-                    {isLiveOnly && (
+                    {hasLivePunch && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         Live

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { canFetchPersonalAttendance } from "@/lib/attendance-live";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 
 const ATTENDANCE_PAGE_LIMIT = 500;
@@ -116,7 +117,7 @@ export function useAttendance(month?: Date, employeeId?: string) {
 
       return fetchAttendancePages(params);
     },
-    enabled: true,
+    enabled: canFetchPersonalAttendance(employeeId),
     retry: 2,
     retryDelay: 1000,
     staleTime: 30000,
