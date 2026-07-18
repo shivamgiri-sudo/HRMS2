@@ -127,6 +127,29 @@ Task 8: Complete (review clean for task scope; note image upload still depends o
   - Wired route at `/engagement/company-feed/create` and added navigation entry under Engagement
   - Fresh local verification:
     - `npm run typecheck` -> PASS
+
+---
+
+# Reports Center Layout Redesign
+
+Plan: docs/superpowers/plans/2026-07-18-reports-center-layout-redesign.md
+Started: 2026-07-18
+Branch base commit: 5af7d410
+
+## Tasks
+
+Task 1: Complete (commit 80da4124, review clean)
+  - Renamed expandedCat/setExpandedCat → selectedCat/setSelectedCat throughout NativeReportsCenter.tsx
+  - Pure rename, zero logic changes, tsc zero errors
+Task 2: Complete (commit be5de032, review clean)
+  - Added leftPanel JSX const directly before return ( in NativeReportsCenter.tsx
+  - 240px sticky aside with category accordion, subcategory rows, search flat-list mode, favourite stars
+Task 3: Complete (commit 5070e5ef, review clean)
+  - Replaced old space-y-6 main content + 4-col card grid with two-column flex layout
+  - {leftPanel} on left, right column has stats tiles + recent bar + empty-state prompt + favourites + category list + runner
+  - selectReport now calls setSelectedCat(r.category) for auto-open on recent/search/fav click
+  - tsc zero errors
+Task 4: Complete (tsc zero errors confirmed; visual verification pending in browser)
 Task 9: Complete
   - Added moderator management API list endpoint plus hook support
   - Built approval queue and management pages with moderation actions, status filters, and delete workflow
