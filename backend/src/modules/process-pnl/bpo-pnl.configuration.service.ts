@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { bpoPnlService } from "./bpo-pnl.service.js";
@@ -27,6 +27,65 @@ function filters(period?: string, processId?: string) {
     where: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
     params,
   };
+}
+
+const PEOPLE_SCOPES = new Set(["employee", "designation", "department"]);
+const PEOPLE_BUCKETS = new Set(["agent_salary", "dsc_people", "bmc_people", "excluded"]);
+const EXPENSE_SCOPES = new Set(["expense_head", "expense_sub_head"]);
+const EXPENSE_BUCKETS = new Set([
+  "dsc_non_people",
+  "bmc_non_people",
+  "depreciation",
+  "amortization",
+  "finance_cost",
+  "tax",
+  "capex",
+  "excluded",
+]);
+
+function expenseTreatment(bucket: string) {
+  if (bucket === "dsc_non_people") return { pnlTreatment: "direct_cost", capexOpex: "opex" };
+  if (["finance_cost", "tax"].includes(bucket)) return { pnlTreatment: "non_operating", capexOpex: "opex" };
+  if (bucket === "capex") return { pnlTreatment: "excluded", capexOpex: "capex" };
+  if (bucket === "excluded") return { pnlTreatment: "excluded", capexOpex: "non_pnl" };
+  return { pnlTreatment: "operating_expense", capexOpex: "opex" };
+}
+
+async function applyExpenseMasterBucket(
+  scopeType: string,
+  scopeKey: string,
+  pnlBucket: string,
+  userId: string
+) {
+  if (!EXPENSE_BUCKETS.has(pnlBucket)) {
+    throw new Error(`P&L bucket ${pnlBucket} cannot be applied to an expense master`);
+  }
+  if (!(await tableExists("finance_expense_sub_head_master"))) {
+    throw new Error("Finance expense sub-head master is not available");
+  }
+  const treatment = expenseTreatment(pnlBucket);
+  let result: ResultSetHeader;
+
+  if (scopeType === "expense_sub_head") {
+    [result] = await db.execute<ResultSetHeader>(
+      `UPDATE finance_expense_sub_head_master
+          SET pnl_bucket = ?, pnl_treatment = ?, capex_opex = ?, updated_by = ?
+        WHERE id = ? OR LOWER(sub_head_code) = LOWER(?) OR LOWER(sub_head_name) = LOWER(?)`,
+      [pnlBucket, treatment.pnlTreatment, treatment.capexOpex, userId, scopeKey, scopeKey, scopeKey]
+    );
+  } else {
+    [result] = await db.execute<ResultSetHeader>(
+      `UPDATE finance_expense_sub_head_master sh
+       JOIN finance_expense_head_master h ON h.id = sh.head_id
+          SET sh.pnl_bucket = ?, sh.pnl_treatment = ?, sh.capex_opex = ?, sh.updated_by = ?
+        WHERE h.id = ? OR LOWER(h.head_code) = LOWER(?) OR LOWER(h.head_name) = LOWER(?)`,
+      [pnlBucket, treatment.pnlTreatment, treatment.capexOpex, userId, scopeKey, scopeKey, scopeKey]
+    );
+  }
+
+  if (result.affectedRows < 1) {
+    throw new Error(`No finance ${scopeType.replace("_", " ")} matched ${scopeKey}`);
+  }
 }
 
 export const bpoPnlConfigurationService = {
@@ -123,6 +182,26 @@ export const bpoPnlConfigurationService = {
   },
 
   async saveClassificationRule(payload: Record<string, unknown>, userId: string) {
+    const scopeType = String(payload.scopeType ?? "").trim();
+    const scopeKey = String(payload.scopeKey ?? "").trim();
+    const pnlBucket = String(payload.pnlBucket ?? "").trim();
+    if (!scopeType || !scopeKey || !pnlBucket) {
+      throw new Error("Scope type, exact scope key and P&L bucket are required");
+    }
+    if (scopeType === "cost_centre") {
+      throw new Error(
+        "Cost-centre P&L treatment is derived from process attribution and approved allocation policy. Configure the expense sub-head or BMC allocation policy instead."
+      );
+    }
+    if (PEOPLE_SCOPES.has(scopeType) && !PEOPLE_BUCKETS.has(pnlBucket)) {
+      throw new Error(`P&L bucket ${pnlBucket} is not valid for a people classification rule`);
+    }
+    if (EXPENSE_SCOPES.has(scopeType)) {
+      await applyExpenseMasterBucket(scopeType, scopeKey, pnlBucket, userId);
+    } else if (!PEOPLE_SCOPES.has(scopeType)) {
+      throw new Error(`Unsupported classification scope ${scopeType}`);
+    }
+
     const id = String(payload.id ?? randomUUID());
     await db.execute(
       `INSERT INTO pnl_cost_classification_rule
@@ -137,11 +216,11 @@ export const bpoPnlConfigurationService = {
       [
         id,
         payload.ruleName,
-        payload.scopeType,
-        payload.scopeKey,
+        scopeType,
+        scopeKey,
         payload.processId ?? null,
         payload.branchId ?? null,
-        payload.pnlBucket,
+        pnlBucket,
         Number(payload.priority ?? 100),
         payload.effectiveFrom,
         payload.effectiveTo ?? null,
