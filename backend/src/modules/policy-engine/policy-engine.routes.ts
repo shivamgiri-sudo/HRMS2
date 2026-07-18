@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireAuth } from "../../middleware/requireAuth.js";
+import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getDomains, getDomainDetail, updateDomain, getDomainHistory } from "./policy-engine.service.js";
 

@@ -274,12 +274,12 @@ export async function updateDomain(
     await conn.beginTransaction();
 
     for (const upd of updates) {
-      const [existing] = await conn.execute<BpcRow[]>(
+      const [existing] = await conn.execute(
         `SELECT id, config_value FROM business_policy_config
          WHERE domain_key = ? AND section_key = ? AND config_key = ? AND active_status = 1
          LIMIT 1`,
         [domainKey, upd.section_key, upd.config_key]
-      );
+      ) as [BpcRow[], unknown];
       const row = existing[0];
       if (!row) continue;
 

@@ -461,6 +461,9 @@ app.use("/api/ai", aiInsightsRouter);
 import { biRouter } from "./modules/business-intelligence/bi.routes.js";
 app.use("/api/bi", biRouter);
 
+import { policyEngineRouter } from "./modules/policy-engine/policy-engine.routes.js";
+app.use("/api/policy-engine", policyEngineRouter);
+
 app.use(notFoundHandler);
 app.use(errorHandler);
 
