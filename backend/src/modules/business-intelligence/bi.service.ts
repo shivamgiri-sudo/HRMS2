@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { getLegacyPool } from '../../db/legacyDb.js';
 import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
+import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
 
 export interface InterventionFlag {
   type: string;
@@ -88,38 +89,54 @@ export async function getDailyOpsPulse(targetDate?: string): Promise<DailyOpsPul
   ).catch(() => [[null]] as any);
   const topProc = (topProcRows as any[])[0] ?? null;
 
+  // Load thresholds from policy engine
+  const [loginCrit, loginWarn, shrinkCrit, shrinkWarn, ahtBench] = await Promise.all([
+    getPolicyValue('rta',        'login_adherence', 'critical_threshold_pct', '50'),
+    getPolicyValue('rta',        'login_adherence', 'warning_threshold_pct',  '70'),
+    getPolicyValue('operations', 'shrinkage',       'critical_threshold_pct', '25'),
+    getPolicyValue('operations', 'shrinkage',       'warning_threshold_pct',  '18'),
+    getPolicyValue('operations', 'call_quality',    'aht_benchmark_seconds',  '400'),
+  ]);
+  const T = {
+    loginCritical:  Number(loginCrit),
+    loginWarning:   Number(loginWarn),
+    shrinkCritical: Number(shrinkCrit),
+    shrinkWarning:  Number(shrinkWarn),
+    ahtBenchmark:   Number(ahtBench),
+  };
+
   // Build intervention flags
   const flags: InterventionFlag[] = [];
-  if (loginAdherence < 80 && agentsScheduled > 0) {
+  if (loginAdherence < T.loginCritical && agentsScheduled > 0) {
     flags.push({
       type: 'LOW_LOGIN_ADHERENCE', severity: 'critical',
       detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents scheduled but not logged in`,
       action: 'Floor check required — contact team leads immediately',
     });
-  } else if (loginAdherence < 90 && agentsScheduled > 0) {
+  } else if (loginAdherence < T.loginWarning && agentsScheduled > 0) {
     flags.push({
       type: 'LOW_LOGIN_ADHERENCE', severity: 'warning',
       detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents below expected`,
       action: 'Send login reminders to late arrivals',
     });
   }
-  if (avgShrinkage > 25) {
+  if (avgShrinkage > T.shrinkCritical) {
     flags.push({
       type: 'HIGH_SHRINKAGE', severity: 'critical',
-      detail: `Avg shrinkage at ${avgShrinkage}% — exceeds 25% org threshold`,
+      detail: `Avg shrinkage at ${avgShrinkage}% — exceeds ${T.shrinkCritical}% org threshold`,
       action: 'Review break schedules and bio patterns immediately',
     });
-  } else if (avgShrinkage > 18) {
+  } else if (avgShrinkage > T.shrinkWarning) {
     flags.push({
       type: 'HIGH_SHRINKAGE', severity: 'warning',
-      detail: `Avg shrinkage at ${avgShrinkage}% — above 18% advisory limit`,
+      detail: `Avg shrinkage at ${avgShrinkage}% — above ${T.shrinkWarning}% advisory limit`,
       action: 'Monitor floor — check DISMX/DSTBY codes by campaign',
     });
   }
-  if (avgAht > 400) {
+  if (avgAht > T.ahtBenchmark) {
     flags.push({
       type: 'HIGH_AHT', severity: 'warning',
-      detail: `Avg AHT at ${Math.round(avgAht)}s — above 400s benchmark`,
+      detail: `Avg AHT at ${Math.round(avgAht)}s — above ${T.ahtBenchmark}s benchmark`,
       action: 'Pull agent-level AHT breakdown and run QA check',
     });
   }

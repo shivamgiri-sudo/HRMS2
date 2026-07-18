@@ -9,6 +9,7 @@ import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import { detectAndCalculateHolidayWork, isHolidayWorkAutoGenEnabled } from "./holiday-work-auto.service.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -263,7 +264,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   // 4. Derive working days from run_month (Mon–Sat = 26 assumed; real impl queries holidays)
   const [year, month] = run.run_month.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
-  const defaultWorkingDays = 26; // BPO standard; can be refined later
+  const defaultWorkingDays = Number(await getPolicyValue("payroll", "calculation", "default_working_days", "26"));
 
   // Derive financial year string e.g. "2025-26" for months April–March
   const fyStartYear = month >= 4 ? year : year - 1;
