@@ -26,9 +26,8 @@ const NativeExitManagement          = lazy(() => import("@/pages/NativeExitManag
 const MyTeamPage                    = lazy(() => import("@/pages/MyTeamPage"));
 const EmployeeJourney               = lazy(() => import("@/pages/EmployeeJourney"));
 
-export function PeopleRoutes() {
-  return (
-    <>
+export const peopleRouteElements = (
+  <>
       {/* Employee directory */}
       <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
       <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
@@ -110,6 +109,5 @@ export function PeopleRoutes() {
         </ProtectedRoute>
       } />
       <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

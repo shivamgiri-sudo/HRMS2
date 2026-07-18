@@ -76,9 +76,8 @@ const NativeNotificationPreferences  = lazy(() => import("@/pages/NativeNotifica
 const NativeCommunicationConfig      = lazy(() => import("@/pages/NativeCommunicationConfig"));
 const NativeCallCentreConfig         = lazy(() => import("@/pages/NativeCallCentreConfig"));
 
-export function PlatformRoutes() {
-  return (
-    <>
+export const platformRouteElements = (
+  <>
       {/* Core platform */}
       <Route path="/settings"        element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/profile"         element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
@@ -175,6 +174,5 @@ export function PlatformRoutes() {
       <Route path="/communication/preferences"   element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
       <Route path="/settings/communication-config" element={<ProtectedRoute roles={['admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
       <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

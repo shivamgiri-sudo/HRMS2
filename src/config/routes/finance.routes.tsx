@@ -25,9 +25,8 @@ const ExpenseReports               = lazy(() => import("@/pages/expenses/Expense
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 const pnlRoles     = ['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head'] as const;
 
-export function FinanceRoutes() {
-  return (
-    <>
+export const financeRouteElements = (
+  <>
       {/* ERP / Vendors / Procurement */}
       <Route path="/erp"        element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
       <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','manager']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
@@ -55,6 +54,5 @@ export function FinanceRoutes() {
       <Route path="/master-reports" element={<Navigate to="/reports" replace />} />
       <Route path="/advanced-reports" element={<Navigate to="/reports" replace />} />
       <Route path="/reports/enterprise" element={<Navigate to="/reports" replace />} />
-    </>
-  );
-}
+  </>
+);

@@ -39,9 +39,8 @@ const NativeLMSIntegration  = lazy(() => import("@/pages/NativeLMSIntegration"))
 const LMSProgressDashboard  = lazy(() => import("@/pages/LMSProgressDashboard"));
 const LMSModuleLaunch       = lazy(() => import("@/pages/LMSModuleLaunch"));
 
-export function PerformanceRoutes() {
-  return (
-    <>
+export const performanceRouteElements = (
+  <>
       {/* Performance — redirects from legacy routes */}
       <Route path="/performance"        element={<ProtectedRoute><Performance /></ProtectedRoute>} />
       <Route path="/reviews-management" element={<Navigate to="/performance-feedback/assignments" replace />} />
@@ -96,6 +95,5 @@ export function PerformanceRoutes() {
       <Route path="/lms/integration"         element={<ProtectedRoute><Gate pageCode="LMS_INTEGRATION"><NativeLMSIntegration /></Gate></ProtectedRoute>} />
       <Route path="/lms/progress-dashboard"  element={<ProtectedRoute><Gate pageCode="LMS_PROGRESS_DASHBOARD"><LMSProgressDashboard /></Gate></ProtectedRoute>} />
       <Route path="/lms/module-launch"       element={<ProtectedRoute><Gate pageCode="LMS_MODULE_LAUNCH"><LMSModuleLaunch /></Gate></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

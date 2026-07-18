@@ -17,6 +17,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+    "verify:routes": "node backend/node_modules/vitest/vitest.mjs run scripts/app-route-composition.test.tsx --config vite.config.ts --globals",
     "dev:frontend": "vite",
     "dev:backend": "cd backend && npm run dev",
     "dev:all": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",

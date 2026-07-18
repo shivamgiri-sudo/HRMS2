@@ -14,9 +14,8 @@ const NativeDPDPWithdrawal          = lazy(() => import("@/pages/NativeDPDPWithd
 const NativeDPDPWithdrawalAdmin     = lazy(() => import("@/pages/NativeDPDPWithdrawalAdmin"));
 const NativeITProvisioningTracker   = lazy(() => import("@/pages/NativeITProvisioningTracker"));
 
-export function ComplianceRoutes() {
-  return (
-    <>
+export const complianceRouteElements = (
+  <>
       {/* Statutory / Labour / DPDP */}
       <Route path="/compliance/statutory"    element={<ProtectedRoute><Gate pageCode="STATUTORY_COMPLIANCE"><NativeStatutoryCompliance /></Gate></ProtectedRoute>} />
       <Route path="/compliance/labour"       element={<ProtectedRoute><Gate pageCode="LABOUR_COMPLIANCE"><NativeLabourCompliance /></Gate></ProtectedRoute>} />
@@ -33,6 +32,5 @@ export function ComplianceRoutes() {
       <Route path="/provisioning/it"                     element={<ProtectedRoute roles={['it','admin','super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/admin"                  element={<ProtectedRoute roles={['branch_admin','hr','admin','super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       <Route path="/provisioning/appointment-letter"     element={<ProtectedRoute roles={['hr','admin','super_admin']}><Gate pageCode="PROVISIONING_APPOINTMENT_LETTER"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

@@ -31,9 +31,8 @@ const PortalLogin          = lazy(() => import("@/pages/portal/PortalLogin"));
 const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocumentEsignReviewPage"));
 const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfComplianceReviewPage"));
 
-export function PublicRoutes() {
-  return (
-    <>
+export const publicRouteElements = (
+  <>
       {/* Root */}
       <Route path="/" element={<Navigate to="/auth" replace />} />
 
@@ -82,6 +81,5 @@ export function PublicRoutes() {
       {/* Token-gated document review flows (token in URL, no session required) */}
       <Route path="/employee/joining-documents/esign/:token" element={<EmployeeDocumentEsignReviewPage />} />
       <Route path="/employee/epf-compliance/review/:token"   element={<EmployeeEpfComplianceReviewPage />} />
-    </>
-  );
-}
+  </>
+);

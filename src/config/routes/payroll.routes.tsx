@@ -43,9 +43,8 @@ const NativePayrollHOQueues     = lazy(() => import("@/pages/NativePayrollHOQueu
 const NativeChequeNameValidation = lazy(() => import("@/pages/NativeChequeNameValidation"));
 const NativeSalaryIncrement     = lazy(() => import("@/pages/NativeSalaryIncrement"));
 
-export function PayrollRoutes() {
-  return (
-    <>
+export const payrollRouteElements = (
+  <>
       <Route path="/payroll" element={<ProtectedRoute><Gate pageCode="PAYROLL"><Payroll /></Gate></ProtectedRoute>} />
       <Route path="/payroll/payslips"       element={<ProtectedRoute><Gate pageCode="PAYROLL_PAYSLIPS"><NativePayslipCenter /></Gate></ProtectedRoute>} />
       <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
@@ -82,6 +81,5 @@ export function PayrollRoutes() {
       <Route path="/payroll/pf-creation-queue"   element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfCreationQueuePage /></ProtectedRoute>} />
       <Route path="/payroll/pf-batches"          element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfBatchesPage /></ProtectedRoute>} />
       <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><NativeSalaryIncrement /></Gate></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

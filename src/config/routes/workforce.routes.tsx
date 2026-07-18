@@ -41,9 +41,8 @@ const BreakDeskDevices             = lazy(() => import("@/pages/BreakDeskDevices
 const BreakReports                 = lazy(() => import("@/pages/BreakReports"));
 const WeekoffFairness              = lazy(() => import("@/pages/wfm/WeekoffFairness"));
 
-export function WorkforceRoutes() {
-  return (
-    <>
+export const workforceRouteElements = (
+  <>
       {/* Attendance */}
       <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
       <Route path="/attendance/biometric-logs" element={<ProtectedRoute><BiometricPunchLogs /></ProtectedRoute>} />
@@ -114,6 +113,5 @@ export function WorkforceRoutes() {
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/break-management/devices" element={<Navigate to="/wfm/break-desk-devices" replace />} />
       <Route path="/break-reports" element={<ProtectedRoute roles={['super_admin','admin','hr','wfm','manager','process_manager']}><BreakReports /></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

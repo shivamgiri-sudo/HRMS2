@@ -13,13 +13,11 @@ const SECURITY_ROLES = [
   "branch_head", "branch_hr", "hr_branch",
 ] as const;
 
-export function VisitorRoutes() {
-  return (
-    <>
+export const visitorRouteElements = (
+  <>
       <Route path="/visitor-management"           element={<ProtectedRoute><VisitorManagement /></ProtectedRoute>} />
       <Route path="/visitor-management/approvals" element={<ProtectedRoute><VisitorApprovals /></ProtectedRoute>} />
       <Route path="/visitor-management/desk"      element={<ProtectedRoute roles={[...SECURITY_ROLES]}><VisitorDesk /></ProtectedRoute>} />
       <Route path="/visitor-management/security"  element={<ProtectedRoute roles={[...SECURITY_ROLES]}><VisitorSecurityOperations /></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

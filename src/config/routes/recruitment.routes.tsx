@@ -38,9 +38,8 @@ const NativeOfferLetterGeneration      = lazy(() => import("@/pages/NativeOfferL
 const ATSBulkImportPage                = lazy(() => import("@/pages/ATSBulkImportPage"));
 const NativeATSCandidateRegistration   = lazy(() => import("@/pages/NativeATSCandidateRegistration"));
 
-export function RecruitmentRoutes() {
-  return (
-    <>
+export const recruitmentRouteElements = (
+  <>
       {/* ATS Dashboards — CANONICAL: /ats/command-center */}
       <Route path="/ats/command-center" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSFullParityCommandCenter /></Gate></ProtectedRoute>} />
       {/* Legacy dashboard views — kept for role-specific bookmarks */}
@@ -124,6 +123,5 @@ export function RecruitmentRoutes() {
 
       {/* Offer letter */}
       <Route path="/offer-letter" element={<ProtectedRoute><Gate pageCode="ATS_OFFER"><NativeOfferLetterGeneration /></Gate></ProtectedRoute>} />
-    </>
-  );
-}
+  </>
+);

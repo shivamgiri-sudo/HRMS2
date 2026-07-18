@@ -12,20 +12,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 import NotFound from "./pages/NotFound";
 
-import {
-  PublicRoutes,
-  DashboardRoutes,
-  PeopleRoutes,
-  RecruitmentRoutes,
-  WorkforceRoutes,
-  PayrollRoutes,
-  PerformanceRoutes,
-  ComplianceRoutes,
-  FinanceRoutes,
-  PlatformRoutes,
-  PortalRoutes,
-  VisitorRoutes,
-} from "./config/routes";
+import { appRouteElements } from "./config/routes";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -55,18 +42,7 @@ const App = () => (
           <ErrorBoundary>
             <Suspense fallback={<PageLoader />}>
               <Routes>
-                <PublicRoutes />
-                <DashboardRoutes />
-                <PeopleRoutes />
-                <RecruitmentRoutes />
-                <WorkforceRoutes />
-                <PayrollRoutes />
-                <PerformanceRoutes />
-                <ComplianceRoutes />
-                <FinanceRoutes />
-                <PlatformRoutes />
-                <PortalRoutes />
-                <VisitorRoutes />
+                {appRouteElements}
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
