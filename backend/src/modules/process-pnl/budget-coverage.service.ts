@@ -67,6 +67,7 @@ async function getCoverage(budgetId: string) {
   const items = rows.map((row) => ({
     ...row,
     planning_status: row.planning_status ?? null,
+    reason: (row.reason as string | null) ?? null,
     budget_line_count: Number(row.budget_line_count ?? 0),
     gross_budget_amount: Number(row.gross_budget_amount ?? 0),
     pnl_budget_amount: Number(row.pnl_budget_amount ?? 0),
