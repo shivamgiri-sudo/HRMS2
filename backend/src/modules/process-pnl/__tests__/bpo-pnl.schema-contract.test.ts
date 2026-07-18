@@ -73,7 +73,7 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(migration).toContain("bmc_non_people");
   });
 
-  it("registers the complete 415 to 418 finance sequence in automated and manual runners", () => {
+  it("registers the complete 415 to 419 finance sequence in automated and manual runners", () => {
     const runner = backendFile("src/db/runFinanceSupplementalMigrations.ts");
     const manualRunners = [
       backendFile("sql/000_run_finance_supplemental.sql"),
@@ -84,6 +84,7 @@ describe("BPO Process P&L schema and API contract", () => {
       "416_smart_grn_allocation_document_intelligence.sql",
       "417_budget_subhead_coverage_control.sql",
       "418_grn_allocation_pnl_attribution.sql",
+      "419_grn_validation_override_control.sql",
     ]) {
       expect(runner).toContain(`"${filename}"`);
       for (const manual of manualRunners) {
