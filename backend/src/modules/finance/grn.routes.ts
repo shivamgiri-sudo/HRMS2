@@ -13,7 +13,9 @@ import {
   assertFinanceRecordBranch,
   resolveFinanceBranchScope,
 } from "./finance-access-scope.js";
+import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
+import { vendorPaymentService } from "./vendor-payment.service.js";
 
 const GRN_WRITE_ROLES = [
   "accounts_head",
@@ -290,12 +292,28 @@ grnRouter.post(
   async (req: ScopedGrnRequest, res) => {
     try {
       const user = actor(req);
+      const effectiveRole = resolveFinanceStageRole({
+        primaryRole: user.role,
+        userRoles: user.roles,
+        currentStatus: String(req.financeGrn?.status ?? ""),
+        workflow: "grn",
+      });
       const result = await grnService.reviewGrn(
         req.params.id,
         req.body,
         user.id,
-        user.role
+        effectiveRole
       );
+      if (result.paymentId) {
+        await vendorPaymentService
+          .auditCreatedPayment(result.paymentId, user.id)
+          .catch((error: unknown) => {
+            console.error(
+              "[finance] vendor payment creation audit failed:",
+              error instanceof Error ? error.message : error
+            );
+          });
+      }
       res.json(result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to review GRN";
