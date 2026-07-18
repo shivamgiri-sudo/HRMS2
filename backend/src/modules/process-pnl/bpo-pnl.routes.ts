@@ -4,8 +4,8 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
-import { bpoPnlService } from "./bpo-pnl.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -31,17 +31,17 @@ function filters(req: AuthenticatedRequest) {
 }
 
 router.get("/summary", h(async (req, res) => {
-  const data = await bpoPnlService.getSummary(filters(req));
+  const data = await bpoPnlAllocationOverlayService.getSummary(filters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/processes/:processId", h(async (req, res) => {
-  const data = await bpoPnlService.getProcessDetail(req.params.processId, filters(req));
+  const data = await bpoPnlAllocationOverlayService.getProcessDetail(req.params.processId, filters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/export", h(async (req, res) => {
-  const csv = await bpoPnlService.exportCsv(filters(req));
+  const csv = await bpoPnlAllocationOverlayService.exportCsv(filters(req));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",
