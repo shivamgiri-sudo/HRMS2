@@ -17,7 +17,7 @@ interface SlabRow extends RowDataPacket {
 }
 
 // GET /api/ats/salary-components/:candidateId
-router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr'), h(async (req, res) => {
+router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'hr'), h(async (req, res) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     'SELECT * FROM salary_component_assignments WHERE candidate_id = ? ORDER BY assigned_at DESC LIMIT 1',
     [req.params.candidateId]

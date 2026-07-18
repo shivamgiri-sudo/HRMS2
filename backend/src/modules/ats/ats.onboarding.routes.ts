@@ -140,7 +140,7 @@ router.patch(
 router.post(
   '/candidates/:id/send-onboarding-link',
   requireAuth,
-  requireRole('recruiter', 'hr', 'branch_hr', 'admin', 'super_admin'),
+  requireRole('recruiter', 'hr', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     const { id } = req.params!;
     const { db: database } = await import('../../db/mysql.js');

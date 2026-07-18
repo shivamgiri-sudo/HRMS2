@@ -18,7 +18,7 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 router.get(
   '/:candidateId/gate-check',
   requireAuth,
-  requireRole('payroll_hr', 'payroll_head', 'admin', 'hr', 'ho_hr', 'branch_hr'),
+  requireRole('payroll_hr', 'payroll_head', 'admin', 'hr'),
   h(async (req, res) => {
     const result = await checkEmployeeCodeGate(req.params.candidateId);
     return res.json({ success: true, ...result });
@@ -30,7 +30,7 @@ router.post(
   '/:candidateId/generate',
   requireAuth,
   requireWriteAccess,
-  requireRole('admin', 'hr', 'ho_hr', 'branch_hr', 'payroll_hr'),
+  requireRole('admin', 'hr', 'payroll_hr'),
   h(async (req, res) => {
     const { candidateId } = req.params;
 

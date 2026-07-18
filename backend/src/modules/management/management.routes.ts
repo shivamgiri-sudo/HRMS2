@@ -91,7 +91,7 @@ router.get("/dashboard", requireRole("admin", "hr", "manager", "branch_head", "c
   ) });
 }));
 
-router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager", "wfm", "payroll", "payroll_hr", "payroll_head", "finance_head", "ho_hr", "ho_payroll", "ho_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager", "wfm", "payroll", "payroll_hr", "payroll_head", "finance_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   const ctx = await getUserRoleContext(req.authUser!.id);
   const scope = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
   // Allow ORG_ALL roles to override scope via query params

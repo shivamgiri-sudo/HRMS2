@@ -100,7 +100,7 @@ wfmRouter.patch("/breaks/:breakId/end", h(async (req: any, res: any) => {
 // Regularization routes moved to wfm.regularization.secure.routes.ts
 
 // Live tracker
-wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "tl"), async (req: any, res: any, next: any) => {
+wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "team_leader"), async (req: any, res: any, next: any) => {
   try {
     const schema = z.object({
       date:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -857,7 +857,7 @@ wfmRouter.post("/roster/publish-final", requireAuth, requireRole("admin", "super
 // GET /api/wfm/rta/final-roster-state?processId=&date=
 // Returns per-employee RTA state for today or a given date.
 // Only returns published/approved/force_approved/realigned records.
-wfmRouter.get("/rta/final-roster-state", requireAuth, requireRole("admin", "wfm", "hr", "manager", "operations"), h(async (req: any, res: any) => {
+wfmRouter.get("/rta/final-roster-state", requireAuth, requireRole("admin", "wfm", "hr", "manager", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, date } = req.query;
   if (!date) return res.status(400).json({ error: "date is required" });
   const { db: dbConn } = await import("../../db/mysql.js");
@@ -966,7 +966,11 @@ wfmRouter.get(
                 CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
                 cps.device_id
            FROM cosec_punch_sync cps
-           JOIN employees e ON (e.employee_code = cps.user_id OR e.biometric_code = cps.user_id)
+           JOIN employees e
+             ON (
+               e.employee_code COLLATE utf8mb4_unicode_ci = cps.user_id COLLATE utf8mb4_unicode_ci
+               OR e.biometric_code COLLATE utf8mb4_unicode_ci = cps.user_id COLLATE utf8mb4_unicode_ci
+             )
           WHERE e.id = ?
             AND (
               DATE(cps.punch_time) = ?
@@ -985,7 +989,11 @@ wfmRouter.get(
                 DATE_FORMAT(cda.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
                 cda.work_minutes, cda.shift_date
            FROM cosec_daily_agg cda
-           JOIN employees e ON (e.employee_code = cda.user_id OR e.biometric_code = cda.user_id)
+           JOIN employees e
+             ON (
+               e.employee_code COLLATE utf8mb4_unicode_ci = cda.user_id COLLATE utf8mb4_unicode_ci
+               OR e.biometric_code COLLATE utf8mb4_unicode_ci = cda.user_id COLLATE utf8mb4_unicode_ci
+             )
           WHERE e.id = ? AND cda.shift_date = ?
           LIMIT 1`,
         [employeeId, date]

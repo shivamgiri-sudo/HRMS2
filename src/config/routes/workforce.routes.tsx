@@ -7,6 +7,7 @@ const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactN
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
 
 const Attendance                   = lazy(() => import("@/pages/Attendance"));
+const BiometricPunchLogs           = lazy(() => import("@/pages/BiometricPunchLogs"));
 const AttendanceRegularization     = lazy(() => import("@/pages/AttendanceRegularization"));
 const AdminAttendanceView          = lazy(() => import("@/pages/AdminAttendanceView"));
 const NativeAttendanceDisputes     = lazy(() => import("@/pages/NativeAttendanceDisputes"));
@@ -45,6 +46,8 @@ export function WorkforceRoutes() {
     <>
       {/* Attendance */}
       <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
+      <Route path="/attendance/biometric-logs" element={<ProtectedRoute><BiometricPunchLogs /></ProtectedRoute>} />
+      <Route path="/attendance/biometric-logs/:employeeId" element={<ProtectedRoute><BiometricPunchLogs /></ProtectedRoute>} />
       {/* CANONICAL regularization route: /attendance-regularization */}
       <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
