@@ -47,7 +47,7 @@ jobs:
 
       - name: Run backend unit tests
         working-directory: backend
-        run: npx vitest run tests/peopleos-module-registry.test.ts tests/policy.test.ts tests/domain-registry.test.ts
+        run: npx vitest run tests/peopleos-module-registry.test.ts tests/policy.test.ts tests/domain-registry.test.ts tests/data-governance.test.ts tests/action-item-registry.test.ts
         timeout-minutes: 5
 
       - name: Build frontend

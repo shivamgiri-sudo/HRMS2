@@ -1,4 +1,14 @@
 import { createWorkItemIfNotExists } from "./work-inbox.service.js";
+import { resolveActionItemDef } from "./action-item-registry.js";
+
+function ttlMs(itemType: string, fallbackHours = 24): number {
+  const def = resolveActionItemDef(itemType);
+  return (def?.defaultTtlHours ?? fallbackHours) * 60 * 60 * 1000;
+}
+
+function dueAt(itemType: string, fallbackHours = 24): string {
+  return new Date(Date.now() + ttlMs(itemType, fallbackHours)).toISOString();
+}
 
 export async function triggerOnboardingStuck(
   candidateId: string,
@@ -15,7 +25,7 @@ export async function triggerOnboardingStuck(
     assignedToRole: "hr",
     branchId,
     priority: "high",
-    dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    dueAt: dueAt("ONBOARDING_STUCK"),
   });
 }
 
@@ -33,6 +43,7 @@ export async function triggerNameMismatch(
     entityId: candidateId,
     assignedToRole: "hr",
     priority: "high",
+    dueAt: dueAt("NAME_MISMATCH"),
   });
 }
 
@@ -51,7 +62,7 @@ export async function triggerIncentiveApproval(
     assignedToRole: approverRole,
     branchId,
     priority: "high",
-    dueAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+    dueAt: dueAt("INCENTIVE_APPROVAL"),
   });
 }
 
@@ -67,7 +78,7 @@ export async function triggerDpdpWithdrawalReview(
     entityId: withdrawalId,
     assignedToRole: "compliance",
     priority: "high",
-    dueAt: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+    dueAt: dueAt("DPDP_WITHDRAWAL_REVIEW"),
   });
 }
 
@@ -85,6 +96,7 @@ export async function triggerTatBreach(
     entityId: tatInstanceId,
     assignedToRole: assignedRole ?? "admin",
     priority: "critical",
+    dueAt: dueAt("TAT_BREACH"),
   });
 }
 
@@ -93,17 +105,17 @@ export async function triggerResignationDiscussion(
   employeeName: string,
   discussionType: "manager" | "hr"
 ): Promise<void> {
+  const itemType = discussionType === "manager"
+    ? "RESIGNATION_MANAGER_DISCUSSION"
+    : "RESIGNATION_HR_DISCUSSION";
   await createWorkItemIfNotExists({
-    itemType:
-      discussionType === "manager"
-        ? "RESIGNATION_MANAGER_DISCUSSION"
-        : "RESIGNATION_HR_DISCUSSION",
+    itemType,
     title: `Resignation discussion pending: ${employeeName}`,
     moduleCode: "exit",
     entityType: "exit_request",
     entityId: exitId,
     assignedToRole: discussionType === "manager" ? "branch_head" : "hr",
     priority: "high",
-    dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    dueAt: dueAt(itemType),
   });
 }

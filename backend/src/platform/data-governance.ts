@@ -248,7 +248,7 @@ export const DATA_GOVERNANCE_REGISTER: DataDomain[] = [
     access_pattern: ACCESS_PATTERN.WRITE_ONLY,
     sensitivity:   "sensitive",
     retention:     RETENTION_CLASS.PERMANENT,
-    audit_required: false,   // audit log itself cannot be audited — it's the root
+    audit_required: true,    // write-once append semantics enforce this at the DB level
     pii_contains:  true,
     payroll_contains: false,
     tables: ["audit_log", "document_access_log"],
