@@ -30,6 +30,12 @@ function actor(req: AuthenticatedRequest) {
   };
 }
 
+function normalizedRoles(req: AuthenticatedRequest) {
+  return Array.from(
+    new Set([req.authUser.role, ...(req.userRoles ?? [])].filter(Boolean).map((role) => String(role).toLowerCase()))
+  );
+}
+
 async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
   const user = actor(req);
   const budget = await branchBudgetService.get(budgetId) as any;
@@ -43,6 +49,41 @@ async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
 }
 
 export const budgetCoverageRouter = Router();
+
+budgetCoverageRouter.get(
+  "/pnl/budgets/capabilities",
+  requireRole(...READ_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const user = actor(req);
+      const roles = normalizedRoles(req);
+      const scopedBranchId = await resolveFinanceBranchScope({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+      });
+      const isSuperAdmin = roles.includes("super_admin");
+      res.json({
+        success: true,
+        data: {
+          roles,
+          scopedBranchId,
+          branchLocked: Boolean(scopedBranchId),
+          canCreate: isSuperAdmin || roles.includes("admin") || roles.includes("branch_admin"),
+          canManageExpenseMaster: isSuperAdmin || roles.includes("finance_head"),
+          canReviewBranchStage: isSuperAdmin || roles.includes("branch_head"),
+          canReviewFinanceStage: isSuperAdmin || roles.includes("finance_head"),
+          canReviewAccountsStage: isSuperAdmin || roles.includes("accounts_head"),
+        },
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to resolve budget capabilities",
+      });
+    }
+  }
+);
 
 // Intercepts the normal budget save endpoint, preserving its response contract while
 // automatically marking every represented master Sub-head as Planned.
