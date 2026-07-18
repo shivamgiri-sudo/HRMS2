@@ -9,9 +9,11 @@ export type BudgetTaxTreatment =
   | "non_gst";
 export type BudgetGstType = "cgst_sgst" | "igst" | "none";
 export type TaxTreatment = BudgetTaxTreatment;
+export type BudgetAttributionScope = "branch_common" | "cost_centre" | "process";
 
 export interface BranchBudgetLineInput {
   id?: string;
+  attributionScope?: BudgetAttributionScope;
   costCentreId?: string | null;
   processId?: string | null;
   head: string;
@@ -167,6 +169,11 @@ export function budgetLineRecordToInput(
 ): BranchBudgetLineInput {
   return {
     id: line.id,
+    attributionScope: line.cost_centre_id
+      ? "cost_centre"
+      : line.process_id
+        ? "process"
+        : "branch_common",
     costCentreId: line.cost_centre_id,
     processId: line.process_id,
     head: line.head,
