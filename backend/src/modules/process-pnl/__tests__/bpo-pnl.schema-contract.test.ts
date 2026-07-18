@@ -63,14 +63,19 @@ describe("BPO Process P&L schema and API contract", () => {
 
   it("registers the complete 415 to 417 finance sequence in automated and manual runners", () => {
     const runner = backendFile("src/db/runFinanceSupplementalMigrations.ts");
-    const manual = backendFile("sql/000_run_finance_supplemental.sql");
+    const manualRunners = [
+      backendFile("sql/000_run_finance_supplemental.sql"),
+      backendFile("sql/000_finance_supplemental.sql"),
+    ];
     for (const filename of [
       "415_bpo_pnl_revenue_cost_model.sql",
       "416_smart_grn_allocation_document_intelligence.sql",
       "417_budget_subhead_coverage_control.sql",
     ]) {
       expect(runner).toContain(`"${filename}"`);
-      expect(manual).toContain(`SOURCE sql/${filename};`);
+      for (const manual of manualRunners) {
+        expect(manual).toContain(`SOURCE sql/${filename};`);
+      }
     }
   });
 
@@ -112,6 +117,15 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(service).toContain('bucket === "agent_salary"');
     expect(service).toContain('bucket === "dsc_people"');
     expect(service).toContain('bucket === "bmc_people"');
+  });
+
+  it("makes classification writes operational and rejects misleading cost-centre overrides", () => {
+    const configurationService = backendFile("src/modules/process-pnl/bpo-pnl.configuration.service.ts");
+    expect(configurationService).toContain("PEOPLE_SCOPES");
+    expect(configurationService).toContain("EXPENSE_SCOPES");
+    expect(configurationService).toContain("UPDATE finance_expense_sub_head_master");
+    expect(configurationService).toContain("JOIN finance_expense_head_master");
+    expect(configurationService).toContain("Cost-centre P&L treatment is derived from process attribution");
   });
 
   it("keeps the command centre, drill-down and governed configuration workspace connected", () => {
