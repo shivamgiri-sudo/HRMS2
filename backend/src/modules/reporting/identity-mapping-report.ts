@@ -23,22 +23,26 @@ export function buildIdentityMappingExceptionsSql(
     "e.active_status = 1",
     "LOWER(COALESCE(e.employment_status,'active')) = 'active'",
   ];
+  const snapshotEmployeeClauses: string[] = [];
 
   const branchId = trimFilter(query.branchId);
   if (branchId) {
     employeeClauses.push("e.branch_id = ?");
+    snapshotEmployeeClauses.push("e.branch_id = ?");
     params.push(branchId);
   }
 
   const processId = trimFilter(query.processId);
   if (processId) {
     employeeClauses.push("e.process_id = ?");
+    snapshotEmployeeClauses.push("e.process_id = ?");
     params.push(processId);
   }
 
   const departmentId = trimFilter(query.departmentId);
   if (departmentId) {
     employeeClauses.push("e.department_id = ?");
+    snapshotEmployeeClauses.push("e.department_id = ?");
     params.push(departmentId);
   }
 
@@ -51,11 +55,17 @@ export function buildIdentityMappingExceptionsSql(
        e.call_centre_code,
        e.updated_at`;
 
-  const baseFrom = `FROM employees e
+  const baseJoins = `FROM employees e
   LEFT JOIN branch_master b ON b.id = e.branch_id
   LEFT JOIN process_master p ON p.id = e.process_id
-  LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
+  LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)`;
+
+  const baseFrom = `${baseJoins}
  WHERE ${employeeClauses.join(" AND ")}`;
+
+  const snapshotEmployeeScope = snapshotEmployeeClauses.length
+    ? ` AND ${snapshotEmployeeClauses.join(" AND ")}`
+    : "";
 
   const sql = `
 SELECT 'MISSING_BIOMETRIC_CODE' AS exception_type,
@@ -97,7 +107,86 @@ SELECT 'MISSING_MANAGER_MAPPING' AS exception_type,
        'Assign reporting_manager_id or manager_id according to the HRMS hierarchy.' AS recommended_action
   ${baseFrom}
    AND e.reporting_manager_id IS NULL
-   AND e.manager_id IS NULL`;
+   AND e.manager_id IS NULL
+UNION ALL
+SELECT 'EXTERNAL_IDENTITY_UNMATCHED' AS exception_type,
+       CASE WHEN ris.match_status = 'ambiguous' THEN 'CRITICAL' ELSE 'HIGH' END AS severity,
+       COALESCE(ris.matched_employee_code, ris.source_employee_code, ris.source_agent_id) AS employee_code,
+       COALESCE(ris.matched_employee_name, ris.source_employee_name, ris.source_record_key) AS employee_name,
+       b.branch_name,
+       p.process_name,
+       COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS manager_name,
+       ris.source_employee_code AS biometric_code,
+       ris.source_agent_id AS call_centre_code,
+       ris.captured_at AS updated_at,
+       CONCAT(ris.source_system, ' source record ', ris.source_record_key, ' is ', ris.match_status, ' in identity snapshot.') AS exception_detail,
+       'Map this external identity to the correct HRMS employee before including it in KPI, attendance, sales, or hierarchy rollups.' AS recommended_action
+  FROM report_identity_source_snapshot ris
+  LEFT JOIN employees e ON e.id = ris.matched_employee_id
+  LEFT JOIN branch_master b ON b.id = e.branch_id
+  LEFT JOIN process_master p ON p.id = e.process_id
+  LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
+ WHERE ris.is_current = 1
+   AND ris.match_status IN ('unmatched','ambiguous')${snapshotEmployeeScope}
+UNION ALL
+SELECT 'HRMS_MISSING_SOURCE_MAPPING' AS exception_type,
+       'MEDIUM' AS severity,
+       ${baseSelect},
+       CONCAT('HRMS employee is missing current source mapping for: ', CONCAT_WS(', ',
+         CASE WHEN bm.id IS NULL THEN 'MASBIOMETRIC_EMPLOYEE' END,
+         CASE WHEN se.id IS NULL THEN 'SHIVAMGIRI_EMPLOYEE' END,
+         CASE WHEN COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL THEN 'MASMIS_AGENT_OR_SHIVAMGIRI_AGENT' END
+       )) AS exception_detail,
+       'Run or review the identity source snapshot, then update employee biometric_code/call_centre_code/source records until every active employee has expected source coverage.' AS recommended_action
+  ${baseJoins}
+  LEFT JOIN (
+    SELECT MIN(id) AS id, matched_employee_id
+      FROM report_identity_source_snapshot
+     WHERE is_current = 1
+       AND source_system = 'MASBIOMETRIC_EMPLOYEE'
+       AND matched_employee_id IS NOT NULL
+     GROUP BY matched_employee_id
+  ) bm ON bm.matched_employee_id = e.id
+  LEFT JOIN (
+    SELECT MIN(id) AS id, matched_employee_id
+      FROM report_identity_source_snapshot
+     WHERE is_current = 1
+       AND source_system = 'SHIVAMGIRI_EMPLOYEE'
+       AND matched_employee_id IS NOT NULL
+     GROUP BY matched_employee_id
+  ) se ON se.matched_employee_id = e.id
+  LEFT JOIN (
+    SELECT MIN(id) AS id, matched_employee_id
+      FROM report_identity_source_snapshot
+     WHERE is_current = 1
+       AND source_system IN ('MASMIS_AGENT','SHIVAMGIRI_AGENT')
+       AND matched_employee_id IS NOT NULL
+     GROUP BY matched_employee_id
+  ) ma ON ma.matched_employee_id = e.id
+ WHERE ${employeeClauses.join(" AND ")}
+   AND (bm.id IS NULL OR se.id IS NULL OR (COALESCE(e.call_centre_code,'') <> '' AND ma.id IS NULL))
+UNION ALL
+SELECT 'IDENTITY_SNAPSHOT_STALE' AS exception_type,
+       'HIGH' AS severity,
+       NULL AS employee_code,
+       NULL AS employee_name,
+       NULL AS branch_name,
+       NULL AS process_name,
+       NULL AS manager_name,
+       NULL AS biometric_code,
+       NULL AS call_centre_code,
+       MAX(ris.captured_at) AS updated_at,
+       CASE
+         WHEN MAX(ris.captured_at) IS NULL THEN 'Identity snapshot has not been synced yet.'
+         ELSE CONCAT('Identity snapshot last synced at ', MAX(ris.captured_at), ', which is older than 24 hours.')
+       END AS exception_detail,
+       'Run /api/reports/suite/identity-source-snapshot/sync before trusting cross-system identity exception counts.' AS recommended_action
+  FROM report_identity_source_snapshot ris
+HAVING MAX(ris.captured_at) IS NULL OR MAX(ris.captured_at) < DATE_SUB(NOW(), INTERVAL 24 HOUR)`;
 
-  return { sql, params: [...params, ...params, ...params, ...params, ...params] };
+  return {
+    sql,
+    params: [...params, ...params, ...params, ...params, ...params, ...params, ...params],
+  };
 }
+
