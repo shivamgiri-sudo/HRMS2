@@ -57,8 +57,8 @@ describe("BPO Process P&L schema and API contract", () => {
     const migration = backendFile("sql/415_bpo_pnl_revenue_cost_model.sql");
     expect(migration).toContain("recognition_period");
     expect(migration).toContain("pnl_cost_amount");
-    expect(migration).toContain("recoverable_tax");
     expect(migration).toContain("pnl_bucket");
+    expect(migration).toContain("DATE_FORMAT(COALESCE");
   });
 
   it("registers migration 415 in automated and manual finance runners", () => {
