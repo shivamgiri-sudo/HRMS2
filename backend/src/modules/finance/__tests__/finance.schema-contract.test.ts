@@ -88,12 +88,73 @@ describe("finance database and API contract", () => {
     expect(runner).toContain('"414_finance_grn_sequence.sql"');
   });
 
+  it("adds allocation-aware GRNs without replacing the legacy parent record", () => {
+    const sql416 = read("sql/416_smart_grn_allocation_document_intelligence.sql");
+    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    const manual = read("sql/000_finance_supplemental.sql");
+
+    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_cost_allocation");
+    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_document");
+    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_document_extraction");
+    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_validation_result");
+    expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_duplicate_match");
+    expect(sql416).toContain("allocation_percentage");
+    expect(sql416).toContain("lifecycle_status");
+    expect(sql416).toContain("sha256");
+    expect(sql416).toContain("document_match_status");
+    expect(sql416).not.toMatch(/DROP\s+TABLE/i);
+    expect(sql416).not.toMatch(/TRUNCATE\s+TABLE/i);
+    expect(runner).toContain('"416_smart_grn_allocation_document_intelligence.sql"');
+    expect(manual).toContain("SOURCE sql/416_smart_grn_allocation_document_intelligence.sql;");
+  });
+
+  it("recalculates and controls every smart GRN allocation on the backend", () => {
+    const service = read("src/modules/finance/grn-smart.service.ts");
+    expect(service).toContain("calculateBudgetLine");
+    expect(service).toContain("lockBudgetLine");
+    expect(service).toContain("FOR UPDATE");
+    expect(service).toContain("split allocation exceeds available budget");
+    expect(service).toContain("split allocation exceeds available quantity");
+    expect(service).toContain("Cost-centre splits must equal the invoice total exactly");
+    expect(service).toContain("allocation_percentage");
+    expect(service).toContain("budgetConsumptionService.reserve");
+    expect(service).toContain("budgetConsumptionService.consume");
+    expect(service).toContain("budgetConsumptionService.release");
+  });
+
+  it("provides duplicate, document and extraction controls for smart GRNs", () => {
+    const service = read("src/modules/finance/grn-smart.service.ts");
+    const routes = read("src/modules/finance/grn-smart.routes.ts");
+    expect(service).toContain("createHash(\"sha256\")");
+    expect(service).toContain("DUPLICATE_INVOICE");
+    expect(service).toContain("DOCUMENT_AMOUNT_MATCH");
+    expect(service).toContain("GoogleGenerativeAI");
+    expect(service).toContain("manual_review");
+    expect(routes).toContain('"/:id/documents"');
+    expect(routes).toContain('"/:id/documents/:documentId/analyze"');
+    expect(routes).toContain('"/:id/extraction/confirm"');
+    expect(routes).toContain('"/:id/revalidate"');
+    expect(routes).toContain('"/:id/workspace"');
+  });
+
+  it("mounts allocation-aware handlers before the legacy GRN handlers", () => {
+    const routes = read("src/modules/finance/grn.routes.ts");
+    const smartMount = routes.indexOf('router.use("/grns", smartGrnRouter)');
+    const legacySubmit = routes.indexOf('"/grns/:id/submit"');
+    expect(smartMount).toBeGreaterThan(-1);
+    expect(legacySubmit).toBeGreaterThan(smartMount);
+    expect(routes).toContain("Legacy GRNs fall through");
+  });
+
   it("requires current authentication and branch scoping on finance routes", () => {
     const grnRoutes = read("src/modules/finance/grn.routes.ts");
+    const smartRoutes = read("src/modules/finance/grn-smart.routes.ts");
     const paymentRoutes = read("src/modules/finance/vendor-payment.routes.ts");
     expect(grnRoutes).toContain("router.use(requireAuth)");
     expect(grnRoutes).toContain("resolveFinanceBranchScope");
     expect(grnRoutes).toContain("assertFinanceRecordBranch");
+    expect(smartRoutes).toContain("assertFinanceRecordBranch");
+    expect(smartRoutes).toContain("requireWriteAccess");
     expect(paymentRoutes).toContain("router.use(requireAuth)");
     expect(paymentRoutes).toContain("resolveFinanceBranchScope");
     expect(paymentRoutes).toContain("assertFinanceRecordBranch");
