@@ -3,3 +3,4 @@
 
 SOURCE sql/412_finance_expense_head_master.sql;
 SOURCE sql/413_vendor_payment_transaction_ledger.sql;
+SOURCE sql/414_finance_grn_sequence.sql;
