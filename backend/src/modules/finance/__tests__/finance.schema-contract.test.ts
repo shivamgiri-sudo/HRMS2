@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 import { hasGlobalFinanceScope } from "../finance-access-scope.js";
+import { resolveFinanceStageRole } from "../finance-workflow-role.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(__dirname, "../../../..");
@@ -33,7 +34,8 @@ describe("finance database and API contract", () => {
     expect(sql405).toContain("ADD COLUMN process_id");
     expect(sql405).toContain("ADD COLUMN cost_centre_id");
     expect(sql405).toContain("ADD COLUMN cost_class");
-    expect(sql405).toContain("process_id IS NOT NULL OR cost_centre_id IS NOT NULL");
+    expect(sql405).toContain("WHEN process_id IS NOT NULL THEN 'direct'");
+    expect(sql405).toContain("WHEN cost_centre_id IS NOT NULL THEN 'direct'");
   });
 
   it("adds quantity-aware budget controls without replacing legacy tables", () => {
@@ -84,5 +86,26 @@ describe("finance database and API contract", () => {
     expect(hasGlobalFinanceScope("branch_head", [])).toBe(false);
     expect(hasGlobalFinanceScope("employee", ["accounts_head"])).toBe(true);
     expect(hasGlobalFinanceScope("branch_admin", ["branch_head"])).toBe(false);
+  });
+
+  it("resolves approval ownership from every assigned role", () => {
+    expect(resolveFinanceStageRole({
+      primaryRole: "employee",
+      userRoles: ["branch_head"],
+      currentStatus: "submitted",
+      workflow: "grn",
+    })).toBe("branch_head");
+    expect(resolveFinanceStageRole({
+      primaryRole: "admin",
+      userRoles: ["finance_head"],
+      currentStatus: "branch_head_approved",
+      workflow: "budget",
+    })).toBe("finance_head");
+    expect(resolveFinanceStageRole({
+      primaryRole: "super_admin",
+      userRoles: [],
+      currentStatus: "finance_head_approved",
+      workflow: "budget",
+    })).toBe("accounts_head");
   });
 });
