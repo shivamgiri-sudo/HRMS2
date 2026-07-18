@@ -1,9 +1,9 @@
 import type { NextFunction, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
+import type { AuthenticatedRequest } from "./authMiddleware.js";
 import { expandRoles, normalizeRoleInputs } from "../platform/policy/index.js";
 import type { RoleKey } from "../platform/policy/index.js";
-import type { AuthenticatedRequest } from "./authMiddleware.js";
 
 export function requireRole(...allowedRoles: string[]) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
