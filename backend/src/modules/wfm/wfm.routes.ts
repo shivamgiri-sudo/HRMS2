@@ -733,7 +733,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
 
   await dbConn.execute(
     `UPDATE wfm_roster_assignment
-        SET final_roster_status = 'force_approved_by_manager',
+        SET final_roster_status = 'manager_rejected_employee_request',
             manager_action_status = 'rejected_request',
             manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
       WHERE id = ?`,
@@ -771,7 +771,8 @@ wfmRouter.get("/my-weekoff", requireAuth, h(async (req: any, res: any) => {
        LEFT JOIN weekly_roster_cycle wrc ON wrc.id = wra.cycle_id
       WHERE wra.employee_id = ?
         AND wra.final_roster_status IN ('pending_employee_ack','acknowledged','rejected_by_employee',
-          'pending_manager_action','realigned_by_manager','force_approved_by_manager')
+          'pending_manager_action','realigned_by_manager','force_approved_by_manager',
+          'manager_rejected_employee_request')
       ORDER BY wra.roster_date DESC LIMIT 90`,
     [(emp as any).id]
   );

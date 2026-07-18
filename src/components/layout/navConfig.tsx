@@ -45,7 +45,6 @@ export const navGroups: NavGroup[] = [
           { label: "Attendance",               href: "/attendance",                    icon: ic(Clock),         description: "Attendance" },
           { label: "My Punch Logs",            href: "/attendance/biometric-logs",     icon: ic(Search),        description: "Read-only biometric punch history" },
           { label: "Regularization",           href: "/attendance/regularizations",    icon: ic(Clock),         pageCode: "ATTENDANCE_REGULARIZATION", description: "Regularize" },
-          { label: "Disputes",                 href: "/attendance/disputes",           icon: ic(ClipboardList), description: "Disputes" },
           { label: "Attendance Lookup",        href: "/hr/attendance-lookup",          icon: ic(Search),        roles: ["super_admin","admin","hr","payroll_head","payroll_admin","wfm"], description: "View any employee's attendance" },
           { label: "My Roster",                href: "/my-roster",                     icon: ic(Calendar),      description: "Roster" },
           { label: "Week-off Preference",      href: "/week-off-preferences",          icon: ic(CalendarDays),  description: "Week-off" },

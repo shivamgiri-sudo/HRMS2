@@ -232,10 +232,15 @@ async function enrichRegularizationRows(rows: RowDataPacket[]) {
   })));
 }
 
-async function reviewRegularizationRequest(req: any, res: any, regularizationId: string) {
+interface ReviewResult {
+  httpStatus: number;
+  payload: Record<string, unknown>;
+}
+
+async function _performReview(req: any, regularizationId: string): Promise<ReviewResult> {
   const reviewRole = await regularizationReviewRole(req.authUser.id, regularizationId);
   if (!reviewRole) {
-    return res.status(403).json({ success: false, message: "Forbidden: regularization is outside your approval scope" });
+    return { httpStatus: 403, payload: { success: false, message: "Forbidden: regularization is outside your approval scope" } };
   }
   const requestedReviewStatus = String(req.body.status ?? "");
 
@@ -280,11 +285,11 @@ async function reviewRegularizationRequest(req: any, res: any, regularizationId:
     [regularizationId]
   );
   const pre = (preRows as RowDataPacket[])[0] as any;
-  if (!pre) return res.status(404).json({ success: false, message: "Regularization not found" });
+  if (!pre) return { httpStatus: 404, payload: { success: false, message: "Regularization not found" } };
 
   const status = nextRegularizationStatus(reviewRole, String(pre.reg_status ?? ""), requestedReviewStatus);
   if (!status) {
-    return res.status(400).json({ success: false, message: "Invalid approval step for current regularization status" });
+    return { httpStatus: 400, payload: { success: false, message: "Invalid approval step for current regularization status" } };
   }
 
   const decisionSupport = await buildRegularizationDecisionSupport(pre);
@@ -294,11 +299,14 @@ async function reviewRegularizationRequest(req: any, res: any, regularizationId:
     decisionSupport.riskLevel !== "low" &&
     req.body.force !== true
   ) {
-    return res.status(409).json({
-      success: false,
-      message: "Risky regularization requires manual review before final WFM approval",
-      decision_support: decisionSupport,
-    });
+    return {
+      httpStatus: 409,
+      payload: {
+        success: false,
+        message: "Risky regularization requires manual review before final WFM approval",
+        decision_support: decisionSupport,
+      },
+    };
   }
 
   const reviewerNote = req.body.reviewerNote ?? req.body.remarks ?? null;
@@ -364,7 +372,11 @@ async function reviewRegularizationRequest(req: any, res: any, regularizationId:
     });
   }
 
-  return res.json({ success: true, data: { ...data, decision_support: decisionSupport }, message: `Regularization ${status}` });
+  return { httpStatus: 200, payload: { success: true, data: { ...data, decision_support: decisionSupport }, message: `Regularization ${status}` } };
+}
+
+function reviewRegularizationRequest(req: any, res: any, regularizationId: string) {
+  return _performReview(req, regularizationId).then(r => res.status(r.httpStatus).json(r.payload));
 }
 
 wfmRegularizationSecureRouter.post("/regularizations", h(async (req: any, res: any) => {
@@ -749,30 +761,25 @@ wfmRegularizationSecureRouter.patch("/regularizations/bulk-review", h(async (req
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(String).filter(Boolean) : [];
   if (!ids.length) return res.status(400).json({ success: false, message: "ids array is required" });
 
-  const results: Array<{ id: string; success: boolean; message?: string }> = [];
+  const results: Array<{ id: string; success: boolean; httpStatus: number; message?: string }> = [];
   for (const id of ids) {
-    const localRes = {
-      statusCode: 200,
-      payload: null as any,
-      status(code: number) { this.statusCode = code; return this; },
-      json(payload: any) { this.payload = payload; return this; },
-    };
     try {
-      await reviewRegularizationRequest(req, localRes, id);
+      const r = await _performReview(req, id);
+      results.push({
+        id,
+        success: r.httpStatus >= 200 && r.httpStatus < 300 && (r.payload as any)?.success !== false,
+        httpStatus: r.httpStatus,
+        message: (r.payload as any)?.message,
+      });
     } catch (err: any) {
-      localRes.statusCode = 500;
-      localRes.payload = { success: false, message: err?.message ?? String(err) };
+      results.push({ id, success: false, httpStatus: 500, message: err?.message ?? String(err) });
     }
-    results.push({
-      id,
-      success: localRes.statusCode >= 200 && localRes.statusCode < 300 && localRes.payload?.success !== false,
-      message: localRes.payload?.message,
-    });
   }
 
   const succeededCount = results.filter(r => r.success).length;
   const failedCount    = results.length - succeededCount;
-  return res.json({
+  const httpStatus     = failedCount === 0 ? 200 : succeededCount === 0 ? results[0]?.httpStatus ?? 400 : 207;
+  return res.status(httpStatus).json({
     success: failedCount === 0,
     succeeded: succeededCount,
     failed: failedCount,

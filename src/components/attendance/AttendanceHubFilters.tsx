@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { HubFilters, SelectOption } from "@/hooks/useAttendanceHub";
 import { useBranchList, useProcessList, useDesignationList } from "@/hooks/useAttendanceHub";
+import { EMPLOYMENT_STATUS_OPTIONS } from "@/lib/constants/employmentStatus";
 
 interface Props {
   filters: HubFilters;
@@ -128,12 +129,7 @@ export function AttendanceHubFilters({ filters, onChange, month, onMonthChange }
         <FilterSelect
           placeholder="All Statuses"
           value={filters.status}
-          options={[
-            { id: "Active", name: "Active" },
-            { id: "Inactive", name: "Inactive" },
-            { id: "On Notice", name: "On Notice" },
-            { id: "Onboarding", name: "Onboarding" },
-          ]}
+          options={EMPLOYMENT_STATUS_OPTIONS as unknown as SelectOption[]}
           onValueChange={v => onChange({ status: v, page: 1 })}
         />
 
