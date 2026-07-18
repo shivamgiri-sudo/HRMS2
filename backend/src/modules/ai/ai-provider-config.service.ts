@@ -328,6 +328,8 @@ class AiProviderConfigService {
       modelName: row.model_name || undefined,
       baseUrl: row.base_url || undefined,
       timeout: row.timeout_ms || undefined,
+      dailyRequestLimit: row.daily_request_limit ?? undefined,
+      monthlyRequestLimit: row.monthly_request_limit ?? undefined,
     };
 
     // Only include decrypted API key if explicitly requested (for provider execution)
