@@ -1839,4 +1839,39 @@ router.post(
 import { holidayDebugRouter } from "./holiday-debug.routes.js";
 router.use("/holiday-debug", holidayDebugRouter);
 
+// ─── PATCH /runs/:id/tds-mode ──────────────────────────────────────────────────
+// Sets tds_mode ('auto' | 'manual') on a draft/calculating run.
+// auto = taxEngineService reads payroll_tax_fy_config + payroll_tax_slab_master.
+// manual = salary_run_manual_tds rows override per-employee TDS (default).
+// Blocked once the run has been calculated (status not in draft/calculating).
+router.patch(
+  "/runs/:id/tds-mode",
+  requireRole("payroll_head", "super_admin", "admin", "finance"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { tds_mode } = req.body as { tds_mode?: string };
+    if (!tds_mode || !["auto", "manual"].includes(tds_mode)) {
+      return res.status(400).json({ success: false, message: "tds_mode must be 'auto' or 'manual'" });
+    }
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, status FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [req.params.id],
+    );
+    const run = (runRows as RowDataPacket[])[0];
+    if (!run) {
+      return res.status(404).json({ success: false, message: "Payroll run not found" });
+    }
+    if (!["draft", "calculating"].includes(String(run.status))) {
+      return res.status(409).json({
+        success: false,
+        message: "TDS mode cannot be changed after calculation has started",
+      });
+    }
+    await db.execute(
+      "UPDATE salary_prep_run SET tds_mode = ? WHERE id = ?",
+      [tds_mode, req.params.id],
+    );
+    return res.json({ success: true, data: { tds_mode }, message: `TDS mode set to ${tds_mode}` });
+  }),
+);
+
 export { router as payrollRouter };
