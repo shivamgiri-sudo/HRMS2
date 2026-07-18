@@ -1,0 +1,11 @@
+export { PublicRoutes }      from "./public.routes";
+export { DashboardRoutes }   from "./dashboards.routes";
+export { PeopleRoutes }      from "./people.routes";
+export { RecruitmentRoutes } from "./recruitment.routes";
+export { WorkforceRoutes }   from "./workforce.routes";
+export { PayrollRoutes }     from "./payroll.routes";
+export { PerformanceRoutes } from "./performance.routes";
+export { ComplianceRoutes }  from "./compliance.routes";
+export { FinanceRoutes }     from "./finance.routes";
+export { PlatformRoutes }    from "./platform.routes";
+export { PortalRoutes }      from "./portal.routes";
