@@ -1,0 +1,17 @@
+# Normalize all text files to LF in the repository
+* text=auto eol=lf
+
+# Explicitly force SQL files to LF so test assertions on \n work on Windows
+*.sql text eol=lf
+
+# Binary files — no conversion
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
