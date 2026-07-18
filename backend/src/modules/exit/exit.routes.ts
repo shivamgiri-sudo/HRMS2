@@ -201,6 +201,23 @@ exitRouter.post(
   })
 );
 
+exitRouter.post(
+  "/ff/:id/verify",
+  requireRole("admin", "hr", "finance", "payroll"),
+  h(async (req, res) => {
+    const data = await ffService.setProvisionalFalse(req.params.id, req.authUser!.id, req);
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "FF_PROVISIONAL_CLEARED",
+      module_key: "exit",
+      entity_type: "full_final_calculation",
+      entity_id: req.params.id,
+      req,
+    });
+    return res.json({ success: true, data, message: "F&F marked as verified (provisional cleared)" });
+  })
+);
+
 exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isPrivileged = await hasRole(userId, "admin", "hr", "manager", "finance", "payroll");
