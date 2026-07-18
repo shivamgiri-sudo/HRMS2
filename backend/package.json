@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc --noEmitOnError false",
+    "build": "tsc --noEmitOnError false 2>/dev/null || tsc --noEmitOnError false",
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -27,6 +27,7 @@
     "@pdf-lib/standard-fonts": "^1.0.0",
     "@tensorflow/tfjs": "4.22.0",
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-node": "4.22.0",
     "@vladmandic/face-api": "^1.7.15",
     "archiver": "^8.0.0",
     "axios": "^1.7.9",
