@@ -1563,6 +1563,15 @@ function SignoffTab() {
       toast({ title: "Revoke failed", description: e?.message, variant: "destructive" }),
   });
 
+  const markDisbursedMut = useMutation({
+    mutationFn: () =>
+      hrmsApi.patch(`/api/payroll/runs/${selectedRunId}/status`, { status: "disbursed" }),
+    onSuccess: () => { toast({ title: "Run marked as disbursed" }); invalidate(); },
+    onError: (e: any) =>
+      toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+
   const fmt = (n: number) =>
     `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
   const fmtDate = (d: string | null) =>
@@ -1573,6 +1582,7 @@ function SignoffTab() {
   return (
     <div className="space-y-4">
       <TdsModePanel />
+
 
       <div className="flex items-center gap-3">
         <Label className="whitespace-nowrap text-sm font-medium">Payroll Run</Label>
@@ -1738,6 +1748,19 @@ function SignoffTab() {
                     {revokeMut.isPending ? "Revoking…" : "Revoke Finance Approval"}
                   </Button>
                 )}
+                {status.status === "locked" &&
+                  !!status.finance_approved_at &&
+                  (!status.ceo_required || !!status.ceo_acknowledged_at) &&
+                  roleKeys.some((r) => ["finance", "super_admin", "payroll_head", "admin"].includes(r)) && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                      onClick={() => markDisbursedMut.mutate()}
+                      disabled={markDisbursedMut.isPending}
+                    >
+                      {markDisbursedMut.isPending ? "Marking…" : "Mark as Disbursed"}
+                    </Button>
+                  )}
               </div>
             </CardContent>
           </Card>
