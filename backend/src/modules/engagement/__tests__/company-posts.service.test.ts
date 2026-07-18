@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CreateCompanyPostSchema,
   GrantCompanyPostCreatorSchema,
@@ -7,6 +7,27 @@ import {
   RevokeCompanyPostCreatorSchema,
 } from "../company-posts.validation";
 import type { CreateCompanyPostDTO } from "../company-posts.types";
+import { Role } from "../../../platform/policy/roles";
+import {
+  assertCanCreateCompanyPost,
+  assertCanModerateCompanyPosts,
+  grantCompanyPostCreator,
+  listCompanyPostCreators,
+  revokeCompanyPostCreator,
+} from "../company-posts.service";
+
+const { executeMock, logSensitiveActionMock } = vi.hoisted(() => ({
+  executeMock: vi.fn(),
+  logSensitiveActionMock: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute: executeMock },
+}));
+
+vi.mock("../../../shared/auditLog.js", () => ({
+  logSensitiveAction: logSensitiveActionMock,
+}));
 
 const migrationSql = readFileSync(
   new URL("../../../../sql/451_company_feed_foundation.sql", import.meta.url),
@@ -138,5 +159,74 @@ describe("company feed validation", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("company feed permissions and creator access", () => {
+  beforeEach(() => {
+    executeMock.mockReset();
+    logSensitiveActionMock.mockClear();
+  });
+
+  it("requires active creator access to create a company post", async () => {
+    executeMock.mockResolvedValueOnce([[], []]);
+
+    await expect(assertCanCreateCompanyPost("user-1")).rejects.toThrow("creator access");
+    expect(executeMock.mock.calls[0][0]).toContain("company_post_creator_access");
+  });
+
+  it("allows only normalized moderation roles", async () => {
+    executeMock.mockResolvedValueOnce([[{ role_key: ` ${Role.HR_ADMIN} ` }], []]);
+    await expect(assertCanModerateCompanyPosts("user-2")).resolves.toBeUndefined();
+
+    executeMock.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
+    await expect(assertCanModerateCompanyPosts("user-3")).rejects.toThrow("Access denied");
+  });
+
+  it("allows only super admins to grant creator access and audits the grant", async () => {
+    executeMock
+      .mockResolvedValueOnce([[{ role_key: "Super Admin" }], []])
+      .mockResolvedValueOnce([[{ user_id: "user-4" }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ id: "access-1", employee_id: "emp-1", user_id: "user-4" }], []]);
+
+    await expect(grantCompanyPostCreator({
+      actorUserId: "super-admin-id",
+      employeeId: "emp-1",
+    })).resolves.toMatchObject({ id: "access-1" });
+    expect(logSensitiveActionMock).toHaveBeenCalledWith(expect.objectContaining({
+      action_type: "COMPANY_FEED_CREATOR_GRANTED",
+      actor_user_id: "super-admin-id",
+    }));
+  });
+
+  it("revokes creator access only for super admins and audits the revoke", async () => {
+    executeMock
+      .mockResolvedValueOnce([[{ role_key: "admin" }], []]);
+
+    await expect(revokeCompanyPostCreator({
+      actorUserId: "admin-id",
+      employeeId: "emp-1",
+    })).rejects.toThrow("super administrator");
+  });
+
+  it("fails without auditing when no active creator access row is revoked", async () => {
+    executeMock
+      .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+
+    await expect(revokeCompanyPostCreator({
+      actorUserId: "super-admin-id",
+      employeeId: "emp-1",
+    })).rejects.toThrow("active company post creator access");
+    expect(logSensitiveActionMock).not.toHaveBeenCalled();
+  });
+
+  it("lists creator access rows", async () => {
+    executeMock.mockResolvedValueOnce([[{ id: "access-1" }], []]);
+
+    await expect(listCompanyPostCreators()).resolves.toEqual([{ id: "access-1" }]);
+    expect(executeMock.mock.calls[0][0]).toContain("FROM company_post_creator_access");
   });
 });

@@ -92,3 +92,8 @@ Task 2: Complete
   - Review loop fixed required `post_id` for moderation and removed server-managed fields from create DTOs
   - Final fix loop made create media schema strict and added runtime rejection coverage
   - Review clean: spec PASS, quality PASS, verdict ACCEPT
+Task 3: In progress
+  - Implement creator-access permission checks and moderator authorization in service layer
+  - Implementer added creator-access checks, moderation authorization, and audited grant/revoke operations
+  - Review loop fixed revoke false-success behavior and aligned moderation role source with canonical backend roles
+  - Review clean: spec PASS, quality PASS, verdict ACCEPT
