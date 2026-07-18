@@ -25,12 +25,28 @@ router.get("/me", h(async (req: any, res: any) => {
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
 
   const [rows] = await db.execute(
-    `SELECT e.*,
-            d.designation_name  AS designation,
-            dept.dept_name      AS department_name,
-            b.branch_name,
-            b.branch_name       AS branch_display_name,
-            CONCAT(mgr.first_name, ' ', mgr.last_name) AS reporting_manager_name
+    `SELECT
+       e.id, e.employee_code, e.user_id,
+       e.first_name, e.last_name,
+       e.email, e.official_email, e.official_email_compliant,
+       e.mobile, e.personal_email, e.personal_phone, e.personal_mobile, e.alternate_mobile,
+       e.avatar_url, e.photo_url,
+       e.gender, e.date_of_birth, e.marital_status, e.blood_group,
+       e.address, e.address_line1, e.city, e.state, e.country, e.pincode,
+       e.status, e.employment_status, e.employment_type,
+       e.designation_id, e.department_id, e.branch_id, e.process_id,
+       e.reporting_manager_id, e.manager_id,
+       e.date_of_joining, e.hire_date, e.salary_start_date,
+       e.working_hours_start, e.working_hours_end, e.working_days,
+       e.is_manager, e.emergency_contact_name,
+       e.pan_verified_on, e.aadhaar_verified_on,
+       e.pan_number, e.uan_number, e.epf_number, e.esic_number,
+       e.aadhaar_number, e.aadhaar_last4,
+       d.designation_name  AS designation,
+       dept.dept_name      AS department_name,
+       b.branch_name,
+       b.branch_name       AS branch_display_name,
+       CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')) AS reporting_manager_name
      FROM employees e
      LEFT JOIN designation_master d    ON d.id    = e.designation_id
      LEFT JOIN department_master  dept ON dept.id = e.department_id
@@ -111,7 +127,66 @@ router.get("/me", h(async (req: any, res: any) => {
   return res.json({
     success: true,
     data: {
-      ...emp,
+      // Identity
+      id:                       emp.id,
+      employee_code:            emp.employee_code,
+      user_id:                  emp.user_id,
+      // Name
+      first_name:               emp.first_name,
+      last_name:                emp.last_name,
+      full_name:                [emp.first_name, emp.last_name].filter(Boolean).join(" "),
+      // Contact
+      email:                    emp.email,
+      official_email:           emp.official_email,
+      official_email_compliant: emp.official_email_compliant,
+      mobile:                   emp.mobile,
+      personal_email:           emp.personal_email,
+      personal_phone:           emp.personal_phone,
+      personal_mobile:          emp.personal_mobile,
+      alternate_mobile:         emp.alternate_mobile,
+      // Avatar
+      avatar_url:               emp.avatar_url,
+      photo_url:                emp.photo_url,
+      // Personal details
+      gender:                   emp.gender,
+      date_of_birth:            emp.date_of_birth,
+      marital_status:           emp.marital_status,
+      blood_group:              emp.blood_group,
+      // Address
+      address:                  emp.address,
+      address_line1:            emp.address_line1,
+      city:                     emp.city,
+      state:                    emp.state,
+      country:                  emp.country,
+      pincode:                  emp.pincode,
+      // Employment
+      status:                   emp.status,
+      employment_status:        emp.employment_status,
+      employment_type:          emp.employment_type,
+      designation:              emp.designation,
+      designation_id:           emp.designation_id,
+      department_name:          emp.department_name,
+      department_id:            emp.department_id,
+      branch_name:              emp.branch_name,
+      branch_display_name:      emp.branch_display_name,
+      branch_id:                emp.branch_id,
+      process_name:             emp.process_name ?? null,
+      process_id:               emp.process_id,
+      reporting_manager_name:   emp.reporting_manager_name,
+      reporting_manager_id:     emp.reporting_manager_id,
+      manager_id:               emp.manager_id,
+      date_of_joining:          emp.date_of_joining,
+      hire_date:                emp.hire_date,
+      salary_start_date:        emp.salary_start_date,
+      // Schedule
+      working_hours_start:      emp.working_hours_start,
+      working_hours_end:        emp.working_hours_end,
+      working_days:             emp.working_days,
+      // Flags
+      is_manager:               emp.is_manager,
+      // Presence-only flag (boolean, never the raw value)
+      bank_account_number:      emp.bank_account_number != null ? true : null,
+      emergency_contact_name:   emp.emergency_contact_name,
       // Nested shapes expected by frontend
       department: emp.department_name ? { name: emp.department_name } : null,
       bank_details: (() => {

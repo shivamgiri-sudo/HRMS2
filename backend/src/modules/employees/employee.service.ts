@@ -187,14 +187,20 @@ export const employeeService = {
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.*,
-              COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
-              desig.designation_name,
-              dept.dept_name        AS department_name,
-              cc.cost_centre_name,
-              pm.process_name,
-              bm.branch_name,
-              CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
+      `SELECT
+         e.id, e.employee_code,
+         e.first_name, e.last_name,
+         e.mobile, e.avatar_url, e.photo_url,
+         e.date_of_joining, e.employment_status, e.employment_type,
+         e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
+         e.reporting_manager_id,
+         COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+         desig.designation_name,
+         dept.dept_name        AS department_name,
+         cc.cost_centre_name,
+         pm.process_name,
+         bm.branch_name,
+         CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
        FROM employees e
        LEFT JOIN designation_master  desig ON desig.id = e.designation_id
        LEFT JOIN department_master   dept  ON dept.id  = e.department_id

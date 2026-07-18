@@ -133,8 +133,24 @@ type BreakSummaryRow = {
 
 async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmployeeRow[]> {
   const userId = req.authUser!.id;
-  const isPlatformWide = await hasRole(userId, 'super_admin', 'admin', 'ceo');
-  const isScopedReader = await hasRole(userId, 'hr', 'wfm', 'manager', 'assistant_manager', 'tl');
+
+  // Single DB round-trip for all roles, then derive access flags in memory
+  const [roleRows] = await (db as any).execute(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
+     UNION
+     SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
+    [userId, userId]
+  ).catch(() => (db as any).execute(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+    [userId]
+  ));
+  const userRoleSet = new Set<string>(
+    (roleRows as { role_key: string }[]).map((r) => String(r.role_key ?? '').trim().toLowerCase()).filter(Boolean)
+  );
+  const hasAdminBypass = userRoleSet.has('super_admin') || userRoleSet.has('admin');
+  const isPlatformWide = hasAdminBypass || userRoleSet.has('ceo');
+  const isScopedReader = hasAdminBypass || ['hr', 'wfm', 'manager', 'assistant_manager', 'tl'].some((r) => userRoleSet.has(r));
+
   const callerEmp = await getEmployeeForUser(userId);
 
   const where: string[] = ['e.active_status = 1'];
@@ -434,15 +450,15 @@ async function computeNcosecMonthlySummary(employeeId: string, month: string) {
   return summary;
 }
 
-// ── Attendance Rules (Admin/HR CRUD + Simulator) ──────────────────────────────
+// Attendance Rules (Admin/HR CRUD + Simulator)
 
-// GET /rules — list all rule configs
+// GET /rules - list all rule configs
 router.get('/rules', h(async (req, res) => {
   const data = await attendanceEngineService.listRules();
   return res.json({ success: true, data });
 }));
 
-// GET /rules/resolve — simulate which rule applies
+// GET /rules/resolve - simulate which rule applies
 router.get('/rules/resolve', h(async (req, res) => {
   const { designationId, processId, branchId } = req.query as Record<string, string>;
   const date = (req.query.date as string) || new Date().toISOString().split('T')[0]!;
@@ -452,7 +468,7 @@ router.get('/rules/resolve', h(async (req, res) => {
   return res.json({ success: true, data: rule });
 }));
 
-// POST /rules — create new rule (admin only)
+// POST /rules - create new rule (admin only)
 router.post('/rules', requireRole('admin'), h(async (req, res) => {
   const schema = z.object({
     rule_name:          z.string().min(1).max(255),
@@ -475,7 +491,7 @@ router.post('/rules', requireRole('admin'), h(async (req, res) => {
   return res.status(201).json({ success: true, data });
 }));
 
-// PATCH /rules/:id — update rule (admin only)
+// PATCH /rules/:id - update rule (admin only)
 router.patch('/rules/:id', requireRole('admin'), h(async (req, res) => {
   const schema = z.object({
     rule_name:         z.string().min(1).max(255).optional(),
@@ -493,15 +509,15 @@ router.patch('/rules/:id', requireRole('admin'), h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
-// DELETE /rules/:id — deactivate rule (admin only)
+// DELETE /rules/:id - deactivate rule (admin only)
 router.delete('/rules/:id', requireRole('admin'), h(async (req, res) => {
   await attendanceEngineService.deactivateRule(req.params.id);
   return res.status(204).send();
 }));
 
-// ── Attendance Processing ─────────────────────────────────────────────────────
+// Attendance Processing
 
-// POST /process — manual trigger for a date (admin, hr, wfm)
+// POST /process - manual trigger for a date (admin, hr, wfm)
 router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) => {
   const { date } = req.body as { date?: string };
   const processDate = date || (() => {
@@ -511,7 +527,7 @@ router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) =>
   return res.json({ success: true, data });
 }));
 
-// GET /daily — list records with filters
+// GET /daily - list records with filters
 router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isPrivileged = await hasRole(userId, 'super_admin', 'admin', 'hr', 'wfm', 'manager', 'payroll_head', 'payroll_admin');
@@ -545,7 +561,7 @@ router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
   return res.json({ success: true, ...data });
 }));
 
-// GET /ncosec-monthly — direct COSEC monthly view with HRMS scope and break enrichment.
+// GET /ncosec-monthly - direct COSEC monthly view with HRMS scope and break enrichment.
 router.get('/ncosec-monthly', h(async (req: AuthenticatedRequest, res: Response) => {
   const page = parsePositiveInt(req.query.page, 1, 100000);
   const limit = parsePositiveInt(req.query.limit, 500, 500);
@@ -588,7 +604,7 @@ router.get('/ncosec-monthly', h(async (req: AuthenticatedRequest, res: Response)
   });
 }));
 
-// GET /today-live — lightweight live punch + break summary lookup for the current user.
+// GET /today-live - lightweight live punch + break summary lookup for the current user.
 router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => {
   const emp = await getEmployeeForUser(req.authUser!.id);
   if (!emp) return res.status(403).json({ success: false, error: 'No employee record' });
@@ -618,7 +634,7 @@ router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => 
   }
 
   try {
-    const live = await withTimeout(getRealTimePunchesToday(emp.id), 2500, 'today-live realtime lookup');
+    const live = await withTimeout(getRealTimePunchesToday(emp.id), 5000, 'today-live realtime lookup');
     if (live) {
       return res.json({
         success: true,
@@ -632,6 +648,28 @@ router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => 
     }
   } catch (error) {
     console.warn('[attendance] today-live realtime lookup failed, falling back to local biometric log:', error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const mappings = await getBulkCosecMappings([emp.id]);
+    const monthlyRecords = await getMonthlyAttendanceFromNcosec(mappings, shiftDate, shiftDate);
+    const directRecord = monthlyRecords.find((record) => record.record_date === shiftDate) ?? null;
+    if (directRecord) {
+      return res.json({
+        success: true,
+        data: {
+          punch_date: directRecord.record_date,
+          first_punch_in: directRecord.clock_in_time,
+          last_punch_out: directRecord.clock_out_time,
+          raw_minutes: Number(directRecord.raw_minutes ?? 0),
+          total_punches: directRecord.clock_out_time ? 2 : directRecord.clock_in_time ? 1 : 0,
+          source: 'biometric_live',
+          break_summary: breakSummary,
+        },
+      });
+    }
+  } catch (error) {
+    console.warn('[attendance] today-live monthly fallback failed, falling back to local biometric log:', error instanceof Error ? error.message : String(error));
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -680,7 +718,7 @@ router.get('/today-live', h(async (req: AuthenticatedRequest, res: Response) => 
   return res.json({ success: true, data: null });
 }));
 
-// GET /daily/:employeeId/:date — single record
+// GET /daily/:employeeId/:date - single record
 router.get('/daily/:employeeId/:date', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const targetId = req.params.employeeId;
@@ -696,7 +734,7 @@ router.get('/daily/:employeeId/:date', h(async (req: AuthenticatedRequest, res: 
   return res.json({ success: true, data: record });
 }));
 
-// PATCH /daily/:employeeId/:date — WFM correction + lock
+// PATCH /daily/:employeeId/:date - WFM correction + lock
 router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(async (req, res) => {
   const schema = z.object({
     attendanceStatus: z.enum(['present','half_day','absent','leave_approved','holiday','week_off','unreconciled']),
@@ -733,7 +771,7 @@ router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(as
   return res.json({ success: true, data, message: 'Attendance record corrected and locked' });
 }));
 
-// GET /summary/:employeeId/:month — monthly summary
+// GET /summary/:employeeId/:month - monthly summary
 router.get('/summary/:employeeId/:month', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const targetId = req.params.employeeId;
@@ -751,7 +789,7 @@ router.get('/summary/:employeeId/:month', h(async (req: AuthenticatedRequest, re
 // POST /clock-in
 router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  // Security: always derive employee_id from auth token — never trust body
+  // Security: always derive employee_id from auth token - never trust body
   const emp = await getEmployeeForUser(userId);
   if (!emp) return res.status(403).json({ success: false, error: 'No employee record for authenticated user' });
   const employee_id = emp.id;
@@ -851,3 +889,4 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
 }));
 
 export { router as attendanceEngineRouter };
+

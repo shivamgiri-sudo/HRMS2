@@ -315,6 +315,13 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const conn = await db.getConnection();
   await conn.beginTransaction();
 
+  // Batch write accumulators — populated during the calculation loop, flushed after it.
+  // Only writes that are never read back within the same employee iteration are safe to batch.
+  const batchPrepLines:    unknown[][] = [];
+  const batchComponents:   unknown[][] = [];
+  const batchAdvUpdates:   { id: string; newRecovered: number; newStatus: string }[] = [];
+  const batchAuditRows:    unknown[][] = [];
+
   try {
   for (const emp of employees) {
     const monthStart = `${run.run_month}-01`;
@@ -760,57 +767,20 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
     const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
-    // 6. Upsert prep line with extended columns
+    // 6. Accumulate prep line for batch upsert after loop
     const prepLineId = randomUUID();
-    await conn.execute(
-      `INSERT INTO salary_prep_line
-         (id, run_id, employee_id, employee_code,
-          working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
-          gross_salary, gross_before_lwp, total_deductions, net_salary,
-          basic, hra, special_allowance,
-          pf_employee, pf_employer, esic_employee, esic_employer,
-          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
-          loan_emi,
-          paid_working_days, eligible_weekoff_days, eligible_holiday_days,
-          final_payable_days, active_calendar_days, holiday_work_extra_payout,
-          other_deductions,
-          attendance_data_source,
-          status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
-       ON DUPLICATE KEY UPDATE
-         working_days = VALUES(working_days), present_days = VALUES(present_days),
-         lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
-         gross_before_lwp = VALUES(gross_before_lwp),
-         total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
-         basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
-         pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
-         esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
-         professional_tax = VALUES(professional_tax),
-         tds = VALUES(tds), tds_amount = VALUES(tds_amount),
-         lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
-         loan_emi = VALUES(loan_emi),
-         paid_working_days = VALUES(paid_working_days),
-         eligible_weekoff_days = VALUES(eligible_weekoff_days),
-         eligible_holiday_days = VALUES(eligible_holiday_days),
-         final_payable_days = VALUES(final_payable_days),
-         active_calendar_days = VALUES(active_calendar_days),
-         holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
-         other_deductions = VALUES(other_deductions),
-         attendance_data_source = VALUES(attendance_data_source),
-         status = 'calculated'`,
-      [
-        prepLineId, runId, emp.employee_id, emp.employee_code,
-        att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
-        calc.gross_salary, grossMonthly, totalDedFinal, netPayFinal,
-        calc.basic, calc.hra, calc.special_allowance,
-        calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
-        calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
-        loanEmi,
-        effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
-        miscDeductions,
-        hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
-      ]
-    );
+    batchPrepLines.push([
+      prepLineId, runId, emp.employee_id, emp.employee_code,
+      att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
+      calc.gross_salary, grossMonthly, totalDedFinal, netPayFinal,
+      calc.basic, calc.hra, calc.special_allowance,
+      calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
+      calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
+      loanEmi,
+      effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
+      miscDeductions,
+      hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
+    ]);
 
     // 6b. Insert component-level breakdown for payslip display
     // Use actual fixed component amounts from salary_structure_component when available
@@ -842,52 +812,31 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         { code: "PA", name: "Personal Allowance", amount: pa },
       );
     }
+    // 6b. Accumulate component rows for batch insert
     for (const comp of payslipEarnings) {
       if (comp.amount <= 0) continue;
-      await conn.execute(
-        `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'structure', 1)
-         ON DUPLICATE KEY UPDATE
-           amount = VALUES(amount), source = VALUES(source), taxable = VALUES(taxable)`,
-        [randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, comp.amount]
-      );
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, 'earning', comp.amount, 'structure', 1]);
     }
 
-    // Insert statutory deduction components for payslip display
     const statutoryDeductions = [
-      { code: "PF_EMPLOYEE", name: "Provident Fund (Employee)", amount: calc.pf_employee },
-      { code: "ESIC_EMPLOYEE", name: "ESI (Employee)", amount: calc.esic_employee },
-      { code: "PROFESSIONAL_TAX", name: "Professional Tax", amount: calc.professional_tax },
-      { code: "TDS", name: "Income Tax (TDS)", amount: tdsMonthly },
-      { code: "LWP_DEDUCTION", name: "LWP / Leave Without Pay", amount: lwpDeduction },
-      { code: "ADVANCE_RECOVERY", name: "Advance Recovery", amount: advanceRecovery },
-      { code: "LOAN_EMI", name: "Loan EMI", amount: loanEmi },
+      { code: "PF_EMPLOYEE",       name: "Provident Fund (Employee)",    amount: calc.pf_employee },
+      { code: "ESIC_EMPLOYEE",     name: "ESI (Employee)",               amount: calc.esic_employee },
+      { code: "PROFESSIONAL_TAX",  name: "Professional Tax",             amount: calc.professional_tax },
+      { code: "TDS",               name: "Income Tax (TDS)",             amount: tdsMonthly },
+      { code: "LWP_DEDUCTION",     name: "LWP / Leave Without Pay",      amount: lwpDeduction },
+      { code: "ADVANCE_RECOVERY",  name: "Advance Recovery",             amount: advanceRecovery },
+      { code: "LOAN_EMI",          name: "Loan EMI",                     amount: loanEmi },
     ];
     for (const ded of statutoryDeductions) {
       if (ded.amount <= 0) continue;
-      await conn.execute(
-        `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'statutory', 0)
-         ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
-        [randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, ded.amount]
-      );
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'statutory', 0]);
     }
 
-    // Insert per-type custom deduction components for payslip breakdown
     for (const ded of miscComponents) {
-      await conn.execute(
-        `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'custom_deduction', 0)
-         ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
-        [randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, ded.amount]
-      );
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'custom_deduction', 0]);
     }
 
-    // Step 10b: Update advance recovery ledger — accumulate recovered_amount per run,
-    // flip status to 'recovered' when fully paid so the deduction stops in future runs.
+    // Step 10b: Read advance state now (needed to compute newRecovered); defer the UPDATE to batch after loop.
     if (advanceRecovery > 0) {
       const [activeAdvances] = await conn.execute<RowDataPacket[]>(
         `SELECT id, amount, recovery_months, COALESCE(recovered_amount, 0) AS recovered_amount
@@ -899,22 +848,14 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         const installment = Math.round((adv.amount / Math.max(1, adv.recovery_months)) * 100) / 100;
         const newRecovered = Math.min(Number(adv.recovered_amount) + installment, Number(adv.amount));
         const newStatus = newRecovered >= Number(adv.amount) ? "recovered" : "active";
-        await conn.execute(
-          `UPDATE salary_advance_log
-              SET recovered_amount = ?,
-                  status = ?
-            WHERE id = ?`,
-          [newRecovered, newStatus, adv.id]
-        );
+        batchAdvUpdates.push({ id: adv.id, newRecovered, newStatus });
       }
     }
 
-    // Step 11: Audit log per employee
-    await conn.execute(
-      `INSERT INTO sensitive_action_log
-         (id, actor_user_id, actor_role, action_type, module_key, entity_type, entity_id, old_value_json, new_value_json, ip_address, user_agent)
-       VALUES (UUID(), 'system', 'payroll-engine', 'payroll_calculation', 'payroll', 'salary_prep_line', ?, NULL, ?, '127.0.0.1', 'payroll-engine')`,
-      [emp.employee_id, JSON.stringify({
+    // Step 11: Accumulate audit row for batch insert
+    batchAuditRows.push([
+      emp.employee_id,
+      JSON.stringify({
         run_id: runId,
         attendance_source: isOpsExecutive ? 'APR/dialler' : 'biometric',
         paid_base: effectivePaidBase,
@@ -925,13 +866,96 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         leave_reversed: reversalResult.daysReversed,
         gross: grossAfterLwp,
         net: netPayFinal,
-      })]
-    );
+      }),
+    ]);
 
     totalGross += calc.gross_salary;
     totalDed   += totalDedFinal;
     totalNet   += netPayFinal;
   }
+
+  // ── Batch flush ────────────────────────────────────────────────────────────
+  // All writes accumulated during the loop are issued here in multi-row batches,
+  // replacing the N individual round-trips that were in the loop body.
+
+  // Flush salary_prep_line rows
+  if (batchPrepLines.length > 0) {
+    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\')').join(',');
+    await conn.execute(
+      `INSERT INTO salary_prep_line
+         (id, run_id, employee_id, employee_code,
+          working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
+          gross_salary, gross_before_lwp, total_deductions, net_salary,
+          basic, hra, special_allowance,
+          pf_employee, pf_employer, esic_employee, esic_employer,
+          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
+          loan_emi,
+          paid_working_days, eligible_weekoff_days, eligible_holiday_days,
+          final_payable_days, active_calendar_days, holiday_work_extra_payout,
+          other_deductions,
+          attendance_data_source,
+          status)
+       VALUES ${placeholders}
+       ON DUPLICATE KEY UPDATE
+         working_days = VALUES(working_days), present_days = VALUES(present_days),
+         lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
+         gross_before_lwp = VALUES(gross_before_lwp),
+         total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
+         basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
+         pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
+         esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
+         professional_tax = VALUES(professional_tax),
+         tds = VALUES(tds), tds_amount = VALUES(tds_amount),
+         lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         loan_emi = VALUES(loan_emi),
+         paid_working_days = VALUES(paid_working_days),
+         eligible_weekoff_days = VALUES(eligible_weekoff_days),
+         eligible_holiday_days = VALUES(eligible_holiday_days),
+         final_payable_days = VALUES(final_payable_days),
+         active_calendar_days = VALUES(active_calendar_days),
+         holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
+         other_deductions = VALUES(other_deductions),
+         attendance_data_source = VALUES(attendance_data_source),
+         status = 'calculated'`,
+      batchPrepLines.flat()
+    );
+  }
+
+  // Flush salary_prep_line_component rows
+  if (batchComponents.length > 0) {
+    const CHUNK = 200;
+    for (let i = 0; i < batchComponents.length; i += CHUNK) {
+      const chunk = batchComponents.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+      await conn.execute(
+        `INSERT INTO salary_prep_line_component
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+         VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount), source = VALUES(source), taxable = VALUES(taxable)`,
+        chunk.flat()
+      );
+    }
+  }
+
+  // Flush advance log updates
+  for (const upd of batchAdvUpdates) {
+    await conn.execute(
+      `UPDATE salary_advance_log SET recovered_amount = ?, status = ? WHERE id = ?`,
+      [upd.newRecovered, upd.newStatus, upd.id]
+    );
+  }
+
+  // Flush audit rows
+  if (batchAuditRows.length > 0) {
+    const placeholders = batchAuditRows.map(() => `(UUID(), 'system', 'payroll-engine', 'payroll_calculation', 'payroll', 'salary_prep_line', ?, NULL, ?, '127.0.0.1', 'payroll-engine')`).join(',');
+    await conn.execute(
+      `INSERT INTO sensitive_action_log
+         (id, actor_user_id, actor_role, action_type, module_key, entity_type, entity_id, old_value_json, new_value_json, ip_address, user_agent)
+       VALUES ${placeholders}`,
+      batchAuditRows.flat()
+    );
+  }
+  // ── End batch flush ────────────────────────────────────────────────────────
 
   // 7a. Apply manual TDS entries (only when tds_mode = 'manual')
   // For each row in salary_run_manual_tds, SET tds to the manual amount (not additive)

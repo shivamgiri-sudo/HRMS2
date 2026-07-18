@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { format, startOfMonth, addMonths, subMonths } from "date-fns";
-import { Calendar, Table, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar, Table, ChevronLeft, ChevronRight, Radio, Fingerprint } from "lucide-react";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAttendanceDailyRecords, useAttendanceSummary } from "@/hooks/useAttendanceHub";
@@ -16,6 +16,12 @@ const STATUS_COLORS: Record<string, string> = {
   late:           "bg-yellow-100 text-yellow-800",
 };
 
+// 'dialler' = APR/dialler-based; 'biometric' = COSEC biometric
+const SOURCE_LABELS: Record<string, { label: string; cls: string }> = {
+  biometric: { label: "Biometric", cls: "bg-slate-100 text-slate-600" },
+  dialler:   { label: "APR",       cls: "bg-indigo-100 text-indigo-700" },
+};
+
 function fmtTime(t: string | null) {
   if (!t) return "—";
   return t.slice(0, 5);
@@ -28,22 +34,40 @@ function fmtMins(m: number | null) {
   return `${h}h ${String(min).padStart(2, "0")}m`;
 }
 
+type SourceFilter = "all" | "biometric" | "dialler";
+
 interface Props { employeeId: string; }
 
 export function AttendanceTab({ employeeId }: Props) {
   const [viewMode, setViewMode] = useState<"calendar" | "table">("calendar");
   const [currentMonth, setCurrentMonth] = useState<Date>(startOfMonth(new Date()));
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
-  const monthStr = format(currentMonth, "yyyy-MM");
-  const monthStart = format(currentMonth, "yyyy-MM-01");
-  const monthEnd = format(
-    new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0),
-    "yyyy-MM-dd"
-  );
-  const monthLabel = format(currentMonth, "MMMM yyyy");
+  const { monthStr, monthStart, monthEnd, monthLabel } = useMemo(() => ({
+    monthStr:   format(currentMonth, "yyyy-MM"),
+    monthStart: format(currentMonth, "yyyy-MM-01"),
+    monthEnd:   format(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0), "yyyy-MM-dd"),
+    monthLabel: format(currentMonth, "MMMM yyyy"),
+  }), [currentMonth]);
 
   const { data: summary, isLoading: summaryLoading } = useAttendanceSummary(employeeId, monthStr);
-  const { data: dailyRecords = [], isLoading: dailyLoading } = useAttendanceDailyRecords(employeeId, monthStart, monthEnd);
+  const { data: allDailyRecords = [], isLoading: dailyLoading } = useAttendanceDailyRecords(employeeId, monthStart, monthEnd);
+
+  const dailyRecords = useMemo(
+    () => sourceFilter === "all"
+      ? allDailyRecords
+      : allDailyRecords.filter(r => (r.source ?? "biometric") === sourceFilter),
+    [allDailyRecords, sourceFilter]
+  );
+
+  const { hasAPR, hasBiometric, hasMixedSources } = useMemo(() => {
+    const sourcesPresent = new Set(allDailyRecords.map(r => r.source ?? "biometric"));
+    return {
+      hasAPR: sourcesPresent.has("dialler"),
+      hasBiometric: sourcesPresent.has("biometric"),
+      hasMixedSources: sourcesPresent.has("dialler") && sourcesPresent.has("biometric"),
+    };
+  }, [allDailyRecords]);
 
   return (
     <div className="space-y-4">
@@ -75,24 +99,66 @@ export function AttendanceTab({ employeeId }: Props) {
           </button>
         </div>
 
-        {/* View toggle */}
-        <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setViewMode("calendar")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "calendar" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50"}`}
-          >
-            <Calendar className="h-3.5 w-3.5" />
-            Calendar
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("table")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "table" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50"}`}
-          >
-            <Table className="h-3.5 w-3.5" />
-            Tabular
-          </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Source toggle — show only when there's actual data */}
+          {(hasAPR || hasBiometric) && (
+            <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setSourceFilter("all")}
+                className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium transition-colors ${sourceFilter === "all" ? "bg-slate-100 text-slate-800" : "text-slate-500 hover:bg-slate-50"}`}
+              >
+                All
+              </button>
+              {hasBiometric && (
+                <button
+                  type="button"
+                  onClick={() => setSourceFilter("biometric")}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-slate-200 ${sourceFilter === "biometric" ? "bg-slate-100 text-slate-800" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                  <Fingerprint className="h-3 w-3" />
+                  Biometric
+                </button>
+              )}
+              {hasAPR && (
+                <button
+                  type="button"
+                  onClick={() => setSourceFilter("dialler")}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium transition-colors border-l border-slate-200 ${sourceFilter === "dialler" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50"}`}
+                >
+                  <Radio className="h-3 w-3" />
+                  APR
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Mixed source warning */}
+          {hasMixedSources && sourceFilter === "all" && (
+            <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              Mixed sources this month
+            </span>
+          )}
+
+          {/* View toggle */}
+          <div className="flex rounded-lg border border-slate-200 bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setViewMode("calendar")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "calendar" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50"}`}
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              Calendar
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l border-slate-200 ${viewMode === "table" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50"}`}
+            >
+              <Table className="h-3.5 w-3.5" />
+              Tabular
+            </button>
+          </div>
         </div>
       </div>
 
@@ -136,7 +202,10 @@ export function AttendanceTab({ employeeId }: Props) {
               {Array.from({ length: 10 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}
             </div>
           ) : dailyRecords.length === 0 ? (
-            <div className="py-12 text-center text-sm text-slate-500">No attendance records for {monthLabel}.</div>
+            <div className="py-12 text-center text-sm text-slate-500">
+              No attendance records
+              {sourceFilter !== "all" ? ` from ${sourceFilter === "dialler" ? "APR" : "Biometric"} source` : ""} for {monthLabel}.
+            </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -156,6 +225,8 @@ export function AttendanceTab({ employeeId }: Props) {
                   const dayName = d.toLocaleString("en-IN", { weekday: "short" });
                   const statusKey = r.status ?? "unknown";
                   const statusCls = STATUS_COLORS[statusKey] ?? "bg-slate-100 text-slate-600";
+                  const src = (r.source ?? "biometric") as string;
+                  const srcMeta = SOURCE_LABELS[src] ?? { label: src, cls: "bg-slate-100 text-slate-500" };
                   return (
                     <tr key={r.date} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-2.5 font-mono text-xs text-slate-700">{r.date?.slice(0, 10)}</td>
@@ -168,7 +239,11 @@ export function AttendanceTab({ employeeId }: Props) {
                       <td className="px-4 py-2.5 text-xs text-slate-600">{fmtTime(r.clock_in)}</td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">{fmtTime(r.clock_out)}</td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">{fmtMins(r.raw_minutes)}</td>
-                      <td className="px-4 py-2.5 text-[10px] text-slate-400 capitalize">{r.source ?? "—"}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold ${srcMeta.cls}`}>
+                          {srcMeta.label}
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}
