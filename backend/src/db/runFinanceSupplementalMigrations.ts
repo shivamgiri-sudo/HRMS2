@@ -20,6 +20,7 @@ const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "413_vendor_payment_transaction_ledger.sql",
   "414_finance_grn_sequence.sql",
   "415_bpo_pnl_revenue_cost_model.sql",
+  "416_smart_grn_allocation_document_intelligence.sql",
 ] as const;
 
 export async function runFinanceSupplementalMigrations() {
