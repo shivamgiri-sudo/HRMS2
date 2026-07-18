@@ -44,3 +44,45 @@ Task 7: Complete (commit 7c2a7e8a, review clean)
   - src/types/joiningDocumentsTracker.ts created
   - 9 exports: 5 interfaces, 1 union type, 2 const maps, 1 helper function
   - Build passing, all Tailwind tokens correct
+
+---
+
+# Payroll Hardening Plan
+
+Plan: docs/superpowers/plans/2026-07-18-payroll-hardening.md
+Started: 2026-07-18
+Branch base commit: 793df940
+
+## Tasks
+
+Task 1: Complete (commit 5d155ba8, review clean)
+  - GET /api/payroll/signoff/runs/:runId/tds-summary added to payroll-signoff.routes.ts
+  - tdsSummaryQuery + TDS Summary Card added to SignoffTab in Payroll.tsx
+  - 4-column grid: Total TDS, Employees with TDS, Avg TDS, Regime N/O
+Task 2: Complete (commit 544185e9, review clean)
+  - GET /api/exit/ff/:exitRequestId/outstanding-advances added to exit.routes.ts
+  - advances state + useEffect fetch + amber info box added to FfSettlementPanel
+  - "Use this amount" explicit click only — no silent field override
+Task 3: Complete (commit c43b966b, review clean)
+  - markDisbursedMut + Mark as Disbursed button added to SignoffTab in Payroll.tsx
+  - Visible only: locked + finance_approved + CEO condition met + role check
+  - Build fix: useDebounce + useTodaySummary added to useAttendanceHub.ts (commit 783d6d06)
+Task 4: Complete — build clean (vite built in 47.45s, 0 errors; backend tsc 0 errors)
+  - Awaiting user push approval
+
+---
+
+# Company Feed Plan
+
+Plan: docs/superpowers/plans/2026-07-18-company-feed.md
+Started: 2026-07-18
+Branch base commit: f50da6fb
+
+## Tasks
+
+Task 1: In progress
+  - Add company feed database foundation
+  - Initial implementer added migration, bootstrap manifest, and contract test
+  - Reviewer found Important blocker: runtime manifest missing `451_company_feed_foundation.sql`
+  - Fix loop added `backend/src/db/runPendingMigrations.ts` entry and strengthened manifest coverage test
+  - Review clean: spec PASS, quality PASS, verdict ACCEPT
