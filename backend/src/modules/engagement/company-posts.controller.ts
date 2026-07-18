@@ -33,6 +33,10 @@ function getActorUserId(req: AuthenticatedRequest): string {
   return req.authUser?.id ?? "";
 }
 
+function requestString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 export const companyPostsController = {
   async listFeed(_req: AuthenticatedRequest, res: Response) {
     return res.json({ success: true, data: await listApprovedCompanyFeed() });
@@ -96,7 +100,7 @@ export const companyPostsController = {
   async remove(req: AuthenticatedRequest, res: Response) {
     const parsed = DeleteCompanyPostSchema.safeParse({
       post_id: req.params.id,
-      reason: req.body.reason,
+      reason: requestString(req.body?.reason) ?? requestString(req.query.reason),
     });
     if (!parsed.success) {
       return res.status(400).json({ success: false, error: validationErrorMessage(parsed.error) });

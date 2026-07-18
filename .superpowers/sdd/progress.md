@@ -110,3 +110,10 @@ Task 5: Complete
   - Fresh local verification:
     - `npx vitest run src/modules/engagement/__tests__/company-posts.routes.test.ts` -> 14/14 passing
     - `npx vitest run src/modules/engagement/__tests__/company-posts.service.test.ts` -> 30/30 passing
+Task 6: Complete
+  - Build shared frontend company-feed data hook layer
+  - Added `useCompanyFeed`, `useMyCompanyPosts`, `useApprovalQueue`, creator-access hooks, and create/approve/reject/delete/grant/revoke mutations
+  - Review hardening aligned delete reason transport with current `hrmsApi.delete()` behavior
+  - Review hardening fixed mutation invalidation so filtered/paginated company-feed queries are refreshed correctly
+  - Fresh local verification:
+    - `npm run typecheck` -> PASS
