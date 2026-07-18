@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { bpoPnlService } from "./bpo-pnl.service.js";
@@ -60,31 +60,48 @@ async function applyExpenseMasterBucket(
   if (!EXPENSE_BUCKETS.has(pnlBucket)) {
     throw new Error(`P&L bucket ${pnlBucket} cannot be applied to an expense master`);
   }
-  if (!(await tableExists("finance_expense_sub_head_master"))) {
-    throw new Error("Finance expense sub-head master is not available");
+  if (
+    !(await tableExists("finance_expense_sub_head_master"))
+    || !(await tableExists("finance_expense_head_master"))
+  ) {
+    throw new Error("Finance expense Head/Sub-Head master is not available");
   }
-  const treatment = expenseTreatment(pnlBucket);
-  let result: ResultSetHeader;
 
+  const matchRows = scopeType === "expense_sub_head"
+    ? await queryRows<RowDataPacket>(
+        `SELECT sh.id
+           FROM finance_expense_sub_head_master sh
+          WHERE sh.id = ? OR LOWER(sh.sub_head_code) = LOWER(?) OR LOWER(sh.sub_head_name) = LOWER(?)
+          LIMIT 1`,
+        [scopeKey, scopeKey, scopeKey]
+      )
+    : await queryRows<RowDataPacket>(
+        `SELECT h.id
+           FROM finance_expense_head_master h
+          WHERE h.id = ? OR LOWER(h.head_code) = LOWER(?) OR LOWER(h.head_name) = LOWER(?)
+          LIMIT 1`,
+        [scopeKey, scopeKey, scopeKey]
+      );
+  if (!matchRows.length) {
+    throw new Error(`No finance ${scopeType.replace("_", " ")} matched ${scopeKey}`);
+  }
+
+  const treatment = expenseTreatment(pnlBucket);
   if (scopeType === "expense_sub_head") {
-    [result] = await db.execute<ResultSetHeader>(
+    await db.execute(
       `UPDATE finance_expense_sub_head_master
           SET pnl_bucket = ?, pnl_treatment = ?, capex_opex = ?, updated_by = ?
         WHERE id = ? OR LOWER(sub_head_code) = LOWER(?) OR LOWER(sub_head_name) = LOWER(?)`,
       [pnlBucket, treatment.pnlTreatment, treatment.capexOpex, userId, scopeKey, scopeKey, scopeKey]
     );
   } else {
-    [result] = await db.execute<ResultSetHeader>(
+    await db.execute(
       `UPDATE finance_expense_sub_head_master sh
        JOIN finance_expense_head_master h ON h.id = sh.head_id
           SET sh.pnl_bucket = ?, sh.pnl_treatment = ?, sh.capex_opex = ?, sh.updated_by = ?
         WHERE h.id = ? OR LOWER(h.head_code) = LOWER(?) OR LOWER(h.head_name) = LOWER(?)`,
       [pnlBucket, treatment.pnlTreatment, treatment.capexOpex, userId, scopeKey, scopeKey, scopeKey]
     );
-  }
-
-  if (result.affectedRows < 1) {
-    throw new Error(`No finance ${scopeType.replace("_", " ")} matched ${scopeKey}`);
   }
 }
 
