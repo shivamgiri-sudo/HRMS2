@@ -116,6 +116,7 @@ jobs:
           src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
           src/modules/finance/__tests__/finance.schema-contract.test.ts
+          src/modules/finance/__tests__/budget-coverage.contract.test.ts
 
       - name: Build frontend
         run: npm run build
