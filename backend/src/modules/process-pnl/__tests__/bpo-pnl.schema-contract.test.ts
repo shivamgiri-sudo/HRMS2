@@ -61,7 +61,19 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(migration).toContain("DATE_FORMAT(COALESCE");
   });
 
-  it("registers the complete 415 to 417 finance sequence in automated and manual runners", () => {
+  it("keeps split-GRN P&L attribution at allocation level", () => {
+    const migration = backendFile("sql/418_grn_allocation_pnl_attribution.sql");
+    expect(migration).toContain("ALTER TABLE grn_cost_allocation ADD COLUMN pnl_bucket");
+    expect(migration).toContain("ALTER TABLE grn_cost_allocation ADD COLUMN recognition_period");
+    expect(migration).toContain("trg_grn_allocation_pnl_before_insert");
+    expect(migration).toContain("finance_expense_sub_head_master");
+    expect(migration).toContain("CREATE OR REPLACE VIEW vw_process_pnl_grn_allocation");
+    expect(migration).toContain("a.lifecycle_status = 'consumed'");
+    expect(migration).toContain("dsc_non_people");
+    expect(migration).toContain("bmc_non_people");
+  });
+
+  it("registers the complete 415 to 418 finance sequence in automated and manual runners", () => {
     const runner = backendFile("src/db/runFinanceSupplementalMigrations.ts");
     const manualRunners = [
       backendFile("sql/000_run_finance_supplemental.sql"),
@@ -71,6 +83,7 @@ describe("BPO Process P&L schema and API contract", () => {
       "415_bpo_pnl_revenue_cost_model.sql",
       "416_smart_grn_allocation_document_intelligence.sql",
       "417_budget_subhead_coverage_control.sql",
+      "418_grn_allocation_pnl_attribution.sql",
     ]) {
       expect(runner).toContain(`"${filename}"`);
       for (const manual of manualRunners) {
