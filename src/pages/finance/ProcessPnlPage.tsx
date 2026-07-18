@@ -162,7 +162,7 @@ export default function ProcessPnlPage() {
                     <Link to={`/finance/process-pnl/configuration?period=${period}`}>Configure contracts &amp; revenue logic</Link>
                   </Button>
                   <Button asChild variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">
-                    <Link to={`/finance/branch-budgets?period=${period}`}>Open branch budgets</Link>
+                    <Link to={`/finance/branch-budget?period=${period}`}>Open branch budgets</Link>
                   </Button>
                   <Button asChild variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10">
                     <Link to={`/finance/process-pnl/period-close?period=${period}`}>Period close &amp; sign-off</Link>
