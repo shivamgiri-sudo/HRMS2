@@ -5,6 +5,7 @@ import { getNcosecPool } from "../../db/ncosecDb.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
 import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { logger } from "../../lib/logger.js";
 
 export type PunchGroup = {
   cosecUserId: string;
@@ -641,6 +642,31 @@ export const cosecSyncService = {
             error: error instanceof Error ? error.message : String(error),
           });
         }
+      }
+
+      if (result.unmappedUsers.length > 0) {
+        logger.warn(
+          { unmappedCount: result.unmappedUsers.length, from, to, users: result.unmappedUsers.slice(0, 20) },
+          "[COSEC Sync] Unmapped COSEC user IDs — attendance data dropped for these employees. Ensure employee_code is linked in mas_hrms."
+        );
+        // Persist so ops team can query without reading log files
+        await db.execute(
+          `INSERT INTO integration_sync_run
+             (integration_key, started_at, completed_at, status, records_pulled, records_migrated,
+              records_failed, error_summary)
+           VALUES ('cosec_unmapped', ?, NOW(), 'warning', ?, 0, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             completed_at = NOW(),
+             records_pulled = VALUES(records_pulled),
+             records_failed = VALUES(records_failed),
+             error_summary = VALUES(error_summary)`,
+          [
+            new Date(),
+            result.unmappedUsers.length,
+            result.unmappedUsers.length,
+            `${result.unmappedUsers.length} unmapped COSEC user(s) for ${from}→${to}: ${result.unmappedUsers.slice(0, 5).map(u => u.cosecUserId).join(", ")}`,
+          ]
+        ).catch(() => { /* non-critical — don't mask the sync result */ });
       }
 
       lastSyncResult = result;

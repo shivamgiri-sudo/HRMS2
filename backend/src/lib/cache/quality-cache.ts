@@ -1,22 +1,25 @@
 /**
- * Quality Cache Wrapper
- * Redis-backed caching for quality dashboard APIs
- * TTL: 2-10 min per endpoint
+ * Quality Cache — in-memory LRU cache for quality dashboard APIs.
+ * TTL: 2-10 min per endpoint, max 200 entries (bounded, no memory leak).
  */
 
 import { logger } from '../logger.js';
 
 export type CacheValue = Record<string, unknown> | unknown[];
 
-/**
- * In-memory fallback cache for testing and environments without Redis
- */
+const MAX_ENTRIES = 200;
+
 class MemoryCache {
   private store = new Map<string, { value: CacheValue; expiresAt: number }>();
 
   async set(key: string, value: CacheValue, ttlSeconds: number): Promise<void> {
-    const expiresAt = Date.now() + ttlSeconds * 1000;
-    this.store.set(key, { value, expiresAt });
+    // Evict oldest entry when at capacity (simple FIFO approximation of LRU)
+    if (this.store.size >= MAX_ENTRIES && !this.store.has(key)) {
+      const oldestKey = this.store.keys().next().value;
+      if (oldestKey !== undefined) this.store.delete(oldestKey);
+    }
+    this.store.delete(key); // re-insert to update insertion order for FIFO eviction
+    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
   }
 
   async get<T extends CacheValue>(key: string): Promise<T | null> {
@@ -31,8 +34,9 @@ class MemoryCache {
 
   async invalidate(pattern: string): Promise<void> {
     const regex = new RegExp(`^${pattern.replace(/\*/g, '.*')}$`);
-    const keys = Array.from(this.store.keys()).filter(k => regex.test(k));
-    keys.forEach(k => this.store.delete(k));
+    for (const k of Array.from(this.store.keys())) {
+      if (regex.test(k)) this.store.delete(k);
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -56,7 +60,7 @@ export class QualityCache {
       this.isConnected = true;
       logger.info('Cache initialized (in-memory)');
     } catch (err) {
-      logger.error('Failed to initialize cache:', err);
+      logger.error({ err }, 'Failed to initialize cache');
     }
   }
 
@@ -66,7 +70,7 @@ export class QualityCache {
     try {
       await this.client.set(key, value, ttlSeconds);
     } catch (err) {
-      logger.error(`Cache set failed for ${key}:`, err);
+      logger.error({ err, key }, 'Cache set failed');
     }
   }
 
@@ -76,7 +80,7 @@ export class QualityCache {
     try {
       return await this.client.get<T>(key);
     } catch (err) {
-      logger.error(`Cache get failed for ${key}:`, err);
+      logger.error({ err, key }, 'Cache get failed');
       return null;
     }
   }
@@ -99,9 +103,9 @@ export class QualityCache {
 
     try {
       await this.client.invalidate(pattern);
-      logger.info(`Cache invalidated pattern ${pattern}`);
+      logger.info({ pattern }, 'Cache invalidated');
     } catch (err) {
-      logger.error(`Cache invalidate failed for pattern ${pattern}:`, err);
+      logger.error({ err, pattern }, 'Cache invalidate failed');
     }
   }
 

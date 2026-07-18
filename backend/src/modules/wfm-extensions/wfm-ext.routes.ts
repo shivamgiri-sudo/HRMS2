@@ -99,7 +99,7 @@ router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) 
   res.status(201).json({ success: true, data });
 }));
 
-router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "tl"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
   const status = String(req.body.status ?? req.body.action ?? "");
   if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "status/action must be approved or rejected" });
   await rosterSwapService.review(req.params.id, status as "approved" | "rejected", req.authUser!.id, req);
@@ -107,19 +107,19 @@ router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manag
 }));
 
 // ── Roster Conflicts ──────────────────────────────────────────────────────────
-router.get("/roster/conflicts", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "tl", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/roster/conflicts", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scope = await employeeScope(req.authUser!.id);
   const resolved = req.query.resolved !== undefined ? req.query.resolved === "true" : undefined;
   res.json({ success: true, data: await rosterConflictService.list({ ...(req.query as any), resolved, ...scope }) });
 }));
 
-router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "tl"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
   await rosterConflictService.resolve(req.params.id, req.authUser!.id, req);
   res.json({ success: true, ok: true });
 }));
 
 // ── Coverage / Shrinkage Snapshots ────────────────────────────────────────────
-router.get("/coverage", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "tl", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/coverage", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scope = await employeeScope(req.authUser!.id);
   res.json(await coverageService.summarize({ ...(req.query as any), ...scope }));
 }));

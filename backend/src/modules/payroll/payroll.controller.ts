@@ -24,7 +24,7 @@ export const payrollController = {
   async createStructure(req: Request, res: Response) {
     const parsed = createStructureSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.createStructure(parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.createStructure(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 
@@ -52,7 +52,7 @@ export const payrollController = {
   async createComponent(req: Request, res: Response) {
     const parsed = createComponentSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.createComponent(parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.createComponent(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 
@@ -93,7 +93,7 @@ export const payrollController = {
   async createRun(req: Request, res: Response) {
     const parsed = createRunSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.createRun(parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.createRun(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 
@@ -149,21 +149,24 @@ export const payrollController = {
   async updateRunStatus(req: Request, res: Response) {
     const parsed = updateRunStatusSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.updateRunStatus(req.params.id, parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.updateRunStatus(req.params.id, parsed.data, (req as any).authUser?.id ?? "system");
     res.json({ data });
   },
 
   // ─── Prep Lines ────────────────────────────────────────────────────────────
 
   async listLines(req: Request, res: Response) {
-    const data = await payrollService.listLines(req.params.id);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const search = (req.query.search as string) || undefined;
+    const data = await payrollService.listLines(req.params.id, page, limit, search);
     res.json({ data });
   },
 
   async updateLine(req: Request, res: Response) {
     const parsed = updatePrepLineSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.updateLine(req.params.id, parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.updateLine(req.params.id, parsed.data, (req as any).authUser?.id ?? "system");
     res.json({ data });
   },
 
@@ -188,7 +191,7 @@ export const payrollController = {
   async createAdvance(req: Request, res: Response) {
     const parsed = advanceSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await payrollService.createAdvance(parsed.data, (req as any).userId ?? "system");
+    const data = await payrollService.createAdvance(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 

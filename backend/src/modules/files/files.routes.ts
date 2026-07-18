@@ -14,6 +14,14 @@ import {
   auditCandidateFileAccess,
   findCandidateFileById,
 } from "../ats/candidate-file.service.js";
+import {
+  registerUpload,
+  findByStoredFilename,
+  softDelete,
+  issueDownloadToken,
+  consumeDownloadToken,
+  logDocumentAccess,
+} from "../document-vault/documentVault.service.js";
 
 // Use process.cwd() — resolves to backend/ in both dev and production (avoids dist/ path issue)
 export const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
@@ -206,6 +214,24 @@ router.post(
     const category = ((req.query.category as string) || req.body?.category || "misc")
       .replace(/[^a-zA-Z0-9_-]/g, "") || "misc";
     const url = `/api/files/${category}/${req.file.filename}`;
+
+    // Record in vault inventory (non-fatal: upload succeeds even if inventory insert fails)
+    try {
+      await registerUpload({
+        uploadedByUser: req.authUser!.id,
+        category,
+        storedFilename: req.file.filename,
+        originalFilename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        fileSizeBytes: req.file.size,
+        accessLevel: (req.body?.accessLevel as any) ?? "internal",
+        ownerEmployeeId: req.body?.ownerEmployeeId ?? undefined,
+        ownerCandidateId: req.body?.ownerCandidateId ?? undefined,
+      });
+    } catch (vaultErr) {
+      console.error("[documentVault] Failed to register upload in inventory:", vaultErr);
+    }
+
     res.status(201).json({
       success: true,
       url,
@@ -217,22 +243,106 @@ router.post(
   })
 );
 
-// GET /api/files/:category/:filename — serve file (authenticated users only)
-router.get(
-  "/:category/:filename",
+// POST /api/files/download-token — issue a short-lived download token for a vault item
+// Body: { storedFilename: string, category: string, ttlMinutes?: number, issuedFor?: string }
+router.post(
+  "/download-token",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
+    const { storedFilename, category, ttlMinutes, issuedFor } = req.body ?? {};
+    if (!storedFilename || !category) {
+      return res.status(400).json({ error: "storedFilename and category required" });
+    }
+    const item = await findByStoredFilename(storedFilename);
+    if (!item || item.category !== (category as string).replace(/[^a-zA-Z0-9_-]/g, "")) {
+      return res.status(404).json({ error: "File not found in vault" });
+    }
+    const result = await issueDownloadToken({
+      vaultItemId: item.id,
+      issuedTo: req.authUser!.id,
+      issuedFor: issuedFor ?? undefined,
+      ttlMinutes: ttlMinutes ? Number(ttlMinutes) : 15,
+    });
+    res.json({
+      token: result.rawToken,
+      expiresAt: result.expiresAt.toISOString(),
+    });
+  })
+);
+
+// GET /api/files/:category/:filename — serve file
+// Accepts either: session JWT (requireAuth) OR ?token=<short-lived-download-token>
+router.get(
+  "/:category/:filename",
+  h(async (req: AuthenticatedRequest, res: Response) => {
     const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
-    const safeFile = path.basename(req.params.filename); // strip any path traversal
+    const safeFile = path.basename(req.params.filename);
     const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
+
+    let actorUserId: string | undefined;
+    let tokenId: string | undefined;
+
+    // Check for short-lived download token first
+    const rawToken = req.query.token as string | undefined;
+    if (rawToken) {
+      const resolved = await consumeDownloadToken(rawToken);
+      if (!resolved) {
+        await logDocumentAccess({
+          storedPath: filePath,
+          actorType: "token",
+          action: "download",
+          accessResult: "denied",
+          denialReason: "Invalid, expired, or exhausted download token",
+          ipAddress: req.ip,
+          userAgent: req.get("user-agent") ?? undefined,
+        });
+        return res.status(403).json({ error: "Invalid or expired download token" });
+      }
+      actorUserId = resolved.issuedTo ?? undefined;
+      tokenId = resolved.tokenId;
+    } else {
+      // Fall back to session JWT
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      const user = authService.verifyAccessToken(authHeader.replace("Bearer ", "").trim());
+      if (!user) {
+        return res.status(401).json({ error: "Invalid session" });
+      }
+      actorUserId = user.id;
+    }
+
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
     }
+
+    // Look up vault item for audit logging (non-fatal if not in inventory)
+    const item = await findByStoredFilename(safeFile).catch(() => null);
+
+    await logDocumentAccess({
+      vaultItemId: item?.id,
+      storedPath: filePath,
+      actorUserId,
+      actorType: tokenId ? "token" : "employee",
+      action: req.query.download === "1" ? "download" : "view",
+      accessResult: "allowed",
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+      tokenId,
+    }).catch(err => console.error("[documentVault] audit log failed:", err));
+
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    if (req.query.download === "1") {
+      const dispName = item?.original_filename ?? safeFile;
+      res.set("Content-Disposition", `attachment; filename="${dispName}"`);
+    }
+    if (item?.mime_type) res.type(item.mime_type);
     res.sendFile(filePath);
   })
 );
 
-// DELETE /api/files/:category/:filename — delete file (admin/hr only)
+// DELETE /api/files/:category/:filename — soft-delete (admin/hr only)
 router.delete(
   "/:category/:filename",
   requireAuth,
@@ -244,6 +354,25 @@ router.delete(
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
     }
+
+    // Soft-delete in vault inventory
+    await softDelete(safeFile, req.authUser!.id).catch(err =>
+      console.error("[documentVault] soft-delete inventory update failed:", err)
+    );
+
+    // Log deletion
+    const item = await findByStoredFilename(safeFile).catch(() => null);
+    await logDocumentAccess({
+      vaultItemId: item?.id,
+      storedPath: filePath,
+      actorUserId: req.authUser!.id,
+      action: "delete",
+      accessResult: "allowed",
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    }).catch(() => {});
+
+    // Physical delete — still performed after soft-delete is recorded
     fs.unlinkSync(filePath);
     res.json({ success: true });
   })

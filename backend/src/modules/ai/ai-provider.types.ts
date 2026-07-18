@@ -73,6 +73,8 @@ export interface SafeAiProviderConfig {
   safetyConfig?: Record<string, unknown>;
   temperature?: number;
   maxOutputTokens?: number;
+  dailyRequestLimit?: number;
+  monthlyRequestLimit?: number;
 }
 
 export interface AiProviderTestResult {

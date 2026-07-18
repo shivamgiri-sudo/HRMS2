@@ -1,5 +1,15 @@
 import rateLimit from "express-rate-limit";
 
+/** 500 req/min per IP — global backstop applied before all routes */
+export const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === "/api/health",
+  message: { success: false, message: "Too many requests, please slow down" },
+});
+
 /** 300 req/min per IP — for paginated list endpoints (employees, payslips, reports) */
 export const listEndpointLimiter = rateLimit({
   windowMs: 60 * 1000,

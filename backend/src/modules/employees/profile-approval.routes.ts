@@ -11,7 +11,7 @@ router.use(requireAuth);
 const h = (fn: (req: any, res: Response) => Promise<any>) => (req: any, res: Response, next: any) => fn(req, res).catch(next);
 
 // GET /api/profile-approval/pending — list pending approvals for current user (HR/Payroll only)
-router.get("/pending", requireRole("admin", "hr", "payroll_hr", "branch_hr", "finance"), h(async (req: any, res: Response) => {
+router.get("/pending", requireRole("admin", "hr", "payroll_hr", "finance"), h(async (req: any, res: Response) => {
   const emp = await getEmployeeForUser(req.authUser?.id);
   if (!emp) return res.status(404).json({ success: false, error: "No employee record" });
 
@@ -20,7 +20,7 @@ router.get("/pending", requireRole("admin", "hr", "payroll_hr", "branch_hr", "fi
 }));
 
 // PATCH /api/profile-approval/:id/review — approve or reject an update request
-router.patch("/:id/review", requireRole("admin", "hr", "payroll_hr", "branch_hr", "finance"), h(async (req: any, res: Response) => {
+router.patch("/:id/review", requireRole("admin", "hr", "payroll_hr", "finance"), h(async (req: any, res: Response) => {
   const emp = await getEmployeeForUser(req.authUser?.id);
   if (!emp) return res.status(404).json({ success: false, error: "No employee record" });
 

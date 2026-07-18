@@ -112,8 +112,9 @@ async function resolveDirectLmsIdentity(
       `SELECT login_id
          FROM role_access_matrix
         WHERE active = 1
-          AND login_id = 'COORD-TEST'
-        LIMIT 1`
+          AND (login_id = ? OR login_id = ?)
+        LIMIT 1`,
+      [employeeCode, email]
     );
     if (rows[0]?.login_id) {
       return { userId: String(rows[0].login_id), userType: "coordinator" };
@@ -125,7 +126,7 @@ async function resolveDirectLmsIdentity(
         ORDER BY created_at ASC
         LIMIT 1`
     );
-    const loginId = String((fallbackRows[0]?.login_id ?? employeeCode) || email || "COORD-TEST");
+    const loginId = String(fallbackRows[0]?.login_id ?? employeeCode ?? email ?? "");
     return { userId: loginId, userType: "coordinator" };
   }
 
@@ -147,7 +148,7 @@ async function resolveDirectLmsIdentity(
       ORDER BY created_at ASC
       LIMIT 1`
   );
-  const employeeId = String((fallbackRows[0]?.employee_id ?? employeeCode) || email || "EMP1001");
+  const employeeId = String(fallbackRows[0]?.employee_id ?? employeeCode ?? email ?? "");
   return { userId: employeeId, userType: "trainee" };
 }
 
@@ -236,9 +237,13 @@ router.get("/batch-planner", requireRole("admin", "hr", "super_admin", "operatio
 }));
 
 router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response) => {
-  const portal = isLmsPortal(req.query.portal) ? req.query.portal : "admin";
+  const portal = isLmsPortal(req.query.portal) ? req.query.portal : "trainee";
   const ctx = await currentLmsContext(req, res);
   if (!ctx) return;
+
+  if (!env.LMS_API_URL) {
+    return res.status(503).json({ success: false, message: "LMS_API_URL not configured on HRMS backend" });
+  }
 
   if (!ctx.access.access[portal]) {
     return res.status(403).json({ success: false, message: `LMS access is not assigned for the ${portal} portal` });
@@ -411,7 +416,7 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
     WHERE lp.attrition_risk_signal = 'red'
     ORDER BY lp.readiness_score ASC
     LIMIT 20
-  `).catch(() => [] as RowDataPacket[]);
+  `).catch(() => [[] as RowDataPacket[], []] as const);
 
   const [byBatchRows] = await db.execute<RowDataPacket[]>(`
     SELECT lp.batch_no,
@@ -424,7 +429,7 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
     GROUP BY lp.batch_no
     ORDER BY lp.batch_no DESC
     LIMIT 20
-  `).catch(() => [] as RowDataPacket[]);
+  `).catch(() => [[] as RowDataPacket[], []] as const);
 
   const [perEmpRows] = await db.execute<RowDataPacket[]>(`
     SELECT

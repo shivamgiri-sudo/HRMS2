@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Users, Activity, AlertTriangle, Target, Clock, UserCheck, UserX, Home } from "lucide-react";
+import { Users, Activity, AlertTriangle, Target, Clock, UserCheck, UserX } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { HeroBanner } from "../widgets/HeroBanner";
 import { KpiRow } from "../widgets/KpiRow";
@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function OpsLayout() {
   const { firstName } = useDashboardUser();
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
   const { data: wfData, isLoading: wfLoading } = useQuery<any>({
     queryKey: ["workforce-dashboard"],
@@ -31,19 +32,24 @@ export function OpsLayout() {
     staleTime: 1000 * 60 * 2,
   });
 
+  const { data: liveData } = useQuery<any>({
+    queryKey: ["rta-live-summary", todayIST],
+    queryFn: () => hrmsApi.get(`/api/rta/live-summary?date=${todayIST}`),
+    staleTime: 1000 * 60 * 2,
+    refetchInterval: 1000 * 60 * 2,
+  });
+
   const summary = wfData?.data?.summary ?? {};
   const metrics = summaryData?.data?.metrics ?? {};
   const alerts: any[] = Array.isArray(alertsData?.data) ? alertsData.data : [];
+  const live = liveData?.data ?? liveData ?? {};
 
-  const total = summary.active_headcount ?? 0;
-  const attPct = summary.attendance_pct ?? 0;
-  const presentCount = Math.round((attPct / 100) * total);
-  // TODO: Replace fixed percentages with real WFM live data from /api/rta/live-summary or /api/wfm/attendance/today-live
-  // Current values are derived from fixed assumptions; should reflect actual daily breakdown
-  const lateCount = Math.round(total * 0.078);      // Placeholder: 7.8% of headcount
-  const absentCount = Math.round(total * 0.189);    // Placeholder: 18.9% of headcount
-  const onLeaveCount = Math.round(total * 0.018);   // Placeholder: 1.8% of headcount
-  const wfhCount = Math.round(total * 0.028);       // Placeholder: 2.8% of headcount
+  const total        = summary.active_headcount ?? 0;
+  const attPct       = summary.attendance_pct ?? 0;
+  const presentCount = Number(live.logged_in  ?? Math.round((attPct / 100) * total));
+  const lateCount    = Number(live.late_count ?? 0);
+  const absentCount  = Number(live.absent     ?? 0);
+  const onLeaveCount = 0; // populated after nightly reconciliation
 
   const kpiTiles = [
     {
@@ -86,13 +92,6 @@ export function OpsLayout() {
       helper: "Approved leave",
       icon: <AlertTriangle className="w-4 h-4" />,
       accent: "#8B5CF6",
-    },
-    {
-      label: "Working Remotely",
-      value: wfhCount,
-      helper: "WFH today",
-      icon: <Home className="w-4 h-4" />,
-      accent: "#14B8A6",
     },
   ];
 

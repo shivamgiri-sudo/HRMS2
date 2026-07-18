@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
 import * as fs from 'node:fs';
@@ -169,9 +170,20 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
 
     const offerId = offerRes.insertId.toString();
 
+    // Resolve offer defaults from policy engine (fallback to static defaults)
+    const [defaultProbation, defaultNotice] = await Promise.all([
+      getPolicyValue("ats", "offer_defaults", "probation_period_months", "3"),
+      getPolicyValue("ats", "offer_defaults", "notice_period_days", "30"),
+    ]);
+    const enrichedData = {
+      ...data,
+      probation_period: data.probation_period ?? Number(defaultProbation),
+      notice_period:    data.notice_period    ?? Number(defaultNotice),
+    };
+
     // Generate PDF
     const pdfBuffer = await generateOfferLetterPDF({
-      ...data,
+      ...enrichedData,
       salary_gross: salary.gross_salary,
       salary_ctc: ctc,
       salary_basic: salary.basic_salary,
@@ -268,8 +280,8 @@ async function generateOfferLetterPDF(data: OfferLetterData & {
         ['Department', data.department || 'Operations'],
         ['Branch', data.branch_name],
         ['Date of Joining', new Date(data.joining_date).toLocaleDateString('en-IN')],
-        ['Probation Period', `${data.probation_period || 3} months`],
-        ['Notice Period', `${data.notice_period || 30} days`],
+        ['Probation Period', `${data.probation_period} months`],
+        ['Notice Period', `${data.notice_period} days`],
         ['Working Hours', data.working_hours || '9 AM - 6 PM (Monday to Friday)'],
       ];
 

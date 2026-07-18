@@ -44,3 +44,76 @@ Task 7: Complete (commit 7c2a7e8a, review clean)
   - src/types/joiningDocumentsTracker.ts created
   - 9 exports: 5 interfaces, 1 union type, 2 const maps, 1 helper function
   - Build passing, all Tailwind tokens correct
+
+---
+
+# Payroll Hardening Plan
+
+Plan: docs/superpowers/plans/2026-07-18-payroll-hardening.md
+Started: 2026-07-18
+Branch base commit: 793df940
+
+## Tasks
+
+Task 1: Complete (commit 5d155ba8, review clean)
+  - GET /api/payroll/signoff/runs/:runId/tds-summary added to payroll-signoff.routes.ts
+  - tdsSummaryQuery + TDS Summary Card added to SignoffTab in Payroll.tsx
+  - 4-column grid: Total TDS, Employees with TDS, Avg TDS, Regime N/O
+Task 2: Complete (commit 544185e9, review clean)
+  - GET /api/exit/ff/:exitRequestId/outstanding-advances added to exit.routes.ts
+  - advances state + useEffect fetch + amber info box added to FfSettlementPanel
+  - "Use this amount" explicit click only — no silent field override
+Task 3: Complete (commit c43b966b, review clean)
+  - markDisbursedMut + Mark as Disbursed button added to SignoffTab in Payroll.tsx
+  - Visible only: locked + finance_approved + CEO condition met + role check
+  - Build fix: useDebounce + useTodaySummary added to useAttendanceHub.ts (commit 783d6d06)
+Task 4: Complete — build clean (vite built in 47.45s, 0 errors; backend tsc 0 errors)
+  - Awaiting user push approval
+
+---
+
+# Company Feed Plan
+
+Plan: docs/superpowers/plans/2026-07-18-company-feed.md
+Started: 2026-07-18
+Branch base commit: f50da6fb
+
+## Tasks
+
+Task 1: Complete (commit 5b277449, review clean after fix)
+  - Add company feed database foundation
+  - Initial implementer added migration, bootstrap manifest, and contract test
+  - Reviewer found Important blocker: runtime manifest missing `451_company_feed_foundation.sql`
+  - Fix loop added `backend/src/db/runPendingMigrations.ts` entry and strengthened manifest coverage test
+  - Review clean: spec PASS, quality PASS, verdict ACCEPT
+Task 2: Complete
+  - Define company feed domain types and validation
+  - Implementer added company feed types, validation schemas, and test coverage
+  - Review loop fixed required `post_id` for moderation and removed server-managed fields from create DTOs
+  - Final fix loop made create media schema strict and added runtime rejection coverage
+  - Review clean: spec PASS, quality PASS, verdict ACCEPT
+Task 3: Complete (commit 969b6c55, review clean after fix)
+  - Implement creator-access permission checks and moderator authorization in service layer
+  - Implementer added creator-access checks, moderation authorization, and audited grant/revoke operations
+  - Review loop fixed revoke false-success behavior and aligned moderation role source with canonical backend roles
+  - Review clean: spec PASS, quality PASS, verdict ACCEPT
+Task 4: Complete
+  - Implement company post lifecycle, moderation status mapping, and visibility-safe feed queries
+  - Added create/list/approve/reject/delete service methods with deterministic moderation mapping
+  - Public feed restricted to approved posts; creator view and approval queue visibility enforced in service layer
+  - Review loops closed moderator scope widening, invalid lifecycle transitions, transactional audit rollback, and concurrent update race windows
+  - Fresh local verification: `npx vitest run src/modules/engagement/__tests__/company-posts.service.test.ts` -> 30/30 passing
+Task 5: Complete
+  - Add controller and engagement routes for company feed APIs
+  - Added company feed controller handlers and mounted engagement routes for feed, create, mine, approvals, approve, reject, delete, and creator-access APIs
+  - Added targeted route coverage and follow-up security hardening for creator-access endpoints
+  - Fresh local verification:
+    - `npx vitest run src/modules/engagement/__tests__/company-posts.routes.test.ts` -> 14/14 passing
+    - `npx vitest run src/modules/engagement/__tests__/company-posts.service.test.ts` -> 30/30 passing
+Task 6: Complete
+  - Build shared frontend company-feed data hook layer
+  - Added `useCompanyFeed`, `useMyCompanyPosts`, `useApprovalQueue`, creator-access hooks, and create/approve/reject/delete/grant/revoke mutations
+  - Review hardening aligned delete reason transport with current `hrmsApi.delete()` behavior
+  - Review hardening fixed mutation invalidation so filtered/paginated company-feed queries are refreshed correctly
+  - Fresh local verification:
+    - `npm run typecheck` -> PASS

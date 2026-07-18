@@ -1,5 +1,6 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ---------------------------------------------------------------------------
 // Helper: get all calendar months (as { year, month } objects) spanned by
@@ -48,7 +49,7 @@ async function checkMonthlyCapExceeded(
   requestedDays: number,
   excludeRequestId?: string
 ): Promise<{ exceeded: boolean; monthBreached: string | null; usedDays: number; cap: number }> {
-  const CAP = 1;
+  const CAP = Number(await getPolicyValue("leave", "cl_ml_policy", "monthly_cap_days", "1"));
   const months = getMonthsInRange(fromDate, toDate);
 
   for (const { year, month } of months) {

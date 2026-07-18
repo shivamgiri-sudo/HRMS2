@@ -18,18 +18,19 @@ import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
 import { smartGrnRouter } from "./grn-smart.routes.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
+import type { RoleKey } from "../../platform/policy/index.js";
 
-const GRN_WRITE_ROLES = [
+const GRN_WRITE_ROLES: RoleKey[] = [
   "accounts_head",
   "finance_head",
   "super_admin",
   "admin",
   "branch_head",
   "branch_admin",
-] as const;
-const GRN_READ_ROLES = [...GRN_WRITE_ROLES, "finance", "hr_admin"] as const;
-const GRN_REVIEW_ROLES = ["branch_head", "finance_head", "super_admin"] as const;
-const EXPENSE_MASTER_READ_ROLES = [
+];
+const GRN_READ_ROLES: RoleKey[] = [...GRN_WRITE_ROLES, "finance", "hr", "hr_admin"];
+const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "accounts_head", "super_admin"];
+const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "super_admin",
   "admin",
   "branch_admin",
@@ -37,8 +38,8 @@ const EXPENSE_MASTER_READ_ROLES = [
   "finance",
   "finance_head",
   "accounts_head",
-] as const;
-const EXPENSE_MASTER_WRITE_ROLES = ["super_admin", "finance_head"] as const;
+];
+const EXPENSE_MASTER_WRITE_ROLES: RoleKey[] = ["super_admin", "finance_head"];
 
 const UPLOAD_DIR = "uploads/grn-attachments";
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });

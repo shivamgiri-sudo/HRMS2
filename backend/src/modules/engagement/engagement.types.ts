@@ -431,6 +431,8 @@ export interface PulseCheckFilters {
 // UTILITY TYPES
 // =====================================================
 
+export * from './company-posts.types.js';
+
 export interface PaginatedResult<T> {
   data: T[];
   total: number;

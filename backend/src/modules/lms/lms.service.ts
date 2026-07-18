@@ -525,7 +525,7 @@ export const lmsService = {
     await db.execute(
       `INSERT INTO lms_employee_mapping (id, employee_id, lms_learner_id, email)
        VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE lms_learner_id = VALUES(lms_learner_id), email = VALUES(email)`,
+       ON DUPLICATE KEY UPDATE lms_learner_id = VALUES(lms_learner_id), email = VALUES(email), is_active = 1, mapped_at = NOW()`,
       [randomUUID(), employeeId, lmsLearnerId, email ?? null]
     );
     const [rows] = await db.execute<RowDataPacket[]>(

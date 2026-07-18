@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CreditCard,
@@ -48,7 +48,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useToast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Pagination,
@@ -67,6 +67,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -1390,6 +1392,100 @@ function LifecyclePipelineCard() {
   );
 }
 
+
+// ── TDS Mode Panel (draft / calculating runs only) ───────────────────────────
+
+function TdsModePanel() {
+  const { toast } = useToast();
+  const { data: roleData } = useUserRole();
+  const roleKeys = roleData?.roleKeys ?? [];
+  const canEdit = roleKeys.some((r) =>
+    ["payroll_head", "super_admin", "admin", "finance"].includes(r)
+  );
+  const qc = useQueryClient();
+
+  const { data: allRunsRaw } = useQuery<any[]>({
+    queryKey: ["payroll-all-runs"],
+    queryFn: () => hrmsApi.get("/api/payroll/runs?limit=100").then((r: any) => r.data ?? []),
+    staleTime: 30_000,
+  });
+
+  const draftRuns = (allRunsRaw ?? []).filter((r: any) =>
+    ["draft", "calculating"].includes(r.status)
+  );
+
+  const tdsMut = useMutation({
+    mutationFn: ({ runId, tds_mode }: { runId: string; tds_mode: string }) =>
+      hrmsApi.patch(`/api/payroll/runs/${runId}/tds-mode`, { tds_mode }),
+    onSuccess: (_d, vars) => {
+      toast({ title: `TDS mode set to ${vars.tds_mode}` });
+      void qc.invalidateQueries({ queryKey: ["payroll-all-runs"] });
+    },
+    onError: (e: any) =>
+      toast({ title: "Failed to update TDS mode", description: e?.message, variant: "destructive" }),
+  });
+
+  if (draftRuns.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">TDS Mode — Draft Runs</CardTitle>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Set <strong>Auto</strong> to compute TDS from the tax engine (reads DB slabs + employee declarations).
+          Set <strong>Manual</strong> to enter TDS via the manual override table. Must be set before Calculate.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {draftRuns.map((run: any) => {
+          const mode: string = run.tds_mode ?? "manual";
+          const isPending = tdsMut.isPending && (tdsMut.variables as any)?.runId === run.id;
+          return (
+            <div
+              key={run.id}
+              className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"
+            >
+              <div className="text-sm">
+                <span className="font-medium">{run.run_month}</span>
+                <span className="ml-2 text-slate-400 text-xs capitalize">{run.status}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={!canEdit || isPending}
+                  onClick={() => tdsMut.mutate({ runId: run.id, tds_mode: "auto" })}
+                  className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                    mode === "auto"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "border border-slate-200 bg-white text-slate-500 hover:border-emerald-400 hover:text-emerald-700"
+                  } disabled:opacity-40`}
+                >
+                  Auto
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEdit || isPending}
+                  onClick={() => tdsMut.mutate({ runId: run.id, tds_mode: "manual" })}
+                  className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                    mode === "manual"
+                      ? "bg-amber-500 text-white shadow-sm"
+                      : "border border-slate-200 bg-white text-slate-500 hover:border-amber-400 hover:text-amber-700"
+                  } disabled:opacity-40`}
+                >
+                  Manual
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {!canEdit && (
+          <p className="text-xs text-slate-400">Only Payroll Head, Finance, or Admin can change TDS mode.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Payroll Signoff Tab ──────────────────────────────────────────────────────
 
 function SignoffTab() {
@@ -1485,6 +1581,8 @@ function SignoffTab() {
 
   return (
     <div className="space-y-4">
+      <TdsModePanel />
+
       <div className="flex items-center gap-3">
         <Label className="whitespace-nowrap text-sm font-medium">Payroll Run</Label>
         <select

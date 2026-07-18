@@ -13,7 +13,7 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 };
 
 // GET /api/ats/jclr/:candidateId
-router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'branch_head', 'bm', 'hr', 'ho_hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head', 'admin', 'branch_head', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     'SELECT * FROM jclr_entries WHERE candidate_id = ? LIMIT 1',
     [req.params.candidateId]
@@ -85,7 +85,7 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
 }));
 
 // POST /api/ats/jclr/:candidateId/approve — BM approves
-router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRole('branch_head', 'bm', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRole('branch_head', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
   const { remarks } = req.body as { remarks?: string };
   if (!remarks || remarks.trim().length < 3) {

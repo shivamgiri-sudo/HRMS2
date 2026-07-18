@@ -9,6 +9,7 @@ import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import { detectAndCalculateHolidayWork, isHolidayWorkAutoGenEnabled } from "./holiday-work-auto.service.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 interface TaxDeclarationRow {
   declared_hra: number;
@@ -263,7 +264,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   // 4. Derive working days from run_month (Mon–Sat = 26 assumed; real impl queries holidays)
   const [year, month] = run.run_month.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
-  const defaultWorkingDays = 26; // BPO standard; can be refined later
+  const defaultWorkingDays = Number(await getPolicyValue("payroll", "calculation", "default_working_days", "26"));
 
   // Derive financial year string e.g. "2025-26" for months April–March
   const fyStartYear = month >= 4 ? year : year - 1;
@@ -315,6 +316,13 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const conn = await db.getConnection();
   await conn.beginTransaction();
 
+  // Batch write accumulators — populated during the calculation loop, flushed after it.
+  // Only writes that are never read back within the same employee iteration are safe to batch.
+  const batchPrepLines:    unknown[][] = [];
+  const batchComponents:   unknown[][] = [];
+  const batchAdvUpdates:   { id: string; newRecovered: number; newStatus: string }[] = [];
+  const batchAuditRows:    unknown[][] = [];
+
   try {
   for (const emp of employees) {
     const monthStart = `${run.run_month}-01`;
@@ -337,7 +345,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     processedCount++;
 
     // Step 1: Load designation and department to determine attendance source
-    const [desigRows] = await db.execute<RowDataPacket[]>(
+    // Use conn (transaction connection) for all reads inside the loop to ensure
+    // a consistent snapshot and avoid dirty reads from concurrent payroll runs.
+    const [desigRows] = await conn.execute<RowDataPacket[]>(
       `SELECT dm.designation_name, dept.dept_name
        FROM employees e
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
@@ -350,10 +360,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       /executive/i.test(desig.designation_name ?? '') &&
       /operations/i.test(desig.dept_name ?? '');
 
-    // Check if attendance_daily_record has been populated for this employee+month
+    // Check if attendance_daily_record has been populated for this employee+month.
+    // record_date is stored as UTC datetime; compare in IST (+05:30) to avoid off-by-one on month boundaries.
     const [adrCountRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM attendance_daily_record
-       WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
+       WHERE employee_id = ?
+         AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
       [emp.employee_id, monthStart, monthEnd]
     );
     const hasEngineData = Number((adrCountRows[0] as any).cnt ?? 0) > 0;
@@ -366,7 +378,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         `SELECT
            ? AS employee_id,
            (SELECT COUNT(*) FROM attendance_daily_record
-            WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+            WHERE employee_id = ?
+              AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
               AND attendance_status NOT IN ('week_off','holiday')) AS working_days,
            COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
            COUNT(CASE WHEN adr.attendance_status IN ('leave_approved','half_day') THEN 1 END) AS leave_days,
@@ -375,7 +388,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
            COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
                               THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
          FROM attendance_daily_record adr
-         WHERE adr.employee_id = ? AND adr.record_date BETWEEN ? AND ?`,
+         WHERE adr.employee_id = ?
+           AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
         [emp.employee_id, emp.employee_id, monthStart, monthEnd, emp.employee_id, monthStart, monthEnd]
       );
       att = (attRows as AttendanceRow[])[0] ?? {
@@ -427,7 +441,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
            END
          ), 0) AS paid_base
        FROM attendance_daily_record adr
-       WHERE adr.employee_id = ? AND adr.record_date BETWEEN ? AND ?`,
+       WHERE adr.employee_id = ?
+         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
       [emp.employee_id, monthStart, monthEnd]
     );
     let paidBase = Number((paidBaseRows[0] as any)?.paid_base ?? 0);
@@ -511,8 +526,19 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         })()
       : daysInMonth;
 
-    // Step 7: Read fixed component amounts from salary_structure_component
-    const [compRows] = await db.execute<RowDataPacket[]>(
+    // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
+    // fall back to salary_structure_component via structure_id.
+    // Use conn so reads are within the transaction snapshot.
+    const [scaRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT basic, hra, conveyance, special_allowance, gross
+         FROM salary_component_assignments
+        WHERE employee_id = ? AND status = 'active'
+        ORDER BY effective_date DESC LIMIT 1`,
+      [emp.employee_id],
+    );
+    const scaRow = (scaRows as any[])[0];
+
+    const [compRows] = await conn.execute<RowDataPacket[]>(
       `SELECT scm.component_code, ssc.calc_type, ssc.value
          FROM salary_structure_component ssc
          JOIN salary_component_master scm ON scm.id = ssc.component_id
@@ -526,14 +552,32 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         compAmounts[c.component_code] = Number(c.value) || 0;
       }
     }
-    const hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
-    const fixedBasic = compAmounts.BASIC || 0;
-    const fixedHRA = compAmounts.HRA || 0;
-    const fixedGross = hasFixedComponents
-      ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
-         (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
-         (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
-      : 0;
+
+    let hasFixedComponents: boolean;
+    let fixedBasic: number;
+    let fixedHRA: number;
+    let fixedGross: number;
+
+    if (scaRow && Number(scaRow.gross) > 0) {
+      hasFixedComponents = true;
+      fixedBasic = Number(scaRow.basic) || 0;
+      fixedHRA   = Number(scaRow.hra)   || 0;
+      fixedGross = Number(scaRow.gross);
+      // Populate compAmounts so payslip component loop works
+      compAmounts.BASIC  = fixedBasic;
+      compAmounts.HRA    = fixedHRA;
+      compAmounts.CONV   = Number(scaRow.conveyance)        || 0;
+      compAmounts.SPECIAL = Number(scaRow.special_allowance) || 0;
+    } else {
+      hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+      fixedBasic = compAmounts.BASIC || 0;
+      fixedHRA   = compAmounts.HRA   || 0;
+      fixedGross = hasFixedComponents
+        ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
+           (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
+           (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+        : 0;
+    }
     const monthlyGrossBase = hasFixedComponents ? fixedGross : (emp.ctc_annual / 12);
 
     // Days-based gross calculation
@@ -586,7 +630,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       : att.working_days;
 
     // 5a. Fetch tax declaration for this employee / financial year
-    const [declRows] = await db.execute<RowDataPacket[]>(
+    const [declRows] = await conn.execute<RowDataPacket[]>(
       "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
       [emp.employee_id, financialYear]
     );
@@ -631,7 +675,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     }
 
     // 5d. Salary advance monthly recovery
-    const [advRows] = await db.execute<RowDataPacket[]>(
+    const [advRows] = await conn.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(ROUND(amount / recovery_months, 2)), 0) AS monthly_recovery
          FROM salary_advance_log
         WHERE employee_id = ? AND status = 'active'`,
@@ -690,7 +734,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       : stat.professional_tax;
 
     // Check for approved PF / ESI opt-outs (employee voluntary declaration approved by Payroll HO)
-    const [overrideRows] = await db.execute<RowDataPacket[]>(
+    const [overrideRows] = await conn.execute<RowDataPacket[]>(
       `SELECT override_type FROM employee_statutory_override
        WHERE employee_id = ? AND status = 'approved'
          AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
@@ -727,57 +771,20 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
     const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
-    // 6. Upsert prep line with extended columns
+    // 6. Accumulate prep line for batch upsert after loop
     const prepLineId = randomUUID();
-    await conn.execute(
-      `INSERT INTO salary_prep_line
-         (id, run_id, employee_id, employee_code,
-          working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
-          gross_salary, gross_before_lwp, total_deductions, net_salary,
-          basic, hra, special_allowance,
-          pf_employee, pf_employer, esic_employee, esic_employer,
-          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
-          loan_emi,
-          paid_working_days, eligible_weekoff_days, eligible_holiday_days,
-          final_payable_days, active_calendar_days, holiday_work_extra_payout,
-          other_deductions,
-          attendance_data_source,
-          status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'calculated')
-       ON DUPLICATE KEY UPDATE
-         working_days = VALUES(working_days), present_days = VALUES(present_days),
-         lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
-         gross_before_lwp = VALUES(gross_before_lwp),
-         total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
-         basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
-         pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
-         esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
-         professional_tax = VALUES(professional_tax),
-         tds = VALUES(tds), tds_amount = VALUES(tds_amount),
-         lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
-         loan_emi = VALUES(loan_emi),
-         paid_working_days = VALUES(paid_working_days),
-         eligible_weekoff_days = VALUES(eligible_weekoff_days),
-         eligible_holiday_days = VALUES(eligible_holiday_days),
-         final_payable_days = VALUES(final_payable_days),
-         active_calendar_days = VALUES(active_calendar_days),
-         holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
-         other_deductions = VALUES(other_deductions),
-         attendance_data_source = VALUES(attendance_data_source),
-         status = 'calculated'`,
-      [
-        prepLineId, runId, emp.employee_id, emp.employee_code,
-        att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
-        calc.gross_salary, grossMonthly, totalDedFinal, netPayFinal,
-        calc.basic, calc.hra, calc.special_allowance,
-        calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
-        calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
-        loanEmi,
-        effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
-        miscDeductions,
-        hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
-      ]
-    );
+    batchPrepLines.push([
+      prepLineId, runId, emp.employee_id, emp.employee_code,
+      att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
+      calc.gross_salary, grossMonthly, totalDedFinal, netPayFinal,
+      calc.basic, calc.hra, calc.special_allowance,
+      calc.pf_employee, calc.pf_employer, calc.esic_employee, calc.esic_employer,
+      calc.professional_tax, tdsMonthly, tdsMonthly, lwpDeduction, advanceRecovery,
+      loanEmi,
+      effectivePaidBase, finalWeekoffs, finalHolidays, finalPayableDays, activeCals, holidayWorkExtraPayout,
+      miscDeductions,
+      hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
+    ]);
 
     // 6b. Insert component-level breakdown for payslip display
     // Use actual fixed component amounts from salary_structure_component when available
@@ -809,52 +816,31 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         { code: "PA", name: "Personal Allowance", amount: pa },
       );
     }
+    // 6b. Accumulate component rows for batch insert
     for (const comp of payslipEarnings) {
       if (comp.amount <= 0) continue;
-      await conn.execute(
-        `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'structure', 1)
-         ON DUPLICATE KEY UPDATE
-           amount = VALUES(amount), source = VALUES(source), taxable = VALUES(taxable)`,
-        [randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, comp.amount]
-      );
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, 'earning', comp.amount, 'structure', 1]);
     }
 
-    // Insert statutory deduction components for payslip display
     const statutoryDeductions = [
-      { code: "PF_EMPLOYEE", name: "Provident Fund (Employee)", amount: calc.pf_employee },
-      { code: "ESIC_EMPLOYEE", name: "ESI (Employee)", amount: calc.esic_employee },
-      { code: "PROFESSIONAL_TAX", name: "Professional Tax", amount: calc.professional_tax },
-      { code: "TDS", name: "Income Tax (TDS)", amount: tdsMonthly },
-      { code: "LWP_DEDUCTION", name: "LWP / Leave Without Pay", amount: lwpDeduction },
-      { code: "ADVANCE_RECOVERY", name: "Advance Recovery", amount: advanceRecovery },
-      { code: "LOAN_EMI", name: "Loan EMI", amount: loanEmi },
+      { code: "PF_EMPLOYEE",       name: "Provident Fund (Employee)",    amount: calc.pf_employee },
+      { code: "ESIC_EMPLOYEE",     name: "ESI (Employee)",               amount: calc.esic_employee },
+      { code: "PROFESSIONAL_TAX",  name: "Professional Tax",             amount: calc.professional_tax },
+      { code: "TDS",               name: "Income Tax (TDS)",             amount: tdsMonthly },
+      { code: "LWP_DEDUCTION",     name: "LWP / Leave Without Pay",      amount: lwpDeduction },
+      { code: "ADVANCE_RECOVERY",  name: "Advance Recovery",             amount: advanceRecovery },
+      { code: "LOAN_EMI",          name: "Loan EMI",                     amount: loanEmi },
     ];
     for (const ded of statutoryDeductions) {
       if (ded.amount <= 0) continue;
-      await conn.execute(
-        `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'statutory', 0)
-         ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
-        [randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, ded.amount]
-      );
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'statutory', 0]);
     }
 
-    // Insert per-type custom deduction components for payslip breakdown
     for (const ded of miscComponents) {
-      await conn.execute(
-        `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'deduction', ?, 'custom_deduction', 0)
-         ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
-        [randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, ded.amount]
-      );
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'custom_deduction', 0]);
     }
 
-    // Step 10b: Update advance recovery ledger — accumulate recovered_amount per run,
-    // flip status to 'recovered' when fully paid so the deduction stops in future runs.
+    // Step 10b: Read advance state now (needed to compute newRecovered); defer the UPDATE to batch after loop.
     if (advanceRecovery > 0) {
       const [activeAdvances] = await conn.execute<RowDataPacket[]>(
         `SELECT id, amount, recovery_months, COALESCE(recovered_amount, 0) AS recovered_amount
@@ -866,22 +852,14 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         const installment = Math.round((adv.amount / Math.max(1, adv.recovery_months)) * 100) / 100;
         const newRecovered = Math.min(Number(adv.recovered_amount) + installment, Number(adv.amount));
         const newStatus = newRecovered >= Number(adv.amount) ? "recovered" : "active";
-        await conn.execute(
-          `UPDATE salary_advance_log
-              SET recovered_amount = ?,
-                  status = ?
-            WHERE id = ?`,
-          [newRecovered, newStatus, adv.id]
-        );
+        batchAdvUpdates.push({ id: adv.id, newRecovered, newStatus });
       }
     }
 
-    // Step 11: Audit log per employee
-    await conn.execute(
-      `INSERT INTO sensitive_action_log
-         (id, actor_user_id, actor_role, action_type, module_key, entity_type, entity_id, old_value_json, new_value_json, ip_address, user_agent)
-       VALUES (UUID(), 'system', 'payroll-engine', 'payroll_calculation', 'payroll', 'salary_prep_line', ?, NULL, ?, '127.0.0.1', 'payroll-engine')`,
-      [emp.employee_id, JSON.stringify({
+    // Step 11: Accumulate audit row for batch insert
+    batchAuditRows.push([
+      emp.employee_id,
+      JSON.stringify({
         run_id: runId,
         attendance_source: isOpsExecutive ? 'APR/dialler' : 'biometric',
         paid_base: effectivePaidBase,
@@ -892,13 +870,96 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
         leave_reversed: reversalResult.daysReversed,
         gross: grossAfterLwp,
         net: netPayFinal,
-      })]
-    );
+      }),
+    ]);
 
     totalGross += calc.gross_salary;
     totalDed   += totalDedFinal;
     totalNet   += netPayFinal;
   }
+
+  // ── Batch flush ────────────────────────────────────────────────────────────
+  // All writes accumulated during the loop are issued here in multi-row batches,
+  // replacing the N individual round-trips that were in the loop body.
+
+  // Flush salary_prep_line rows
+  if (batchPrepLines.length > 0) {
+    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\')').join(',');
+    await conn.execute(
+      `INSERT INTO salary_prep_line
+         (id, run_id, employee_id, employee_code,
+          working_days, present_days, leave_days, lwp_days, late_marks, dialer_hours,
+          gross_salary, gross_before_lwp, total_deductions, net_salary,
+          basic, hra, special_allowance,
+          pf_employee, pf_employer, esic_employee, esic_employer,
+          professional_tax, tds, tds_amount, lwp_deduction, advance_recovery,
+          loan_emi,
+          paid_working_days, eligible_weekoff_days, eligible_holiday_days,
+          final_payable_days, active_calendar_days, holiday_work_extra_payout,
+          other_deductions,
+          attendance_data_source,
+          status)
+       VALUES ${placeholders}
+       ON DUPLICATE KEY UPDATE
+         working_days = VALUES(working_days), present_days = VALUES(present_days),
+         lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
+         gross_before_lwp = VALUES(gross_before_lwp),
+         total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
+         basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
+         pf_employee = VALUES(pf_employee), pf_employer = VALUES(pf_employer),
+         esic_employee = VALUES(esic_employee), esic_employer = VALUES(esic_employer),
+         professional_tax = VALUES(professional_tax),
+         tds = VALUES(tds), tds_amount = VALUES(tds_amount),
+         lwp_deduction = VALUES(lwp_deduction), advance_recovery = VALUES(advance_recovery),
+         loan_emi = VALUES(loan_emi),
+         paid_working_days = VALUES(paid_working_days),
+         eligible_weekoff_days = VALUES(eligible_weekoff_days),
+         eligible_holiday_days = VALUES(eligible_holiday_days),
+         final_payable_days = VALUES(final_payable_days),
+         active_calendar_days = VALUES(active_calendar_days),
+         holiday_work_extra_payout = VALUES(holiday_work_extra_payout),
+         other_deductions = VALUES(other_deductions),
+         attendance_data_source = VALUES(attendance_data_source),
+         status = 'calculated'`,
+      batchPrepLines.flat()
+    );
+  }
+
+  // Flush salary_prep_line_component rows
+  if (batchComponents.length > 0) {
+    const CHUNK = 200;
+    for (let i = 0; i < batchComponents.length; i += CHUNK) {
+      const chunk = batchComponents.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+      await conn.execute(
+        `INSERT INTO salary_prep_line_component
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+         VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE amount = VALUES(amount), source = VALUES(source), taxable = VALUES(taxable)`,
+        chunk.flat()
+      );
+    }
+  }
+
+  // Flush advance log updates
+  for (const upd of batchAdvUpdates) {
+    await conn.execute(
+      `UPDATE salary_advance_log SET recovered_amount = ?, status = ? WHERE id = ?`,
+      [upd.newRecovered, upd.newStatus, upd.id]
+    );
+  }
+
+  // Flush audit rows
+  if (batchAuditRows.length > 0) {
+    const placeholders = batchAuditRows.map(() => `(UUID(), 'system', 'payroll-engine', 'payroll_calculation', 'payroll', 'salary_prep_line', ?, NULL, ?, '127.0.0.1', 'payroll-engine')`).join(',');
+    await conn.execute(
+      `INSERT INTO sensitive_action_log
+         (id, actor_user_id, actor_role, action_type, module_key, entity_type, entity_id, old_value_json, new_value_json, ip_address, user_agent)
+       VALUES ${placeholders}`,
+      batchAuditRows.flat()
+    );
+  }
+  // ── End batch flush ────────────────────────────────────────────────────────
 
   // 7a. Apply manual TDS entries (only when tds_mode = 'manual')
   // For each row in salary_run_manual_tds, SET tds to the manual amount (not additive)

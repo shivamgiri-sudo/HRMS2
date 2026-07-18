@@ -20,6 +20,7 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 import { startPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
 import { startBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
+import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
@@ -102,6 +103,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "employee-lifecycle",
     start: () => { startEmployeeLifecycleWorker(); return Promise.resolve(); },
   },
+  {
+    name: "rta-nightly",
+    start: () => { startRtaNightlyCron(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -132,6 +137,7 @@ function shutdown(): void {
   stopCommunicationCleanup();
   stopAttendanceEngineScheduler();
   stopCosecSyncWorker();
+  stopRtaNightlyCron();
   stopEmployeeLifecycleWorker();
   legacySyncWorker.stop();
   console.log("[workers] Clean shutdown complete.");

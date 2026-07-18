@@ -32,7 +32,7 @@ export const lmsEmployeeMapper = {
     };
 
     try {
-      const [traineeRows] = await lmsQuery<RowDataPacket[]>(
+      const traineeRows = await lmsQuery<RowDataPacket[]>(
         `SELECT employee_id, permanent_emp_id, trainee_name, email, mobile
            FROM trainee_master WHERE employee_id = ? OR permanent_emp_id = ? OR lms_id = ? LIMIT 1`,
         [lmsId, lmsId, lmsId]
@@ -94,12 +94,12 @@ export const lmsEmployeeMapper = {
         log.triedOfficialEmail = t.email;
         const prefix = t.email.split("@")[0];
         const [rows] = await db.execute<RowDataPacket[]>(
-          `SELECT id, employee_code FROM employees WHERE office_email = ? AND active_status = 1 LIMIT 1`,
+          `SELECT id, employee_code FROM employees WHERE official_email = ? AND active_status = 1 LIMIT 1`,
           [t.email]
         );
         if (rows.length) { log.emailOfficialMatchFound = true; return save(rows[0] as any, "official_email", "medium"); }
         const [rows2] = await db.execute<RowDataPacket[]>(
-          `SELECT id, employee_code FROM employees WHERE office_email LIKE ? AND active_status = 1 LIMIT 1`,
+          `SELECT id, employee_code FROM employees WHERE official_email LIKE ? AND active_status = 1 LIMIT 1`,
           [`${prefix}@%`]
         );
         if (rows2.length) { log.emailOfficialMatchFound = true; return save(rows2[0] as any, "official_email", "medium"); }

@@ -52,7 +52,8 @@ export default defineConfig(({ mode }) => ({
     format: 'es',
   },
   build: {
-    chunkSizeWarningLimit: 800,
+    chunkSizeWarningLimit: 500,
+    reportCompressedSize: true,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -64,6 +65,10 @@ export default defineConfig(({ mode }) => ({
           if (/[\\/]node_modules[\\/](date-fns|clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return "vendor-utils";
           if (id.includes("recharts")) return "vendor-charts";
           if (/[\\/]node_modules[\\/](jspdf|jspdf-autotable)[\\/]/.test(id)) return "vendor-pdf";
+          if (/[\\/]node_modules[\\/](apexcharts|react-apexcharts)[\\/]/.test(id)) return "vendor-apex";
+          if (id.includes("xlsx")) return "vendor-xlsx";
+          if (id.includes("framer-motion")) return "vendor-motion";
+          if (/[\\/]node_modules[\\/](@xyflow|@dagrejs)[\\/]/.test(id)) return "vendor-xyflow";
           return undefined;
         },
       },

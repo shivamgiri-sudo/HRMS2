@@ -61,12 +61,12 @@ export const attendanceExceptionRouter = Router();
 attendanceExceptionRouter.use(requireAuth);
 attendanceExceptionRouter.get(
   "/summary",
-  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager", "team_leader", "tl"),
+  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager", "team_leader"),
   h(async (req, res) => res.json(apiSuccess(await getAttendanceExceptionSummary(actor(req), req.query)))),
 );
 attendanceExceptionRouter.get(
   "/list",
-  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager", "team_leader", "tl"),
+  requireRole("admin", "hr", "ceo", "wfm", "process_manager", "manager", "team_leader"),
   h(async (req, res) => res.json(apiSuccess(await listAttendanceExceptions(actor(req), req.query)))),
 );
 attendanceExceptionRouter.get(

@@ -922,19 +922,27 @@ const Attendance = () => {
           </section>
 
           {/* Calendar View */}
-          {currentEmployee?.id && (
-            <section className="space-y-4">
-              <div>
-                <h2 className="text-base font-semibold tracking-tight text-slate-950">
-                  Attendance Calendar
-                </h2>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  View your monthly attendance with color-coded status. Click any date for details.
-                </p>
-              </div>
+            {currentEmployee?.id && (
+              <section className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold tracking-tight text-slate-950">
+                      Attendance Calendar
+                    </h2>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      View your monthly attendance with color-coded status. Click any date for details.
+                    </p>
+                  </div>
 
-              <AttendanceCalendar
-                employeeId={currentEmployee.id}
+                  <Button asChild variant="outline" className="h-9 rounded-xl border-slate-200 text-xs font-semibold">
+                    <Link to={`/attendance/biometric-logs/${currentEmployee.id}`}>
+                      Open My Punch Logs
+                    </Link>
+                  </Button>
+                </div>
+
+                <AttendanceCalendar
+                  employeeId={currentEmployee.id}
                 initialMonth={Number(selectedMonth)}
                 initialYear={Number(selectedYear)}
               />

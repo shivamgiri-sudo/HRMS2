@@ -20,8 +20,8 @@ import { logger } from '../../logger.js';
 
 const router = Router();
 
-// Middleware: Require HR Admin or Finance role
-const requireCostAccess = requireRole('super_admin', 'hr_admin', 'finance_admin');
+// Middleware: Require HR or Finance leadership role
+const requireCostAccess = requireRole('super_admin', 'hr', 'finance', 'finance_head', 'accounts_head');
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helper: Query Parameter Extraction

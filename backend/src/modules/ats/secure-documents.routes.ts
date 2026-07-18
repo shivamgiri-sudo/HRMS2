@@ -15,7 +15,7 @@ import {
 
 export const secureDocumentsRouter = Router();
 
-const documentRoles = requireRole("super_admin", "admin", "hr", "payroll_hr", "branch_head", "finance", "operations", "it_admin");
+const documentRoles = requireRole("super_admin", "admin", "hr", "payroll_hr", "branch_head", "finance", "operations_manager", "it");
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (
   req: AuthenticatedRequest,

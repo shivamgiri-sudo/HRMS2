@@ -41,7 +41,7 @@ function commonWhere(query: any, params: any[]) {
   return clauses.join(" AND ");
 }
 
-const roleGuard = requireRole("admin", "hr", "wfm", "manager", "process_manager", "team_leader", "tl", "ceo", "finance", "payroll");
+const roleGuard = requireRole("admin", "hr", "wfm", "manager", "process_manager", "team_leader", "ceo", "finance", "payroll");
 
 // Roles that must have scope auto-injected if not explicitly passed
 const RESTRICTED_SCOPE_ROLES = new Set(["manager", "process_manager", "team_leader", "tl", "wfm"]);

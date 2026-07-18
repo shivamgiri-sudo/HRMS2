@@ -474,7 +474,7 @@ payrollMoreRouter.get("/deductions/types", h(async (req: AuthenticatedRequest, r
 }));
 
 // POST /deductions/types — create new deduction type
-payrollMoreRouter.post("/deductions/types", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.post("/deductions/types", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { deduction_code, deduction_name, description, is_prorated } = req.body as any;
   if (!deduction_code || !deduction_name) return res.status(400).json({ success: false, message: "deduction_code and deduction_name are required" });
   const code = String(deduction_code).toUpperCase().replace(/\s+/g, "_");
@@ -487,7 +487,7 @@ payrollMoreRouter.post("/deductions/types", requireRole("admin", "hr_admin", "fi
 }));
 
 // PUT /deductions/types/:id — update deduction type
-payrollMoreRouter.put("/deductions/types/:id", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.put("/deductions/types/:id", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { deduction_name, description, is_prorated } = req.body as any;
   if (!deduction_name) return res.status(400).json({ success: false, message: "deduction_name is required" });
   await db.execute(
@@ -498,7 +498,7 @@ payrollMoreRouter.put("/deductions/types/:id", requireRole("admin", "hr_admin", 
 }));
 
 // PATCH /deductions/types/:id/toggle — activate / deactivate
-payrollMoreRouter.patch("/deductions/types/:id/toggle", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.patch("/deductions/types/:id/toggle", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>("SELECT active_status FROM payroll_deduction_type WHERE id=?", [req.params.id]);
   if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Deduction type not found" });
   const current = (rows[0] as any).active_status;
@@ -508,7 +508,7 @@ payrollMoreRouter.patch("/deductions/types/:id/toggle", requireRole("admin", "hr
 
 // ── DEDUCTION UPLOAD TEMPLATE ─────────────────────────────────────────────────
 // GET /deductions/upload-template?month=YYYY-MM
-payrollMoreRouter.get("/deductions/upload-template", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.get("/deductions/upload-template", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const month = ((req.query as any).month as string) || new Date().toISOString().slice(0, 7);
 
   const [types] = await db.execute<RowDataPacket[]>(
@@ -542,7 +542,7 @@ payrollMoreRouter.get("/deductions/upload-template", requireRole("admin", "hr_ad
 // ── DEDUCTION BULK UPLOAD ─────────────────────────────────────────────────────
 // POST /deductions/bulk-upload — multipart CSV
 payrollMoreRouter.post("/deductions/bulk-upload",
-  requireRole("admin", "hr_admin", "finance", "payroll"),
+  requireRole("admin", "hr", "finance", "payroll"),
   dedCsvUpload.single("file"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
@@ -614,7 +614,7 @@ payrollMoreRouter.post("/deductions/bulk-upload",
 );
 
 // GET /deductions/employee/:employeeId — list deduction entries for one employee
-payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { runMonth } = req.query as any;
   const params: unknown[] = [req.params.employeeId];
   let extra = "";
@@ -630,7 +630,7 @@ payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "
 }));
 
 // PATCH /deductions/entry/:id — activate / deactivate one entry
-payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { status } = req.body as { status: "active" | "inactive" };
   if (!["active", "inactive"].includes(status)) return res.status(400).json({ success: false, message: 'status must be "active" or "inactive"' });
   await db.execute("UPDATE employee_deduction_entries SET status=? WHERE id=?", [status, req.params.id]);
@@ -672,7 +672,7 @@ payrollMoreRouter.patch("/holiday-work/config/process/:processId", requireRole("
 
 // PATCH /api/payroll/holidays/:holidayId/extra-pay-eligible
 // Mark holiday as eligible/ineligible for extra pay
-payrollMoreRouter.patch("/holidays/:holidayId/extra-pay-eligible", requireRole("admin", "super_admin", "hr_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.patch("/holidays/:holidayId/extra-pay-eligible", requireRole("admin", "super_admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holidayId } = req.params;
   const { eligible } = req.body as { eligible: boolean };
 

@@ -32,7 +32,8 @@ import {
 } from './reconciliation.service.js';
 
 const router = Router();
-const RECONCILIATION_ROLES = ['super_admin', 'admin', 'hr'];
+import type { RoleKey } from "../../platform/policy/index.js";
+const RECONCILIATION_ROLES: RoleKey[] = ['super_admin', 'admin', 'hr'];
 
 router.use(requireAuth);
 router.use(requireRole(...RECONCILIATION_ROLES));

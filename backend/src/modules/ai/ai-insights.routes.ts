@@ -13,6 +13,8 @@ import { aiProviderRegistry } from './ai-provider.registry.js';
 import { aiProviderConfigService } from './ai-provider-config.service.js';
 import { aiSafetyService } from './ai-safety.service.js';
 import { aiAuditService } from './ai-audit.service.js';
+import { checkAndIncrement } from './ai-rate-limiter.js';
+import { validateQuestion, validateContextType, validateEntityId } from './ai-input-guard.js';
 import type { AiGenerateRequest } from './ai-provider.types.js';
 
 export const aiInsightsRouter = Router();
@@ -188,24 +190,46 @@ aiInsightsRouter.get('/providers/usage', requireRole('super_admin'), h(async (re
 aiInsightsRouter.post('/ask', h(async (req, res) => {
   const { question, context_type, entity_id } = req.body;
 
-  if (!question || typeof question !== 'string') {
-    return res.status(400).json(apiError('VALIDATION_ERROR', 'question is required', 400));
+  const userId = req.authUser!.id;
+  const roleKeys: string[] = (req as any).userRoles || ['employee'];
+
+  // Input guard — validate before rate-limit so blocked input isn't counted
+  const questionCheck = validateQuestion(question ?? '');
+  if (!questionCheck.valid) {
+    return res.status(400).json(apiError('VALIDATION_ERROR', questionCheck.reason!, 400));
+  }
+  const contextCheck = validateContextType(context_type, roleKeys);
+  if (!contextCheck.valid) {
+    return res.status(403).json(apiError('FORBIDDEN', contextCheck.reason!, 403));
+  }
+  const entityCheck = validateEntityId(entity_id);
+  if (!entityCheck.valid) {
+    return res.status(400).json(apiError('VALIDATION_ERROR', entityCheck.reason!, 400));
   }
 
-  const userId = req.authUser!.id;
-  const roleKeys = (req as any).userRoles || ['employee'];
+  // Per-user daily rate limit
+  const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
+  const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
+  if (!rateResult.allowed) {
+    res.setHeader('X-RateLimit-Remaining', '0');
+    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toISOString());
+    return res.status(429).json(apiError('RATE_LIMIT_EXCEEDED', 'Daily AI request limit reached. Try again tomorrow.', 429));
+  }
+  res.setHeader('X-RateLimit-Remaining', String(rateResult.remaining));
+
+  const safeContextType = contextCheck.sanitizedContextType ?? 'generic';
+  const safeEntityId = entity_id ? String(entity_id).slice(0, 128) : null;
+  const safeQuestion = questionCheck.sanitizedQuestion!;
 
   // Get active provider
   const provider = await aiProviderRegistry.getDefault();
   const config = await aiProviderConfigService.getByKey(provider.key, true);
 
-  // Build sanitized context from PeopleOS services
-  // For now, use a simple context; full integration with peopleos.service.ts to follow
   const rawContext: Record<string, unknown> = {
     user_id: userId,
     user_role: roleKeys[0],
-    context_type: context_type || 'generic',
-    entity_id: entity_id || null,
+    context_type: safeContextType,
+    entity_id: safeEntityId,
     timestamp: new Date().toISOString(),
   };
 
@@ -227,12 +251,12 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
       userId,
       roleKeys,
       providerKey: fallbackProvider.key,
-      userQuestion: question,
+      userQuestion: safeQuestion,
       sanitizedContext: sanitizationResult.sanitizedContext,
       requestSource: 'copilot',
-      entityType: context_type,
-      entityId: entity_id,
-      systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, context_type),
+      entityType: safeContextType,
+      entityId: safeEntityId ?? undefined,
+      systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, safeContextType),
     };
 
     const response = await fallbackProvider.generateText(request);
@@ -254,14 +278,14 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     roleKeys,
     providerKey: provider.key,
     model: config?.modelName,
-    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, context_type),
-    userQuestion: question,
+    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, safeContextType),
+    userQuestion: safeQuestion,
     sanitizedContext: sanitizationResult.sanitizedContext,
     temperature: 0.3,
     maxOutputTokens: 1024,
     requestSource: 'copilot',
-    entityType: context_type,
-    entityId: entity_id,
+    entityType: safeContextType,
+    entityId: safeEntityId ?? undefined,
   };
 
   // Generate response
@@ -332,8 +356,17 @@ aiInsightsRouter.post('/explain', h(async (req, res) => {
  */
 aiInsightsRouter.get('/role-insights', h(async (req, res) => {
   const userId = req.authUser!.id;
-  const roleKeys = (req as any).userRoles || ['employee'];
+  const roleKeys: string[] = (req as any).userRoles || ['employee'];
   const role = roleKeys[0] ?? 'employee';
+
+  // Shared daily rate limit with /ask
+  const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
+  const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
+  if (!rateResult.allowed) {
+    res.setHeader('X-RateLimit-Remaining', '0');
+    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toISOString());
+    return res.status(429).json(apiError('RATE_LIMIT_EXCEEDED', 'Daily AI request limit reached.', 429));
+  }
 
   const provider = await aiProviderRegistry.getDefault();
 

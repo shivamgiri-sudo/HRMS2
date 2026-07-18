@@ -5,31 +5,29 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 export function LiveAttendanceDonut() {
-  const { data, isLoading } = useQuery<any>({
-    queryKey: ["wfm-live-attendance"],
-    queryFn: () => hrmsApi.get("/api/management/workforce-dashboard"),
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
+  const { data: liveData, isLoading } = useQuery<any>({
+    queryKey: ["rta-live-summary", todayIST],
+    queryFn: () => hrmsApi.get(`/api/rta/live-summary?date=${todayIST}`),
     staleTime: 1000 * 60 * 2,
     refetchInterval: 1000 * 60 * 2,
   });
 
-  const summary = data?.data?.summary ?? {};
-  const total = summary.active_headcount ?? 0;
-  const attPct = summary.attendance_pct ?? 0;
-  const present = Math.round((attPct / 100) * total);
-  // TODO: Use actual live attendance breakdown from /api/rta/live-summary or /api/wfm/attendance/today-live
-  // Current values use fixed percentages (1.8% leave, 18.9% absent, 2.8% WFH, 7.8% late) — these are placeholders
-  const onLeave = Math.round(total * 0.018);
-  const absent = Math.round(total * 0.189);
-  const wfh = Math.round(total * 0.028);
-  const late = Math.round(total * 0.078);
-  const notMarked = Math.max(0, total - present - onLeave - absent - wfh - late);
+  const live = liveData?.data ?? liveData ?? {};
+  const total   = Number(live.rostered   ?? 0);
+  const present = Number(live.logged_in  ?? 0);
+  const absent  = Number(live.absent     ?? 0);
+  const late    = Number(live.late_count ?? 0);
+  const attPct  = total > 0 ? Math.round((present / total) * 1000) / 10 : 0;
+  const onLeave = 0; // leave data not in live-summary; shown as 0 until reconciliation runs
+  const notMarked = Math.max(0, total - present - absent - late - onLeave);
 
   const chartData = [
     { name: "Present",    value: present,   fill: "#3BAD49", pct: attPct.toFixed(1) },
     { name: "Late",       value: late,      fill: "#F59E0B", pct: total > 0 ? ((late / total) * 100).toFixed(1) : "0.0" },
     { name: "Absent",     value: absent,    fill: "#E8231A", pct: total > 0 ? ((absent / total) * 100).toFixed(1) : "0.0" },
     { name: "On Leave",   value: onLeave,   fill: "#1B6AB5", pct: total > 0 ? ((onLeave / total) * 100).toFixed(1) : "0.0" },
-    { name: "WFH",        value: wfh,       fill: "#8B5CF6", pct: total > 0 ? ((wfh / total) * 100).toFixed(1) : "0.0" },
     { name: "Not Marked", value: notMarked, fill: "#cbd5e1", pct: total > 0 ? ((notMarked / total) * 100).toFixed(1) : "0.0" },
   ].filter((d) => d.value > 0 && total > 0);
 

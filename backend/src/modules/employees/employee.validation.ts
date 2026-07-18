@@ -67,6 +67,7 @@ export const employeeFiltersSchema = z.object({
   processId: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
   departmentId: z.string().uuid().optional(),
+  designationId: z.string().uuid().optional(),
   search: z.string().trim().optional(),
   includeAnalytics: z.coerce.boolean().default(false),
   page: z.coerce.number().int().min(1).default(1),

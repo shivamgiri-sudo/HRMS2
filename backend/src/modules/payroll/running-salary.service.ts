@@ -27,7 +27,9 @@ export async function computeRunningSalary(
   esic_employee: number;
   professional_tax: number;
 }> {
-  const today = asOfDate ?? new Date().toISOString().slice(0, 10);
+  // Use IST date so month boundaries align with stored dates (DB datetimes are UTC-shifted)
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const today = asOfDate ?? new Date(Date.now() + istOffset).toISOString().slice(0, 10);
   const monthStart = runMonth;
   const [y, m] = runMonth.split("-").map(Number);
   const monthEnd = new Date(y, m, 0).toISOString().slice(0, 10); // last day of month
@@ -50,7 +52,18 @@ export async function computeRunningSalary(
   const emp = (empRows[0] as any);
   if (!emp) return _zeroResult();
 
-  // Read fixed component amounts directly from salary_structure_component
+  // Primary salary source: salary_component_assignments (latest active record)
+  // This is the authoritative source for employees assigned directly without a structure.
+  const [scaRows] = await db.execute<RowDataPacket[]>(
+    `SELECT basic, hra, conveyance, special_allowance, gross
+       FROM salary_component_assignments
+      WHERE employee_id = ? AND status = 'active'
+      ORDER BY effective_date DESC LIMIT 1`,
+    [employeeId],
+  );
+  const scaRow = (scaRows as any[])[0];
+
+  // Fallback: salary_structure_component via structure_id
   const [compRows] = await db.execute<RowDataPacket[]>(
     `SELECT scm.component_code, ssc.calc_type, ssc.value
        FROM salary_structure_component ssc
@@ -65,15 +78,28 @@ export async function computeRunningSalary(
       compAmounts[c.component_code] = Number(c.value) || 0;
     }
   }
-  // If fixed components exist, use them directly for Gross calculation
-  const hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
-  const fixedBasic = compAmounts.BASIC || 0;
-  const fixedHRA = compAmounts.HRA || 0;
-  const fixedGross = hasFixedComponents
-    ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
-       (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
-       (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
-    : 0;
+
+  // Prefer salary_component_assignments when available
+  let hasFixedComponents: boolean;
+  let fixedBasic: number;
+  let fixedHRA: number;
+  let fixedGross: number;
+
+  if (scaRow && Number(scaRow.gross) > 0) {
+    hasFixedComponents = true;
+    fixedBasic = Number(scaRow.basic) || 0;
+    fixedHRA   = Number(scaRow.hra)   || 0;
+    fixedGross = Number(scaRow.gross);
+  } else {
+    hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
+    fixedBasic = compAmounts.BASIC || 0;
+    fixedHRA   = compAmounts.HRA   || 0;
+    fixedGross = hasFixedComponents
+      ? (fixedBasic + fixedHRA + (compAmounts.BONUS || 0) + (compAmounts.CONV || 0) +
+         (compAmounts.PORTFOLIO || 0) + (compAmounts.MEDICAL || 0) + (compAmounts.LTA || 0) +
+         (compAmounts.SPECIAL || 0) + (compAmounts.OTHER_ALLOW || 0) + (compAmounts.PLI || 0))
+      : 0;
+  }
 
   // Statutory config for deductions
   const [statKvRows] = await db.execute<RowDataPacket[]>(
@@ -108,12 +134,13 @@ export async function computeRunningSalary(
   const activeCalDays = await _activeCalendarDays(employeeId, runMonth);
 
   // ── Attendance up to today ────────────────────────────────────────────────
+  const tillDate = today < monthEnd ? today : monthEnd;
   const [attRows] = await db.execute<RowDataPacket[]>(
     `SELECT attendance_status, lwp_value, record_date
        FROM attendance_daily_record
       WHERE employee_id = ?
-        AND record_date >= ? AND record_date <= ?`,
-    [employeeId, monthStart, today < monthEnd ? today : monthEnd],
+        AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
+    [employeeId, monthStart, tillDate],
   );
 
   let presentTillDate = 0;
@@ -128,6 +155,7 @@ export async function computeRunningSalary(
       case "leave_approved": paidLeaveTillDate += 1; break;
       case "week_off":       weekoffRosteredTillDate += 1; break;
       case "absent":         lwpTillDate += 1; break;
+      case "missing_punch":  lwpTillDate += Number(r.lwp_value ?? 1); break;
     }
   }
 

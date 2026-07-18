@@ -249,11 +249,12 @@ export const wfmService = {
       }
     }
 
-    // Get branch_id for routing to WFM lead
+    // Get branch_id and reporting manager for routing
     const [empRow] = await db.execute<RowDataPacket[]>(
-      `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      `SELECT branch_id, reporting_manager_id, manager_id FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
     );
     const branchId = (empRow[0] as any)?.branch_id ?? null;
+    const managerEmpId = (empRow[0] as any)?.reporting_manager_id ?? (empRow[0] as any)?.manager_id ?? null;
 
     const id = randomUUID();
     const inp = input as any;
@@ -282,37 +283,62 @@ export const wfmService = {
        inp.supportingDocId ?? null]
     );
 
-    // Notify WFM lead(s) for this branch via work inbox
-    if (branchId) {
-      try {
-        const [wfmRows] = await db.execute<RowDataPacket[]>(
-          `SELECT e.user_id FROM user_assignment_scope uas
-           JOIN employees e ON e.id = uas.manager_employee_id
-           WHERE uas.role_key = 'wfm' AND uas.branch_id = ? AND e.user_id IS NOT NULL`,
-          [branchId]
+    // Notify reporting manager and WFM lead(s) via work inbox
+    try {
+      const [empInfo] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
+         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      );
+      const emp = (empInfo[0] as any);
+      const { inboxService } = await import('../inbox/inbox.service.js');
+      const title = `Attendance Regularization: ${emp?.full_name ?? input.employeeId}`;
+      const description = `${emp?.employee_code ?? ''} requested ${(input as any).requestedStatus ?? 'correction'} on ${input.sessionDate}. Reason: ${input.reason}`;
+
+      // Step 1: Notify reporting manager — this is Stage 1 of the approval flow
+      if (managerEmpId) {
+        const [mgRows] = await db.execute<RowDataPacket[]>(
+          `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
+          [managerEmpId]
         );
-        const [empInfo] = await db.execute<RowDataPacket[]>(
-          `SELECT employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
-           FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
-        );
-        const emp = (empInfo[0] as any);
-        const { inboxService } = await import('../inbox/inbox.service.js');
-        for (const wfm of wfmRows as any[]) {
-          if (!wfm.user_id) continue;
+        const managerUserId = (mgRows[0] as any)?.user_id ?? null;
+        if (managerUserId) {
           await inboxService.createItem({
-            user_id: wfm.user_id,
+            user_id: managerUserId,
             type: 'attendance_regularization',
-            title: `Attendance Regularization: ${emp?.full_name ?? input.employeeId}`,
-            description: `${emp?.employee_code ?? ''} requested ${(input as any).requestedStatus ?? 'correction'} on ${input.sessionDate}. Reason: ${input.reason}`,
+            title,
+            description: `[ACTION REQUIRED - Stage 1] ${description}`,
             entity_type: 'attendance',
             entity_id: input.employeeId,
             action_url: `/attendance/regularizations`,
             priority: 'high',
           });
         }
-      } catch {
-        // Non-fatal — notification failure should not block submission
       }
+
+      // Step 2: Also notify WFM leads for visibility (they act in Stage 2)
+      if (branchId) {
+        const [wfmRows] = await db.execute<RowDataPacket[]>(
+          `SELECT e.user_id FROM user_assignment_scope uas
+           JOIN employees e ON e.id = uas.manager_employee_id
+           WHERE uas.role_key = 'wfm' AND uas.branch_id = ? AND e.user_id IS NOT NULL`,
+          [branchId]
+        );
+        for (const wfm of wfmRows as any[]) {
+          if (!wfm.user_id) continue;
+          await inboxService.createItem({
+            user_id: wfm.user_id,
+            type: 'attendance_regularization',
+            title,
+            description: `[WFM - Pending manager approval] ${description}`,
+            entity_type: 'attendance',
+            entity_id: input.employeeId,
+            action_url: `/attendance/regularizations`,
+            priority: 'normal',
+          });
+        }
+      }
+    } catch {
+      // Non-fatal — notification failure should not block submission
     }
 
     return this.getRegularization(id);
@@ -403,6 +429,44 @@ export const wfmService = {
       throw err;
     }
     conn.release();
+
+    // When manager approves (stage 1 → manager_approved), escalate to WFM for final action
+    if ((input.status as string) === 'manager_approved') {
+      try {
+        const [empInfo] = await db.execute<RowDataPacket[]>(
+          `SELECT e.employee_code,
+                  CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
+                  e.branch_id
+           FROM employees e WHERE e.id = ? LIMIT 1`, [reg.employee_id]
+        );
+        const emp = (empInfo[0] as any);
+        if (emp?.branch_id) {
+          const [wfmRows] = await db.execute<RowDataPacket[]>(
+            `SELECT e2.user_id FROM user_assignment_scope uas
+             JOIN employees e2 ON e2.id = uas.manager_employee_id
+             WHERE uas.role_key = 'wfm' AND uas.branch_id = ? AND e2.user_id IS NOT NULL`,
+            [emp.branch_id]
+          );
+          const { inboxService } = await import('../inbox/inbox.service.js');
+          for (const wfm of wfmRows as any[]) {
+            if (!wfm.user_id) continue;
+            await inboxService.createItem({
+              user_id: wfm.user_id,
+              type: 'attendance_regularization',
+              title: `[ACTION REQUIRED] Manager Approved: ${emp?.full_name ?? reg.employee_id}`,
+              description: `${emp?.employee_code ?? ''} regularization for ${reg.session_date} is awaiting WFM final approval.`,
+              entity_type: 'attendance',
+              entity_id: reg.employee_id,
+              action_url: `/attendance/regularizations`,
+              priority: 'high',
+            });
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     return this.getRegularization(id);
   },
 

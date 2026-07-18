@@ -31,7 +31,7 @@ router.post("/requests", h(async (req: AuthenticatedRequest, res: Response) => {
 }));
 
 // Pending requests for caller's role (approver inbox)
-router.get("/requests/pending", requireRole("admin", "hr", "manager", "tl"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/requests/pending", requireRole("admin", "hr", "manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
   const role = (req.query.role as string) ?? "hr";
   const requests = await workflowService.listPendingForRole(role);
   res.json({ data: requests });
@@ -44,7 +44,7 @@ router.get("/requests/entity/:type/:id", h(async (req: AuthenticatedRequest, res
 }));
 
 // Act on a request (approve/reject/withdraw)
-router.post("/requests/:id/act", requireRole("admin", "hr", "manager", "tl"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/requests/:id/act", requireRole("admin", "hr", "manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { action, remarks } = req.body;
   if (!["approved", "rejected", "withdrawn"].includes(action)) {
     return res.status(400).json({ error: "action must be approved, rejected, or withdrawn" });

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format } from "date-fns";
 import { parseLocalDate } from "@/lib/utils";
+import { useMemo } from "react";
 
 export interface Asset {
   id: string;
@@ -46,30 +47,20 @@ export function useAssets() {
 }
 
 export function useAssetStats() {
-  return useQuery({
-    queryKey: ["asset-stats"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{ data: any[] }>("/api/assets-mgmt");
-      const all = res.data ?? [];
-      return {
-        total: all.length,
-        available: all.filter((a: any) => a.status === "available").length,
-        assigned: all.filter((a: any) => a.status === "assigned").length,
-        maintenance: all.filter(
-          (a: any) => a.status === "maintenance" || a.status === "repair"
-        ).length,
-        laptops: all.filter(
-          (a: any) => (a.asset_category ?? "").toLowerCase() === "laptop"
-        ).length,
-        monitors: all.filter(
-          (a: any) => (a.asset_category ?? "").toLowerCase() === "monitor"
-        ).length,
-        phones: all.filter(
-          (a: any) => (a.asset_category ?? "").toLowerCase() === "phone"
-        ).length,
-      };
-    },
-  });
+  const { data: assets, isLoading, error } = useAssets();
+  const stats = useMemo(() => {
+    if (!assets) return null;
+    return {
+      total: assets.length,
+      available: assets.filter((a) => a.status === "available").length,
+      assigned: assets.filter((a) => a.status === "assigned").length,
+      maintenance: assets.filter((a) => a.status === "maintenance" || a.status === "repair").length,
+      laptops: assets.filter((a) => a.type === "laptop").length,
+      monitors: assets.filter((a) => a.type === "monitor").length,
+      phones: assets.filter((a) => a.type === "phone").length,
+    };
+  }, [assets]);
+  return { data: stats, isLoading, error };
 }
 
 export interface CreateAssetData {

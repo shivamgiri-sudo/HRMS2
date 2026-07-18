@@ -1,23 +1,8 @@
-import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
-import { env } from "../../config/env.js";
+import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 
-let ciPool: mysql.Pool | null = null;
-
-function getCiPool(): mysql.Pool {
-  if (!ciPool) {
-    ciPool = mysql.createPool({
-      host: env.DB_HOST,
-      port: env.DB_PORT,
-      user: env.DB_USER,
-      password: env.DB_PASSWORD,
-      database: "Shivamgiri",
-      waitForConnections: true,
-      connectionLimit: 5,
-      connectTimeout: 10000,
-    });
-  }
-  return ciPool;
+function getCiPool() {
+  return getShivamgiriPool();
 }
 
 /**

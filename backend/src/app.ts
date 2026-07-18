@@ -7,7 +7,7 @@ import path from "path";
 
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { listEndpointLimiter, payrollRunLimiter, reportLimiter } from "./middleware/rateLimiter.js";
+import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter } from "./middleware/rateLimiter.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { processRouter } from "./modules/process/process.routes.js";
 import { integrationRouter } from "./modules/integration-hub/integration.routes.js";
@@ -235,17 +235,23 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(globalLimiter);
 
 const uploadsPath = path.resolve(process.cwd(), "uploads");
 
-app.use("/uploads", (req, res, next) => {
-  if (req.path.startsWith("/onboarding/")) {
+// Only employee-photos are intentionally public (avatar display, no PII risk).
+// Every other subfolder — tax-documents, onboarding, payslips, expense-receipts,
+// bank proofs, NOC files, etc. — must go through the authenticated /api/files/ endpoint.
+const UPLOADS_PUBLIC_ALLOWLIST = new Set(["/employee-photos/"]);
+app.use("/uploads", (req, res, _next) => {
+  const isAllowed = [...UPLOADS_PUBLIC_ALLOWLIST].some(prefix => req.path.startsWith(prefix));
+  if (!isAllowed) {
     return res.status(403).json({
       success: false,
-      message: "Direct access blocked. Use the secure document preview endpoint.",
+      message: "Direct access blocked. Use the secure document endpoint.",
     });
   }
-  return express.static(uploadsPath)(req, res, next);
+  return express.static(uploadsPath)(req, res, _next);
 });
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
@@ -273,7 +279,7 @@ app.use("/api/leave", leaveRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
 app.use("/api/payroll/readiness", payrollReadinessRouter);
-app.use("/api/payroll", payrollRunLimiter, payrollSecureRouter);
+app.use("/api/payroll", listEndpointLimiter, payrollSecureRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
@@ -455,5 +461,9 @@ app.use("/api/ai", aiInsightsRouter);
 import { biRouter } from "./modules/business-intelligence/bi.routes.js";
 app.use("/api/bi", biRouter);
 
+import { policyEngineRouter } from "./modules/policy-engine/policy-engine.routes.js";
+app.use("/api/policy-engine", policyEngineRouter);
+
 app.use(notFoundHandler);
 app.use(errorHandler);
+

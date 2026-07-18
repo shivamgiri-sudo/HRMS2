@@ -28,8 +28,8 @@ export function useDashboardStats() {
 
   return useQuery({
     queryKey: ["dashboard-stats", user?.id, isAdminOrHR],
-    refetchInterval: 5 * 60_000,   // was 30s — reduces server load 10×
-    refetchOnWindowFocus: true,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       // Batch 1: resolve the employee record (needed for all subsequent calls)
       let myEmployee: { id: string } | null = null;

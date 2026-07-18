@@ -24,6 +24,7 @@ import { checkBgvReadiness, getBgvReadinessSummary } from '../ats/bgv-readiness.
 import { PAN_REGEX, AADHAAR_REGEX } from '../ats/bgv-config.js';
 import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
 import { activateIfJoiningDateReached } from './employee-activation.service.js';
+import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -272,6 +273,14 @@ export async function createEmployeeFromCandidate(
       result.provisioningStatus.dispatched = false;
       // Employee creation still successful
     }
+
+    // Non-blocking LMS provisioning — errors do not block employee creation
+    provisionLmsIdentityForEmployee({
+      employeeCode,
+      createdBy: approverId ?? "system",
+    }).catch((err) => {
+      console.error('[EmployeeOrchestrator] LMS auto-provisioning failed:', err);
+    });
 
     // Real-time activation: if joining date is today or past, activate immediately
     if (result.employeeId && offer.date_of_joining) {
