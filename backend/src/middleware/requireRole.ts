@@ -2,31 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import type { NextFunction, Response } from "express";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
-
-/**
- * Role aliases — bidirectional:
- * - "manager" ↔ "process_manager": same authority, different naming conventions across modules.
- *   A route protected with requireRole("manager") accepts users with either role key.
- * - "tl" ↔ "team_leader": legacy short form and canonical form.
- *   Expansion runs on BOTH the allowed list and the user's actual roles so both orderings match.
- */
-const ROLE_ALIASES: Record<string, string[]> = {
-  "process_manager": ["manager"],
-  "manager":         ["process_manager"],
-  "team_leader":     ["tl"],
-  "tl":              ["team_leader"],
-  "wfm":             ["wfm_analyst"],
-  "wfm_analyst":     ["wfm"],
-};
-
-/** Expand a list of roles to include their known aliases */
-function expandRoles(roles: string[]): string[] {
-  const expanded = new Set(roles);
-  for (const r of roles) {
-    (ROLE_ALIASES[r] ?? []).forEach(a => expanded.add(a));
-  }
-  return Array.from(expanded);
-}
+import { expandRoles } from "../platform/policy/index.js";
 
 export function requireRole(...allowedRoles: string[]) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
