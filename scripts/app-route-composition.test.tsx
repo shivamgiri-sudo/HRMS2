@@ -1,6 +1,17 @@
 import { createRoutesFromElements, type RouteObject } from "react-router-dom";
+import { renderToStaticMarkup } from "react-dom/server";
+import { vi } from "vitest";
 
 import { appRouteElements } from "../src/config/routes";
+import SuperAdminDashboardV2 from "../src/pages/SuperAdminDashboardV2";
+
+vi.mock("../src/pages/Index", () => ({
+  default: () => <div data-dashboard-entry="switcher" />,
+}));
+
+vi.mock("../src/pages/dashboards/ReferenceRoleDashboard", () => ({
+  default: () => <div data-dashboard-entry="single-view" />,
+}));
 
 function collectPaths(routes: RouteObject[]): string[] {
   return routes.flatMap((route) => [
@@ -23,4 +34,11 @@ test("application route groups contain only valid routes and preserve candidate 
   }
 
   expect(routePaths.length).toBeGreaterThan(100);
+});
+
+test("the dedicated super-admin URL preserves the dashboard role switcher", () => {
+  const html = renderToStaticMarkup(<SuperAdminDashboardV2 />);
+
+  expect(html).toContain('data-dashboard-entry="switcher"');
+  expect(html).not.toContain('data-dashboard-entry="single-view"');
 });

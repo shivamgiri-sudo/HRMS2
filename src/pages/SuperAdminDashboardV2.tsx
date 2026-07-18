@@ -1,5 +1,5 @@
-import ReferenceRoleDashboard from "./dashboards/ReferenceRoleDashboard";
+import DashboardIndex from "./Index";
 
 export default function SuperAdminDashboardV2() {
-  return <ReferenceRoleDashboard variant="super_admin" />;
+  return <DashboardIndex />;
 }
