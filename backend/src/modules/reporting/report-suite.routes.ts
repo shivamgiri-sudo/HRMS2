@@ -1698,6 +1698,975 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       break;
     }
 
+    // ─── Missing Attendance ───────────────────────────────────────────────────
+    case "late-arrival-summary": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      clauses.push("adr.late_mark = 1");
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
+                    COUNT(*) AS late_arrival_days,
+                    SUM(COALESCE(adr.late_minutes, 0)) AS total_late_minutes
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, p.process_name
+              ORDER BY late_arrival_days DESC`;
+      break;
+    }
+
+    case "regularization-summary": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("DATE_FORMAT(arr.attendance_date,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
+                    arr.attendance_date, arr.requested_status, arr.reason,
+                    arr.status AS approval_status,
+                    arr.approved_by, arr.created_at AS requested_at
+               FROM attendance_regularization arr
+               JOIN employees e ON e.id = arr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY arr.attendance_date DESC, employee_name`;
+      break;
+    }
+
+    case "attendance-dispute-summary": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      if (req.query.status) { clauses.push("ad.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("DATE_FORMAT(ad.dispute_date,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    ad.dispute_date, ad.dispute_type, ad.description,
+                    ad.status, ad.resolution, ad.resolved_at
+               FROM attendance_dispute ad
+               JOIN employees e ON e.id = ad.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY ad.dispute_date DESC`;
+      break;
+    }
+
+    // ─── Missing Leave ────────────────────────────────────────────────────────
+    case "leave-encashment-register": {
+      const year = String(req.query.year ?? new Date().getFullYear());
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("YEAR(le.encashment_date) = ?"); params.push(year);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
+                    le.leave_type, le.days_encashed, le.encashment_amount,
+                    le.encashment_date, le.status, le.payroll_month
+               FROM leave_encashment le
+               JOIN employees e ON e.id = le.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY le.encashment_date DESC`;
+      break;
+    }
+
+    // ─── Missing Payroll ──────────────────────────────────────────────────────
+    case "payroll-readiness-status": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("spr.payroll_month = ?"); params.push(month);
+      sql = `SELECT spr.payroll_month, b.branch_name,
+                    spr.status AS run_status,
+                    spr.total_employees, spr.processed_count, spr.error_count,
+                    spr.finalized_at, spr.finalized_by,
+                    ROUND(spr.processed_count / NULLIF(spr.total_employees,0) * 100, 1) AS readiness_pct
+               FROM salary_prep_run spr
+               LEFT JOIN branch_master b ON b.id = spr.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY spr.payroll_month DESC, b.branch_name`;
+      break;
+    }
+
+    // ─── Missing Statutory ────────────────────────────────────────────────────
+    case "esic-challan-data": {
+      const month = monthParam(req.query.month);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    e.esic_number, b.branch_name,
+                    COALESCE(gross_comp.amount, 0) AS gross_wages,
+                    COALESCE(esic_ee.amount, 0) AS employee_esic,
+                    COALESCE(esic_er.amount, 0) AS employer_esic
+               FROM employees e
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN (
+                 SELECT spl.employee_id, SUM(splc.amount) AS amount
+                   FROM salary_prep_line spl
+                   JOIN salary_prep_line_component splc ON splc.line_id = spl.id
+                   JOIN salary_prep_run spr ON spr.id = spl.run_id
+                  WHERE spr.payroll_month = ? AND LOWER(splc.component_code) LIKE '%gross%'
+                  GROUP BY spl.employee_id
+               ) gross_comp ON gross_comp.employee_id = e.id
+               LEFT JOIN (
+                 SELECT spl.employee_id, SUM(splc.amount) AS amount
+                   FROM salary_prep_line spl
+                   JOIN salary_prep_line_component splc ON splc.line_id = spl.id
+                   JOIN salary_prep_run spr ON spr.id = spl.run_id
+                  WHERE spr.payroll_month = ? AND LOWER(splc.component_code) IN ('esic_ee','esic_employee','esic')
+                  GROUP BY spl.employee_id
+               ) esic_ee ON esic_ee.employee_id = e.id
+               LEFT JOIN (
+                 SELECT spl.employee_id, SUM(splc.amount) AS amount
+                   FROM salary_prep_line spl
+                   JOIN salary_prep_line_component splc ON splc.line_id = spl.id
+                   JOIN salary_prep_run spr ON spr.id = spl.run_id
+                  WHERE spr.payroll_month = ? AND LOWER(splc.component_code) IN ('esic_er','esic_employer')
+                  GROUP BY spl.employee_id
+               ) esic_er ON esic_er.employee_id = e.id
+              WHERE e.active_status = 1 AND e.esic_number IS NOT NULL AND e.esic_number != ''
+              ORDER BY e.employee_code`;
+      params.push(month, month, month);
+      break;
+    }
+
+    case "pt-slab-master": {
+      const state = String(req.query.state ?? "");
+      if (state) { clauses.push("psc.state_code = ?"); params.push(state); }
+      sql = `SELECT psc.state_code, psc.state_name,
+                    psc.salary_from, psc.salary_to, psc.pt_amount,
+                    psc.frequency, psc.effective_from, psc.effective_to,
+                    psc.is_active
+               FROM pt_slab_config psc
+              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              ORDER BY psc.state_code, psc.salary_from`;
+      break;
+    }
+
+    case "form16-data": {
+      const financialYear = String(req.query.financialYear ?? `${new Date().getFullYear() - 1}-${String(new Date().getFullYear()).slice(2)}`);
+      addEmployeeFilters(req.query, clauses, params);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    e.pan_number, b.branch_name,
+                    td.gross_salary, td.total_deductions, td.taxable_income,
+                    td.tds_deducted, td.tds_deposited,
+                    td.financial_year, td.status
+               FROM tax_declaration td
+               JOIN employees e ON e.id = td.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE td.financial_year = ?
+                AND ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              ORDER BY e.employee_code`;
+      params.unshift(financialYear);
+      break;
+    }
+
+    case "gratuity-monthly-accrual": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("DATE_FORMAT(gal.accrual_month,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
+                    gal.accrual_month, gal.eligible_wage, gal.accrual_amount,
+                    gal.cumulative_accrual, gal.years_of_service,
+                    gal.calculation_basis
+               FROM gratuity_accrual_ledger gal
+               JOIN employees e ON e.id = gal.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY e.employee_code`;
+      break;
+    }
+
+    case "posh-compliance-register": {
+      const year = String(req.query.year ?? new Date().getFullYear());
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("YEAR(pc.complaint_date) = ?"); params.push(year);
+      sql = `SELECT pc.complaint_id, pc.complaint_date,
+                    b.branch_name, p.process_name,
+                    pc.complainant_designation, pc.respondent_designation,
+                    pc.complaint_type, pc.status, pc.ic_formed,
+                    pc.inquiry_completed_at, pc.resolution_date,
+                    DATEDIFF(COALESCE(pc.resolution_date, CURDATE()), pc.complaint_date) AS days_open
+               FROM posh_complaint pc
+               LEFT JOIN branch_master b ON b.id = pc.branch_id
+               LEFT JOIN process_master p ON p.id = pc.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY pc.complaint_date DESC`;
+      break;
+    }
+
+    case "labour-compliance-register": {
+      const year = String(req.query.year ?? new Date().getFullYear());
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("YEAR(lce.due_date) = ?"); params.push(year);
+      sql = `SELECT lce.compliance_type, lce.act_name, lce.form_number,
+                    b.branch_name, lce.state_code,
+                    lce.due_date, lce.filed_date, lce.status,
+                    lce.filing_reference, lce.remarks
+               FROM labour_compliance_event lce
+               LEFT JOIN branch_master b ON b.id = lce.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY lce.due_date DESC`;
+      break;
+    }
+
+    // ─── Missing ATS / Onboarding ─────────────────────────────────────────────
+    case "bgv-vendor-dispatch-log": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      sql = `SELECT ac.candidate_code, ac.full_name,
+                    abc.vendor_name, abc.check_type,
+                    abc.dispatched_at, abc.received_at,
+                    DATEDIFF(COALESCE(abc.received_at, NOW()), abc.dispatched_at) AS tat_days,
+                    abc.status, abc.result, abc.remarks
+               FROM ats_bgv_check abc
+               JOIN ats_candidate ac ON ac.id = abc.candidate_id
+              WHERE abc.dispatched_at BETWEEN ? AND ?
+              ORDER BY abc.dispatched_at DESC`;
+      params.push(from, to);
+      break;
+    }
+
+    case "onboarding-request-status": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.branchId) { clauses.push("aor.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (req.query.status) { clauses.push("aor.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("aor.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT ac.candidate_code, ac.full_name, ac.mobile,
+                    b.branch_name, p.process_name,
+                    aor.status, aor.joining_date, aor.created_at AS request_date,
+                    DATEDIFF(COALESCE(aor.completed_at, CURDATE()), aor.created_at) AS days_in_progress
+               FROM ats_onboarding_request aor
+               JOIN ats_candidate ac ON ac.id = aor.candidate_id
+               LEFT JOIN branch_master b ON b.id = aor.branch_id
+               LEFT JOIN process_master p ON p.id = aor.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY aor.created_at DESC`;
+      break;
+    }
+
+    case "offer-letter-tat-report": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.branchId) { clauses.push("aol.branch_id = ?"); params.push(String(req.query.branchId)); }
+      clauses.push("aol.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT ac.candidate_code, ac.full_name,
+                    b.branch_name, p.process_name,
+                    aol.created_at AS offer_generated_at,
+                    aol.sent_at AS offer_sent_at,
+                    aol.signed_at AS offer_accepted_at,
+                    DATEDIFF(aol.sent_at, aol.created_at) AS generation_to_send_days,
+                    DATEDIFF(aol.signed_at, aol.sent_at) AS send_to_accept_days,
+                    aol.status AS offer_status
+               FROM ats_offer_letter aol
+               JOIN ats_candidate ac ON ac.id = aol.candidate_id
+               LEFT JOIN branch_master b ON b.id = aol.branch_id
+               LEFT JOIN process_master p ON p.id = aol.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY aol.created_at DESC`;
+      break;
+    }
+
+    case "cheque-name-mismatch-report": {
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (req.query.status) { clauses.push("ebd.verification_status = ?"); params.push(String(req.query.status)); }
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    ebd.account_holder_name AS bank_name,
+                    ebd.penny_drop_name AS verified_name,
+                    ebd.bank_name AS bank,
+                    ebd.account_number, ebd.ifsc_code,
+                    ebd.verification_status, ebd.mismatch_reason,
+                    ebd.updated_at
+               FROM employee_bank_detail ebd
+               JOIN employees e ON e.id = ebd.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ebd.penny_drop_name IS NOT NULL
+                AND LOWER(TRIM(ebd.account_holder_name)) != LOWER(TRIM(ebd.penny_drop_name))
+                AND ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              ORDER BY ebd.updated_at DESC`;
+      break;
+    }
+
+    case "bgv-completion-rate": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.branchId) { clauses.push("aob.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (req.query.processId) { clauses.push("aob.process_id = ?"); params.push(String(req.query.processId)); }
+      clauses.push("ac.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT b.branch_name, p.process_name,
+                    COUNT(DISTINCT ac.id) AS total_candidates,
+                    SUM(CASE WHEN abc.status = 'clear' THEN 1 ELSE 0 END) AS bgv_cleared,
+                    SUM(CASE WHEN abc.status = 'discrepancy' THEN 1 ELSE 0 END) AS bgv_discrepancy,
+                    SUM(CASE WHEN abc.id IS NULL THEN 1 ELSE 0 END) AS bgv_pending,
+                    ROUND(SUM(CASE WHEN abc.status = 'clear' THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(DISTINCT ac.id),0) * 100, 1) AS completion_rate_pct
+               FROM ats_candidate ac
+               LEFT JOIN ats_onboarding_bridge aob ON aob.candidate_id = ac.id
+               LEFT JOIN branch_master b ON b.id = aob.branch_id
+               LEFT JOIN process_master p ON p.id = aob.process_id
+               LEFT JOIN ats_bgv_check abc ON abc.candidate_id = ac.id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY b.branch_name, p.process_name
+              ORDER BY completion_rate_pct DESC`;
+      break;
+    }
+
+    case "esign-digilocker-status": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (req.query.status) { clauses.push("ejdc.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("ejdc.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    ejdc.doc_type, ejdc.status,
+                    ejdc.esign_requested_at, ejdc.esign_completed_at,
+                    ejdc.digilocker_linked,
+                    DATEDIFF(COALESCE(ejdc.esign_completed_at, CURDATE()), ejdc.esign_requested_at) AS tat_days
+               FROM employee_joining_document_checklist ejdc
+               JOIN employees e ON e.id = ejdc.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ejdc.doc_type IN ('appointment_letter','offer_letter','esign','digilocker')
+                AND ${clauses.join(" AND ")}
+              ORDER BY ejdc.esign_requested_at DESC`;
+      break;
+    }
+
+    // ─── Missing Exit ─────────────────────────────────────────────────────────
+    case "rehire-eligibility-register": {
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, d.dept_name AS department_name, p.process_name,
+                    er.exit_type, er.exit_reason_category,
+                    COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
+                    TIMESTAMPDIFF(MONTH, e.date_of_joining,
+                      COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)) AS tenure_months,
+                    CASE WHEN er.exit_type NOT IN ('termination','dismissal','absconding')
+                          AND COALESCE(ffc.is_ff_provisional, 0) = 0
+                         THEN 'Eligible' ELSE 'Not Eligible' END AS rehire_eligible,
+                    er.rehire_flag, er.exit_notes
+               FROM exit_request er
+               JOIN employees e ON e.id = er.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
+              WHERE er.status = 'completed'
+                AND ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              ORDER BY COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) DESC`;
+      break;
+    }
+
+    case "attrition-by-exit-reason": {
+      const year = String(req.query.year ?? new Date().getFullYear());
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      clauses.push("YEAR(ar.exit_date) = ?"); params.push(year);
+      sql = `SELECT COALESCE(er.exit_reason_category, 'Not Specified') AS exit_reason,
+                    er.exit_type,
+                    b.branch_name,
+                    COUNT(*) AS exit_count,
+                    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct_of_total,
+                    ROUND(AVG(TIMESTAMPDIFF(MONTH, e.date_of_joining, ar.exit_date)), 1) AS avg_tenure_months
+               FROM attrition_record ar
+               JOIN employees e ON e.id = ar.employee_id
+               LEFT JOIN exit_request er ON er.employee_id = ar.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY er.exit_reason_category, er.exit_type, b.branch_name
+              ORDER BY exit_count DESC`;
+      break;
+    }
+
+    // ─── Missing Performance ──────────────────────────────────────────────────
+    case "feedback-360-summary": {
+      const cycle = String(req.query.cycle ?? "");
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (cycle) { clauses.push("pfr.cycle_id = ?"); params.push(cycle); }
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    p.process_name, b.branch_name,
+                    COUNT(pfr.id) AS total_feedback_responses,
+                    ROUND(AVG(pfr.overall_score), 2) AS avg_overall_score,
+                    ROUND(AVG(pfr.self_score), 2) AS avg_self_score,
+                    ROUND(AVG(pfr.manager_score), 2) AS avg_manager_score,
+                    ROUND(AVG(pfr.peer_score), 2) AS avg_peer_score,
+                    MAX(pfr.submitted_at) AS last_feedback_at
+               FROM performance_feedback_report pfr
+               JOIN employees e ON e.id = pfr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, p.process_name, b.branch_name
+              ORDER BY avg_overall_score DESC`;
+      break;
+    }
+
+    case "goal-completion-summary": {
+      const period = String(req.query.period ?? "");
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (period) { clauses.push("dp.plan_start_date <= ? AND dp.plan_end_date >= ?"); params.push(period, period); }
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    p.process_name, b.branch_name,
+                    dp.plan_start_date, dp.plan_end_date,
+                    COUNT(dpg.goal_id) AS total_goals,
+                    SUM(CASE WHEN dpg.status = 'completed' THEN 1 ELSE 0 END) AS completed_goals,
+                    SUM(CASE WHEN dpg.status = 'in_progress' THEN 1 ELSE 0 END) AS in_progress_goals,
+                    ROUND(SUM(CASE WHEN dpg.status = 'completed' THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(dpg.goal_id),0) * 100, 1) AS completion_pct
+               FROM development_plan dp
+               JOIN employees e ON e.id = dp.employee_id
+               LEFT JOIN development_plan_goal dpg ON dpg.plan_id = dp.plan_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
+                       p.process_name, b.branch_name, dp.plan_start_date, dp.plan_end_date
+              ORDER BY completion_pct DESC`;
+      break;
+    }
+
+    case "training-needs-summary": {
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (req.query.priority) { clauses.push("tna.priority = ?"); params.push(String(req.query.priority)); }
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
+                    tna.skill_gap, tna.training_topic, tna.priority,
+                    tna.identified_by, tna.identified_at,
+                    tna.status, tna.target_completion_date
+               FROM training_need_assessment tna
+               JOIN employees e ON e.id = tna.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
+              ORDER BY FIELD(tna.priority,'high','medium','low'), e.employee_code`;
+      break;
+    }
+
+    // ─── Missing WFM ──────────────────────────────────────────────────────────
+    case "coverage-gap-actions": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      if (req.query.processId) { clauses.push("cga.process_id = ?"); params.push(String(req.query.processId)); }
+      if (req.query.status) { clauses.push("cga.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("cga.gap_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT cga.gap_date, p.process_name, b.branch_name,
+                    cga.required_hc, cga.available_hc,
+                    cga.required_hc - cga.available_hc AS gap_count,
+                    cga.action_type, cga.action_details,
+                    cga.status, cga.resolved_by, cga.resolved_at
+               FROM wfm_coverage_gap_action cga
+               LEFT JOIN process_master p ON p.id = cga.process_id
+               LEFT JOIN branch_master b ON b.id = cga.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY cga.gap_date DESC, gap_count DESC`;
+      break;
+    }
+
+    case "roster-cycle-status": {
+      const month = monthParam(req.query.month);
+      if (req.query.branchId) { clauses.push("wrp.branch_id = ?"); params.push(String(req.query.branchId)); }
+      if (req.query.processId) { clauses.push("wrp.process_id = ?"); params.push(String(req.query.processId)); }
+      clauses.push("DATE_FORMAT(wrp.from_date,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT wrp.plan_name, p.process_name, b.branch_name,
+                    wrp.from_date, wrp.to_date,
+                    wrp.plan_status,
+                    wrp.required_headcount, wrp.assigned_headcount,
+                    ROUND(wrp.assigned_headcount / NULLIF(wrp.required_headcount,0) * 100, 1) AS fill_rate_pct,
+                    wrp.published_at, wrp.published_by,
+                    wrp.ack_required, wrp.ack_completed_count
+               FROM wfm_roster_plan wrp
+               LEFT JOIN process_master p ON p.id = wrp.process_id
+               LEFT JOIN branch_master b ON b.id = wrp.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY wrp.from_date DESC, p.process_name`;
+      break;
+    }
+
+    // ─── Missing Integration & Audit ─────────────────────────────────────────
+    case "integration-run-history": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      const integrationKey = String(req.query.integrationKey ?? "");
+      const status = String(req.query.status ?? "");
+      if (integrationKey) { clauses.push("icr.connector_key = ?"); params.push(integrationKey); }
+      if (status) { clauses.push("icr.run_status = ?"); params.push(status); }
+      clauses.push("icr.run_started_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT icr.connector_key, icr.run_type, icr.run_status,
+                    icr.run_started_at, icr.run_ended_at,
+                    TIMESTAMPDIFF(SECOND, icr.run_started_at, icr.run_ended_at) AS duration_sec,
+                    icr.records_fetched, icr.records_inserted, icr.records_updated, icr.records_errored,
+                    icr.error_message, icr.triggered_by
+               FROM integration_connector_run icr
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY icr.run_started_at DESC`;
+      break;
+    }
+
+    case "tat-escalation-breach": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      const taskType = String(req.query.taskType ?? "");
+      if (taskType) { clauses.push("wi.workflow_type = ?"); params.push(taskType); }
+      if (req.query.branchId) { clauses.push("wi.branch_id = ?"); params.push(String(req.query.branchId)); }
+      clauses.push("wi.created_at BETWEEN ? AND ?"); params.push(from, to);
+      clauses.push("wi.escalated = 1");
+      sql = `SELECT wi.workflow_type, wi.reference_id, wi.reference_type,
+                    e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    wi.created_at AS opened_at, wi.due_at, wi.escalated_at,
+                    DATEDIFF(wi.escalated_at, wi.due_at) AS overdue_days,
+                    wi.status, wi.assigned_to, wi.escalated_to
+               FROM workflow_instance wi
+               LEFT JOIN employees e ON e.id = wi.employee_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY overdue_days DESC`;
+      break;
+    }
+
+    case "sensitive-action-audit": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      const module = String(req.query.module ?? "");
+      const actionType = String(req.query.actionType ?? "");
+      if (module) { clauses.push("sal.module_key = ?"); params.push(module); }
+      if (actionType) { clauses.push("sal.action_type = ?"); params.push(actionType); }
+      clauses.push("sal.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT sal.module_key, sal.action_type, sal.reference_id, sal.reference_type,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS actor_name,
+                    e.employee_code AS actor_code,
+                    sal.ip_address, sal.user_agent,
+                    sal.before_value, sal.after_value,
+                    sal.reason, sal.created_at AS action_at
+               FROM sensitive_action_log sal
+               LEFT JOIN employees e ON e.id = sal.actor_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY sal.created_at DESC`;
+      break;
+    }
+
+    case "communication-dispatch-log": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      const channel = String(req.query.channel ?? "");
+      const status = String(req.query.status ?? "");
+      if (channel) { clauses.push("ndl.channel = ?"); params.push(channel); }
+      if (status) { clauses.push("ndl.status = ?"); params.push(status); }
+      clauses.push("ndl.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT ndl.channel, ndl.template_code, ndl.recipient_type,
+                    ndl.recipient_identifier, ndl.status,
+                    ndl.sent_at, ndl.delivered_at, ndl.failed_reason,
+                    ndl.reference_type, ndl.reference_id,
+                    ndl.created_at AS queued_at
+               FROM notification_dispatch_log ndl
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY ndl.created_at DESC`;
+      break;
+    }
+
+    // ─── Missing Helpdesk & Grievance ─────────────────────────────────────────
+    case "helpdesk-ticket-summary": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.ticketCategory) { clauses.push("ht.category = ?"); params.push(String(req.query.ticketCategory)); }
+      if (req.query.status) { clauses.push("ht.status = ?"); params.push(String(req.query.status)); }
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      clauses.push("ht.created_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT ht.ticket_number, ht.category, ht.subject,
+                    e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    ht.priority, ht.status,
+                    ht.created_at, ht.resolved_at,
+                    DATEDIFF(COALESCE(ht.resolved_at, NOW()), ht.created_at) AS tat_days,
+                    ht.assigned_to
+               FROM helpdesk_ticket ht
+               LEFT JOIN employees e ON e.id = ht.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY ht.created_at DESC`;
+      break;
+    }
+
+    case "grievance-register": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.status) { clauses.push("gc.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT gc.grievance_number, gc.category, gc.sub_category,
+                    e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
+                    gc.filed_at, gc.status,
+                    gc.assigned_to, gc.resolved_at,
+                    DATEDIFF(COALESCE(gc.resolved_at, CURDATE()), gc.filed_at) AS days_open,
+                    gc.resolution_summary
+               FROM grievance_case gc
+               LEFT JOIN employees e ON e.id = gc.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY gc.filed_at DESC`;
+      break;
+    }
+
+    case "grievance-tat-report": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      if (req.query.status) { clauses.push("gc.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT gc.category,
+                    COUNT(*) AS total_cases,
+                    SUM(CASE WHEN gc.resolved_at IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
+                    SUM(CASE WHEN gc.resolved_at IS NULL THEN 1 ELSE 0 END) AS pending,
+                    ROUND(AVG(DATEDIFF(gc.resolved_at, gc.filed_at)), 1) AS avg_resolution_days,
+                    MAX(DATEDIFF(COALESCE(gc.resolved_at, CURDATE()), gc.filed_at)) AS max_days_open,
+                    SUM(CASE WHEN DATEDIFF(COALESCE(gc.resolved_at, CURDATE()), gc.filed_at) > 7 THEN 1 ELSE 0 END) AS breached_sla
+               FROM grievance_case gc
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY gc.category
+              ORDER BY avg_resolution_days DESC`;
+      break;
+    }
+
+    case "grievance-category-analysis": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      clauses.push("gc.filed_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT gc.category, gc.sub_category,
+                    COUNT(*) AS total_cases,
+                    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) AS pct_of_total,
+                    SUM(CASE WHEN gc.status = 'closed' THEN 1 ELSE 0 END) AS closed_cases,
+                    ROUND(AVG(DATEDIFF(gc.resolved_at, gc.filed_at)), 1) AS avg_resolution_days
+               FROM grievance_case gc
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY gc.category, gc.sub_category
+              ORDER BY total_cases DESC`;
+      break;
+    }
+
+    case "dpdp-consent-status": {
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      clauses.push("e.active_status = 1");
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    ecr.consent_type, ecr.status AS consent_status,
+                    ecr.consented_at, ecr.expires_at,
+                    ecr.revoked_at,
+                    CASE WHEN ecr.id IS NULL THEN 'Not Collected'
+                         WHEN ecr.revoked_at IS NOT NULL THEN 'Revoked'
+                         WHEN ecr.status = 'active' THEN 'Active'
+                         ELSE ecr.status END AS consent_state
+               FROM employees e
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN employee_consent_record ecr ON ecr.employee_id = e.id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY consent_state, e.employee_code`;
+      break;
+    }
+
+    // ─── Missing Client Portal ────────────────────────────────────────────────
+    case "portal-kpi-commitment-vs-actual": {
+      const month = monthParam(req.query.month);
+      if (req.query.processId) { clauses.push("pkc.process_id = ?"); params.push(String(req.query.processId)); }
+      clauses.push("pkc.kpi_month = ?"); params.push(month);
+      sql = `SELECT p.process_name, pkc.kpi_name, pkc.kpi_unit,
+                    pkc.committed_value, pkc.actual_value,
+                    ROUND(pkc.actual_value / NULLIF(pkc.committed_value,0) * 100, 1) AS achievement_pct,
+                    CASE WHEN pkc.actual_value >= pkc.committed_value THEN 'Met'
+                         WHEN pkc.actual_value >= pkc.committed_value * 0.9 THEN 'Near Miss'
+                         ELSE 'Missed' END AS status,
+                    pkc.kpi_month
+               FROM portal_kpi_commitment pkc
+               LEFT JOIN process_master p ON p.id = pkc.process_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY status, p.process_name, pkc.kpi_name`;
+      break;
+    }
+
+    case "action-plan-status": {
+      const month = monthParam(req.query.month);
+      if (req.query.processId) { clauses.push("ap.process_id = ?"); params.push(String(req.query.processId)); }
+      if (req.query.status) { clauses.push("ap.status = ?"); params.push(String(req.query.status)); }
+      clauses.push("DATE_FORMAT(ap.created_at,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT ap.action_plan_number, ap.title, ap.action_type,
+                    p.process_name, b.branch_name,
+                    ap.owner, ap.status, ap.priority,
+                    ap.due_date, ap.completed_at,
+                    DATEDIFF(ap.due_date, CURDATE()) AS days_to_due,
+                    ap.created_at, ap.root_cause
+               FROM action_plan ap
+               LEFT JOIN process_master p ON p.id = ap.process_id
+               LEFT JOIN branch_master b ON b.id = ap.branch_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY ap.due_date ASC, ap.priority DESC`;
+      break;
+    }
+
+    case "governance-checklist-completion": {
+      const month = monthParam(req.query.month);
+      if (req.query.processId) { clauses.push("gci.process_id = ?"); params.push(String(req.query.processId)); }
+      clauses.push("DATE_FORMAT(gci.checklist_date,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT p.process_name, b.branch_name,
+                    gci.checklist_type, gci.checklist_date,
+                    COUNT(gci.id) AS total_items,
+                    SUM(CASE WHEN gci.status = 'completed' THEN 1 ELSE 0 END) AS completed_items,
+                    ROUND(SUM(CASE WHEN gci.status='completed' THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(gci.id),0) * 100, 1) AS completion_pct,
+                    MAX(gci.updated_at) AS last_updated
+               FROM governance_checklist_item gci
+               LEFT JOIN process_master p ON p.id = gci.process_id
+               LEFT JOIN branch_master b ON b.id = gci.branch_id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY p.process_name, b.branch_name, gci.checklist_type, gci.checklist_date
+              ORDER BY completion_pct ASC, gci.checklist_date DESC`;
+      break;
+    }
+
+    case "portal-access-log": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      const clientId = String(req.query.clientId ?? "");
+      if (clientId) { clauses.push("pal.client_id = ?"); params.push(clientId); }
+      clauses.push("pal.accessed_at BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT pal.client_id, cm.client_name,
+                    pal.user_identifier, pal.action,
+                    pal.page_accessed, pal.ip_address,
+                    pal.accessed_at,
+                    pal.data_export_flag
+               FROM portal_access_log pal
+               LEFT JOIN client_master cm ON cm.id = pal.client_id
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY pal.accessed_at DESC`;
+      break;
+    }
+
+    // ─── Missing Productivity ─────────────────────────────────────────────────
+    case "productivity-daily-heatmap": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT adr.record_date,
+                    e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    p.process_name, b.branch_name,
+                    adr.attendance_status,
+                    ROUND(adr.dialler_minutes / 60, 2) AS login_hours,
+                    ROUND(adr.biometric_minutes / 60, 2) AS biometric_hours,
+                    COALESCE(kda.actual_value, 0) AS kpi_daily_score,
+                    adr.late_mark,
+                    CASE
+                      WHEN adr.dialler_minutes >= 480 AND adr.late_mark = 0 THEN 'HIGH'
+                      WHEN adr.dialler_minutes >= 360 THEN 'MEDIUM'
+                      WHEN adr.dialler_minutes > 0 THEN 'LOW'
+                      ELSE 'ABSENT'
+                    END AS productivity_band
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
+                 AND kda.record_date = adr.record_date AND kda.source = 'apr'
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY adr.record_date, p.process_name, employee_name`;
+      break;
+    }
+
+    case "productivity-process-summary": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT p.process_name, b.branch_name,
+                    COUNT(DISTINCT e.id) AS active_agents,
+                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
+                    ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
+                    ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_days,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
+                 AND kda.record_date = adr.record_date AND kda.source = 'apr'
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY p.process_name, b.branch_name
+              ORDER BY avg_login_hours_per_agent DESC`;
+      break;
+    }
+
+    case "productivity-aht-trend": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
+                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
+                    ROUND(SUM(adr.dialler_minutes) / NULLIF(COUNT(CASE WHEN adr.dialler_minutes > 0 THEN 1 END), 0), 1) AS avg_daily_login_minutes,
+                    COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END) AS present_days
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), p.process_name
+              ORDER BY month DESC, process_name`;
+      break;
+    }
+
+    case "productivity-branch-summary": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT b.branch_name,
+                    COUNT(DISTINCT e.id) AS active_agents,
+                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
+                    ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
+                    ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
+                 AND kda.record_date = adr.record_date AND kda.source = 'apr'
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY b.branch_name
+              ORDER BY avg_login_hours_per_agent DESC`;
+      break;
+    }
+
+    case "productivity-cost-centre-summary": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT cc.cost_centre_name, b.branch_name,
+                    COUNT(DISTINCT e.id) AS active_agents,
+                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
+                    ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours_per_agent,
+                    ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
+                 AND kda.record_date = adr.record_date AND kda.source = 'apr'
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY cc.cost_centre_name, b.branch_name
+              ORDER BY avg_login_hours_per_agent DESC`;
+      break;
+    }
+
+    case "productivity-org-summary": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS report_date,
+                    COUNT(DISTINCT e.id) AS active_agents,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_count,
+                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
+                    ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT CASE WHEN adr.dialler_minutes > 0 THEN e.id END),0), 2) AS avg_login_hours_per_agent,
+                    ROUND(AVG(kda.actual_value), 2) AS avg_kpi_score,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
+                 AND kda.record_date = adr.record_date AND kda.source = 'apr'
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m-%d')
+              ORDER BY report_date DESC`;
+      break;
+    }
+
+    case "productivity-occupancy-utilization": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT p.process_name, b.branch_name,
+                    adr.record_date,
+                    COUNT(DISTINCT e.id) AS scheduled_hc,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_hc,
+                    ROUND(SUM(adr.dialler_minutes) / NULLIF(
+                      SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 480 ELSE 0 END), 0) * 100, 1) AS occupancy_pct,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(*),0) * 100, 1) AS utilization_pct
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY p.process_name, b.branch_name, adr.record_date
+              ORDER BY adr.record_date DESC, occupancy_pct ASC`;
+      break;
+    }
+
+    case "productivity-adherence-vs-kpi": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    p.process_name,
+                    ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                          / NULLIF(COUNT(*),0) * 100, 1) AS attendance_pct,
+                    kss.final_score AS kpi_score, kss.rating,
+                    CASE WHEN COUNT(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 END)
+                              / NULLIF(COUNT(*),0) < 0.85 AND kss.final_score < 70
+                         THEN 'HIGH_RISK' ELSE 'OK' END AS correlation_flag
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN kpi_score_summary kss ON kss.employee_id = e.id
+               LEFT JOIN kpi_score_period ksp ON ksp.id = kss.period_id
+                 AND ksp.period_start <= LAST_DAY(STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d'))
+                 AND ksp.period_end >= STR_TO_DATE(CONCAT(?, '-01'), '%Y-%m-%d')
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, p.process_name, kss.final_score, kss.rating
+              ORDER BY attendance_pct ASC`;
+      params.push(month, month);
+      break;
+    }
+
+    case "productivity-shrinkage-impact": {
+      const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
+      const to = dateParam(req.query.to, from);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      sql = `SELECT adr.record_date, p.process_name, b.branch_name,
+                    COUNT(DISTINCT e.id) AS total_scheduled,
+                    SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS present_count,
+                    COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS shrinkage_count,
+                    ROUND((COUNT(DISTINCT e.id) - SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END))
+                          / NULLIF(COUNT(DISTINCT e.id),0) * 100, 1) AS shrinkage_pct,
+                    ROUND(SUM(adr.dialler_minutes) / 60, 2) AS actual_login_hours,
+                    ROUND(SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 480 ELSE 0 END) / 60, 2) AS expected_login_hours
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+              WHERE ${clauses.join(" AND ")}
+              GROUP BY adr.record_date, p.process_name, b.branch_name
+              ORDER BY adr.record_date DESC, shrinkage_pct DESC`;
+      break;
+    }
+
     default: {
       const fallback = fallbackReport(code);
       sql = fallback.sql;

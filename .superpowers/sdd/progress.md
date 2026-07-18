@@ -117,3 +117,25 @@ Task 6: Complete
   - Review hardening fixed mutation invalidation so filtered/paginated company-feed queries are refreshed correctly
   - Fresh local verification:
     - `npm run typecheck` -> PASS
+Task 7: Complete (review clean for task scope; note shared nav/route files also contain unrelated pending edits)
+  - Built `NativeCompanyFeed` with approved-feed lane, my-submissions rail, honest workflow shortcut cards, and responsive MAS-branded UI
+  - Wired route at `/engagement/company-feed` and added navigation entry under Engagement
+  - Fresh local verification:
+    - `npm run typecheck` -> PASS
+Task 8: Complete (review clean for task scope; note image upload still depends on current shared file-upload permissions)
+  - Built `NativeCompanyPostCreate` with server-backed creator gating, premium composer UI, local image preview grid, and submission state handling
+  - Wired route at `/engagement/company-feed/create` and added navigation entry under Engagement
+  - Fresh local verification:
+    - `npm run typecheck` -> PASS
+Task 9: Complete
+  - Added moderator management API list endpoint plus hook support
+  - Built approval queue and management pages with moderation actions, status filters, and delete workflow
+Task 10: Complete
+  - Built Super Admin creator-rights page with employee search, grant flow, active creator list, and revoke workflow
+Task 12: Complete
+  - Final verification run completed for company feed feature
+  - Fresh local verification:
+    - `npm run typecheck` -> PASS
+    - `cd backend && npx vitest run src/modules/engagement/__tests__/company-posts.routes.test.ts src/modules/engagement/__tests__/company-posts.service.test.ts` -> PASS (46/46)
+    - `cd backend && npx tsc --noEmit --pretty false --incremental false` -> PASS
+    - `npm run build` -> PASS

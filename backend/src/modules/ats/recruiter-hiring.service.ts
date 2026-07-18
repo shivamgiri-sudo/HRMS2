@@ -523,6 +523,23 @@ async function getOptionList(configKey: string, fallback: string[]) {
   return fallback;
 }
 
+async function getOptionLists(keys: string[], defaults: Record<string, string[]>): Promise<Record<string, string[]>> {
+  if (!keys.length) return {};
+  const placeholders = keys.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_key, config_value FROM ats_form_config WHERE config_key IN (${placeholders})`,
+    keys
+  );
+  const result: Record<string, string[]> = { ...Object.fromEntries(keys.map(k => [k, defaults[k] ?? []])) };
+  for (const row of rows as any[]) {
+    try {
+      const parsed = typeof row.config_value === "string" ? JSON.parse(row.config_value) : row.config_value;
+      if (Array.isArray(parsed)) result[row.config_key] = parsed.map(String);
+    } catch { /* keep default */ }
+  }
+  return result;
+}
+
 async function buildActivityActorContext(actorUserId: string): Promise<ActivityActorContext> {
   const recruiterProfile = await resolveRecruiterForActor(actorUserId).catch((err: unknown) => {
     // Re-throw hard DB/connection errors; swallow only "not found" misses
@@ -756,26 +773,27 @@ async function getCurrentUserBranch(userId: string): Promise<string | null> {
 }
 
 export async function getHiringActivityBootstrap(userId: string): Promise<HiringActivityBootstrap> {
-  const actor = await buildActivityActorContext(userId);
-  const [
-    processOptions,
-    sourceOptions,
-    positionOptions,
-    wpGroupOptions,
-    callingOutcomeOptions,
-    genderOptions,
-    educationOptions,
-    experienceOptions,
-  ] = await Promise.all([
-    getOptionList("hiringProcessOptions", DEFAULT_HIRING_OPTION_LISTS.processOptions),
-    getOptionList("hiringSourceOptions", DEFAULT_HIRING_OPTION_LISTS.sourceOptions),
-    getOptionList("hiringPositionOptions", DEFAULT_HIRING_OPTION_LISTS.positionOptions),
-    getOptionList("hiringWpGroupOptions", DEFAULT_HIRING_OPTION_LISTS.wpGroupOptions),
-    getOptionList("hiringCallingOutcomeOptions", DEFAULT_HIRING_OPTION_LISTS.callingOutcomeOptions),
-    getOptionList("genderOptions", DEFAULT_HIRING_OPTION_LISTS.genderOptions),
-    getOptionList("educationOptions", DEFAULT_HIRING_OPTION_LISTS.educationOptions),
-    getOptionList("experienceOptions", DEFAULT_HIRING_OPTION_LISTS.experienceOptions),
+  const [actor, opts] = await Promise.all([
+    buildActivityActorContext(userId),
+    getOptionLists(
+      ["hiringProcessOptions","hiringSourceOptions","hiringPositionOptions","hiringWpGroupOptions",
+       "hiringCallingOutcomeOptions","genderOptions","educationOptions","experienceOptions"],
+      {
+        hiringProcessOptions:       DEFAULT_HIRING_OPTION_LISTS.processOptions,
+        hiringSourceOptions:        DEFAULT_HIRING_OPTION_LISTS.sourceOptions,
+        hiringPositionOptions:      DEFAULT_HIRING_OPTION_LISTS.positionOptions,
+        hiringWpGroupOptions:       DEFAULT_HIRING_OPTION_LISTS.wpGroupOptions,
+        hiringCallingOutcomeOptions:DEFAULT_HIRING_OPTION_LISTS.callingOutcomeOptions,
+        genderOptions:              DEFAULT_HIRING_OPTION_LISTS.genderOptions,
+        educationOptions:           DEFAULT_HIRING_OPTION_LISTS.educationOptions,
+        experienceOptions:          DEFAULT_HIRING_OPTION_LISTS.experienceOptions,
+      }
+    ),
   ]);
+  const { hiringProcessOptions: processOptions, hiringSourceOptions: sourceOptions,
+    hiringPositionOptions: positionOptions, hiringWpGroupOptions: wpGroupOptions,
+    hiringCallingOutcomeOptions: callingOutcomeOptions, genderOptions,
+    educationOptions, experienceOptions } = opts;
 
   return {
     actor: {
@@ -1491,13 +1509,14 @@ export async function getHiringDashboard(userId: string, role: string | undefine
   };
   metrics.contacted_pct = metrics.total_records ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10 : 0;
 
-  return {
-    metrics,
-    byRecruiter: await aggregateBy("recruiter_name_snapshot", filters, scopedOnly, userId),
-    bySource: await aggregateBy("hiring_source", filters, scopedOnly, userId),
-    byProcess: await aggregateBy("process_name", filters, scopedOnly, userId),
-    byBranch: await aggregateBy("branch_name", filters, scopedOnly, userId),
-  };
+  const [byRecruiter, bySource, byProcess, byBranch] = await Promise.all([
+    aggregateBy("recruiter_name_snapshot", filters, scopedOnly, userId),
+    aggregateBy("hiring_source", filters, scopedOnly, userId),
+    aggregateBy("process_name", filters, scopedOnly, userId),
+    aggregateBy("branch_name", filters, scopedOnly, userId),
+  ]);
+
+  return { metrics, byRecruiter, bySource, byProcess, byBranch };
 }
 
 export async function getCallingDashboard(userId: string, role: string | undefined, filters: HiringFilters) {
@@ -1548,8 +1567,8 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   if (filters.hiringSource){ clauses.push("arha.hiring_source LIKE ?");            params.push(`%${filters.hiringSource}%`); }
   if (filters.recruiter)   { clauses.push("arha.recruiter_name_snapshot LIKE ?");  params.push(`%${filters.recruiter}%`); }
   if (filters.gender)      { clauses.push("arha.gender = ?");                      params.push(filters.gender); }
+  const branch = scopedOnly ? await getActorBranch(userId) : null;
   if (scopedOnly) {
-    const branch = await getActorBranch(userId);
     clauses.push("(arha.branch_name = ? OR arha.created_by = ? OR arha.recruiter_id = ?)");
     params.push(branch ?? "", userId, userId);
   }
@@ -1619,18 +1638,125 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
         )
   )`;
 
-  // ── Funnel ────────────────────────────────────────────────────────────────
-  const [summaryRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(*)                                             AS logged,
-       SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END)    AS contacted,
-       SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END)    AS walkins,
-       SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END)    AS selected,
-       SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END)    AS joined
-     FROM ats_recruiter_hiring_activity arha
-    WHERE ${W}`,
-    params
-  );
+  // Build follow-up params reusing already-resolved branch
+  const followupClauses: string[] = [
+    "followup_required = 1",
+    "followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
+  ];
+  const followupParams: unknown[] = [];
+  if (scopedOnly) {
+    followupClauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
+    followupParams.push(branch ?? "", userId, userId);
+  }
+
+  // ── Fire all queries in parallel ─────────────────────────────────────────
+  const [
+    [summaryRows],
+    [outcomeRows],
+    [sourceRows],
+    [processRows],
+    [recruiterRows],
+    [branchRows],
+    [genderRows],
+    [dowRows],
+    [trendRows],
+    [followupRows],
+  ] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*)                                             AS logged,
+         SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END)    AS contacted,
+         SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END)    AS walkins,
+         SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END)    AS selected,
+         SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END)    AS joined
+       FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(arha.current_status,''), NULLIF(arha.recruiter_remarks,''), 'Pending') AS label,
+              COUNT(*) AS count
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY label ORDER BY count DESC LIMIT 12`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(arha.hiring_source,''),'Unknown') AS label,
+              COUNT(*) AS total,
+              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY label ORDER BY total DESC LIMIT 10`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(arha.process_name,''),'Unknown') AS label,
+              COUNT(*) AS total,
+              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY label ORDER BY total DESC LIMIT 15`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown') AS label,
+              COUNT(*) AS total,
+              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY label ORDER BY total DESC LIMIT 15`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(arha.branch_name,''),'Unknown') AS label,
+              COUNT(*) AS total,
+              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY label ORDER BY total DESC LIMIT 20`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
+              COUNT(*) AS count,
+              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY label ORDER BY count DESC LIMIT 10`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DAYOFWEEK(arha.activity_date) AS dow, COUNT(*) AS count
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}
+         GROUP BY dow ORDER BY dow ASC`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT arha.activity_date AS date,
+              COUNT(*) AS logged,
+              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected
+         FROM ats_recruiter_hiring_activity arha
+        WHERE arha.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${W}
+        GROUP BY arha.activity_date ORDER BY arha.activity_date ASC`,
+      params
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, candidate_name, mobile,
+              DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
+              followup_reason
+         FROM ats_recruiter_hiring_activity
+        WHERE ${followupClauses.join(" AND ")}
+        ORDER BY followup_date ASC LIMIT 50`,
+      followupParams
+    ),
+  ]);
+
+  // ── Map results ───────────────────────────────────────────────────────────
   const s = summaryRows[0] ?? {};
   const logged    = Number(s.logged    ?? 0);
   const contacted = Number(s.contacted ?? 0);
@@ -1639,166 +1765,35 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const joined    = Number(s.joined    ?? 0);
   const pct = (n: number) => logged ? Math.round(n / logged * 1000) / 10 : 0;
   const funnel = [
-    { stage: "Logged",    count: logged,    pct: 100      },
+    { stage: "Logged",    count: logged,    pct: 100           },
     { stage: "Contacted", count: contacted, pct: pct(contacted) },
     { stage: "Walked In", count: walkins,   pct: pct(walkins)   },
     { stage: "Selected",  count: selected,  pct: pct(selected)  },
     { stage: "Joined",    count: joined,    pct: pct(joined)    },
   ];
 
-  // ── Outcome distribution ──────────────────────────────────────────────────
-  const [outcomeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(arha.current_status,''), NULLIF(arha.recruiter_remarks,''), 'Pending') AS label,
-            COUNT(*) AS count
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY label ORDER BY count DESC LIMIT 12`,
-    params
-  );
-  const byOutcome = (outcomeRows as any[]).map((r) => ({ label: String(r.label), count: Number(r.count) }));
-
-  // ── By source ─────────────────────────────────────────────────────────────
-  const [sourceRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(arha.hiring_source,''),'Unknown') AS label,
-            COUNT(*) AS total,
-            SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-            SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY label ORDER BY total DESC LIMIT 10`,
-    params
-  );
-  const bySource = (sourceRows as any[]).map((r) => ({
-    label: String(r.label || 'Unknown'), total: Number(r.total) || 0,
-    walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0,
-  }));
-
-  // ── By process ────────────────────────────────────────────────────────────
-  const [processRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(arha.process_name,''),'Unknown') AS label,
-            COUNT(*) AS total,
-            SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-            SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY label ORDER BY total DESC LIMIT 15`,
-    params
-  );
-  const byProcess = (processRows as any[]).map((r) => ({
-    label: String(r.label || 'Unknown'), total: Number(r.total) || 0,
-    walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0,
-  }));
-
-  // ── By recruiter ──────────────────────────────────────────────────────────
-  const [recruiterRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown') AS label,
-            COUNT(*) AS total,
-            SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-            SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY label ORDER BY total DESC LIMIT 15`,
-    params
-  );
+  const byOutcome   = (outcomeRows as any[]).map((r) => ({ label: String(r.label), count: Number(r.count) }));
+  const bySource    = (sourceRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
+  const byProcess   = (processRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
+  const byBranch    = (branchRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
+  const byGender    = (genderRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), count: Number(r.count) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
   const byRecruiter = (recruiterRows as any[]).map((r) => {
     const total = Number(r.total) || 0;
     const sel   = Number(r.selected) || 0;
     const selRate = total ? Math.round((sel / total) * 1000) / 10 : 0;
-    return {
-      label: String(r.label || 'Unknown'), total,
-      walkins: Number(r.walkins) || 0, selected: sel,
-      joined: Number(r.joined) || 0,
-      selRate: Number.isFinite(selRate) ? selRate : 0,
-    };
+    return { label: String(r.label || 'Unknown'), total, walkins: Number(r.walkins) || 0, selected: sel, joined: Number(r.joined) || 0, selRate: Number.isFinite(selRate) ? selRate : 0 };
   });
 
-  // ── By branch ─────────────────────────────────────────────────────────────
-  const [branchRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(arha.branch_name,''),'Unknown') AS label,
-            COUNT(*) AS total,
-            SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-            SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY label ORDER BY total DESC LIMIT 20`,
-    params
-  );
-  const byBranch = (branchRows as any[]).map((r) => ({
-    label: String(r.label || 'Unknown'), total: Number(r.total) || 0,
-    walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0,
-  }));
-
-  // ── By gender ─────────────────────────────────────────────────────────────
-  const [genderRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
-            COUNT(*) AS count,
-            SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-            SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY label ORDER BY count DESC LIMIT 10`,
-    params
-  );
-  const byGender = (genderRows as any[]).map((r) => ({
-    label: String(r.label || 'Unknown'), count: Number(r.count) || 0,
-    walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0,
-  }));
-
-  // ── By day of week ────────────────────────────────────────────────────────
   const DOW_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const [dowRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DAYOFWEEK(arha.activity_date) AS dow, COUNT(*) AS count
-       FROM ats_recruiter_hiring_activity arha
-      WHERE ${W}
-      GROUP BY dow ORDER BY dow ASC`,
-    params
-  );
   const dowMap = new Map<number, number>();
   for (const r of dowRows as any[]) dowMap.set(Number(r.dow), Number(r.count) || 0);
   const byDayOfWeek = [1,2,3,4,5,6,7].map((d) => ({ label: DOW_LABELS[d-1], count: dowMap.get(d) ?? 0 }));
 
-  // ── 30-day trend ──────────────────────────────────────────────────────────
-  const [trendRows] = await db.execute<RowDataPacket[]>(
-    `SELECT arha.activity_date AS date,
-            COUNT(*) AS logged,
-            SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-            SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected
-       FROM ats_recruiter_hiring_activity arha
-      WHERE arha.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        AND ${W}
-      GROUP BY arha.activity_date ORDER BY arha.activity_date ASC`,
-    params
-  );
   const trend = (trendRows as any[]).map((r) => ({
     date: String(r.date ?? "").slice(0,10),
     logged: Number(r.logged), walkins: Number(r.walkins), selected: Number(r.selected),
   }));
 
-  // ── Follow-up due ─────────────────────────────────────────────────────────
-  const followupClauses: string[] = [
-    "followup_required = 1",
-    "followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
-  ];
-  const followupParams: unknown[] = [];
-  if (scopedOnly) {
-    const branch = await getActorBranch(userId);
-    followupClauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
-    followupParams.push(branch ?? "", userId, userId);
-  }
-  const [followupRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, candidate_name, mobile,
-            DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
-            followup_reason
-       FROM ats_recruiter_hiring_activity
-      WHERE ${followupClauses.join(" AND ")}
-      ORDER BY followup_date ASC LIMIT 50`,
-    followupParams
-  );
   const followupDue = (followupRows as any[]).map((r) => ({
     id: String(r.id), candidate_name: String(r.candidate_name ?? ""),
     mobile: String(r.mobile ?? ""), followup_date: String(r.followup_date ?? ""),

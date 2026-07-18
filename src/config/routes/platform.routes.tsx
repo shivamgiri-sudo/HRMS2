@@ -36,6 +36,7 @@ const NativeSecurityCenter          = lazy(() => import("@/pages/NativeSecurityC
 const UnifiedAccessControl          = lazy(() => import("@/pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("@/pages/SuperAdminAccessControl"));
 const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccess"));
+const NativePolicyEngine            = lazy(() => import("@/pages/NativePolicyEngine"));
 const AIProviderSettings            = lazy(() => import("@/pages/AIProviderSettings"));
 const PeopleOSCopilot               = lazy(() => import("@/pages/PeopleOSCopilot"));
 const NativeProcessConfig           = lazy(() => import("@/pages/NativeProcessConfig"));
@@ -124,6 +125,7 @@ export function PlatformRoutes() {
       <Route path="/settings/access-control"     element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><SuperAdminAccessControl /></ProtectedRoute>} />
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
+      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><NativePolicyEngine /></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
 
       {/* AI / Copilot */}

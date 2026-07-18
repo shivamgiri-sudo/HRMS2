@@ -184,11 +184,7 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/analytics", async (req: Au
       education:    parseQueryBool(req.query.education),
     };
 
-    console.log("[Analytics] Request from user:", req.authUser?.id, "role:", req.authUser?.role, "filters:", filters);
-
     const data = await getHiringActivityAnalytics(req.authUser!.id, req.authUser?.role, filters);
-
-    console.log("[Analytics] Response data keys:", Object.keys(data), "funnel length:", data.funnel?.length);
 
     return res.json({ success: true, data });
   } catch (error: unknown) {
@@ -388,7 +384,7 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/report", async (req: Authe
               offer_letter_status, salary_package_inr AS offer_salary
        FROM ats_recruiter_hiring_activity ${where}
        ORDER BY activity_date DESC, created_at DESC
-       LIMIT 50000`,
+       LIMIT 5000`,
       params
     );
 

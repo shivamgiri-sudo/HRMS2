@@ -280,6 +280,7 @@ const MIGRATION_MANIFEST: string[] = [
   "411_branch_budget_grn_approval_flow.sql",
   "450_policy_engine_config.sql",
   "451_company_feed_foundation.sql",
+  "460_ats_performance_indexes.sql",
   ];
 
 export type MigrationHealth = {

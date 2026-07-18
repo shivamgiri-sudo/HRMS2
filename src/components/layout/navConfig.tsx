@@ -278,6 +278,7 @@ export const navGroups: NavGroup[] = [
           { label: "Process P&L",             href: "/finance/process-pnl",              icon: ic(BarChart3),    roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Profitability command centre" },
           { label: "P&L Configuration",       href: "/finance/process-pnl/configuration", icon: ic(Settings2),   roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Contracts, plans and rates" },
           { label: "P&L Period Close",        href: "/finance/process-pnl/period-close",  icon: ic(CheckCircle), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Signoff and lock" },
+          { label: "Branch Budget",           href: "/finance/branch-budget",            icon: ic(Wallet),       roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Monthly branch budgets and approval" },
           { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Goods receipt notes" },
           { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
           { label: "Expense Finance Queue",   href: "/expenses/finance",                 icon: ic(Receipt),      roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense reimbursement control" },
@@ -332,6 +333,7 @@ export const navGroups: NavGroup[] = [
           { label: "Access Control",   href: "/settings/access-control",    icon: ic(Settings),   pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Access" },
           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },
           { label: "Module Access",    href: "/super-admin/module-access",  icon: ic(Lock),       pageCode: "MODULE_ACCESS", roles: ["super_admin"], description: "Module permissions" },
+          { label: "Policy Engine",    href: "/super-admin/policy-engine",  icon: ic(Settings2),  roles: ["super_admin"], description: "Master business policy configuration" },
           { label: "Feed Creators",    href: "/super-admin/company-feed-creators", icon: ic(UsersRound), roles: ["super_admin"], description: "Grant company feed posting rights" },
           { label: "Super Admin Dashboard", href: "/super-admin/dashboard", icon: ic(Shield),     pageCode: "SUPER_ADMIN_DASHBOARD", roles: ["super_admin"], description: "Super admin dashboard" },
           { label: "Security Center",  href: "/security-center",            icon: ic(ShieldAlert),pageCode: "SECURITY_CENTER", roles: ["super_admin", "admin"], description: "Security monitoring" },
@@ -369,6 +371,7 @@ export const navGroups: NavGroup[] = [
         label: "System",         href: "/customization", icon: ic(Settings2), description: "System tools",
         children: [
           { label: "Customization",    href: "/customization",      icon: ic(Settings2), pageCode: "CUSTOMIZATION_MANAGER", description: "Customization rules" },
+          { label: "Visitor Mgmt",    href: "/visitor-management", icon: ic(UserPlus),                                     description: "Visitor access & security" },
           { label: "Assets",           href: "/assets",             icon: ic(Package),                                      description: "Assets" },
           { label: "Assets Manager",   href: "/assets-manager",     icon: ic(Package),   pageCode: "ASSETS_MANAGER",        description: "Asset management" },
           { label: "Mobility",         href: "/mobility",           icon: ic(Users),     pageCode: "MOBILITY",              description: "Mobility" },

@@ -24,6 +24,7 @@ import {
   FinanceRoutes,
   PlatformRoutes,
   PortalRoutes,
+  VisitorRoutes,
 } from "./config/routes";
 
 const queryClient = new QueryClient({
@@ -65,6 +66,7 @@ const App = () => (
                 <FinanceRoutes />
                 <PlatformRoutes />
                 <PortalRoutes />
+                <VisitorRoutes />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>

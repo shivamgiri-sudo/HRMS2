@@ -16,7 +16,7 @@ import {
   ChevronRight, Edit2, History, AlertCircle, Plus, Trash2,
   RefreshCw,
 } from "lucide-react";
-import { hrmsApi } from "@/lib/api";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

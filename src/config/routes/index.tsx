@@ -9,3 +9,4 @@ export { ComplianceRoutes }  from "./compliance.routes";
 export { FinanceRoutes }     from "./finance.routes";
 export { PlatformRoutes }    from "./platform.routes";
 export { PortalRoutes }      from "./portal.routes";
+export { VisitorRoutes }     from "./visitor.routes";

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -31,10 +31,12 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
-import ReactApexChart from "react-apexcharts";
-import type { ApexOptions } from "apexcharts";
+// ApexCharts lazy-loaded — only used in Analytics tab
+const ReactApexChart = lazy(() => import("react-apexcharts"));
+type ApexOptions = import("apexcharts").ApexChartOptions;
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { useDebounce } from "@/hooks/useDebounce";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -301,7 +303,8 @@ export default function NativeATSHiringEntry() {
   const location = useLocation();
   const isCalling = location.pathname.includes("/calling-entry");
   const { user } = useAuth();
-  const roleKeys = user?.roles?.map((r: any) => r.role_key) || [];
+  const roleKeys = useMemo(() => user?.roles?.map((r: any) => r.role_key) ?? [], [user?.roles]);
+  const todayIso = useMemo(() => new Date().toISOString().split("T")[0], []);
 
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -324,6 +327,14 @@ export default function NativeATSHiringEntry() {
   const [aRecruiter, setARecruiter] = useState("");
 
   const tabBarRef = useRef<HTMLDivElement>(null);
+  const saveEntryRef = useRef<(() => Promise<void>) | null>(null);
+  const timeoutRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const safeTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(fn, ms);
+    timeoutRefs.current.push(id);
+    return id;
+  }, []);
+  useEffect(() => () => { timeoutRefs.current.forEach(clearTimeout); }, []);
 
   // Followup modal state
   const [followupModal, setFollowupModal] = useState<{ id: string; candidateName: string } | null>(null);
@@ -345,7 +356,8 @@ export default function NativeATSHiringEntry() {
   const [errorMsg, setErrorMsg] = useState("");
 
   // Progress tab filters
-  const [entrySearch, setEntrySearch] = useState("");
+  const [entrySearchRaw, setEntrySearchRaw] = useState("");
+  const entrySearch = useDebounce(entrySearchRaw, 300);
   const [filterOutcome, setFilterOutcome] = useState("");
   const [filterRecruiter, setFilterRecruiter] = useState("");
   const [filterBranch, setFilterBranch] = useState("");
@@ -358,31 +370,33 @@ export default function NativeATSHiringEntry() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const fieldRefs = useRef<Partial<Record<keyof FormState, HTMLElement | null>>>({});
 
-  const assignFieldRef = (key: keyof FormState) => (node: HTMLElement | null) => {
+  const assignFieldRef = useCallback((key: keyof FormState) => (node: HTMLElement | null) => {
     fieldRefs.current[key] = node;
-  };
+  }, []);
 
-  const focusField = (key: keyof FormState) => {
+  const focusField = useCallback((key: keyof FormState) => {
     fieldRefs.current[key]?.focus();
-  };
+  }, []);
 
-  const moveToNextField = (key: keyof FormState) => {
+  const moveToNextField = useCallback((key: keyof FormState) => {
     const idx = ENTRY_FIELD_ORDER.indexOf(key);
     const next = ENTRY_FIELD_ORDER[idx + 1];
-    if (next) focusField(next);
-  };
+    if (next) fieldRefs.current[next]?.focus();
+  }, []);
 
-  const handleKeyAdvance = (key: keyof FormState) => (event: KeyboardEvent<HTMLElement>) => {
+  const handleKeyAdvance = useCallback((key: keyof FormState) => (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Enter" || event.shiftKey || key === "recruiter_rejection_reason") return;
     event.preventDefault();
-    moveToNextField(key);
-  };
+    const idx = ENTRY_FIELD_ORDER.indexOf(key);
+    const next = ENTRY_FIELD_ORDER[idx + 1];
+    if (next) fieldRefs.current[next]?.focus();
+  }, []);
 
-  const updateForm = (key: keyof FormState, value: string) => {
+  const updateForm = useCallback((key: keyof FormState, value: string) => {
     setForm((prev) => ({ ...prev, [key]: key === "mobile" ? digitsOnly(value) : value }));
-  };
+  }, []);
 
-  const clearCandidateFields = () => {
+  const clearCandidateFields = useCallback(() => {
     setForm((prev) => ({
       ...prev,
       candidate_name: "", mobile: "", candidate_email: "", gender: "",
@@ -390,8 +404,8 @@ export default function NativeATSHiringEntry() {
       recruiter_remarks: "", recruiter_rejection_reason: "", walkin_date: "",
     }));
     setValidationErrors([]);
-    window.setTimeout(() => focusField("candidate_name"), 0);
-  };
+    safeTimeout(() => fieldRefs.current["candidate_name"]?.focus(), 0);
+  }, [safeTimeout]);
 
   const resetAll = () => {
     setForm(EMPTY_FORM);
@@ -523,13 +537,13 @@ export default function NativeATSHiringEntry() {
       };
       saveSessionContext(context);
       setSessionLocked(true);
-      window.setTimeout(() => focusField("candidate_name"), 100);
+      safeTimeout(() => focusField("candidate_name"), 100);
     }
   };
 
   const switchTab = (tab: typeof activeTab) => {
     setActiveTab(tab);
-    setTimeout(() => tabBarRef.current?.scrollIntoView({ behavior: "instant", block: "nearest" }), 0);
+    safeTimeout(() => tabBarRef.current?.scrollIntoView({ behavior: "instant", block: "nearest" }), 0);
   };
 
   const deleteEntry = async (id: string, candidateName: string) => {
@@ -548,11 +562,14 @@ export default function NativeATSHiringEntry() {
     updateForm(field as keyof FormState, value);
   };
 
+  // Keep saveEntryRef current so the keyboard handler never has a stale closure
+  useEffect(() => { saveEntryRef.current = saveEntry; });
+
   useEffect(() => {
     const handleGlobalKeyboard = (e: globalThis.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !saving && sessionLocked) {
         e.preventDefault();
-        void saveEntry();
+        void saveEntryRef.current?.();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "d") {
         e.preventDefault();
@@ -561,15 +578,14 @@ export default function NativeATSHiringEntry() {
     };
     window.addEventListener("keydown", handleGlobalKeyboard);
     return () => window.removeEventListener("keydown", handleGlobalKeyboard);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saving, sessionLocked]);
 
   useEffect(() => { void loadPageData(); }, []);
 
   useEffect(() => {
     if (bootstrap && !loading) {
-      if (sessionLocked) window.setTimeout(() => focusField("candidate_name"), 0);
-      else window.setTimeout(() => focusField("process_name"), 0);
+      if (sessionLocked) safeTimeout(() => focusField("candidate_name"), 0);
+      else safeTimeout(() => focusField("process_name"), 0);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrap, loading, sessionLocked]);
@@ -619,6 +635,14 @@ export default function NativeATSHiringEntry() {
   const genderOptions = bootstrap?.options.genderOptions ?? [];
   const educationOptions = bootstrap?.options.educationOptions ?? [];
   const experienceOptions = bootstrap?.options.experienceOptions ?? [];
+
+  const filterMeta = useMemo(() => ({
+    recruiters: [...new Set(rows.map(r => String(r.recruiter_name_snapshot || "")).filter(Boolean))].sort(),
+    branches:   [...new Set(rows.map(r => String(r.branch_name || "")).filter(Boolean))].sort(),
+    processes:  [...new Set(rows.map(r => String(r.process_name || "")).filter(Boolean))].sort(),
+    sources:    [...new Set(rows.map(r => String(r.hiring_source || "")).filter(Boolean))].sort(),
+    wpGroups:   [...new Set(rows.map(r => String(r.wp_group || "")).filter(Boolean))].sort(),
+  }), [rows]);
 
   const aggregatedTrend = useMemo(() => {
     if (!analytics?.trend?.length) return [];
@@ -729,7 +753,19 @@ export default function NativeATSHiringEntry() {
         : "Entry saved successfully."
       );
       clearCandidateFields();
-      await reloadRowsAfterSave();
+      if (savedRow) {
+        if (action === "updated") {
+          setRows((prev) => prev.map((r) => r.id === savedRow.id ? savedRow : r));
+        } else {
+          setRows((prev) => [savedRow, ...prev.slice(0, 49)]);
+          setRowsTotal((t) => t + 1);
+        }
+        hrmsApi.get<HiringDashboardResponse>("/api/ats/recruiter/hiring-dashboard")
+          .then((res) => { setDashboard(res.data ?? null); setDashboardFailed(false); })
+          .catch(() => {});
+      } else {
+        await reloadRowsAfterSave();
+      }
     } catch (error: unknown) {
       setErrorMsg((error as { message?: string })?.message || "Unable to save entry. Please try again.");
     } finally {
@@ -1059,7 +1095,7 @@ export default function NativeATSHiringEntry() {
                     value={form.walkin_date}
                     onChange={(e) => updateForm("walkin_date", e.target.value)}
                     className="h-12 w-full rounded-xl border-2 border-emerald-300 bg-white px-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
-                    min={new Date().toISOString().split('T')[0]}
+                    min={todayIso}
                   />
                 </div>
               )}
@@ -1170,6 +1206,7 @@ export default function NativeATSHiringEntry() {
 
         {/* ── TAB 3: Branch Analytics ── */}
         {activeTab === "analytics" && (
+          <Suspense fallback={<div className="flex h-32 items-center justify-center text-slate-400 text-sm">Loading charts…</div>}>
           <section className="space-y-5">
 
             {/* ── Analytics header + filter bar ── */}
@@ -1767,6 +1804,7 @@ export default function NativeATSHiringEntry() {
               );
             })()}
           </section>
+          </Suspense>
         )}
 
         {/* ── TAB 2: My Entries & Progress (full-width table) ── */}
@@ -1777,8 +1815,8 @@ export default function NativeATSHiringEntry() {
               <div className="relative flex-1 min-w-[180px]">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
-                  value={entrySearch}
-                  onChange={(e) => setEntrySearch(e.target.value)}
+                  value={entrySearchRaw}
+                  onChange={(e) => setEntrySearchRaw(e.target.value)}
                   placeholder="Search name, mobile, process, WP group…"
                   className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-4 text-sm outline-none focus:border-slate-400 focus:bg-white"
                 />
@@ -1797,7 +1835,7 @@ export default function NativeATSHiringEntry() {
                 className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
               >
                 <option value="">All recruiters</option>
-                {Array.from(new Set(rows.map(r => String(r.recruiter_name_snapshot || "")).filter(Boolean))).sort().map((name) => <option key={name} value={name}>{name}</option>)}
+                {filterMeta.recruiters.map((name) => <option key={name} value={name}>{name}</option>)}
               </select>
               {roleKeys.includes("super_admin") && (
                 <select
@@ -1806,7 +1844,7 @@ export default function NativeATSHiringEntry() {
                   className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
                 >
                   <option value="">All branches</option>
-                  {Array.from(new Set(rows.map(r => String(r.branch_name || "")).filter(Boolean))).sort().map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                  {filterMeta.branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
                 </select>
               )}
               <select
@@ -1815,7 +1853,7 @@ export default function NativeATSHiringEntry() {
                 className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
               >
                 <option value="">All processes</option>
-                {Array.from(new Set(rows.map(r => String(r.process_name || "")).filter(Boolean))).sort().map((proc) => <option key={proc} value={proc}>{proc}</option>)}
+                {filterMeta.processes.map((proc) => <option key={proc} value={proc}>{proc}</option>)}
               </select>
               <select
                 value={filterSource}
@@ -1823,7 +1861,7 @@ export default function NativeATSHiringEntry() {
                 className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
               >
                 <option value="">All sources</option>
-                {Array.from(new Set(rows.map(r => String(r.hiring_source || "")).filter(Boolean))).sort().map((src) => <option key={src} value={src}>{src}</option>)}
+                {filterMeta.sources.map((src) => <option key={src} value={src}>{src}</option>)}
               </select>
               <select
                 value={filterWpGroup}
@@ -1831,7 +1869,7 @@ export default function NativeATSHiringEntry() {
                 className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400"
               >
                 <option value="">All WP groups</option>
-                {Array.from(new Set(rows.map(r => String(r.wp_group || "")).filter(Boolean))).sort().map((wp) => <option key={wp} value={wp}>{wp}</option>)}
+                {filterMeta.wpGroups.map((wp) => <option key={wp} value={wp}>{wp}</option>)}
               </select>
               <input
                 type="date"
@@ -1850,7 +1888,7 @@ export default function NativeATSHiringEntry() {
               {(entrySearch || filterOutcome || filterRecruiter || filterBranch || filterProcess || filterSource || filterWpGroup || filterFrom || filterTo) && (
                 <button
                   type="button"
-                  onClick={() => { setEntrySearch(""); setFilterOutcome(""); setFilterRecruiter(""); setFilterBranch(""); setFilterProcess(""); setFilterSource(""); setFilterWpGroup(""); setFilterFrom(""); setFilterTo(""); }}
+                  onClick={() => { setEntrySearchRaw(""); setFilterOutcome(""); setFilterRecruiter(""); setFilterBranch(""); setFilterProcess(""); setFilterSource(""); setFilterWpGroup(""); setFilterFrom(""); setFilterTo(""); }}
                   className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-500 hover:bg-slate-50"
                 >
                   Clear
