@@ -20,73 +20,81 @@ async function getBudgetOrThrow(budgetId: string) {
   return rows[0] as any;
 }
 
+function isInvalidCoverage(item: {
+  planning_status: string | null | undefined;
+  reason: unknown;
+  budget_line_count: number;
+}) {
+  if (!item.planning_status) return true;
+  if (item.planning_status === "planned") return item.budget_line_count <= 0;
+  return item.budget_line_count > 0 || !String(item.reason ?? "").trim();
+}
+
+async function getCoverage(budgetId: string) {
+  await getBudgetOrThrow(budgetId);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT h.id AS expense_head_id, h.head_code, h.head_name,
+            h.display_order AS head_display_order,
+            s.id AS expense_sub_head_id, s.sub_head_code, s.sub_head_name,
+            s.default_unit, s.default_tax_treatment, s.default_gst_rate,
+            s.default_gst_type, s.default_recoverable_tax_pct,
+            s.default_allocation_driver, s.pnl_treatment,
+            s.display_order AS sub_head_display_order,
+            c.planning_status, c.reason, c.reviewed_by, c.reviewed_at,
+            COUNT(l.id) AS budget_line_count,
+            COALESCE(SUM(l.gross_amount),0) AS gross_budget_amount,
+            COALESCE(SUM(l.pnl_cost_amount),0) AS pnl_budget_amount
+       FROM finance_expense_head_master h
+       JOIN finance_expense_sub_head_master s
+         ON s.head_id = h.id AND s.active_status = 1
+       LEFT JOIN finance_budget_subhead_status c
+         ON c.budget_id = ? AND c.expense_sub_head_id = s.id
+       LEFT JOIN finance_budget_line l
+         ON l.budget_id = ?
+        AND l.head = h.head_name
+        AND COALESCE(l.sub_head,'') = s.sub_head_name
+      WHERE h.active_status = 1
+      GROUP BY h.id, h.head_code, h.head_name, h.display_order,
+               s.id, s.sub_head_code, s.sub_head_name, s.default_unit,
+               s.default_tax_treatment, s.default_gst_rate, s.default_gst_type,
+               s.default_recoverable_tax_pct, s.default_allocation_driver,
+               s.pnl_treatment, s.display_order, c.planning_status, c.reason,
+               c.reviewed_by, c.reviewed_at
+      ORDER BY h.display_order, h.head_name, s.display_order, s.sub_head_name`,
+    [budgetId, budgetId]
+  );
+
+  const items = rows.map((row) => ({
+    ...row,
+    planning_status: row.planning_status ?? null,
+    budget_line_count: Number(row.budget_line_count ?? 0),
+    gross_budget_amount: Number(row.gross_budget_amount ?? 0),
+    pnl_budget_amount: Number(row.pnl_budget_amount ?? 0),
+  }));
+  const total = items.length;
+  const reviewed = items.filter((item) => item.planning_status).length;
+  const planned = items.filter((item) => item.planning_status === "planned").length;
+  const notPlanned = items.filter((item) => item.planning_status === "not_planned").length;
+  const notApplicable = items.filter((item) => item.planning_status === "not_applicable").length;
+  const invalid = items.filter((item) => isInvalidCoverage(item));
+
+  return {
+    items,
+    summary: {
+      total,
+      reviewed,
+      planned,
+      notPlanned,
+      notApplicable,
+      incomplete: invalid.length,
+      completionPct: total ? Math.round((reviewed / total) * 10000) / 100 : 0,
+      readyToSubmit: total > 0 && invalid.length === 0,
+    },
+  };
+}
+
 export const budgetCoverageService = {
-  async getCoverage(budgetId: string) {
-    await getBudgetOrThrow(budgetId);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT h.id AS expense_head_id, h.head_code, h.head_name,
-              h.display_order AS head_display_order,
-              s.id AS expense_sub_head_id, s.sub_head_code, s.sub_head_name,
-              s.default_unit, s.default_tax_treatment, s.default_gst_rate,
-              s.default_gst_type, s.default_recoverable_tax_pct,
-              s.default_allocation_driver, s.pnl_treatment,
-              s.display_order AS sub_head_display_order,
-              c.planning_status, c.reason, c.reviewed_by, c.reviewed_at,
-              COUNT(l.id) AS budget_line_count,
-              COALESCE(SUM(l.gross_amount),0) AS gross_budget_amount,
-              COALESCE(SUM(l.pnl_cost_amount),0) AS pnl_budget_amount
-         FROM finance_expense_head_master h
-         JOIN finance_expense_sub_head_master s
-           ON s.head_id = h.id AND s.active_status = 1
-         LEFT JOIN finance_budget_subhead_status c
-           ON c.budget_id = ? AND c.expense_sub_head_id = s.id
-         LEFT JOIN finance_budget_line l
-           ON l.budget_id = ?
-          AND l.head = h.head_name
-          AND COALESCE(l.sub_head,'') = s.sub_head_name
-        WHERE h.active_status = 1
-        GROUP BY h.id, h.head_code, h.head_name, h.display_order,
-                 s.id, s.sub_head_code, s.sub_head_name, s.default_unit,
-                 s.default_tax_treatment, s.default_gst_rate, s.default_gst_type,
-                 s.default_recoverable_tax_pct, s.default_allocation_driver,
-                 s.pnl_treatment, s.display_order, c.planning_status, c.reason,
-                 c.reviewed_by, c.reviewed_at
-        ORDER BY h.display_order, h.head_name, s.display_order, s.sub_head_name`,
-      [budgetId, budgetId]
-    );
-
-    const items = rows.map((row) => ({
-      ...row,
-      planning_status: row.planning_status ?? null,
-      budget_line_count: Number(row.budget_line_count ?? 0),
-      gross_budget_amount: Number(row.gross_budget_amount ?? 0),
-      pnl_budget_amount: Number(row.pnl_budget_amount ?? 0),
-    }));
-    const total = items.length;
-    const reviewed = items.filter((item) => item.planning_status).length;
-    const planned = items.filter((item) => item.planning_status === "planned").length;
-    const notPlanned = items.filter((item) => item.planning_status === "not_planned").length;
-    const notApplicable = items.filter((item) => item.planning_status === "not_applicable").length;
-    const invalid = items.filter((item) => {
-      if (!item.planning_status) return true;
-      if (item.planning_status === "planned") return item.budget_line_count <= 0;
-      return !String(item.reason ?? "").trim();
-    });
-
-    return {
-      items,
-      summary: {
-        total,
-        reviewed,
-        planned,
-        notPlanned,
-        notApplicable,
-        incomplete: invalid.length,
-        completionPct: total ? Math.round((reviewed / total) * 10000) / 100 : 0,
-        readyToSubmit: total > 0 && invalid.length === 0,
-      },
-    };
-  },
+  getCoverage,
 
   async saveCoverage(
     budgetId: string,
@@ -113,7 +121,7 @@ export const budgetCoverageService = {
         if (!entry.expenseHeadId || !entry.expenseSubHeadId) {
           throw new Error(`Coverage row ${index + 1}: Head and Sub-head are required`);
         }
-        if (!(["planned", "not_planned", "not_applicable"] as string[]).includes(entry.planningStatus)) {
+        if (!("planned,not_planned,not_applicable".split(",")).includes(entry.planningStatus)) {
           throw new Error(`Coverage row ${index + 1}: invalid planning status`);
         }
         if (seen.has(entry.expenseSubHeadId)) {
@@ -121,7 +129,9 @@ export const budgetCoverageService = {
         }
         seen.add(entry.expenseSubHeadId);
         if (entry.planningStatus !== "planned" && !entry.reason?.trim()) {
-          throw new Error(`Coverage row ${index + 1}: reason is mandatory for ${entry.planningStatus.replace("_", " ")}`);
+          throw new Error(
+            `Coverage row ${index + 1}: reason is mandatory for ${entry.planningStatus.replace("_", " ")}`
+          );
         }
         const [masterRows] = await connection.execute<RowDataPacket[]>(
           `SELECT s.id
@@ -133,6 +143,22 @@ export const budgetCoverageService = {
         );
         if (!masterRows[0]) {
           throw new Error(`Coverage row ${index + 1}: active Head/Sub-head mapping was not found`);
+        }
+        if (entry.planningStatus !== "planned") {
+          const [lineRows] = await connection.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS total
+               FROM finance_budget_line l
+               JOIN finance_expense_head_master h ON h.id = ?
+               JOIN finance_expense_sub_head_master s ON s.id = ? AND s.head_id = h.id
+              WHERE l.budget_id = ? AND l.head = h.head_name
+                AND COALESCE(l.sub_head,'') = s.sub_head_name`,
+            [entry.expenseHeadId, entry.expenseSubHeadId, budgetId]
+          );
+          if (Number(lineRows[0]?.total ?? 0) > 0) {
+            throw new Error(
+              `Coverage row ${index + 1}: remove the detailed budget line before marking this Sub-head ${entry.planningStatus.replace("_", " ")}`
+            );
+          }
         }
         await connection.execute(
           `INSERT INTO finance_budget_subhead_status
@@ -158,7 +184,7 @@ export const budgetCoverageService = {
     } finally {
       connection.release();
     }
-    return this.getCoverage(budgetId);
+    return getCoverage(budgetId);
   },
 
   async syncPlannedFromLines(budgetId: string, actorUserId: string) {
@@ -195,7 +221,7 @@ export const budgetCoverageService = {
     } finally {
       connection.release();
     }
-    return this.getCoverage(budgetId);
+    return getCoverage(budgetId);
   },
 
   async submitBudget(
@@ -235,13 +261,13 @@ export const budgetCoverageService = {
       if (!coverageRows.length) {
         throw new Error("No active Finance Head/Sub-head master is configured");
       }
-      const failures = coverageRows.filter((row) => {
-        if (!row.planning_status) return true;
-        if (String(row.planning_status) === "planned") {
-          return Number(row.budget_line_count ?? 0) <= 0;
-        }
-        return !String(row.reason ?? "").trim();
-      });
+      const failures = coverageRows.filter((row) =>
+        isInvalidCoverage({
+          planning_status: row.planning_status ? String(row.planning_status) : null,
+          reason: row.reason,
+          budget_line_count: Number(row.budget_line_count ?? 0),
+        })
+      );
       if (failures.length) {
         const labels = failures.slice(0, 6).map(
           (row) => `${row.head_name} / ${row.sub_head_name}`
