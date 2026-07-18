@@ -1,5 +1,6 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -38,7 +39,7 @@ function roundMoney(value: number) {
 }
 
 async function writeAudit(
-  connection: any,
+  connection: PoolConnection,
   actionType: string,
   entityId: string,
   actorUserId: string,
@@ -60,7 +61,7 @@ async function writeAudit(
   );
 }
 
-async function lockedPayment(connection: any, paymentId: string) {
+async function lockedPayment(connection: PoolConnection, paymentId: string) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT *
        FROM vendor_payment_tracking
@@ -80,6 +81,16 @@ function validatePaymentDate(value: string) {
   if (value > new Date().toISOString().slice(0, 10)) {
     throw new Error("Payment date cannot be in the future");
   }
+}
+
+function paymentReferenceLockName(
+  paymentMode: string,
+  bankId: string | null,
+  transactionId: string
+) {
+  return createHash("sha256")
+    .update(`${paymentMode}|${bankId ?? ""}|${transactionId.trim().toUpperCase()}`)
+    .digest("hex");
 }
 
 export const vendorPaymentLedgerService = {
@@ -112,8 +123,9 @@ export const vendorPaymentLedgerService = {
     }
 
     const connection = await db.getConnection();
-    let transactionId = "";
+    let transactionRowId = "";
     let auditSummary: Record<string, unknown> = {};
+    let referenceLock: string | null = null;
     try {
       await connection.beginTransaction();
       const payment = await lockedPayment(connection, paymentId);
@@ -126,7 +138,9 @@ export const vendorPaymentLedgerService = {
 
       const currentPaid = roundMoney(Number(payment.paid_amount ?? 0));
       const dueAmount = roundMoney(Number(payment.due_amount ?? 0));
-      const balanceBefore = roundMoney(Number(payment.balance_amount ?? dueAmount - currentPaid));
+      const balanceBefore = roundMoney(
+        Number(payment.balance_amount ?? dueAmount - currentPaid)
+      );
       if (amount > balanceBefore + 0.01) {
         throw new Error(
           `Payment amount ${amount.toFixed(2)} exceeds outstanding balance ${balanceBefore.toFixed(2)}`
@@ -154,12 +168,27 @@ export const vendorPaymentLedgerService = {
       }
 
       if (externalTransactionId) {
+        referenceLock = paymentReferenceLockName(
+          payload.paymentMode,
+          bankId,
+          externalTransactionId
+        );
+        const [lockRows] = await connection.query<RowDataPacket[]>(
+          `SELECT GET_LOCK(?, 10) AS acquired`,
+          [referenceLock]
+        );
+        if (Number(lockRows[0]?.acquired ?? 0) !== 1) {
+          throw new Error("Payment reference is currently being processed; retry once");
+        }
+
         const [duplicateRows] = await connection.execute<RowDataPacket[]>(
           `SELECT transaction_id
              FROM vendor_payment_transaction
-            WHERE transaction_id = ?
+            WHERE payment_mode = ?
+              AND COALESCE(bank_id, '') = COALESCE(?, '')
+              AND UPPER(transaction_id) = UPPER(?)
             LIMIT 1`,
-          [externalTransactionId]
+          [payload.paymentMode, bankId, externalTransactionId]
         );
         if (duplicateRows[0]) {
           throw new Error("This transaction reference is already recorded");
@@ -173,7 +202,7 @@ export const vendorPaymentLedgerService = {
         [paymentId]
       );
       const sequenceNo = Number(sequenceRows[0]?.last_sequence ?? 0) + 1;
-      transactionId = randomUUID();
+      transactionRowId = randomUUID();
 
       await connection.execute(
         `INSERT INTO vendor_payment_transaction
@@ -182,7 +211,7 @@ export const vendorPaymentLedgerService = {
            created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
-          transactionId,
+          transactionRowId,
           paymentId,
           payment.grn_request_id,
           sequenceNo,
@@ -245,7 +274,7 @@ export const vendorPaymentLedgerService = {
       auditSummary = {
         grn_number: payment.grn_number,
         installment_sequence: sequenceNo,
-        payment_transaction_id: transactionId,
+        payment_transaction_id: transactionRowId,
         external_transaction_id: externalTransactionId,
         payment_mode: payload.paymentMode,
         payment_date: payload.paymentDate,
@@ -269,6 +298,9 @@ export const vendorPaymentLedgerService = {
       await connection.rollback();
       throw error;
     } finally {
+      if (referenceLock) {
+        await connection.query(`SELECT RELEASE_LOCK(?)`, [referenceLock]).catch(() => undefined);
+      }
       connection.release();
     }
 
@@ -278,7 +310,7 @@ export const vendorPaymentLedgerService = {
       action_type: "VENDOR_PAYMENT_INSTALLMENT_DISPATCHED",
       module_key: "FINANCE",
       entity_type: "vendor_payment_transaction",
-      entity_id: transactionId,
+      entity_id: transactionRowId,
       change_summary: auditSummary,
     }).catch(() => undefined);
 
@@ -312,12 +344,14 @@ export const vendorPaymentLedgerService = {
         : paidAmount > 0
           ? "Partially Paid"
           : "Payment Pending";
-      const grnStatus = hold
-        ? paidAmount > 0 ? "partially_paid" : "pending_accounts_payment"
-        : paidAmount > 0 ? "partially_paid" : "pending_accounts_payment";
+      const grnStatus = paidAmount > 0
+        ? "partially_paid"
+        : "pending_accounts_payment";
       const accountsStatus = hold
         ? "on_hold"
-        : paidAmount > 0 ? "partially_paid" : "pending";
+        : paidAmount > 0
+          ? "partially_paid"
+          : "pending";
 
       await connection.execute(
         `UPDATE vendor_payment_tracking
@@ -381,6 +415,7 @@ export const vendorPaymentLedgerService = {
     actorRole?: string
   ) {
     const connection = await db.getConnection();
+    let auditSummary: Record<string, unknown> = {};
     try {
       await connection.beginTransaction();
       await lockedPayment(connection, paymentId);
@@ -409,19 +444,20 @@ export const vendorPaymentLedgerService = {
           WHERE id = ?`,
         [fileName, filePath, fileMime, actorUserId, paymentId]
       );
+      auditSummary = {
+        payment_transaction_id: transactionRowId,
+        external_transaction_id: transactionRows[0].transaction_id,
+        amount: Number(transactionRows[0].amount),
+        file_name: fileName,
+        file_mime: fileMime,
+      };
       await writeAudit(
         connection,
         "VENDOR_PAYMENT_INSTALLMENT_PROOF_UPLOADED",
         paymentId,
         actorUserId,
         actorRole,
-        {
-          payment_transaction_id: transactionRowId,
-          external_transaction_id: transactionRows[0].transaction_id,
-          amount: Number(transactionRows[0].amount),
-          file_name: fileName,
-          file_mime: fileMime,
-        }
+        auditSummary
       );
       await connection.commit();
     } catch (error) {
@@ -430,6 +466,16 @@ export const vendorPaymentLedgerService = {
     } finally {
       connection.release();
     }
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      actor_role: actorRole,
+      action_type: "VENDOR_PAYMENT_INSTALLMENT_PROOF_UPLOADED",
+      module_key: "FINANCE",
+      entity_type: "vendor_payment_transaction",
+      entity_id: transactionRowId,
+      change_summary: auditSummary,
+    }).catch(() => undefined);
   },
 
   async getPayment(paymentId: string) {
