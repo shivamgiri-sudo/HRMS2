@@ -209,6 +209,15 @@ export function invalidatePool(key: string): void {
   mysqlPools.delete(key);
 }
 
+export async function closeExternalDbPools(): Promise<void> {
+  await Promise.allSettled([
+    ...Array.from(mssqlPools.values()).map((pool) => pool.close()),
+    ...Array.from(mysqlPools.values()).map((pool) => pool.end()),
+  ]);
+  mssqlPools.clear();
+  mysqlPools.clear();
+}
+
 export async function testPoolForKey(key: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const creds = await getCredentialsForKey(key);

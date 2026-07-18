@@ -281,6 +281,9 @@ const MIGRATION_MANIFEST: string[] = [
   "450_policy_engine_config.sql",
   "451_company_feed_foundation.sql",
   "460_ats_performance_indexes.sql",
+  "504_performance_intelligence_foundation.sql",
+  "505_performance_source_connector_keys.sql",
+  "506_sales_performance_metric_foundation.sql",
   "507_identity_source_snapshot.sql",
   ];
 

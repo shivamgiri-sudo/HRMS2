@@ -22,6 +22,9 @@ import {
 import {
   syncAprMetrics,
   syncAttendanceMetrics,
+  syncConversionMetrics,
+  syncSalesBrandMisMetrics,
+  syncSalesOrderMetrics,
   syncQualityMetrics,
 } from './kpi-data-connector.service.js';
 
@@ -90,7 +93,7 @@ async function canViewEmployeePerformance(req: AuthenticatedRequest, employeeId:
   return false;
 }
 
-// ─── Admin: list configs ──────────────────────────────────────────────────────
+// Admin: list configs
 router.get(
   '/',
   requireRole('admin', 'hr', 'manager', 'process_manager'),
@@ -104,7 +107,7 @@ router.get(
   })
 );
 
-// ─── Admin: upsert config ─────────────────────────────────────────────────────
+// Admin: upsert config
 router.post(
   '/',
   requireRole('admin', 'hr', 'process_manager'),
@@ -117,7 +120,7 @@ router.post(
   })
 );
 
-// ─── Manager: team KPI summary ───────────────────────────────────────────────
+// Manager: team KPI summary
 router.get(
   '/team-summary',
   h(async (req: AuthenticatedRequest, res: Response) => {
@@ -134,7 +137,7 @@ router.get(
   })
 );
 
-// ─── Admin: soft-delete ───────────────────────────────────────────────────────
+// Admin: soft-delete
 router.delete(
   '/:id',
   requireRole('admin', 'hr', 'process_manager'),
@@ -147,7 +150,7 @@ router.delete(
   })
 );
 
-// ─── Org unit dropdown options ────────────────────────────────────────────────
+// Org unit dropdown options
 router.get(
   '/org-units/:type',
   requireRole('admin', 'hr', 'manager', 'process_manager'),
@@ -162,7 +165,7 @@ router.get(
   })
 );
 
-// ─── Admin: resolve KPIs for a specific employee ──────────────────────────────
+// Admin: resolve KPIs for a specific employee
 router.post(
   '/resolve/:empId',
   requireRole('admin', 'hr', 'process_manager'),
@@ -172,7 +175,7 @@ router.post(
   })
 );
 
-// ─── Employee: get my resolved KPIs (resolves on-demand if empty) ─────────────
+// Employee: get my resolved KPIs (resolves on-demand if empty)
 router.get(
   '/my-kpis',
   h(async (req: AuthenticatedRequest, res: Response) => {
@@ -191,7 +194,7 @@ router.get(
   })
 );
 
-// ─── Employee: live performance (self) ────────────────────────────────────────
+// Employee: live performance (self)
 router.get(
   '/live',
   h(async (req: AuthenticatedRequest, res: Response) => {
@@ -214,7 +217,7 @@ router.get(
   })
 );
 
-// ─── Manager: live performance for a specific employee ────────────────────────
+// Manager: live performance for a specific employee
 router.get(
   '/live/:empId',
   requireRole('admin', 'hr', 'manager', 'process_manager', 'qa'),
@@ -229,7 +232,7 @@ router.get(
   })
 );
 
-// ─── Admin: trigger data sync ──────────────────────────────────────────────────
+// Admin: trigger data sync
 router.post(
   '/sync',
   requireRole('admin', 'hr', 'process_manager'),
@@ -241,6 +244,9 @@ router.post(
     if (date) {
       results.apr = await syncAprMetrics(date);
       results.attendance = await syncAttendanceMetrics(date);
+      results.conversion = await syncConversionMetrics(date);
+      results.salesBrandMis = await syncSalesBrandMisMetrics(date);
+      results.salesOrders = await syncSalesOrderMetrics(date);
     }
     if (year_month) {
       results.quality = await syncQualityMetrics(year_month);

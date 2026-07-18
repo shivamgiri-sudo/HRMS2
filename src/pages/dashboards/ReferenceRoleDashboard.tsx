@@ -27,6 +27,7 @@ import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { RoleSalesPerformancePanel } from "@/components/performance-hub/RoleSalesPerformancePanel";
 import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import "./role-dashboard-reference.css";
@@ -315,6 +316,16 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     <DashboardLayout subheader={subheader}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
+        {["hr", "ceo", "payroll", "manager", "super_admin"].includes(variant) ? (
+          <div className="mb-5">
+            <RoleSalesPerformancePanel
+              variant={variant}
+              branchId={branchId}
+              processId={processId}
+              enabled={accessGranted}
+            />
+          </div>
+        ) : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} /> : null}

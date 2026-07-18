@@ -433,6 +433,7 @@ app.use("/api/call-master", callMasterRouter);
 app.use("/api/inbound", inboundRouter);
 app.use("/api/sales-upload", salesUploadRouter);
 app.use("/api/inbound-quality", inboundQualityRouter);
+app.use("/api/performance-hub", performanceIntelligenceRouter);
 app.use("/api/performance-dashboard", performanceDashboardRouter);
 app.use("/api/performance-hub", performanceIntelligenceRouter);
 app.use("/api/legacy", legacyRouter);
