@@ -46,6 +46,11 @@ const NativeControlTower            = lazy(() => import("@/pages/NativeControlTo
 const NativeManagementDashboard     = lazy(() => import("@/pages/NativeManagementDashboard"));
 const NativeJobsPage                = lazy(() => import("@/pages/NativeJobsPage"));
 const NativeEngagement              = lazy(() => import("@/pages/NativeEngagement"));
+const NativeCompanyFeed             = lazy(() => import("@/pages/NativeCompanyFeed"));
+const NativeCompanyPostCreate       = lazy(() => import("@/pages/NativeCompanyPostCreate"));
+const NativeCompanyPostApproval     = lazy(() => import("@/pages/NativeCompanyPostApproval"));
+const NativeCompanyPostManage       = lazy(() => import("@/pages/NativeCompanyPostManage"));
+const NativeCompanyFeedCreatorAccess = lazy(() => import("@/pages/NativeCompanyFeedCreatorAccess"));
 const NativeBadges                  = lazy(() => import("@/pages/NativeBadges"));
 const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
@@ -119,6 +124,7 @@ export function PlatformRoutes() {
       <Route path="/settings/access-control"     element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><SuperAdminAccessControl /></ProtectedRoute>} />
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
+      <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
 
       {/* AI / Copilot */}
       <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
@@ -147,6 +153,10 @@ export function PlatformRoutes() {
 
       {/* Engagement */}
       <Route path="/engagement"                  element={<ProtectedRoute><NativeEngagement /></ProtectedRoute>} />
+      <Route path="/engagement/company-feed"     element={<ProtectedRoute><NativeCompanyFeed /></ProtectedRoute>} />
+      <Route path="/engagement/company-feed/create" element={<ProtectedRoute><NativeCompanyPostCreate /></ProtectedRoute>} />
+      <Route path="/engagement/company-feed/approvals" element={<ProtectedRoute roles={['hr_head','admin','super_admin']}><NativeCompanyPostApproval /></ProtectedRoute>} />
+      <Route path="/engagement/company-feed/manage" element={<ProtectedRoute roles={['hr_head','admin','super_admin']}><NativeCompanyPostManage /></ProtectedRoute>} />
       <Route path="/engagement/badges"           element={<ProtectedRoute><NativeBadges /></ProtectedRoute>} />
       <Route path="/engagement/kudos"            element={<ProtectedRoute><NativeKudos /></ProtectedRoute>} />
       <Route path="/engagement/surveys"          element={<ProtectedRoute><NativeSurveys /></ProtectedRoute>} />

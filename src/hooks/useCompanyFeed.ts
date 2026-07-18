@@ -138,6 +138,8 @@ export const companyFeedQueryKeys = {
     ["company-feed", "mine", normalizeQueryKey(params)] as const,
   approvals: (params?: CompanyFeedQueryParams) =>
     ["company-feed", "approvals", normalizeQueryKey(params)] as const,
+  manage: (params?: CompanyFeedQueryParams) =>
+    ["company-feed", "manage", normalizeQueryKey(params)] as const,
   creators: () => ["company-feed", "creators"] as const,
 };
 
@@ -150,6 +152,7 @@ function invalidateCompanyFeedCollections(queryClient: ReturnType<typeof useQuer
   void queryClient.invalidateQueries({ queryKey: ["company-feed", "feed"] });
   void queryClient.invalidateQueries({ queryKey: ["company-feed", "mine"] });
   void queryClient.invalidateQueries({ queryKey: ["company-feed", "approvals"] });
+  void queryClient.invalidateQueries({ queryKey: ["company-feed", "manage"] });
 }
 
 export function useCompanyFeed(params?: CompanyFeedQueryParams) {
@@ -191,6 +194,15 @@ export function useApprovalQueue(params?: CompanyFeedQueryParams) {
   return useQuery({
     queryKey: companyFeedQueryKeys.approvals(params),
     queryFn: () => getCompanyPosts("/api/engagement/company-posts/approvals", params),
+    placeholderData: (previous) => previous,
+    staleTime: 10_000,
+  });
+}
+
+export function useManageCompanyPosts(params?: CompanyFeedQueryParams) {
+  return useQuery({
+    queryKey: companyFeedQueryKeys.manage(params),
+    queryFn: () => getCompanyPosts("/api/engagement/company-posts/manage", params),
     placeholderData: (previous) => previous,
     staleTime: 10_000,
   });

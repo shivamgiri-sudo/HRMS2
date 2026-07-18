@@ -4,15 +4,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../company-posts.service.js", () => ({
   approveCompanyPost: vi.fn(),
+  assertCanCreateCompanyPost: vi.fn(),
   createCompanyPost: vi.fn(),
   deleteCompanyPost: vi.fn(),
   grantCompanyPostCreator: vi.fn(),
   listApprovedCompanyFeed: vi.fn(),
   listCompanyPostApprovals: vi.fn(),
   listCompanyPostCreators: vi.fn(),
+  listCompanyPostManagement: vi.fn(),
   listMyCompanyPosts: vi.fn(),
   rejectCompanyPost: vi.fn(),
   revokeCompanyPostCreator: vi.fn(),
+}));
+
+vi.mock("../../document-vault/documentVault.service.js", () => ({
+  registerUpload: vi.fn(),
 }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
@@ -70,16 +76,19 @@ vi.mock("../engagement.controller.js", () => ({
 
 import {
   approveCompanyPost,
+  assertCanCreateCompanyPost,
   createCompanyPost,
   deleteCompanyPost,
   grantCompanyPostCreator,
   listApprovedCompanyFeed,
   listCompanyPostApprovals,
   listCompanyPostCreators,
+  listCompanyPostManagement,
   listMyCompanyPosts,
   rejectCompanyPost,
   revokeCompanyPostCreator,
 } from "../company-posts.service.js";
+import { registerUpload } from "../../document-vault/documentVault.service.js";
 
 function createApp(router: express.Router) {
   const app = express();
@@ -149,6 +158,61 @@ describe("company post engagement routes", () => {
     });
   });
 
+  it("uploads a company-feed image for an authorized creator", async () => {
+    vi.mocked(assertCanCreateCompanyPost).mockResolvedValueOnce(undefined as never);
+    vi.mocked(registerUpload).mockResolvedValueOnce("vault-1");
+
+    const response = await request(app)
+      .post("/api/engagement/company-posts/upload")
+      .set("Authorization", "Bearer test-token")
+      .attach("file", Buffer.from("fake-image-content"), {
+        filename: "poster.png",
+        contentType: "image/png",
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.file_id).toMatch(/\.png$/);
+    expect(response.body.data.url).toMatch(/^\/api\/files\/company-feed\//);
+    expect(assertCanCreateCompanyPost).toHaveBeenCalledWith(
+      "11111111-1111-1111-1111-111111111111",
+    );
+    expect(registerUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks company-feed image upload for unauthorized creators", async () => {
+    const error = new Error("Company post creator access is required") as Error & { statusCode?: number };
+    error.statusCode = 403;
+    vi.mocked(assertCanCreateCompanyPost).mockRejectedValueOnce(error);
+
+    const response = await request(app)
+      .post("/api/engagement/company-posts/upload")
+      .set("Authorization", "Bearer test-token")
+      .attach("file", Buffer.from("fake-image-content"), {
+        filename: "poster.png",
+        contentType: "image/png",
+      });
+
+    expect(response.status).toBe(403);
+    expect(registerUpload).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-image company-feed uploads", async () => {
+    vi.mocked(assertCanCreateCompanyPost).mockResolvedValueOnce(undefined as never);
+
+    const response = await request(app)
+      .post("/api/engagement/company-posts/upload")
+      .set("Authorization", "Bearer test-token")
+      .attach("file", Buffer.from("not-an-image"), {
+        filename: "notes.txt",
+        contentType: "text/plain",
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.success).toBe(false);
+    expect(registerUpload).not.toHaveBeenCalled();
+  });
+
   it("loads the current creator's posts from auth context", async () => {
     vi.mocked(listMyCompanyPosts).mockResolvedValueOnce([] as any);
 
@@ -171,6 +235,19 @@ describe("company post engagement routes", () => {
 
     expect(response.status).toBe(200);
     expect(listCompanyPostApprovals).toHaveBeenCalledWith({
+      actorUserId: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  it("loads the moderation management list from auth context", async () => {
+    vi.mocked(listCompanyPostManagement).mockResolvedValueOnce([] as any);
+
+    const response = await request(app)
+      .get("/api/engagement/company-posts/manage")
+      .set("Authorization", "Bearer test-token");
+
+    expect(response.status).toBe(200);
+    expect(listCompanyPostManagement).toHaveBeenCalledWith({
       actorUserId: "11111111-1111-1111-1111-111111111111",
     });
   });

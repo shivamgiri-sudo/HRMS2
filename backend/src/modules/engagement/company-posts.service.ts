@@ -423,6 +423,16 @@ export async function listCompanyPostApprovals(
   );
 }
 
+export async function listCompanyPostManagement(
+  input: ListCompanyPostApprovalsInput,
+): Promise<CompanyPostDTO[]> {
+  await assertCanModerateCompanyPosts(input.actorUserId);
+  return listCompanyPosts(
+    `status <> 'deleted' AND active_status = 1`,
+    [],
+  );
+}
+
 export async function approveCompanyPost(input: ModerateCompanyPostInput): Promise<CompanyPostDTO> {
   const actorUserId = normalizeActorUserId(input);
   await assertCanModerateCompanyPosts(actorUserId);

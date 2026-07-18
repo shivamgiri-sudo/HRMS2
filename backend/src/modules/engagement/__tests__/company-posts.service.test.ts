@@ -18,6 +18,7 @@ import {
   listCompanyPostCreators,
   listApprovedCompanyFeed,
   listCompanyPostApprovals,
+  listCompanyPostManagement,
   listMyCompanyPosts,
   rejectCompanyPost,
   revokeCompanyPostCreator,
@@ -467,6 +468,27 @@ describe("company feed lifecycle and moderation", () => {
     expect(executeMock.mock.calls[1][0]).toContain(
       "status IN ('pending_approval', 'borderline_flagged') AND active_status = 1",
     );
+  });
+
+  it("returns non-deleted posts for moderator management", async () => {
+    executeMock
+      .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
+      .mockResolvedValueOnce([[
+        makePostRow({ status: "approved" }),
+        makePostRow({
+          id: "00000000-0000-0000-0000-000000000104",
+          status: "rejected",
+          moderation_state: "manual_override_rejected",
+        }),
+      ], []])
+      .mockResolvedValueOnce([[], []]);
+
+    const result = await listCompanyPostManagement({
+      actorUserId: "00000000-0000-0000-0000-000000000710",
+    });
+
+    expect(result.map((post) => post.status)).toEqual(["approved", "rejected"]);
+    expect(executeMock.mock.calls[1][0]).toContain("status <> 'deleted' AND active_status = 1");
   });
 
   it("approves a queued post and audits the moderation action", async () => {

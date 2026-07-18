@@ -1,13 +1,63 @@
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import type { Response } from "express";
 import { Router } from "express";
+import multer from "multer";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { selfOrAdminHr } from "../../shared/accessGuard.js";
+import { registerUpload } from "../document-vault/documentVault.service.js";
+import { UPLOADS_ROOT } from "../files/files.routes.js";
+import { assertCanCreateCompanyPost } from "./company-posts.service.js";
 import { companyPostsController as companyPosts } from "./company-posts.controller.js";
 import { engagementController as c } from "./engagement.controller.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+const COMPANY_FEED_CATEGORY = "company-feed";
+const companyFeedUploadStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.join(UPLOADS_ROOT, COMPANY_FEED_CATEGORY);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${randomUUID()}${ext}`);
+  },
+});
+
+const companyFeedUpload = multer({
+  storage: companyFeedUploadStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error(`File type ${ext} not allowed. Allowed: .jpg, .jpeg, .png, .webp`));
+  },
+});
+
+async function requireCompanyPostCreator(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: () => void,
+) {
+  try {
+    const userId = req.authUser?.id ?? "";
+    await assertCanCreateCompanyPost(userId);
+    next();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Company post creator access is required";
+    return res.status(403).json({ success: false, message });
+  }
+}
 
 router.use(requireAuth);
 
@@ -39,10 +89,58 @@ router.get("/pulse/me", h(c.getMyPulseChecks));
 router.get("/pulse/summary", requireRole("admin", "hr"), h(c.getPulseSummary));
 router.post("/pulse", h(c.submitPulse));
 
+router.post(
+  "/company-posts/upload",
+  requireCompanyPostCreator,
+  (req: any, res: any, next: any) => {
+    companyFeedUpload.single("file")(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ success: false, message: `Upload error: ${err.message}` });
+      }
+      if (err) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+      next();
+    });
+  },
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No image uploaded or file type not allowed" });
+    }
+
+    try {
+      await registerUpload({
+        uploadedByUser: req.authUser!.id,
+        category: COMPANY_FEED_CATEGORY,
+        storedFilename: req.file.filename,
+        originalFilename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        fileSizeBytes: req.file.size,
+        accessLevel: "internal",
+        ownerEmployeeId: req.body?.ownerEmployeeId ?? undefined,
+      });
+    } catch (vaultErr) {
+      console.error("[documentVault] Failed to register company feed upload:", vaultErr);
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        file_id: req.file.filename,
+        url: `/api/files/${COMPANY_FEED_CATEGORY}/${req.file.filename}`,
+        original_name: req.file.originalname,
+        mime_type: req.file.mimetype,
+        size: req.file.size,
+      },
+    });
+  }),
+);
+
 router.get("/company-posts/feed", h(companyPosts.listFeed));
 router.post("/company-posts", h(companyPosts.create));
 router.get("/company-posts/mine", h(companyPosts.listMine));
 router.get("/company-posts/approvals", h(companyPosts.listApprovals));
+router.get("/company-posts/manage", h(companyPosts.listManage));
 router.post("/company-posts/:id/approve", h(companyPosts.approve));
 router.post("/company-posts/:id/reject", h(companyPosts.reject));
 router.delete("/company-posts/:id", h(companyPosts.remove));

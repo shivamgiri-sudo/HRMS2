@@ -9,6 +9,7 @@ import {
   listApprovedCompanyFeed,
   listCompanyPostApprovals,
   listCompanyPostCreators,
+  listCompanyPostManagement,
   listMyCompanyPosts,
   rejectCompanyPost,
   revokeCompanyPostCreator,
@@ -62,6 +63,11 @@ export const companyPostsController = {
 
   async listApprovals(req: AuthenticatedRequest, res: Response) {
     const data = await listCompanyPostApprovals({ actorUserId: getActorUserId(req) });
+    return res.json({ success: true, data });
+  },
+
+  async listManage(req: AuthenticatedRequest, res: Response) {
+    const data = await listCompanyPostManagement({ actorUserId: getActorUserId(req) });
     return res.json({ success: true, data });
   },
 

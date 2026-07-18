@@ -6,7 +6,7 @@ import {
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
-  Plus, Send, Lock, Shield, ShieldAlert,
+  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -69,6 +69,10 @@ export const navGroups: NavGroup[] = [
         label: "Engage",     href: "/engagement", icon: ic(Sparkles), description: "Engagement & feedback",
         children: [
           { label: "Engagement",         href: "/engagement",                          icon: ic(Sparkles),       description: "Engagement" },
+          { label: "Company Feed",       href: "/engagement/company-feed",             icon: ic(Send),           description: "Approved company updates" },
+          { label: "Creator Studio",     href: "/engagement/company-feed/create",      icon: ic(PenSquare),      description: "Submit posts for moderation" },
+          { label: "Approval Queue",     href: "/engagement/company-feed/approvals",   icon: ic(ShieldCheck),    roles: ["hr_head","admin","super_admin"], description: "Review pending posts" },
+          { label: "Feed Management",    href: "/engagement/company-feed/manage",      icon: ic(Eye),            roles: ["hr_head","admin","super_admin"], description: "Manage published and reviewed posts" },
           { label: "Leaderboard",        href: "/engagement/leaderboard",              icon: ic(TrendingUp),     description: "Leaderboard" },
           { label: "Kudos Wall",         href: "/engagement/kudos",                    icon: ic(Heart),          description: "Kudos" },
           { label: "Badges",             href: "/engagement/badges",                   icon: ic(ShieldCheck),    description: "Badges" },
@@ -328,6 +332,7 @@ export const navGroups: NavGroup[] = [
           { label: "Access Control",   href: "/settings/access-control",    icon: ic(Settings),   pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Access" },
           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },
           { label: "Module Access",    href: "/super-admin/module-access",  icon: ic(Lock),       pageCode: "MODULE_ACCESS", roles: ["super_admin"], description: "Module permissions" },
+          { label: "Feed Creators",    href: "/super-admin/company-feed-creators", icon: ic(UsersRound), roles: ["super_admin"], description: "Grant company feed posting rights" },
           { label: "Super Admin Dashboard", href: "/super-admin/dashboard", icon: ic(Shield),     pageCode: "SUPER_ADMIN_DASHBOARD", roles: ["super_admin"], description: "Super admin dashboard" },
           { label: "Security Center",  href: "/security-center",            icon: ic(ShieldAlert),pageCode: "SECURITY_CENTER", roles: ["super_admin", "admin"], description: "Security monitoring" },
           { label: "DPDP / Privacy",   href: "/compliance/dpdp",            icon: ic(ShieldCheck),roles: ["admin","hr"],       description: "DPDP" },
