@@ -15,6 +15,7 @@ import {
 } from "./finance-access-scope.js";
 import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
+import { smartGrnRouter } from "./grn-smart.routes.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 
 const GRN_WRITE_ROLES = [
@@ -117,6 +118,14 @@ grNRouterUseAuth(grnRouter);
 
 function grNRouterUseAuth(router: Router) {
   router.use(requireAuth);
+}
+
+// Allocation-aware smart GRNs are handled first. Legacy GRNs fall through to the
+// existing handlers below, preserving all historical records and API contracts.
+grNRouterSmartRoutes(grnRouter);
+
+function grNRouterSmartRoutes(router: Router) {
+  router.use("/grns", smartGrnRouter);
 }
 
 // Configurable Head/Sub-Head master used by branch budget, GRN and P&L.
