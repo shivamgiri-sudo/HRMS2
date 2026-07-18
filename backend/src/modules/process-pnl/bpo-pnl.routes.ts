@@ -4,6 +4,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
 import { bpoPnlService } from "./bpo-pnl.service.js";
 
 const router = Router();
@@ -50,8 +51,47 @@ router.get("/export", h(async (req, res) => {
 }));
 
 router.get("/revenue-rules", h(async (req, res) => {
-  const data = await bpoPnlService.listRevenueRules(
+  const data = await bpoPnlConfigurationService.listRevenueRules(
     req.query.processId ? String(req.query.processId) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
+router.get("/delivery-actuals", h(async (req, res) => {
+  const data = await bpoPnlConfigurationService.listDeliveryActuals(
+    req.query.period ? String(req.query.period) : undefined,
+    req.query.processId ? String(req.query.processId) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
+router.get("/revenue-components", h(async (req, res) => {
+  const data = await bpoPnlConfigurationService.listRevenueComponents(
+    req.query.period ? String(req.query.period) : undefined,
+    req.query.processId ? String(req.query.processId) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
+router.get("/cost-components", h(async (req, res) => {
+  const data = await bpoPnlConfigurationService.listCostComponents(
+    req.query.period ? String(req.query.period) : undefined,
+    req.query.processId ? String(req.query.processId) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
+router.get("/allocation-policies", h(async (req, res) => {
+  const data = await bpoPnlConfigurationService.listAllocationPolicies(
+    req.query.branchId ? String(req.query.branchId) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
+router.get("/classification-rules", h(async (req, res) => {
+  const data = await bpoPnlConfigurationService.listClassificationRules(
+    req.query.processId ? String(req.query.processId) : undefined,
+    req.query.branchId ? String(req.query.branchId) : undefined
   );
   res.json({ success: true, data });
 }));
@@ -61,7 +101,7 @@ router.post(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    const data = await bpoPnlService.saveRevenueRule(req.body ?? {}, req.authUser.id);
+    const data = await bpoPnlConfigurationService.saveRevenueRule(req.body ?? {}, req.authUser.id);
     res.status(201).json({ success: true, data });
   })
 );
@@ -71,7 +111,7 @@ router.post(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    const data = await bpoPnlService.saveDeliveryActual(req.body ?? {}, req.authUser.id);
+    const data = await bpoPnlConfigurationService.saveDeliveryActual(req.body ?? {}, req.authUser.id);
     res.status(201).json({ success: true, data });
   })
 );
@@ -81,7 +121,7 @@ router.post(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    const data = await bpoPnlService.saveRevenueComponent(req.body ?? {}, req.authUser.id);
+    const data = await bpoPnlConfigurationService.saveRevenueComponent(req.body ?? {}, req.authUser.id);
     res.status(201).json({ success: true, data });
   })
 );
@@ -91,7 +131,7 @@ router.post(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    const data = await bpoPnlService.saveCostComponent(req.body ?? {}, req.authUser.id);
+    const data = await bpoPnlConfigurationService.saveCostComponent(req.body ?? {}, req.authUser.id);
     res.status(201).json({ success: true, data });
   })
 );
@@ -101,7 +141,17 @@ router.post(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    const data = await bpoPnlService.saveAllocationPolicy(req.body ?? {}, req.authUser.id);
+    const data = await bpoPnlConfigurationService.saveAllocationPolicy(req.body ?? {}, req.authUser.id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/classification-rules",
+  requireWriteAccess,
+  requireRole(...WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await bpoPnlConfigurationService.saveClassificationRule(req.body ?? {}, req.authUser.id);
     res.status(201).json({ success: true, data });
   })
 );
