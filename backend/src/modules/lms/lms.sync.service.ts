@@ -174,11 +174,22 @@ export async function syncCertifications(actorId?: string): Promise<{ count: num
   return { count, errors };
 }
 
-// Syncs MCQ assessment attempts from last 24h.
+// Syncs MCQ assessment attempts since the last successful sync (max 30 days back on first run).
 // Writes to lms_assessment_scores (from migration 250).
 export async function syncAssessmentScores(actorId?: string): Promise<{ count: number; errors: string[] }> {
   const errors: string[] = [];
   let count = 0;
+
+  // Determine window start: last successful sync time, capped at 30 days ago for first run / long gaps
+  const [lastSyncRows] = await db.execute<RowDataPacket[]>(
+    `SELECT created_at FROM lms_sync_audit_log
+      WHERE sync_type = 'assessment_scores' AND status IN ('success', 'partial')
+      ORDER BY created_at DESC LIMIT 1`
+  ).catch(() => [[] as RowDataPacket[], []]);
+  const lastSync = (lastSyncRows as any[])[0]?.created_at;
+  const windowStart = lastSync
+    ? new Date(lastSync)
+    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   const attempts = await lmsQuery<RowDataPacket[]>(
     `SELECT aa.id AS attempt_id, aa.employee_id AS lms_id, aa.assessment_id, aa.attempt_no,
@@ -188,8 +199,9 @@ export async function syncAssessmentScores(actorId?: string): Promise<{ count: n
        FROM assessment_attempts aa
        LEFT JOIN assessment_master am ON am.assessment_id = aa.assessment_id
        LEFT JOIN trainee_master tm ON tm.employee_id = aa.employee_id OR tm.permanent_emp_id = aa.employee_id
-      WHERE aa.submitted_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-      LIMIT 5000`
+      WHERE aa.submitted_at > ?
+      LIMIT 5000`,
+    [windowStart]
   ).catch((e: any) => { errors.push(`fetchAttempts: ${e?.message}`); return [] as RowDataPacket[]; });
 
   for (const att of attempts) {
