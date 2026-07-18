@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -394,16 +395,24 @@ export const shrinkageService = {
 
 // ─── Adherence Alert Service ──────────────────────────────────────────────────
 
-const ALERT_THRESHOLDS = {
-  low_adherence:    70,  // % below this fires warning
-  critical_adherence: 50,
-  shrinkage_warning: 15, // % above this fires warning
-  shrinkage_critical: 25,
-  break_breach_mins: 60, // break minutes above this
-};
+async function loadAlertThresholds() {
+  const [lowAdh, critAdh, shrinkWarn, shrinkCrit] = await Promise.all([
+    getPolicyValue("rta", "login_adherence",  "warning_threshold_pct",  "70"),
+    getPolicyValue("rta", "login_adherence",  "critical_threshold_pct", "50"),
+    getPolicyValue("operations", "shrinkage", "warning_threshold_pct",  "15"),
+    getPolicyValue("operations", "shrinkage", "critical_threshold_pct", "25"),
+  ]);
+  return {
+    low_adherence:      Number(lowAdh),
+    critical_adherence: Number(critAdh),
+    shrinkage_warning:  Number(shrinkWarn),
+    shrinkage_critical: Number(shrinkCrit),
+  };
+}
 
 export const alertService = {
   async fireAlertsForDate(date: string, opts: { userId: string }): Promise<number> {
+    const THRESHOLDS = await loadAlertThresholds();
     let fired = 0;
 
     // 1. Low adherence individual alerts
@@ -412,17 +421,17 @@ export const alertService = {
        FROM attendance_reconciliation_record
        WHERE roster_date = ? AND attendance_status NOT IN ('leave_approved','absent')
          AND adherence_pct < ?`,
-      [date, ALERT_THRESHOLDS.low_adherence]
+      [date, THRESHOLDS.low_adherence]
     );
 
     for (const row of lowAdh as RowDataPacket[]) {
-      const severity = Number(row.adherence_pct) < ALERT_THRESHOLDS.critical_adherence ? "critical" : "warning";
+      const severity = Number(row.adherence_pct) < THRESHOLDS.critical_adherence ? "critical" : "warning";
       await db.execute(
         `INSERT IGNORE INTO adherence_alert
            (id, alert_date, alert_type, severity, employee_id,
             threshold_pct, actual_pct, status)
          VALUES (UUID(), ?, 'low_adherence', ?, ?, ?, ?, 'open')`,
-        [date, severity, row.employee_id, ALERT_THRESHOLDS.low_adherence, row.adherence_pct]
+        [date, severity, row.employee_id, THRESHOLDS.low_adherence, row.adherence_pct]
       );
       fired++;
     }
@@ -446,17 +455,17 @@ export const alertService = {
     const [shrinkSnaps] = await db.execute<RowDataPacket[]>(
       `SELECT process_id, branch_id, total_shrinkage_pct
        FROM shrinkage_daily_snapshot WHERE snapshot_date = ? AND total_shrinkage_pct >= ?`,
-      [date, ALERT_THRESHOLDS.shrinkage_warning]
+      [date, THRESHOLDS.shrinkage_warning]
     );
     for (const snap of shrinkSnaps as RowDataPacket[]) {
-      const severity = Number(snap.total_shrinkage_pct) >= ALERT_THRESHOLDS.shrinkage_critical ? "critical" : "warning";
+      const severity = Number(snap.total_shrinkage_pct) >= THRESHOLDS.shrinkage_critical ? "critical" : "warning";
       await db.execute(
         `INSERT IGNORE INTO adherence_alert
            (id, alert_date, alert_type, severity, process_id, branch_id,
             threshold_pct, actual_pct, status)
          VALUES (UUID(), ?, 'shrinkage_spike', ?, ?, ?, ?, ?, 'open')`,
         [date, severity, snap.process_id, snap.branch_id,
-         ALERT_THRESHOLDS.shrinkage_warning, snap.total_shrinkage_pct]
+         THRESHOLDS.shrinkage_warning, snap.total_shrinkage_pct]
       );
       fired++;
     }

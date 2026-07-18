@@ -1,19 +1,23 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ─── Slab helper ──────────────────────────────────────────────────────────────
 
-/**
- * Returns the maximum week-offs allowed by the paid-days slab.
- * Returns Infinity when paidBase >= 26 (no cap — use actual count).
- */
-export function getSlabMaxWeekoffs(paidBase: number): number {
-  if (paidBase < 7)  return 0;
-  if (paidBase < 12) return 1;
-  if (paidBase < 18) return 2;
-  if (paidBase < 24) return 3;
-  if (paidBase < 26) return 4;
-  return Infinity; // paidBase >= 26 — no cap, use actual weekoff count
+const DEFAULT_SLABS_JSON = '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4}]';
+const DEFAULT_SLABS: Array<{ from: number; to: number; max_weekoffs: number }> = JSON.parse(DEFAULT_SLABS_JSON);
+
+async function loadWeekoffSlabs(): Promise<Array<{ from: number; to: number; max_weekoffs: number }>> {
+  const raw = await getPolicyValue("payroll", "weekoff_eligibility", "slabs", DEFAULT_SLABS_JSON);
+  try { return JSON.parse(raw); } catch { return DEFAULT_SLABS; }
+}
+
+export async function getSlabMaxWeekoffs(paidBase: number): Promise<number> {
+  const slabs = await loadWeekoffSlabs();
+  for (const slab of slabs) {
+    if (paidBase >= slab.from && paidBase <= slab.to) return slab.max_weekoffs;
+  }
+  return Infinity;
 }
 
 // ─── Last day of month ────────────────────────────────────────────────────────
@@ -125,7 +129,7 @@ export async function calculateWeekoffEligibility(
   }
 
   // Otherwise apply the paid-base slab cap
-  const slabMax = getSlabMaxWeekoffs(paidBase);
+  const slabMax = await getSlabMaxWeekoffs(paidBase);
   if (slabMax === Infinity) return actualCount;
   return Math.min(slabMax, actualCount);
 }

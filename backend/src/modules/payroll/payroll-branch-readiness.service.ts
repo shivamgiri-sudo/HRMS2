@@ -10,6 +10,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -431,13 +432,14 @@ export const payrollBranchReadinessService = {
   // computeStatus
   // -------------------------------------------------------------------------
 
-  computeStatus(
+  async computeStatus(
     score: number,
     frozen: number,
     hoOverride: number
-  ): "not_started" | "in_progress" | "ready" | "blocked" {
+  ): Promise<"not_started" | "in_progress" | "ready" | "blocked"> {
     if (hoOverride === 1) return "ready";
-    if (score >= 80 && frozen === 1) return "ready";
+    const minScore = Number(await getPolicyValue("payroll", "readiness", "min_readiness_score", "80"));
+    if (score >= minScore && frozen === 1) return "ready";
     if (frozen === 0 && score < 50) return "blocked";
     if (score >= 50) return "in_progress";
     if (score > 0) return "in_progress";
@@ -623,7 +625,7 @@ export const payrollBranchReadinessService = {
     }
 
     const score = this.computeScore(record);
-    const status = this.computeStatus(
+    const status = await this.computeStatus(
       score,
       Number(record.attendance_frozen ?? 0),
       Number(record.ho_override_ready ?? 0)
@@ -793,7 +795,7 @@ export const payrollBranchReadinessService = {
     // Recompute score/status after sign-off
     const rec = await this.getOrRefresh(month, branchId);
     const score = this.computeScore(rec);
-    const status = this.computeStatus(
+    const status = await this.computeStatus(
       score,
       rec.attendance_frozen,
       rec.ho_override_ready
