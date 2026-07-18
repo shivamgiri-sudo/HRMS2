@@ -80,9 +80,15 @@ Branch base commit: f50da6fb
 
 ## Tasks
 
-Task 1: In progress
+Task 1: Complete (commit 5b277449, review clean after fix)
   - Add company feed database foundation
   - Initial implementer added migration, bootstrap manifest, and contract test
   - Reviewer found Important blocker: runtime manifest missing `451_company_feed_foundation.sql`
   - Fix loop added `backend/src/db/runPendingMigrations.ts` entry and strengthened manifest coverage test
+  - Review clean: spec PASS, quality PASS, verdict ACCEPT
+Task 2: Complete
+  - Define company feed domain types and validation
+  - Implementer added company feed types, validation schemas, and test coverage
+  - Review loop fixed required `post_id` for moderation and removed server-managed fields from create DTOs
+  - Final fix loop made create media schema strict and added runtime rejection coverage
   - Review clean: spec PASS, quality PASS, verdict ACCEPT
