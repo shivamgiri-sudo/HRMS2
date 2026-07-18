@@ -338,10 +338,6 @@ const BreakDesk = lazy(() => import("./pages/BreakDesk"));
 const BreakDeskDevices = lazy(() => import("./pages/BreakDeskDevices"));
 const BreakReports = lazy(() => import("./pages/BreakReports"));
 const WaitingRoomDisplay = lazy(() => import("./pages/WaitingRoomDisplay"));
-const VisitorManagement = lazy(() => import("./pages/VisitorManagement"));
-const VisitorApprovals = lazy(() => import("./pages/VisitorApprovals"));
-const VisitorDesk = lazy(() => import("./pages/VisitorDesk"));
-const VisitorSecurityOperations = lazy(() => import("./pages/VisitorSecurityOperations"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -590,7 +586,7 @@ const App = () => (
               <Route path="/payroll/disbursal" element={<ProtectedRoute roles={['super_admin', 'payroll', 'finance']}><DisbursalManagement /></ProtectedRoute>} />
               <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
               <Route path="/payroll/masters" element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
-              <Route path="/payroll/ho-queues" element={<ProtectedRoute><NativePayrollHOQueues /></ProtectedRoute>} />
+              <Route path="/payroll/ho-queues" element={<ProtectedRoute roles={['super_admin', 'payroll_head', 'payroll', 'finance', 'hr', 'admin']}><NativePayrollHOQueues /></ProtectedRoute>} />
               <Route path="/payroll/cheque-validation" element={<ProtectedRoute roles={['payroll','payroll_head','super_admin','finance']}><NativeChequeNameValidation /></ProtectedRoute>} />
               <Route path="/payroll/package-admin" element={<ProtectedRoute roles={['admin','super_admin','payroll']}><NativeSalaryPackageAdmin /></ProtectedRoute>} />
               <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackages /></Gate></ProtectedRoute>} />
@@ -644,7 +640,7 @@ const App = () => (
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
               <Route path="/control-tower" element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><NativeControlTower /></ProtectedRoute>} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
-              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
+              {/* duplicate /ats/walkin-queue removed — canonical declaration is at line ~461 */}
               <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
               <Route path="/wfm/mismatch-queue" element={<ProtectedRoute><NativeAttendanceMismatchQueue /></ProtectedRoute>} />
               <Route path="/attendance/billing-config" element={<ProtectedRoute><NativeAttendanceBillingConfig /></ProtectedRoute>} />
@@ -694,10 +690,6 @@ const App = () => (
               <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin', 'admin', 'wfm']}><BreakDeskDevices /></ProtectedRoute>} />
               <Route path="/break-reports" element={<ProtectedRoute roles={['super_admin', 'admin', 'hr', 'wfm', 'manager', 'process_manager']}><BreakReports /></ProtectedRoute>} />
               <Route path="/break-desk" element={<BreakDeskErrorBoundary><BreakDesk /></BreakDeskErrorBoundary>} />
-              <Route path="/visitor-management" element={<ProtectedRoute><VisitorManagement /></ProtectedRoute>} />
-              <Route path="/visitor-management/approvals" element={<ProtectedRoute><VisitorApprovals /></ProtectedRoute>} />
-              <Route path="/visitor-management/desk" element={<ProtectedRoute><VisitorDesk /></ProtectedRoute>} />
-              <Route path="/visitor-management/security" element={<ProtectedRoute><VisitorSecurityOperations /></ProtectedRoute>} />
               <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
 
               <Route path="*" element={<NotFound />} />

@@ -42,6 +42,7 @@ async function geoLookupIp(ip: string): Promise<string | null> {
 }
 
 const JWT_SECRET = env.JWT_SECRET;
+const OTP_HMAC_SECRET = env.OTP_HMAC_SECRET;
 const JWT_EXPIRES_IN = '15m';
 const PRE_AUTH_EXPIRES_IN = '10m'; // short-lived — only for 2FA challenge exchange
 const REFRESH_EXPIRES_DAYS = 7;
@@ -733,7 +734,7 @@ export const authService = {
     // Generate 6-digit OTP
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpHash = crypto
-      .createHmac('sha256', JWT_SECRET)
+      .createHmac('sha256', OTP_HMAC_SECRET)
       .update(`${otp}:${userId}:${phoneOrEmail}`)
       .digest('hex');
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
@@ -793,7 +794,7 @@ export const authService = {
 
     // Verify OTP hash using HMAC-SHA-256 with timing-safe comparison
     const candidateHash = crypto
-      .createHmac('sha256', JWT_SECRET)
+      .createHmac('sha256', OTP_HMAC_SECRET)
       .update(`${otp}:${userId}:${phoneOrEmail}`)
       .digest('hex');
 

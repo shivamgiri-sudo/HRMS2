@@ -7,7 +7,7 @@ import path from "path";
 
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { listEndpointLimiter, payrollRunLimiter, reportLimiter } from "./middleware/rateLimiter.js";
+import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter } from "./middleware/rateLimiter.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { processRouter } from "./modules/process/process.routes.js";
 import { integrationRouter } from "./modules/integration-hub/integration.routes.js";
@@ -235,6 +235,7 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(globalLimiter);
 
 const uploadsPath = path.resolve(process.cwd(), "uploads");
 

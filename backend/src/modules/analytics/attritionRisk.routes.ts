@@ -27,7 +27,7 @@ const router = Router();
 router.get(
   '/performance-degradation',
   requireAuth,
-  requireRole('HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER'),
+  requireRole('hr', 'wfm', 'manager', 'admin'),
   getPerformanceDegradation
 );
 
@@ -35,7 +35,7 @@ router.get(
 router.get(
   '/absenteeism-correlation',
   requireAuth,
-  requireRole('HR_ADMIN', 'OPERATIONS_MANAGER'),
+  requireRole('hr', 'manager', 'admin'),
   getAbsenteeismCorrelation
 );
 
@@ -43,7 +43,7 @@ router.get(
 router.get(
   '/compound-risk',
   requireAuth,
-  requireRole('HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER'),
+  requireRole('hr', 'wfm', 'manager', 'admin'),
   getCompoundRiskProfile
 );
 
@@ -51,7 +51,7 @@ router.get(
 router.get(
   '/quality-velocity',
   requireAuth,
-  requireRole('HR_ADMIN', 'WFM_MANAGER'),
+  requireRole('hr', 'wfm', 'admin'),
   getQualityVelocity
 );
 
@@ -59,7 +59,7 @@ router.get(
 router.get(
   '/early-warning',
   requireAuth,
-  requireRole('HR_ADMIN', 'OPERATIONS_MANAGER'),
+  requireRole('hr', 'manager', 'admin'),
   getEarlyWarningIndicators
 );
 
@@ -67,7 +67,7 @@ router.get(
 router.get(
   '/consolidated',
   requireAuth,
-  requireRole('HR_ADMIN', 'WFM_MANAGER', 'OPERATIONS_MANAGER'),
+  requireRole('hr', 'wfm', 'manager', 'admin'),
   getConsolidatedRiskReport
 );
 

@@ -2,6 +2,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { format } from "date-fns";
 
+// Re-export so existing callers that import useDepartments from this file continue to work
+export { useDepartments } from "./useDepartments";
+
 const EMPLOYEE_PAGE_SIZE = 200;
 
 export interface Employee {
@@ -267,21 +270,6 @@ export function useEmployeeStats() {
         active: stats.active_employees ?? 0,
         onboarding: stats.onboarding_employees ?? 0,
       };
-    },
-  });
-}
-
-export function useDepartments() {
-  return useQuery({
-    queryKey: ["departments"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{ data: DepartmentRow[] }>("/api/org/departments");
-      return (res.data ?? []).map((d) => ({
-        id: d.id,
-        name: d.dept_name,
-        code: d.dept_code,
-        description: d.description ?? "",
-      }));
     },
   });
 }
