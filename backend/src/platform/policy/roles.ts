@@ -37,12 +37,110 @@ export const Role = {
   IT:                  "it",
   BRANCH_ADMIN:        "branch_admin",
   CLIENT:              "client",
+  // Extended roles discovered via compile-time audit of existing route files
+  HR_ADMIN_ALT:        "hr_admin",         // alternate hr key used in some modules
+  QA_MANAGER:          "QA_Manager",       // legacy capitalised form in top-performers module
+  QUALITY_MANAGER:     "Quality_Manager",  // another legacy capitalised form
+  BRANCH_HR:           "branch_hr",
+  BRANCH_IT:           "branch_it",
+  HO_HR:               "ho_hr",            // Head-office HR role
+  HO_PAYROLL:          "ho_payroll",
+  HO_OPERATIONS:       "ho_operations",
+  BM:                  "bm",               // Branch Manager (legacy alias)
+  OPERATIONS:          "operations",
+  OPERATIONS_HEAD:     "operations_head",
+  MANAGEMENT:          "management",
+  PAYROLL_ADMIN:       "payroll_admin",
+  FINANCE_ADMIN:       "finance_admin",
+  IT_ADMIN:            "it_admin",
+  COMPLIANCE:          "compliance",
+  DPO:                 "dpo",              // Data Protection Officer
+  SECURITY:            "security",
+  SECURITY_HEAD:       "security_head",
+  SALES:               "sales",
+  ANALYST:             "analyst",
+  WFM_SPOC:            "wfm_spoc",
+  SUPER_ADMIN_DISPLAY: "Super Admin",      // legacy display name (non-canonical — do not use in new code)
   // Internal / system
   ADMIN:               "admin",
   DEMO:                "demo",
 } as const;
 
 export type RoleKey = typeof Role[keyof typeof Role];
+
+const ROLE_VALUES = new Set<RoleKey>(Object.values(Role));
+
+const LEGACY_ROLE_EQUIVALENTS: Readonly<Record<string, RoleKey[]>> = {
+  hr_admin: [Role.HR_ADMIN],
+  hr_admin_alt: [Role.HR_ADMIN],
+  hr_admin_display: [Role.HR_ADMIN],
+  branch_hr: [Role.HR_ADMIN],
+  ho_hr: [Role.HR_ADMIN],
+  hr_admin_: [Role.HR_ADMIN],
+  qa_manager: [Role.QA],
+  quality_manager: [Role.QA],
+  qa_manager_: [Role.QA],
+  quality_manager_: [Role.QA],
+  operations_manager: [Role.OPERATIONS_MANAGER],
+  operations: [Role.OPERATIONS_MANAGER],
+  operations_head: [Role.OPERATIONS_MANAGER],
+  ho_operations: [Role.OPERATIONS_MANAGER],
+  management: [
+    Role.CEO,
+    Role.COO,
+    Role.BRANCH_HEAD,
+    Role.OPERATIONS_MANAGER,
+    Role.MANAGER,
+    Role.PROCESS_MANAGER,
+  ],
+  ho_payroll: [Role.PAYROLL_HEAD],
+  payroll_admin: [Role.PAYROLL],
+  wfm_spoc: [Role.WFM],
+  ho_wfm: [Role.WFM],
+  branch_it: [Role.IT],
+  it_admin: [Role.IT],
+  bm: [Role.BRANCH_HEAD],
+  analyst: [Role.QUALITY_ANALYST],
+  finance_admin: [Role.FINANCE, Role.FINANCE_HEAD, Role.ACCOUNTS_HEAD],
+  super_admin: [Role.SUPER_ADMIN],
+  super_admin_display: [Role.SUPER_ADMIN],
+};
+
+function canonicalizeRoleLabel(role: string): string {
+  return role.trim().replace(/[\s-]+/g, "_").toLowerCase();
+}
+
+function isRoleKey(role: string): role is RoleKey {
+  return ROLE_VALUES.has(role as RoleKey);
+}
+
+export function normalizeRoleInputs(roles: readonly string[]): RoleKey[] {
+  const normalized = new Set<RoleKey>();
+
+  for (const rawRole of roles) {
+    const canonical = canonicalizeRoleLabel(rawRole);
+    const mapped = LEGACY_ROLE_EQUIVALENTS[canonical];
+
+    if (mapped) {
+      mapped.forEach((role) => normalized.add(role));
+      continue;
+    }
+
+    if (isRoleKey(rawRole)) {
+      normalized.add(rawRole);
+      continue;
+    }
+
+    if (isRoleKey(canonical)) {
+      normalized.add(canonical);
+      continue;
+    }
+
+    normalized.add(rawRole as RoleKey);
+  }
+
+  return Array.from(normalized);
+}
 
 /**
  * Canonical role aliases. Bidirectional pairs that are treated as equivalent
