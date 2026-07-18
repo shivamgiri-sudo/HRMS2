@@ -119,6 +119,7 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
       });
     } catch {
       setFf(null);
+      setForm({ noticePeriodDays: 0, noticeShortfallDays: 0, noticeRecovery: 0, gratuityAmount: 0, salaryHold: 0, advancesRecovery: 0, netPayable: 0 });
     } finally {
       setLoadingFf(false);
     }
