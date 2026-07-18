@@ -12,6 +12,7 @@ import { assertFinanceRecordBranch } from "./finance-access-scope.js";
 import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
+import { grnValidationControlService } from "./grn-validation-control.service.js";
 
 const SMART_READ_ROLES = [
   "accounts_head",
@@ -32,6 +33,7 @@ const SMART_WRITE_ROLES = [
   "branch_admin",
 ] as const;
 const SMART_REVIEW_ROLES = ["branch_head", "finance_head", "super_admin"] as const;
+const SMART_OVERRIDE_ROLES = ["finance_head", "super_admin"] as const;
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads", "grn-documents");
 if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -239,12 +241,62 @@ smartGrnRouter.post(
   authorizeGrn,
   async (req: SmartRequest, res) => {
     try {
-      const data = await grnSmartService.revalidate(req.params.id);
+      const data = await grnValidationControlService.effectiveValidation(req.params.id);
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
         success: false,
         error: error instanceof Error ? error.message : "GRN validation failed",
+      });
+    }
+  }
+);
+
+smartGrnRouter.post(
+  "/:id/validations/:validationCode/override",
+  requireWriteAccess,
+  requireRole(...SMART_OVERRIDE_ROLES),
+  authorizeGrn,
+  async (req: SmartRequest, res) => {
+    try {
+      const user = actor(req);
+      const data = await grnValidationControlService.overrideValidation(
+        req.params.id,
+        req.params.validationCode,
+        String(req.body?.reason ?? ""),
+        user.id,
+        user.role
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to approve validation override",
+      });
+    }
+  }
+);
+
+smartGrnRouter.post(
+  "/:id/validations/:validationCode/revoke",
+  requireWriteAccess,
+  requireRole(...SMART_OVERRIDE_ROLES),
+  authorizeGrn,
+  async (req: SmartRequest, res) => {
+    try {
+      const user = actor(req);
+      const data = await grnValidationControlService.revokeOverride(
+        req.params.id,
+        req.params.validationCode,
+        String(req.body?.reason ?? ""),
+        user.id,
+        user.role
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to revoke validation override",
       });
     }
   }
@@ -290,7 +342,7 @@ smartGrnRouter.post(
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
-      const data = await grnSmartService.submit(
+      const data = await grnValidationControlService.submit(
         req.params.id,
         user.id,
         user.role,
@@ -322,10 +374,10 @@ smartGrnRouter.post(
         workflow: "grn",
       });
       const decision = String(req.body?.decision ?? "") as "approved" | "rejected";
-      if (!(["approved", "rejected"] as string[]).includes(decision)) {
+      if (!("approved,rejected".split(",")).includes(decision)) {
         throw new Error("Decision must be approved or rejected");
       }
-      const data = await grnSmartService.review(
+      const data = await grnValidationControlService.review(
         req.params.id,
         decision,
         req.body?.reviewNote ? String(req.body.reviewNote) : undefined,
@@ -333,9 +385,11 @@ smartGrnRouter.post(
         effectiveRole
       );
       if (data.paymentId) {
-        await import("./vendor-payment.service.js").then(({ vendorPaymentService }) =>
-          vendorPaymentService.auditCreatedPayment(data.paymentId!, user.id)
-        ).catch(() => undefined);
+        await import("./vendor-payment.service.js")
+          .then(({ vendorPaymentService }) =>
+            vendorPaymentService.auditCreatedPayment(data.paymentId!, user.id)
+          )
+          .catch(() => undefined);
       }
       res.json(data);
     } catch (error) {
