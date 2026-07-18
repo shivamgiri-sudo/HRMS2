@@ -304,10 +304,12 @@ describe("company feed permissions and creator access", () => {
   });
 
   it("lists creator access rows", async () => {
-    executeMock.mockResolvedValueOnce([[{ id: "access-1" }], []]);
+    executeMock
+      .mockResolvedValueOnce([[{ role_key: "super_admin" }], []])
+      .mockResolvedValueOnce([[{ id: "access-1" }], []]);
 
-    await expect(listCompanyPostCreators()).resolves.toEqual([{ id: "access-1" }]);
-    expect(executeMock.mock.calls[0][0]).toContain("FROM company_post_creator_access");
+    await expect(listCompanyPostCreators({ actorUserId: "super-admin-id" })).resolves.toEqual([{ id: "access-1" }]);
+    expect(executeMock.mock.calls[1][0]).toContain("FROM company_post_creator_access");
   });
 });
 

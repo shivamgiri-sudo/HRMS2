@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { selfOrAdminHr } from "../../shared/accessGuard.js";
+import { companyPostsController as companyPosts } from "./company-posts.controller.js";
 import { engagementController as c } from "./engagement.controller.js";
 
 const router = Router();
@@ -37,6 +38,18 @@ router.post("/surveys/:id/respond", h(c.submitSurvey));
 router.get("/pulse/me", h(c.getMyPulseChecks));
 router.get("/pulse/summary", requireRole("admin", "hr"), h(c.getPulseSummary));
 router.post("/pulse", h(c.submitPulse));
+
+router.get("/company-posts/feed", h(companyPosts.listFeed));
+router.post("/company-posts", h(companyPosts.create));
+router.get("/company-posts/mine", h(companyPosts.listMine));
+router.get("/company-posts/approvals", h(companyPosts.listApprovals));
+router.post("/company-posts/:id/approve", h(companyPosts.approve));
+router.post("/company-posts/:id/reject", h(companyPosts.reject));
+router.delete("/company-posts/:id", h(companyPosts.remove));
+
+router.get("/company-post-creators", requireRole("super_admin"), h(companyPosts.listCreators));
+router.post("/company-post-creators/:employeeId/grant", requireRole("super_admin"), h(companyPosts.grantCreator));
+router.post("/company-post-creators/:employeeId/revoke", requireRole("super_admin"), h(companyPosts.revokeCreator));
 
 export { router as engagementRouter };
 

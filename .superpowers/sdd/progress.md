@@ -103,6 +103,10 @@ Task 4: Complete
   - Public feed restricted to approved posts; creator view and approval queue visibility enforced in service layer
   - Review loops closed moderator scope widening, invalid lifecycle transitions, transactional audit rollback, and concurrent update race windows
   - Fresh local verification: `npx vitest run src/modules/engagement/__tests__/company-posts.service.test.ts` -> 30/30 passing
-Task 5: In progress
+Task 5: Complete
   - Add controller and engagement routes for company feed APIs
-  - Pending task brief dispatch
+  - Added company feed controller handlers and mounted engagement routes for feed, create, mine, approvals, approve, reject, delete, and creator-access APIs
+  - Added targeted route coverage and follow-up security hardening for creator-access endpoints
+  - Fresh local verification:
+    - `npx vitest run src/modules/engagement/__tests__/company-posts.routes.test.ts` -> 14/14 passing
+    - `npx vitest run src/modules/engagement/__tests__/company-posts.service.test.ts` -> 30/30 passing

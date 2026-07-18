@@ -545,7 +545,9 @@ export async function deleteCompanyPost(input: DeleteCompanyPostInput): Promise<
   });
 }
 
-export async function listCompanyPostCreators(): Promise<CompanyPostCreatorAccessRowDTO[]> {
+export async function listCompanyPostCreators(input: { actorUserId: string }): Promise<CompanyPostCreatorAccessRowDTO[]> {
+  await assertCanManageCreators(input.actorUserId);
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_id, user_id, active_status, granted_by, granted_at,
             revoked_by, revoked_at, created_at, updated_at
