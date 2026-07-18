@@ -9,6 +9,7 @@ import {
   type BudgetTaxTreatment,
 } from "../process-pnl/branch-budget.service.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
+import { allocateGrnNumber } from "./grn-number.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 
 export type GrnType = "vendor" | "imprest";
@@ -48,24 +49,6 @@ export interface SubmitGrnPayload {
 export interface ReviewGrnPayload {
   decision: "approved" | "rejected";
   reviewNote?: string;
-}
-
-async function generateGrnNumber(branchId: string, financialYear: string): Promise<string> {
-  const [branchRows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_seq FROM branch_master WHERE id = ? LIMIT 1`,
-    [branchId]
-  );
-  if (!branchRows[0]) throw new Error("Selected branch was not found");
-
-  const branchSeq = Number(branchRows[0].branch_seq ?? 0);
-  const yy = financialYear.slice(2, 4);
-  const [sequenceRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt
-       FROM grn_request
-      WHERE branch_id = ? AND financial_year = ?`,
-    [branchId, financialYear]
-  );
-  return `Mas/${branchSeq}/${yy}/${Number(sequenceRows[0]?.cnt ?? 0) + 1}`;
 }
 
 async function writeGrnAudit(
@@ -125,6 +108,21 @@ function financialYearFromPeriod(periodCode: string) {
   return month >= 4
     ? `${year}-${String(year + 1).slice(-2)}`
     : `${year - 1}-${String(year).slice(-2)}`;
+}
+
+function addDays(dateString: string, days: number) {
+  const date = new Date(`${dateString}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+async function getGrnOrThrow(grnId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM grn_request WHERE id = ? LIMIT 1`,
+    [grnId]
+  );
+  if (!rows[0]) throw new Error("GRN not found");
+  return rows[0] as any;
 }
 
 export const grnService = {
@@ -212,7 +210,7 @@ export const grnService = {
     }
 
     const id = randomUUID();
-    const grnNumber = await generateGrnNumber(payload.branchId, financialYear);
+    const grnNumber = await allocateGrnNumber(payload.branchId, financialYear);
     const dueDate = addDays(payload.billDate, paymentTermsDays);
     const costClass: "direct" | "indirect" =
       budgetLine.process_id || budgetLine.cost_centre_id ? "direct" : "indirect";
@@ -296,19 +294,23 @@ export const grnService = {
       throw new Error("Invoice / supporting attachment is required before submission");
     }
 
-    await db.execute(
+    const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted',
               submitted_by = ?,
               submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
-        WHERE id = ?`,
+        WHERE id = ? AND status = 'draft'`,
       [actorUserId, payload.remarks?.trim() || null, grnId]
     );
+    if (result.affectedRows !== 1) {
+      throw new Error("GRN status changed before submission; refresh and try again");
+    }
+
     await writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
       remarks: payload.remarks,
     });
-    return { success: true, newStatus: "submitted" };
+    return { success: true, newStatus: "submitted" as const };
   },
 
   async reviewGrn(
@@ -529,12 +531,15 @@ export const grnService = {
         );
       }
 
-      await connection.execute(
+      const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE grn_request
             SET status = 'cancelled', reviewed_by = ?, reviewed_at = NOW()
-          WHERE id = ?`,
-        [actorUserId, grnId]
+          WHERE id = ? AND status = ?`,
+        [actorUserId, grnId, grn.status]
       );
+      if (result.affectedRows !== 1) {
+        throw new Error("GRN status changed before cancellation; refresh and try again");
+      }
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -681,18 +686,3 @@ export const grnService = {
     });
   },
 };
-
-async function getGrnOrThrow(grnId: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM grn_request WHERE id = ? LIMIT 1`,
-    [grnId]
-  );
-  if (!rows[0]) throw new Error("GRN not found");
-  return rows[0] as any;
-}
-
-function addDays(dateString: string, days: number) {
-  const date = new Date(`${dateString}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
