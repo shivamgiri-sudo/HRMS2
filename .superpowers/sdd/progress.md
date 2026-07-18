@@ -92,8 +92,17 @@ Task 2: Complete
   - Review loop fixed required `post_id` for moderation and removed server-managed fields from create DTOs
   - Final fix loop made create media schema strict and added runtime rejection coverage
   - Review clean: spec PASS, quality PASS, verdict ACCEPT
-Task 3: In progress
+Task 3: Complete (commit 969b6c55, review clean after fix)
   - Implement creator-access permission checks and moderator authorization in service layer
   - Implementer added creator-access checks, moderation authorization, and audited grant/revoke operations
   - Review loop fixed revoke false-success behavior and aligned moderation role source with canonical backend roles
   - Review clean: spec PASS, quality PASS, verdict ACCEPT
+Task 4: Complete
+  - Implement company post lifecycle, moderation status mapping, and visibility-safe feed queries
+  - Added create/list/approve/reject/delete service methods with deterministic moderation mapping
+  - Public feed restricted to approved posts; creator view and approval queue visibility enforced in service layer
+  - Review loops closed moderator scope widening, invalid lifecycle transitions, transactional audit rollback, and concurrent update race windows
+  - Fresh local verification: `npx vitest run src/modules/engagement/__tests__/company-posts.service.test.ts` -> 30/30 passing
+Task 5: In progress
+  - Add controller and engagement routes for company feed APIs
+  - Pending task brief dispatch
