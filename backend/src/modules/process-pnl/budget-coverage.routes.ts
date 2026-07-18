@@ -85,8 +85,6 @@ budgetCoverageRouter.get(
   }
 );
 
-// Intercepts the normal budget save endpoint, preserving its response contract while
-// automatically marking every represented master Sub-head as Planned.
 budgetCoverageRouter.post(
   "/pnl/budgets",
   requireWriteAccess,
@@ -158,8 +156,6 @@ budgetCoverageRouter.put(
   }
 );
 
-// Intercepts submission and performs completeness validation inside the same
-// database transaction as the status change.
 budgetCoverageRouter.post(
   "/pnl/budgets/:id/submit",
   requireWriteAccess,
@@ -168,11 +164,12 @@ budgetCoverageRouter.post(
     try {
       const user = actor(req);
       await scopedBudget(req, req.params.id);
-      const data = await budgetCoverageService.submitBudget(
+      await budgetCoverageService.submitBudget(
         req.params.id,
         user.id,
         user.role
       );
+      const data = await branchBudgetService.get(req.params.id);
       res.json({ success: true, data });
     } catch (error) {
       res.status(400).json({
