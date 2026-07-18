@@ -1,21 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useEffect, useRef, useState } from "react";
-
-export function useDebounce<T>(value: T, ms = 350): T {
-  const [debounced, setDebounced] = useState(value);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setDebounced(value), ms);
-    return () => {
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [value, ms]);
-
-  return debounced;
-}
 
 export interface HubEmployee {
   id: string;
@@ -150,18 +134,6 @@ export interface SelectOption {
   name: string;
 }
 
-export interface TodaySummary {
-  date: string;
-  total_active: number;
-  present: number;
-  half_day: number;
-  absent: number;
-  missing_punch: number;
-  on_leave: number;
-  week_off: number;
-  holiday: number;
-}
-
 // ── Directory ──────────────────────────────────────────────────────────────
 
 export function useHubEmployees(filters: HubFilters, month: string) {
@@ -273,18 +245,6 @@ export function useLeaveBalance(employeeId: string | null, year: number) {
       return (res?.data ?? res ?? []) as LeaveBalance[];
     },
     staleTime: 120_000,
-  });
-}
-
-export function useTodaySummary() {
-  return useQuery({
-    queryKey: ["hub-today-summary"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<any>("/api/employees/hr-hub/today-summary");
-      return (res?.data ?? res) as TodaySummary;
-    },
-    staleTime: 60_000,
-    refetchInterval: 60_000,
   });
 }
 

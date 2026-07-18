@@ -2,17 +2,15 @@ import type { RowDataPacket } from "mysql2";
 import type { NextFunction, Response } from "express";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
-import { expandRoles, normalizeRoleInputs } from "../platform/policy/index.js";
+import { expandRoles } from "../platform/policy/index.js";
 import type { RoleKey } from "../platform/policy/index.js";
 
-export function requireRole(...allowedRoles: string[]) {
+export function requireRole(...allowedRoles: RoleKey[]) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.authUser?.id) {
         return res.status(401).json({ success: false, message: "Unauthenticated" });
       }
-
-      const normalizedAllowed = normalizeRoleInputs(allowedRoles);
 
       // Demo bypass: resolve roles from req.authUser.role (set by DEMO_TOKEN_MAP)
       // instead of querying the DB. This allows mock-token-{role} to correctly
@@ -26,7 +24,7 @@ export function requireRole(...allowedRoles: string[]) {
           return next();
         }
         const expandedUserRoles = expandRoles(userRoles);
-        const expandedAllowed   = expandRoles(normalizedAllowed);
+        const expandedAllowed   = expandRoles(allowedRoles);
         if (expandedAllowed.some((role) => expandedUserRoles.includes(role))) {
           (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;
           return next();
@@ -49,7 +47,7 @@ export function requireRole(...allowedRoles: string[]) {
 
       // Expand both sides with aliases so manager↔process_manager are interchangeable
       const expandedUserRoles = expandRoles(userRoles);
-      const expandedAllowed   = expandRoles(normalizedAllowed);
+      const expandedAllowed   = expandRoles(allowedRoles);
       const allowed = expandedAllowed.some((role) => expandedUserRoles.includes(role));
 
       if (!allowed) {

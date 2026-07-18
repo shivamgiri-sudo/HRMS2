@@ -1423,9 +1423,27 @@ function SignoffTab() {
     staleTime: 15_000,
   });
 
+  const { data: tdsSummary } = useQuery<{
+    total_tds: number;
+    employee_count_with_tds: number;
+    avg_tds: number;
+    regime_breakdown: { new: number; old: number };
+  }>({
+    queryKey: ["payroll-signoff-tds-summary", selectedRunId],
+    queryFn: () =>
+      hrmsApi
+        .get<{ success: boolean; data: any }>(
+          `/api/payroll/signoff/runs/${selectedRunId}/tds-summary`
+        )
+        .then((r) => (r as any).data),
+    enabled: !!selectedRunId,
+    staleTime: 60_000,
+  });
+
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["payroll-signoff-runs"] });
     void qc.invalidateQueries({ queryKey: ["payroll-signoff-status", selectedRunId] });
+    void qc.invalidateQueries({ queryKey: ["payroll-signoff-tds-summary", selectedRunId] });
   };
 
   const financeApproveMut = useMutation({
@@ -1545,6 +1563,36 @@ function SignoffTab() {
               </CardContent>
             </Card>
           </div>
+
+          {tdsSummary && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">TDS Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
+                  <div>
+                    <p className="text-slate-500 text-xs">Total TDS</p>
+                    <p className="font-semibold text-slate-900">{fmt(tdsSummary.total_tds)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Employees with TDS</p>
+                    <p className="font-semibold text-slate-900">{tdsSummary.employee_count_with_tds}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Avg TDS / Employee</p>
+                    <p className="font-semibold text-slate-900">{fmt(tdsSummary.avg_tds)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Regime</p>
+                    <p className="font-semibold text-slate-900">
+                      {tdsSummary.regime_breakdown.new}N / {tdsSummary.regime_breakdown.old}O
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="pb-3">
