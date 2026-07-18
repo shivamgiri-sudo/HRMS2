@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Award, BookOpen, Clock, TrendingUp } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatISTDate } from "@/lib/utils";
+import { formatIST } from "@/lib/utils";
 
 interface EmployeeProgress {
   employee_id: string;
@@ -26,10 +26,10 @@ function SectionCard({
   children: ReactNode;
 }) {
   return (
-    <section className="mcn-page-card overflow-hidden">
+    <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       <div className="border-b border-slate-200/80 bg-white px-6 py-5">
-        <h2 className="mcn-section-title">{title}</h2>
-        {subtitle && <p className="mcn-section-subtitle">{subtitle}</p>}
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
       </div>
       <div className="bg-[var(--card-solid)] p-6">{children}</div>
     </section>
@@ -64,7 +64,7 @@ export default function LMSProgressDashboard() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <header className="mcn-page-card overflow-hidden">
+        <header className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="border-b border-slate-200/80 bg-white px-6 py-5">
             <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-700">MCN LMS</p>
             <h1 className="mt-1 text-2xl font-black text-slate-950">LMS Progress Dashboard</h1>
@@ -75,7 +75,7 @@ export default function LMSProgressDashboard() {
         </header>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <div className="mcn-page-card p-5">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Total Learners</p>
@@ -87,7 +87,7 @@ export default function LMSProgressDashboard() {
             </div>
           </div>
 
-          <div className="mcn-page-card p-5">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Avg Completion</p>
@@ -99,7 +99,7 @@ export default function LMSProgressDashboard() {
             </div>
           </div>
 
-          <div className="mcn-page-card p-5">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Certifications</p>
@@ -111,7 +111,7 @@ export default function LMSProgressDashboard() {
             </div>
           </div>
 
-          <div className="mcn-page-card p-5">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Active (7d)</p>
@@ -176,7 +176,7 @@ export default function LMSProgressDashboard() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-500">
-                        {formatISTDate(progress.last_activity)}
+                        {formatIST(progress.last_activity)}
                       </td>
                     </tr>
                   ))}
@@ -186,7 +186,7 @@ export default function LMSProgressDashboard() {
           )}
         </SectionCard>
 
-        <div className="mcn-page-card border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
           <p className="font-semibold">Integration Note:</p>
           <p className="mt-1">
             This dashboard displays read-only progress data synced from the external LMS system.
