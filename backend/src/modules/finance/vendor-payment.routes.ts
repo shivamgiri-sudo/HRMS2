@@ -39,6 +39,21 @@ function actor(req: AuthenticatedRequest) {
   };
 }
 
+function allRoles(req: AuthenticatedRequest) {
+  return new Set(
+    [req.authUser?.role, ...(req.userRoles ?? [])]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => value.toLowerCase())
+  );
+}
+
+function paymentWriteRole(req: AuthenticatedRequest) {
+  const roles = allRoles(req);
+  if (roles.has("accounts_head")) return "accounts_head";
+  if (roles.has("super_admin")) return "super_admin";
+  return String(req.authUser?.role ?? "unknown");
+}
+
 type ScopedPaymentRequest = AuthenticatedRequest & { financePayment?: any };
 
 async function authorizePaymentBranch(
@@ -70,6 +85,31 @@ async function authorizePaymentBranch(
 }
 
 router.use(requireAuth);
+
+router.get(
+  "/vendor-payments/capabilities",
+  requireRole(...PAYMENT_READ_ROLES),
+  (req: AuthenticatedRequest, res) => {
+    const roles = allRoles(req);
+    const canWrite = roles.has("accounts_head") || roles.has("super_admin");
+    const hasGlobalRead = [
+      "accounts_head",
+      "super_admin",
+      "finance_head",
+      "admin",
+      "finance",
+    ].some((role) => roles.has(role));
+    res.json({
+      success: true,
+      data: {
+        canRead: true,
+        canWrite,
+        readScope: hasGlobalRead ? "organisation" : "branch",
+        writeRole: canWrite ? paymentWriteRole(req) : null,
+      },
+    });
+  }
+);
 
 router.get(
   "/banks",
@@ -244,7 +284,7 @@ router.post(
       req.params.id,
       req.body,
       user.id,
-      user.role
+      paymentWriteRole(req)
     );
     res.json({ success: true, data });
   })
@@ -268,7 +308,7 @@ router.post(
     const results = await vendorPaymentService.bulkUpdate(
       updates,
       user.id,
-      user.role
+      paymentWriteRole(req)
     );
     res.json({ success: true, results });
   })
@@ -326,7 +366,7 @@ router.post(
       req.file.path,
       req.file.mimetype,
       user.id,
-      user.role
+      paymentWriteRole(req)
     );
     res.json({ success: true, message: "Proof uploaded" });
   })
