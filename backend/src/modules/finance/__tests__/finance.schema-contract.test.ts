@@ -61,6 +61,18 @@ describe("finance database and API contract", () => {
     expect(sql412).toContain("Computer Hire");
   });
 
+  it("preserves every payment installment in an additive transaction ledger", () => {
+    const sql413 = read("sql/413_vendor_payment_transaction_ledger.sql");
+    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    expect(sql413).toContain("CREATE TABLE IF NOT EXISTS vendor_payment_transaction");
+    expect(sql413).toContain("vendor_payment_id");
+    expect(sql413).toContain("sequence_no");
+    expect(sql413).toContain("transaction_id");
+    expect(sql413).toContain("proof_file_path");
+    expect(sql413).toContain("Historical aggregate backfill");
+    expect(runner).toContain('"413_vendor_payment_transaction_ledger.sql"');
+  });
+
   it("requires current authentication and branch scoping on finance routes", () => {
     const grnRoutes = read("src/modules/finance/grn.routes.ts");
     const paymentRoutes = read("src/modules/finance/vendor-payment.routes.ts");
@@ -79,6 +91,21 @@ describe("finance database and API contract", () => {
     expect(service).toContain("Cost centre mapping is locked from the approved GRN");
     expect(service).toContain("Payment Pending");
     expect(service).toContain("transaction ID / UTR");
+  });
+
+  it("uses installment dispatch APIs instead of overwriting aggregate UTR fields", () => {
+    const routes = read("src/modules/finance/vendor-payment.routes.ts");
+    const ledgerService = read("src/modules/finance/vendor-payment-ledger.service.ts");
+    const page = read("../src/pages/finance/VendorPaymentDispatchPage.tsx");
+    expect(routes).toContain('"/vendor-payments/:id/dispatch"');
+    expect(routes).toContain('"/vendor-payments/:id/transactions"');
+    expect(routes).toContain("Aggregate payment updates are retired");
+    expect(ledgerService).toContain("VENDOR_PAYMENT_INSTALLMENT_DISPATCHED");
+    expect(ledgerService).toContain("paymentAmount");
+    expect(page).toContain("/dispatch");
+    expect(page).toContain("/transactions");
+    expect(page).not.toContain("/update-payment");
+    expect(page).not.toContain("/bulk-update");
   });
 
   it("treats branch roles as scoped and finance leadership as global", () => {
