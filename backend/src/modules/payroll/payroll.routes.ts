@@ -1239,7 +1239,12 @@ router.get(
     }>)[0] ?? null;
 
     const grossSalary = Number(line.gross_salary);
-    const standardDeduction = 75000;
+
+    const [sdRows] = await db.execute<RowDataPacket[]>(
+      `SELECT config_value FROM statutory_config WHERE config_key = 'tds_standard_deduction' LIMIT 1`
+    );
+    const standardDeduction = Number((sdRows as any[])[0]?.config_value ?? 75000);
+
     const tdsDeducted = Number(line.tds_amount) || Number(line.tds) || 0;
     const totalDeductions = standardDeduction
       + (decl ? Number(decl.declared_hra) + Number(decl.declared_80c) + Number(decl.declared_80d) : 0);
