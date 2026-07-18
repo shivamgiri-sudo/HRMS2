@@ -45,26 +45,17 @@ jobs:
         working-directory: backend
         run: npx tsc --noEmit
 
+      - name: Run backend unit tests
+        working-directory: backend
+        run: npx vitest run tests/peopleos-module-registry.test.ts tests/policy.test.ts tests/domain-registry.test.ts
+        timeout-minutes: 5
+
       - name: Build frontend
         run: bun run build
 
       - name: Build backend
         working-directory: backend
         run: npm run build
-
-      - name: Upload backend dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-dist
-          path: backend/dist/
-          retention-days: 1
-
-      - name: Upload frontend dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: dist/
-          retention-days: 1
 
   # ── 2. Deploy (self-hosted runner on 192.168.11.225) ─────────────────────────
   # The self-hosted runner runs INSIDE the LAN and has direct access to
@@ -80,24 +71,37 @@ jobs:
     environment: production
 
     steps:
-      # Download the artifacts built by ci-gate (avoids rebuilding on server)
-      - name: Download backend dist
-        uses: actions/download-artifact@v4
+      - name: Checkout source at triggering commit
+        uses: actions/checkout@v4
         with:
-          name: backend-dist
-          path: /tmp/deploy/backend/dist/
+          fetch-depth: 1
 
-      - name: Download frontend dist
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-dist
-          path: /tmp/deploy/dist/
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Verify commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Deploying commit: ${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Build frontend
+        run: npm run build
 
       - name: Validate backend artifact
         shell: bash
         run: |
           set -euo pipefail
-          ARTIFACT="/tmp/deploy/backend/dist"
+          ARTIFACT="backend/dist"
           test -f "$ARTIFACT/src/server.js"
           test -f "$ARTIFACT/src/modules/visitor/visitor.routes.js"
           if ! find "$ARTIFACT/src/modules/visitor" -type f -name '*.js' | grep -q .; then
@@ -114,7 +118,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ARTIFACT="/tmp/deploy/dist"
+          ARTIFACT="dist"
           test -f "$ARTIFACT/index.html"
           if find "$ARTIFACT" \( -type d \( -name uploads -o -name private-storage -o -name candidate-files -o -name candidate-documents -o -name ocr-data -o -name node_modules \) -o -type f -name '.env' \) | grep -q .; then
             echo "Frontend artifact contains forbidden runtime files"
@@ -127,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           DEPLOY_ROOT="/var/www/HRMS2"
-          ARTIFACT="/tmp/deploy/backend/dist"
+          ARTIFACT="backend/dist"
           LIVE_DIR="$DEPLOY_ROOT/backend/dist"
           STAGE_PARENT="$DEPLOY_ROOT/backend/.deploy-staging"
           BACKUP_PARENT="$DEPLOY_ROOT/backend/.deploy-backups"
@@ -203,7 +207,7 @@ jobs:
         run: |
           set -euo pipefail
           DEPLOY_ROOT="/var/www/HRMS2"
-          ARTIFACT="/tmp/deploy/dist"
+          ARTIFACT="dist"
           LIVE_DIR="$DEPLOY_ROOT/dist"
           STAGE_PARENT="$DEPLOY_ROOT/.deploy-staging"
           BACKUP_PARENT="$DEPLOY_ROOT/.deploy-backups"
@@ -248,8 +252,8 @@ jobs:
             exit 1
           fi
 
-          if ! curl -fsSI http://127.0.0.1:8085/visitor-management >/dev/null; then
-            echo "Frontend visitor management route failed after deploy"
+          if ! curl -fsSI http://127.0.0.1:8085/dashboard >/dev/null; then
+            echo "Frontend dashboard route failed after deploy"
             rollback_frontend
             exit 1
           fi
