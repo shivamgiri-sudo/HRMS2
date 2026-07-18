@@ -11,6 +11,7 @@ import { employeeFiltersSchema } from "./employee.validation.js";
 import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -359,6 +360,29 @@ router.put("/me/statutory-details", h(async (req: any, res: any) => {
     await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId]).catch(() => {});
   }
 
+  // Audit every self-service statutory change — these fields feed payroll, PF filings, and TDS.
+  // Record which fields were submitted (not values — PAN/Aadhaar are sensitive).
+  const changedFields = [
+    epf_number  !== undefined && "epf_number",
+    esi_number  !== undefined && "esi_number",
+    uan_number  !== undefined && "uan_number",
+    pan_number  !== undefined && "pan_number",
+    aadhaar_id  !== undefined && "aadhaar_id",
+    pf_eligible !== undefined && "pf_eligible",
+    esi_eligible!== undefined && "esi_eligible",
+    epf_date    !== undefined && "epf_date",
+  ].filter(Boolean);
+
+  void logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "STATUTORY_SELF_UPDATE",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    change_summary: { fields_updated: changedFields },
+    req,
+  });
+
   return res.json({ success: true, message: "Statutory details saved" });
 }));
 
@@ -457,6 +481,49 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
+// GET /api/employees/hr-hub/today-summary — live today attendance counts for the hub header strip
+router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+  // IST today: UTC+5:30
+  const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const today = nowIST.toISOString().slice(0, 10);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_with_record,
+       SUM(adr.attendance_status = 'present')        AS present,
+       SUM(adr.attendance_status = 'half_day')       AS half_day,
+       SUM(adr.attendance_status = 'absent')         AS absent,
+       SUM(adr.attendance_status = 'missing_punch')  AS missing_punch,
+       SUM(adr.attendance_status = 'leave_approved') AS on_leave,
+       SUM(adr.attendance_status = 'week_off')       AS week_off,
+       SUM(adr.attendance_status = 'holiday')        AS holiday
+     FROM employees e
+     LEFT JOIN attendance_daily_record adr
+       ON adr.employee_id = e.id AND adr.record_date = ?
+     WHERE e.active_status = 1 AND e.employment_status = 'Active'`,
+    [today]
+  );
+  const [totalRow] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND employment_status = 'Active'`
+  );
+  const total_active = Number((totalRow[0] as any)?.total ?? 0);
+  const r = rows[0] as any;
+  return res.json({
+    success: true,
+    date: today,
+    data: {
+      total_active,
+      present:       Number(r.present ?? 0),
+      half_day:      Number(r.half_day ?? 0),
+      absent:        Number(r.absent ?? 0),
+      missing_punch: Number(r.missing_punch ?? 0),
+      on_leave:      Number(r.on_leave ?? 0),
+      week_off:      Number(r.week_off ?? 0),
+      holiday:       Number(r.holiday ?? 0),
+      no_record:     total_active - Number(r.total_with_record ?? 0),
+    },
+  });
+}));
+
 // GET /api/employees/hr-hub — enriched employee list for People Attendance & Earnings Hub
 router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
   const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
@@ -509,17 +576,18 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
             bm.branch_name, pm.process_name, dm.designation_name, dept.dept_name,
             (SELECT COUNT(*) FROM attendance_daily_record adr
                WHERE adr.employee_id = e.id
-                 AND DATE(CONVERT_TZ(adr.record_date,'+00:00','+05:30')) BETWEEN ? AND ?
+                 AND adr.record_date BETWEEN ? AND ?
                  AND adr.attendance_status = 'present') AS present_days,
             (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
                WHERE adr2.employee_id = e.id
-                 AND DATE(CONVERT_TZ(adr2.record_date,'+00:00','+05:30')) BETWEEN ? AND ?) AS lwp_days,
+                 AND adr2.record_date BETWEEN ? AND ?
+                 AND adr2.attendance_status NOT IN ('week_off','holiday','leave_approved')) AS lwp_days,
             (SELECT COALESCE(SUM(adr3.late_mark),0) FROM attendance_daily_record adr3
                WHERE adr3.employee_id = e.id
-                 AND DATE(CONVERT_TZ(adr3.record_date,'+00:00','+05:30')) BETWEEN ? AND ?) AS late_marks,
+                 AND adr3.record_date BETWEEN ? AND ?) AS late_marks,
             (SELECT COUNT(*) FROM attendance_daily_record adr4
                WHERE adr4.employee_id = e.id
-                 AND DATE(CONVERT_TZ(adr4.record_date,'+00:00','+05:30')) BETWEEN ? AND ?
+                 AND adr4.record_date BETWEEN ? AND ?
                  AND adr4.attendance_status = 'missing_punch') AS missing_punch_count,
             (SELECT spl.net_salary FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -538,7 +606,8 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
        ${anomalyOnly ? "HAVING lwp_days > 2 OR missing_punch_count > 0" : ""}
        ORDER BY e.employee_code ASC
        LIMIT ${limit} OFFSET ${offset}`,
-    [...params, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd]
+    // month dates first (8 params for the 4 subqueries), then WHERE filter params
+    [monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, ...params]
   );
 
   const countQuery = anomalyOnly
@@ -546,10 +615,11 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
          SELECT e.id,
            (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
               WHERE adr2.employee_id = e.id
-                AND DATE(CONVERT_TZ(adr2.record_date,'+00:00','+05:30')) BETWEEN ? AND ?) AS lwp_days,
+                AND adr2.record_date BETWEEN ? AND ?
+                AND adr2.attendance_status NOT IN ('week_off','holiday','leave_approved')) AS lwp_days,
            (SELECT COUNT(*) FROM attendance_daily_record adr4
               WHERE adr4.employee_id = e.id
-                AND DATE(CONVERT_TZ(adr4.record_date,'+00:00','+05:30')) BETWEEN ? AND ?
+                AND adr4.record_date BETWEEN ? AND ?
                 AND adr4.attendance_status = 'missing_punch') AS missing_punch_count
          FROM employees e ${where}
          HAVING lwp_days > 2 OR missing_punch_count > 0
@@ -557,7 +627,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
     : `SELECT COUNT(*) AS total FROM employees e ${where}`;
 
   const countParams = anomalyOnly
-    ? [...params, monthStart, monthEnd, monthStart, monthEnd, ...params]
+    ? [monthStart, monthEnd, monthStart, monthEnd, ...params]
     : params;
 
   const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);

@@ -23,6 +23,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(5055),
   FRONTEND_URL: z.string().url().default("http://localhost:8080"),
   BACKEND_URL: z.string().url().default("http://localhost:5056"),
+  // Comma-separated list of additional allowed CORS origins (e.g. staging IP, CDN).
+  // Use this instead of hard-coding IPs in source code.
+  CORS_ALLOWED_ORIGINS: z.string().default(""),
 
   ACTIVE_DB_PROVIDER: z.enum(["sqlserver", "mysql"]).default("mysql"),
 
@@ -207,6 +210,23 @@ if (parsed.data.NODE_ENV === "production") {
   if (parsed.data.LUCKPAY_PROVIDER_ENABLED === "true" && !parsed.data.LUCKPAY_WEBHOOK_SECRET) {
     console.error("[FATAL] LUCKPAY_WEBHOOK_SECRET must be set when LUCKPAY_PROVIDER_ENABLED=true.");
     process.exit(1);
+  }
+}
+
+// Non-production warning: zero ENCRYPTION_KEY with a live upstream host means
+// external-DB credentials stored in MySQL are encrypted with a null key.
+if (parsed.data.NODE_ENV !== "production") {
+  const zeroKey = '0000000000000000000000000000000000000000000000000000000000000000';
+  const isLiveHost = (h: string) => !!h && !/^(localhost|127\.0\.0\.1|::1)$/.test(h.trim());
+  if (
+    parsed.data.ENCRYPTION_KEY === zeroKey &&
+    (isLiveHost(parsed.data.NCOSEC_DB_HOST) || isLiveHost(parsed.data.LMS_DB_HOST))
+  ) {
+    console.warn(
+      '[WARN] ENCRYPTION_KEY is the all-zero default while a live upstream DB host is configured. ' +
+      'External-DB connector credentials stored in mas_hrms are encrypted with a null key. ' +
+      'Set a real ENCRYPTION_KEY before connecting to production source systems.'
+    );
   }
 }
 

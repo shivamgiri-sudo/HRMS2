@@ -58,6 +58,8 @@ interface AuthUserRow extends RowDataPacket {
   is_blocked: number | null;
   must_change_password: number | null;
   active_status: number | null;
+  failed_login_attempts: number | null;
+  locked_until: string | null;
 }
 
 interface OrgSettingRow extends RowDataPacket {
@@ -230,6 +232,8 @@ export const authService = {
         `SELECT au.id, au.email, au.password_hash, au.is_blocked,
                 COALESCE(au.must_change_password, 0) AS must_change_password,
                 COALESCE(au.is_read_only, 0) AS is_read_only,
+                COALESCE(au.failed_login_attempts, 0) AS failed_login_attempts,
+                au.locked_until,
                 e.active_status
            FROM auth_user au
            LEFT JOIN employees e ON e.user_id = au.id
@@ -238,6 +242,8 @@ export const authService = {
          SELECT au.id, au.email, au.password_hash, au.is_blocked,
                 COALESCE(au.must_change_password, 0) AS must_change_password,
                 COALESCE(au.is_read_only, 0) AS is_read_only,
+                COALESCE(au.failed_login_attempts, 0) AS failed_login_attempts,
+                au.locked_until,
                 e.active_status
            FROM auth_user au
            JOIN employees e ON e.user_id = au.id
@@ -249,15 +255,36 @@ export const authService = {
       if (!user) throw new Error('Invalid credentials');
       if (user.is_blocked) throw new Error('Account is blocked');
 
+      // Per-account lockout: check before password comparison to prevent timing oracle
+      if (user.locked_until && new Date(user.locked_until) > new Date()) {
+        throw new Error('Account temporarily locked due to multiple failed attempts. Please try again later or contact HR.');
+      }
+
       // CRITICAL: Block inactive employees from logging in
       if (Number(user.active_status ?? 1) === 0) {
         throw new Error('Account is inactive. Please contact HR for assistance.');
       }
 
       const valid = await bcrypt.compare(password, user.password_hash as string);
-      if (!valid) throw new Error('Invalid credentials');
+      if (!valid) {
+        // Increment failed attempts; lock for 15 minutes after 5 consecutive failures
+        await db.execute(
+          `UPDATE auth_user
+              SET failed_login_attempts = failed_login_attempts + 1,
+                  locked_until = IF(failed_login_attempts + 1 >= 5,
+                                    DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+                                    locked_until)
+            WHERE id = ?`,
+          [user.id]
+        );
+        throw new Error('Invalid credentials');
+      }
 
-      await db.execute('UPDATE auth_user SET last_login_at = NOW() WHERE id = ?', [user.id]);
+      // Successful auth — clear lockout state
+      await db.execute(
+        'UPDATE auth_user SET last_login_at = NOW(), failed_login_attempts = 0, locked_until = NULL WHERE id = ?',
+        [user.id]
+      );
 
       const accessToken = jwt.sign(
         { sub: user.id, email: user.email, is_read_only: Boolean((user as any).is_read_only) },
@@ -705,8 +732,10 @@ export const authService = {
 
     // Generate 6-digit OTP
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const salt = userId + phoneOrEmail;
-    const otpHash = crypto.createHash('sha256').update(otp + salt).digest('hex');
+    const otpHash = crypto
+      .createHmac('sha256', JWT_SECRET)
+      .update(`${otp}:${userId}:${phoneOrEmail}`)
+      .digest('hex');
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
     try {
@@ -762,15 +791,24 @@ export const authService = {
       throw Object.assign(new Error('Too many attempts. Request a new OTP.'), { statusCode: 429 });
     }
 
-    // Verify OTP hash
-    const salt = userId + phoneOrEmail;
-    const otpHash = crypto.createHash('sha256').update(otp + salt).digest('hex');
+    // Verify OTP hash using HMAC-SHA-256 with timing-safe comparison
+    const candidateHash = crypto
+      .createHmac('sha256', JWT_SECRET)
+      .update(`${otp}:${userId}:${phoneOrEmail}`)
+      .digest('hex');
 
-    const [matching] = await db.execute<OtpMatchRow[]>(
-      'SELECT id FROM auth_otp_reset WHERE user_id = ? AND otp_hash = ? AND used = 0 AND expires_at > NOW() LIMIT 1',
-      [userId, otpHash]
+    const [otpRows] = await db.execute<(OtpMatchRow & { otp_hash: string })[]>(
+      'SELECT id, otp_hash FROM auth_otp_reset WHERE user_id = ? AND used = 0 AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
+      [userId]
     );
-    if (!Array.isArray(matching) || !matching.length) {
+    const otpRow = Array.isArray(otpRows) ? otpRows[0] : null;
+
+    const hashMatches = otpRow
+      ? crypto.timingSafeEqual(Buffer.from(candidateHash, 'hex'), Buffer.from(otpRow.otp_hash, 'hex'))
+      : false;
+
+    const matching = hashMatches && otpRow ? [otpRow] : [];
+    if (!matching.length) {
       throw Object.assign(new Error('Invalid or expired OTP'), { statusCode: 400 });
     }
 

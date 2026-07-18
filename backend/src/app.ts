@@ -209,7 +209,6 @@ const ALLOWED_ORIGINS: ReadonlySet<string> = new Set([
 ]);
 
 function isAllowedOrigin(origin: string): boolean {
-  if (origin === "http://115.241.59.220" || origin === "https://115.241.59.220") return true;
   if (env.NODE_ENV !== "production" && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) return true;
   return ALLOWED_ORIGINS.has(origin);
 }
@@ -239,14 +238,19 @@ app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 
 const uploadsPath = path.resolve(process.cwd(), "uploads");
 
-app.use("/uploads", (req, res, next) => {
-  if (req.path.startsWith("/onboarding/")) {
+// Only employee-photos are intentionally public (avatar display, no PII risk).
+// Every other subfolder — tax-documents, onboarding, payslips, expense-receipts,
+// bank proofs, NOC files, etc. — must go through the authenticated /api/files/ endpoint.
+const UPLOADS_PUBLIC_ALLOWLIST = new Set(["/employee-photos/"]);
+app.use("/uploads", (req, res, _next) => {
+  const isAllowed = [...UPLOADS_PUBLIC_ALLOWLIST].some(prefix => req.path.startsWith(prefix));
+  if (!isAllowed) {
     return res.status(403).json({
       success: false,
-      message: "Direct access blocked. Use the secure document preview endpoint.",
+      message: "Direct access blocked. Use the secure document endpoint.",
     });
   }
-  return express.static(uploadsPath)(req, res, next);
+  return express.static(uploadsPath)(req, res, _next);
 });
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
