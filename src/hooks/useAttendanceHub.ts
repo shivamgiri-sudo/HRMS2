@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -283,5 +284,33 @@ export function useDesignationList() {
       return raw.map((d: any) => ({ id: d.id, name: d.designation_name ?? d.name })) as SelectOption[];
     },
     staleTime: 300_000,
+  });
+}
+
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setDebouncedValue(value), delay);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [value, delay]);
+  return debouncedValue;
+}
+
+export function useTodaySummary() {
+  return useQuery<{
+    present: number;
+    half_day: number;
+    absent: number;
+    missing_punch: number;
+    on_leave: number;
+  }>({
+    queryKey: ["today-attendance-summary"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>("/api/attendance/today-summary");
+      return res?.data ?? res ?? { present: 0, half_day: 0, absent: 0, missing_punch: 0, on_leave: 0 };
+    },
+    staleTime: 60_000,
   });
 }
