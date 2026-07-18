@@ -61,22 +61,46 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(migration).toContain("DATE_FORMAT(COALESCE");
   });
 
-  it("registers migration 415 in automated and manual finance runners", () => {
+  it("registers the complete 415 to 417 finance sequence in automated and manual runners", () => {
     const runner = backendFile("src/db/runFinanceSupplementalMigrations.ts");
     const manual = backendFile("sql/000_run_finance_supplemental.sql");
-    expect(runner).toContain('"415_bpo_pnl_revenue_cost_model.sql"');
-    expect(manual).toContain("SOURCE sql/415_bpo_pnl_revenue_cost_model.sql;");
+    for (const filename of [
+      "415_bpo_pnl_revenue_cost_model.sql",
+      "416_smart_grn_allocation_document_intelligence.sql",
+      "417_budget_subhead_coverage_control.sql",
+    ]) {
+      expect(runner).toContain(`"${filename}"`);
+      expect(manual).toContain(`SOURCE sql/${filename};`);
+    }
   });
 
-  it("mounts authenticated BPO P&L APIs under the finance router", () => {
+  it("mounts authenticated BPO reporting and configuration APIs under the finance router", () => {
     const parentRoutes = backendFile("src/modules/process-pnl/process-pnl.routes.ts");
     const routes = backendFile("src/modules/process-pnl/bpo-pnl.routes.ts");
     expect(parentRoutes).toContain('router.use("/pnl/bpo", bpoPnlRouter)');
-    expect(routes).toContain('router.get("/summary"');
-    expect(routes).toContain('router.get("/processes/:processId"');
-    expect(routes).toContain('router.get("/export"');
-    expect(routes).toContain('router.post(\n  "/revenue-rules"');
-    expect(routes).toContain('router.post(\n  "/delivery-actuals"');
+    for (const getPath of [
+      "/summary",
+      "/processes/:processId",
+      "/export",
+      "/revenue-rules",
+      "/delivery-actuals",
+      "/revenue-components",
+      "/cost-components",
+      "/allocation-policies",
+      "/classification-rules",
+    ]) {
+      expect(routes).toContain(`router.get("${getPath}"`);
+    }
+    for (const postPath of [
+      "/revenue-rules",
+      "/delivery-actuals",
+      "/revenue-components",
+      "/cost-components",
+      "/allocation-policies",
+      "/classification-rules",
+    ]) {
+      expect(routes).toContain(`"${postPath}"`);
+    }
     expect(routes).toContain("requireWriteAccess");
     expect(routes).toContain("requireRole(...WRITE_ROLES)");
   });
@@ -90,17 +114,24 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(service).toContain('bucket === "bmc_people"');
   });
 
-  it("keeps the command centre and process drill-down connected to BPO APIs", () => {
-    const hook = repositoryFile("src/hooks/useBpoProcessPnl.ts");
+  it("keeps the command centre, drill-down and governed configuration workspace connected", () => {
+    const summaryHook = repositoryFile("src/hooks/useBpoProcessPnl.ts");
     const detailHook = repositoryFile("src/hooks/useBpoProcessPnlDetail.ts");
+    const configurationHook = repositoryFile("src/hooks/useBpoPnlConfiguration.ts");
     const page = repositoryFile("src/pages/finance/ProcessPnlPage.tsx");
     const detailPage = repositoryFile("src/pages/finance/ProcessPnlDetailPage.tsx");
-    expect(hook).toContain("/api/finance/pnl/bpo/summary");
+    const configurationPage = repositoryFile("src/pages/finance/ProcessPnlConfigurationPage.tsx");
+    expect(summaryHook).toContain("/api/finance/pnl/bpo/summary");
     expect(detailHook).toContain("/api/finance/pnl/bpo/processes/");
+    expect(configurationHook).toContain("/api/finance/pnl/bpo/revenue-rules");
+    expect(configurationHook).toContain("/api/finance/pnl/bpo/classification-rules");
     expect(page).toContain("Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT");
     expect(page).toContain("/finance/branch-budget?period=");
     expect(detailPage).toContain("Commercial revenue statement");
     expect(detailPage).toContain("Agent / DSC / BMC");
     expect(detailPage).toContain("GRN &amp; budget");
+    expect(configurationPage).toContain("Configure every commercial and cost driver");
+    expect(configurationPage).toContain("Revenue additions/deductions");
+    expect(configurationPage).toContain("Agent / DSC / BMC classification");
   });
 });
