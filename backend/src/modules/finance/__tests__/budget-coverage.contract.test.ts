@@ -58,7 +58,7 @@ describe("mandatory branch-budget Head/Sub-head coverage", () => {
   });
 
   it("renders the complete catalogue and role-aware budget workspace", () => {
-    const page = read("../src/pages/finance/BranchBudgetManagementPage.tsx");
+    const page = read("../src/pages/finance/BranchBudgetManagementWorkspace.tsx");
     expect(page).toContain("Head/Sub-head Coverage");
     expect(page).toContain("Complete Expense Catalogue");
     expect(page).toContain("not_planned");

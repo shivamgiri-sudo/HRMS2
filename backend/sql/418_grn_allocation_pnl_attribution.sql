@@ -50,17 +50,17 @@ LEFT JOIN finance_expense_sub_head_master sh
  )
  AND sh.active_status = 1
 SET a.pnl_bucket = COALESCE(
-      a.pnl_bucket,
-      sh.pnl_bucket,
-      CASE WHEN a.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END
-    ),
-    a.recognition_period = COALESCE(
-      a.recognition_period,
-      DATE_FORMAT(
-        COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at),
-        '%Y-%m'
-      )
-    );
+    a.pnl_bucket,
+    sh.pnl_bucket,
+    CASE WHEN a.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END
+  ),
+  a.recognition_period = COALESCE(
+    a.recognition_period,
+    DATE_FORMAT(
+      COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at),
+      '%Y-%m'
+    )
+  );
 
 -- Reusable source of truth for Process P&L and finance reconciliation. The view
 -- intentionally re-resolves null buckets from the approved budget Head/Sub-Head,

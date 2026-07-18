@@ -158,7 +158,7 @@ describe("BPO Process P&L schema and API contract", () => {
     const configurationHook = repositoryFile("src/hooks/useBpoPnlConfiguration.ts");
     const page = repositoryFile("src/pages/finance/ProcessPnlPage.tsx");
     const detailPage = repositoryFile("src/pages/finance/ProcessPnlDetailPage.tsx");
-    const configurationPage = repositoryFile("src/pages/finance/ProcessPnlConfigurationPage.tsx");
+    const configurationPage = repositoryFile("src/pages/finance/PnlMasterControlCenterPage.tsx");
     expect(summaryHook).toContain("/api/finance/pnl/bpo/summary");
     expect(detailHook).toContain("/api/finance/pnl/bpo/processes/");
     expect(configurationHook).toContain("/api/finance/pnl/bpo/revenue-rules");
@@ -168,8 +168,8 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(detailPage).toContain("Commercial revenue statement");
     expect(detailPage).toContain("Agent / DSC / BMC");
     expect(detailPage).toContain("GRN &amp; budget");
-    expect(configurationPage).toContain("Configure every commercial and cost driver");
-    expect(configurationPage).toContain("Revenue additions/deductions");
-    expect(configurationPage).toContain("Agent / DSC / BMC classification");
+    expect(configurationPage).toContain("Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification");
+    expect(configurationPage).toContain("Revenue addition or deduction");
+    expect(configurationPage).toContain("P&L classification rule");
   });
 });
