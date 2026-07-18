@@ -277,6 +277,9 @@ const MIGRATION_MANIFEST: string[] = [
   "408_ats_candidate_assessment_engine.sql",
   "409_visitor_management_foundation.sql",
   "410_visitor_configuration_branch_fk.sql",
+  "504_performance_intelligence_foundation.sql",
+  "505_performance_source_connector_keys.sql",
+  "506_sales_performance_metric_foundation.sql",
   ];
 
 export type MigrationHealth = {

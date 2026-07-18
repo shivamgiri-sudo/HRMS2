@@ -66,6 +66,7 @@ const Payroll = lazy(() => import("./pages/Payroll"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Performance = lazy(() => import("./pages/Performance"));
+const PerformanceHub = lazy(() => import("./pages/PerformanceHub"));
 const Attendance = lazy(() => import("./pages/Attendance"));
 const AttendanceRegularization = lazy(() => import("./pages/AttendanceRegularization"));
 const BulkUploadHub = lazy(() => import("./pages/BulkUploadHub"));
@@ -407,6 +408,7 @@ const App = () => (
               <Route path="/profile" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
               <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
               <Route path="/performance" element={<ProtectedRoute><Performance /></ProtectedRoute>} />
+              <Route path="/performance-hub" element={<ProtectedRoute><PerformanceHub /></ProtectedRoute>} />
               <Route path="/reviews-management" element={<Navigate to="/performance-feedback/assignments" replace />} />
               <Route path="/attendance" element={<ProtectedRoute><Attendance /></ProtectedRoute>} />
               <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />

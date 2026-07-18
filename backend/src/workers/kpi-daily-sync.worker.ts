@@ -1,12 +1,8 @@
-import { syncAprMetrics, syncAttendanceMetrics, syncQualityMetrics } from '../modules/kpi/kpi-data-connector.service.js';
+import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics } from '../modules/kpi/kpi-data-connector.service.js';
 
-// ── Configuration ─────────────────────────────────────────────────────────────
-
-const DAILY_INTERVAL_MS  = 24 * 60 * 60 * 1000; // Run nightly
-const DAILY_HOUR         = 1;  // 01:00 AM
-const QUALITY_DAY        = 2;  // 2nd of each month triggers quality sync for prev month
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DAILY_HOUR = 1;
+const QUALITY_DAY = 2;
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');
@@ -33,56 +29,68 @@ function msUntilHour(hour: number): number {
   return next.getTime() - now.getTime();
 }
 
-// ── Worker Logic ──────────────────────────────────────────────────────────────
-
 async function runDailySync(): Promise<void> {
   const date = yesterday();
   console.log(`[KpiDailySyncWorker] Starting daily sync for ${date}`);
 
   try {
     const aprResult = await syncAprMetrics(date);
-    console.log(`[KpiDailySyncWorker] APR sync: ${aprResult.synced} synced, ${aprResult.skipped} skipped`);
+    console.log(`[KpiDailySyncWorker] APR sync: ${aprResult.synced} synced, ${aprResult.skipped} skipped, ${aprResult.errors.length} errors`);
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] APR sync failed:`, err.message);
   }
 
   try {
     const attResult = await syncAttendanceMetrics(date);
-    console.log(`[KpiDailySyncWorker] Attendance sync: ${attResult.synced} synced`);
+    console.log(`[KpiDailySyncWorker] Attendance sync: ${attResult.synced} synced, ${attResult.skipped} skipped, ${attResult.errors.length} errors`);
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Attendance sync failed:`, err.message);
   }
 
-  // On the 2nd of each month: also sync quality for previous month
+  try {
+    const conversionResult = await syncConversionMetrics(date);
+    console.log(`[KpiDailySyncWorker] Conversion sync: ${conversionResult.synced} synced, ${conversionResult.skipped} skipped, ${conversionResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Conversion sync failed:`, err.message);
+  }
+
+  try {
+    const salesBrandResult = await syncSalesBrandMisMetrics(date);
+    console.log(`[KpiDailySyncWorker] Sales brand MIS sync: ${salesBrandResult.synced} synced, ${salesBrandResult.skipped} skipped, ${salesBrandResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Sales brand MIS sync failed:`, err.message);
+  }
+
+  try {
+    const salesOrderResult = await syncSalesOrderMetrics(date);
+    console.log(`[KpiDailySyncWorker] Sales order sync: ${salesOrderResult.synced} synced, ${salesOrderResult.skipped} skipped, ${salesOrderResult.errors.length} errors`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Sales order sync failed:`, err.message);
+  }
+
   const today = new Date();
   if (today.getDate() === QUALITY_DAY) {
     const ym = lastMonth();
     try {
       const qResult = await syncQualityMetrics(ym);
-      console.log(`[KpiDailySyncWorker] Quality sync (${ym}): ${qResult.synced} synced`);
+      console.log(`[KpiDailySyncWorker] Quality sync (${ym}): ${qResult.synced} synced, ${qResult.skipped} skipped, ${qResult.errors.length} errors`);
     } catch (err: any) {
       console.error(`[KpiDailySyncWorker] Quality sync failed:`, err.message);
     }
   }
 }
 
-// ── Scheduler ─────────────────────────────────────────────────────────────────
-
 async function startWorker(): Promise<void> {
-  console.log(`[KpiDailySyncWorker] Starting — will run daily at ${DAILY_HOUR}:00 AM`);
+  console.log(`[KpiDailySyncWorker] Starting - will run daily at ${DAILY_HOUR}:00 AM`);
 
-  // Schedule first run at 01:00 AM
   const delay = msUntilHour(DAILY_HOUR);
   console.log(`[KpiDailySyncWorker] First run in ${Math.round(delay / 60000)} minutes`);
 
   setTimeout(async () => {
     await runDailySync();
-    // Then repeat every 24 hours
     setInterval(runDailySync, DAILY_INTERVAL_MS);
   }, delay);
 }
-
-// ── Entry Point ───────────────────────────────────────────────────────────────
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   startWorker().catch(err => {

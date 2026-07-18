@@ -53,6 +53,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ScopedFilterBar, WorkInboxPanel } from "@/components/dashboard";
 import { AIInsightPanel } from "@/components/ai";
+import { RoleSalesPerformancePanel } from "@/components/performance-hub/RoleSalesPerformancePanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
@@ -745,6 +746,10 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
           )}
 
           <AlertStrip items={alerts} />
+
+          {variant === "employee" ? (
+            <RoleSalesPerformancePanel variant="employee" enabled={!roleLoading} />
+          ) : null}
 
           <section className={cn("grid gap-3", cards.length >= 7 ? "sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7" : cards.length >= 6 ? "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" : "sm:grid-cols-2 xl:grid-cols-4")}>
             {cards.map((metric) => <MetricCard key={metric.label} metric={metric} loading={loading} />)}

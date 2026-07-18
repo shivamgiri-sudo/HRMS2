@@ -20,7 +20,11 @@
     "phase2:describe": "tsx scripts/phase2-describe.ts",
     "phase2:smoke": "npm run phase2:smoke:live:dangerous",
     "phase2:smoke:live:dangerous": "tsx scripts/smoke/hrms2-lifecycle-smoke.ts",
-    "lms:backfill-identities": "tsx scripts/backfill-lms-identities.ts"
+    "lms:backfill-identities": "tsx scripts/backfill-lms-identities.ts",
+    "performance:preview": "tsx scripts/performance-source-preview.ts",
+    "performance:activation-check": "tsx scripts/performance-activation-check.ts",
+    "performance:configure-connectors": "tsx scripts/performance-configure-connectors.ts",
+    "performance:safe-sync": "tsx scripts/performance-safe-sync.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
