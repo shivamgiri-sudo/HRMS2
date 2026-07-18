@@ -9,6 +9,7 @@ import {
   assertFinanceRecordBranch,
   resolveFinanceBranchScope,
 } from "../finance/finance-access-scope.js";
+import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
 import { branchBudgetService } from "./branch-budget.service.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
@@ -48,7 +49,7 @@ const BUDGET_READ_ROLES = [
   "accounts_head",
 ] as const;
 const BUDGET_CREATE_ROLES = ["super_admin", "admin", "branch_admin"] as const;
-const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head"] as const;
+const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "super_admin"] as const;
 
 function actor(req: AuthenticatedRequest) {
   return {
@@ -140,7 +141,8 @@ router.post(
     if (!branchId) throw new Error("Branch is required");
     const data = await branchBudgetService.saveDraft(
       { ...req.body, branchId },
-      user.id
+      user.id,
+      user.role
     );
     res.status(201).json({ success: true, data });
   })
@@ -168,7 +170,7 @@ router.post(
   requireRole(...BUDGET_REVIEW_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    await scopedBudget(req, req.params.id);
+    const budget = await scopedBudget(req, req.params.id);
     const decision = String(req.body?.decision ?? "") as
       | "approve"
       | "reject"
@@ -176,11 +178,17 @@ router.post(
     if (!["approve", "reject", "revision"].includes(decision)) {
       throw new Error("Invalid budget decision");
     }
+    const effectiveRole = resolveFinanceStageRole({
+      primaryRole: user.role,
+      userRoles: user.roles,
+      currentStatus: String(budget.status ?? ""),
+      workflow: "budget",
+    });
     const data = await branchBudgetService.review(
       req.params.id,
       decision,
       user.id,
-      user.role,
+      effectiveRole,
       req.body?.remarks ? String(req.body.remarks) : undefined
     );
     res.json({ success: true, data });
