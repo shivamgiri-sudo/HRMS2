@@ -31,6 +31,7 @@ const NativePerformanceFeedbackDevelopmentPlan = lazy(() => import("@/pages/Nati
 const NativePerformanceFeedbackAssignments     = lazy(() => import("@/pages/NativePerformanceFeedbackAssignments"));
 const NativePerformanceFeedbackForm            = lazy(() => import("@/pages/NativePerformanceFeedbackForm"));
 const NativePerformanceFeedbackTeamReports     = lazy(() => import("@/pages/NativePerformanceFeedbackTeamReports"));
+const PerformanceHub                 = lazy(() => import("@/pages/PerformanceHub"));
 const NativeLMSMyLearning   = lazy(() => import("@/pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator  = lazy(() => import("@/pages/NativeLMSCoordinator"));
 const LMSIntegrationAdmin   = lazy(() => import("@/pages/LMSIntegrationAdmin"));
@@ -54,6 +55,9 @@ export function PerformanceRoutes() {
       <Route path="/performance-feedback/assignments"     element={<ProtectedRoute><NativePerformanceFeedbackAssignments /></ProtectedRoute>} />
       <Route path="/performance-feedback/form/:id"        element={<ProtectedRoute><NativePerformanceFeedbackForm /></ProtectedRoute>} />
       <Route path="/performance-feedback/team-reports"    element={<ProtectedRoute><NativePerformanceFeedbackTeamReports /></ProtectedRoute>} />
+
+      {/* Performance Hub */}
+      <Route path="/performance-hub" element={<ProtectedRoute><PerformanceHub /></ProtectedRoute>} />
 
       {/* KPI */}
       <Route path="/kpi-config"   element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />

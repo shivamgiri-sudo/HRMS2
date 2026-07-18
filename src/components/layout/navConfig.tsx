@@ -227,6 +227,7 @@ export const navGroups: NavGroup[] = [
           { label: "Performance",          href: "/performance",                icon: ic(Target),       description: "Performance" },
           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
+          { label: "Performance Hub",      href: "/performance-hub",            icon: ic(BarChart3),    description: "Role-scoped KPI hub" },
           // Goals, Reviews Management, PIP Management removed per business requirement
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "Operations KPI",       href: "/operations-kpi",             icon: ic(Target),       pageCode: "OPERATIONS_KPI",          description: "Ops KPI" },
