@@ -22,6 +22,7 @@ const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "415_bpo_pnl_revenue_cost_model.sql",
   "416_smart_grn_allocation_document_intelligence.sql",
   "417_budget_subhead_coverage_control.sql",
+  "418_grn_allocation_pnl_attribution.sql",
 ] as const;
 
 export async function runFinanceSupplementalMigrations() {
