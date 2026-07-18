@@ -109,6 +109,19 @@ function queryString(values: Record<string, string | undefined>) {
   return query ? `?${query}` : "";
 }
 
+function useSaveMutation<T extends Record<string, unknown>>(
+  endpoint: string,
+  invalidate: () => Promise<unknown>
+) {
+  return useMutation({
+    mutationFn: async (payload: T) => {
+      const response = await hrmsApi.post<{ success: boolean; data: { id: string } }>(endpoint, payload);
+      return response.data;
+    },
+    onSuccess: invalidate,
+  });
+}
+
 export function useBpoPnlConfiguration(period?: string, processId?: string, branchId?: string) {
   const queryClient = useQueryClient();
   const periodProcessQuery = queryString({ period, processId });
@@ -194,20 +207,30 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
     ]);
   };
 
-  const save = <T extends Record<string, unknown>>(endpoint: string) => useMutation({
-    mutationFn: async (payload: T) => {
-      const response = await hrmsApi.post<{ success: boolean; data: { id: string } }>(endpoint, payload);
-      return response.data;
-    },
-    onSuccess: invalidate,
-  });
-
-  const saveRevenueRule = save<RevenueRulePayload & Record<string, unknown>>("/api/finance/pnl/bpo/revenue-rules");
-  const saveDeliveryActual = save<DeliveryActualPayload & Record<string, unknown>>("/api/finance/pnl/bpo/delivery-actuals");
-  const saveRevenueComponent = save<RevenueComponentPayload & Record<string, unknown>>("/api/finance/pnl/bpo/revenue-components");
-  const saveCostComponent = save<CostComponentPayload & Record<string, unknown>>("/api/finance/pnl/bpo/cost-components");
-  const saveAllocationPolicy = save<AllocationPolicyPayload & Record<string, unknown>>("/api/finance/pnl/bpo/allocation-policies");
-  const saveClassificationRule = save<ClassificationRulePayload & Record<string, unknown>>("/api/finance/pnl/bpo/classification-rules");
+  const saveRevenueRule = useSaveMutation<RevenueRulePayload & Record<string, unknown>>(
+    "/api/finance/pnl/bpo/revenue-rules",
+    invalidate
+  );
+  const saveDeliveryActual = useSaveMutation<DeliveryActualPayload & Record<string, unknown>>(
+    "/api/finance/pnl/bpo/delivery-actuals",
+    invalidate
+  );
+  const saveRevenueComponent = useSaveMutation<RevenueComponentPayload & Record<string, unknown>>(
+    "/api/finance/pnl/bpo/revenue-components",
+    invalidate
+  );
+  const saveCostComponent = useSaveMutation<CostComponentPayload & Record<string, unknown>>(
+    "/api/finance/pnl/bpo/cost-components",
+    invalidate
+  );
+  const saveAllocationPolicy = useSaveMutation<AllocationPolicyPayload & Record<string, unknown>>(
+    "/api/finance/pnl/bpo/allocation-policies",
+    invalidate
+  );
+  const saveClassificationRule = useSaveMutation<ClassificationRulePayload & Record<string, unknown>>(
+    "/api/finance/pnl/bpo/classification-rules",
+    invalidate
+  );
 
   return {
     revenueRulesQuery,
