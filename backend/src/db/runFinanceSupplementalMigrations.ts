@@ -18,6 +18,7 @@ const SQL_DIR =
 const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "412_finance_expense_head_master.sql",
   "413_vendor_payment_transaction_ledger.sql",
+  "414_finance_grn_sequence.sql",
 ] as const;
 
 export async function runFinanceSupplementalMigrations() {
