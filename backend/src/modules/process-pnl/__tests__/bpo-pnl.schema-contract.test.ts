@@ -92,10 +92,19 @@ describe("BPO Process P&L schema and API contract", () => {
     }
   });
 
-  it("mounts authenticated BPO reporting and configuration APIs under the finance router", () => {
+  it("mounts allocation-accurate reporting and governed configuration APIs", () => {
     const parentRoutes = backendFile("src/modules/process-pnl/process-pnl.routes.ts");
     const routes = backendFile("src/modules/process-pnl/bpo-pnl.routes.ts");
+    const overlay = backendFile("src/modules/process-pnl/bpo-pnl-allocation-overlay.service.ts");
     expect(parentRoutes).toContain('router.use("/pnl/bpo", bpoPnlRouter)');
+    expect(routes).toContain("bpoPnlAllocationOverlayService.getSummary");
+    expect(routes).toContain("bpoPnlAllocationOverlayService.getProcessDetail");
+    expect(routes).toContain("bpoPnlAllocationOverlayService.exportCsv");
+    expect(overlay).toContain("vw_process_pnl_grn_allocation");
+    expect(overlay).toContain("row.dscNonPeople - legacy.direct + buckets.dscNonPeople");
+    expect(overlay).toContain("row.bmcNonPeople - legacy.bmc + buckets.bmcNonPeople");
+    expect(overlay).toContain("COALESCE(vpt.payment_status, '')");
+    expect(overlay).not.toContain("vpt.status");
     for (const getPath of [
       "/summary",
       "/processes/:processId",
