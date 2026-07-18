@@ -11,25 +11,15 @@ const SQL_DIR_CANDIDATES = [
   path.resolve(__dirname, "../../sql"),
   path.resolve(__dirname, "../../../sql"),
 ];
-const SQL_DIR =
-  SQL_DIR_CANDIDATES.find((candidate) => fs.existsSync(candidate))
+const SQL_DIR = SQL_DIR_CANDIDATES.find((candidate) => fs.existsSync(candidate))
   ?? SQL_DIR_CANDIDATES[0];
 
-const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
-  "412_finance_expense_head_master.sql",
-  "413_vendor_payment_transaction_ledger.sql",
-  "414_finance_grn_sequence.sql",
-  "415_bpo_pnl_revenue_cost_model.sql",
-  "416_smart_grn_allocation_document_intelligence.sql",
-  "417_budget_subhead_coverage_control.sql",
-  "418_grn_allocation_pnl_attribution.sql",
-  "419_grn_validation_override_control.sql",
-] as const;
+const MIGRATIONS = ["420_grn_validation_schema_hardening.sql"] as const;
 
-export async function runFinanceSupplementalMigrations() {
+export async function runFinanceSchemaHardeningMigrations() {
   if (process.env.SKIP_MIGRATIONS === "true") return;
 
-  const connectionConfig = {
+  const config = {
     host: env.DB_HOST,
     port: env.DB_PORT,
     user: env.DB_USER,
@@ -38,44 +28,41 @@ export async function runFinanceSupplementalMigrations() {
     multipleStatements: false,
   };
 
-  const trackingConnection = await mysql.createConnection(connectionConfig);
+  const tracker = await mysql.createConnection(config);
   try {
-    await trackingConnection.query(`
+    await tracker.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         filename VARCHAR(255) NOT NULL PRIMARY KEY,
         applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
   } finally {
-    await trackingConnection.end();
+    await tracker.end();
   }
 
-  for (const filename of FINANCE_SUPPLEMENTAL_MIGRATIONS) {
+  for (const filename of MIGRATIONS) {
     const filePath = path.join(SQL_DIR, filename);
     if (!fs.existsSync(filePath)) {
-      throw new Error(`Required finance migration is missing: ${filename}`);
+      throw new Error(`Required finance hardening migration is missing: ${filename}`);
     }
 
-    const statusConnection = await mysql.createConnection(connectionConfig);
-    let alreadyApplied = false;
+    const statusConnection = await mysql.createConnection(config);
     try {
       const [rows] = await statusConnection.query<RowDataPacket[]>(
         "SELECT filename FROM schema_migrations WHERE filename = ? LIMIT 1",
         [filename]
       );
-      alreadyApplied = rows.length > 0;
+      if (rows.length) {
+        console.log(`[finance-hardening] skipped already applied: ${filename}`);
+        continue;
+      }
     } finally {
       await statusConnection.end();
     }
-    if (alreadyApplied) {
-      console.log(`[finance-migration] skipped already applied: ${filename}`);
-      continue;
-    }
 
-    const migrationConnection = await mysql.createConnection(connectionConfig);
+    const migrationConnection = await mysql.createConnection(config);
     try {
-      const rawSql = fs.readFileSync(filePath, "utf8");
-      const statements = splitSql(rawSql).filter((statement) => {
+      const statements = splitSql(fs.readFileSync(filePath, "utf8")).filter((statement) => {
         const upper = statement.toUpperCase();
         return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
       });
@@ -86,10 +73,10 @@ export async function runFinanceSupplementalMigrations() {
         "INSERT INTO schema_migrations (filename) VALUES (?)",
         [filename]
       );
-      console.log(`[finance-migration] applied: ${filename}`);
+      console.log(`[finance-hardening] applied: ${filename}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Finance migration ${filename} failed: ${message}`);
+      throw new Error(`Finance hardening migration ${filename} failed: ${message}`);
     } finally {
       await migrationConnection.end();
     }

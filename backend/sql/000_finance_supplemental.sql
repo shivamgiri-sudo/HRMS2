@@ -1,6 +1,9 @@
--- Manual supplemental finance bootstrap.
--- Run after backend/sql/000_run_all.sql.
+-- 000_finance_supplemental.sql
+-- Manual DBA convenience entrypoint for the complete Finance Budget / GRN / Vendor stack.
+-- Production startup remains authoritative through runFinanceSupplementalMigrations().
+-- Run from backend/: mysql -u <user> -p <database> < sql/000_finance_supplemental.sql
 
+SOURCE sql/411_branch_budget_grn_approval_flow.sql;
 SOURCE sql/412_finance_expense_head_master.sql;
 SOURCE sql/413_vendor_payment_transaction_ledger.sql;
 SOURCE sql/414_finance_grn_sequence.sql;

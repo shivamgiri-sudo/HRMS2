@@ -1,45 +1,31 @@
-/**
- * GRN Management — two tabs:
- *  1. Create / Edit Draft GRN
- *  2. Approval Queue (submit / approve / reject / cancel)
- */
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  BadgeCheck,
   Building2,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
   Eye,
+  FileCheck2,
   FilePlus,
+  FileSearch,
   FileText,
   IndianRupee,
   Loader2,
-  Plus,
   RefreshCw,
-  RotateCcw,
   Search,
   Send,
-  Upload,
-  X,
+  ShieldCheck,
+  Split,
   XCircle,
 } from "lucide-react";
-import { hrmsApi } from "@/lib/hrmsApi";
-import { useToast } from "@/hooks/use-toast";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -47,61 +33,60 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { hrmsApi } from "@/lib/hrmsApi";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const EXPENSE_HEADS = [
-  "Rent",
-  "Salaries & Wages",
-  "Utilities",
-  "Office Supplies",
-  "Travel & Conveyance",
-  "Marketing & Advertising",
-  "IT & Software",
-  "Repairs & Maintenance",
-  "Training",
-  "Miscellaneous",
-];
-
-const SUB_HEAD_MAP: Record<string, string[]> = {
-  Rent: ["Head Office Rent", "Branch Rent", "Warehouse Rent", "Guest House Rent"],
-  "Salaries & Wages": ["Regular Staff", "Contract Staff", "Overtime", "Incentives & Bonuses"],
-  Utilities: ["Electricity", "Water", "Internet & Broadband", "Telephone / Mobile"],
-  "Office Supplies": ["Stationery", "Printing & Cartridges", "Furniture", "Equipment"],
-  "Travel & Conveyance": [
-    "Local Conveyance",
-    "Outstation Travel",
-    "Fuel",
-    "Cab / Auto",
-    "Air Travel",
-    "Hotel",
-  ],
-  "Marketing & Advertising": [
-    "Digital Marketing",
-    "Print Media",
-    "Events & Sponsorship",
-    "Branding",
-  ],
-  "IT & Software": ["Software Licenses", "Hardware", "Cloud Services", "IT Support & AMC"],
-  "Repairs & Maintenance": [
-    "Building Maintenance",
-    "Equipment Maintenance",
-    "Vehicle Maintenance",
-    "AMC Contracts",
-  ],
-  Training: ["Internal Training", "External Training", "Online Courses", "Workshop / Seminar"],
-  Miscellaneous: [
-    "Bank Charges",
-    "Professional Fees",
-    "Legal Expenses",
-    "Audit Fees",
-    "Other",
-  ],
+type GrnRow = {
+  id: string;
+  grn_number: string;
+  grn_type: "vendor" | "imprest";
+  branch_id: string;
+  branch_name?: string | null;
+  vendor_name?: string | null;
+  head?: string | null;
+  sub_head?: string | null;
+  amount?: number | null;
+  amount_without_tax?: number | null;
+  tax_amount?: number | null;
+  amount_with_tax?: number | null;
+  pnl_cost_amount?: number | null;
+  bill_date?: string | null;
+  due_date?: string | null;
+  financial_year?: string | null;
+  status: string;
+  allocation_mode?: "single" | "split" | null;
+  validation_score?: number | null;
+  document_match_status?: string | null;
+  attachment_path?: string | null;
+  attachment_file_path?: string | null;
 };
 
-const PAYMENT_TERMS_OPTIONS = [7, 15, 30, 45, 60, 90];
+type SmartWorkspace = {
+  grn: Record<string, any>;
+  allocations: Array<Record<string, any>>;
+  documents: Array<Record<string, any>>;
+  extractions: Array<Record<string, any>>;
+  validations: Array<Record<string, any>>;
+  duplicates: Array<Record<string, any>>;
+};
+
+type FinanceCapabilities = {
+  canCreate: boolean;
+  canReviewBranchStage: boolean;
+  canReviewFinanceStage: boolean;
+  canReviewAccountsStage: boolean;
+};
 
 const STATUS_CONFIG: Record<
   string,
@@ -115,12 +100,33 @@ const STATUS_CONFIG: Record<
   submitted: {
     dot: "bg-amber-400",
     badge: "bg-amber-50 text-amber-700 border-amber-200",
-    label: "Submitted",
+    label: "Branch Head Queue",
   },
-  branch_head_approved: { dot: "bg-blue-500", badge: "bg-blue-50 text-blue-700 border-blue-200", label: "Branch Head Approved" },
-  pending_accounts_payment: { dot: "bg-violet-500", badge: "bg-violet-50 text-violet-700 border-violet-200", label: "Pending Accounts Payment" },
-  partially_paid: { dot: "bg-amber-500", badge: "bg-amber-50 text-amber-700 border-amber-200", label: "Partially Paid" },
-  paid: { dot: "bg-emerald-500", badge: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "Paid" },
+  branch_head_approved: {
+    dot: "bg-blue-500",
+    badge: "bg-blue-50 text-blue-700 border-blue-200",
+    label: "Finance Head Queue",
+  },
+  pending_accounts_payment: {
+    dot: "bg-violet-500",
+    badge: "bg-violet-50 text-violet-700 border-violet-200",
+    label: "Pending Accounts Payment",
+  },
+  payment_scheduled: {
+    dot: "bg-indigo-500",
+    badge: "bg-indigo-50 text-indigo-700 border-indigo-200",
+    label: "Payment Scheduled",
+  },
+  partially_paid: {
+    dot: "bg-amber-500",
+    badge: "bg-amber-50 text-amber-700 border-amber-200",
+    label: "Partially Paid",
+  },
+  paid: {
+    dot: "bg-emerald-500",
+    badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    label: "Paid",
+  },
   approved: {
     dot: "bg-emerald-500",
     badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -133,701 +139,10 @@ const STATUS_CONFIG: Record<
   },
   cancelled: {
     dot: "bg-slate-300",
-    badge: "bg-slate-100 text-slate-400 border-slate-200",
+    badge: "bg-slate-100 text-slate-500 border-slate-200",
     label: "Cancelled",
   },
 };
-
-function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.draft;
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${cfg.badge}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-      {cfg.label}
-    </span>
-  );
-}
-
-const fmtDate = (d?: string | null) =>
-  d
-    ? new Date(d).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone: "Asia/Kolkata",
-      })
-    : "—";
-
-const fmt = (n: number | null | undefined) =>
-  Number(n ?? 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
-function getCurrentFinancialYear(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  if (month >= 4) return `${year}-${String(year + 1).slice(2)}`;
-  return `${year - 1}-${String(year).slice(2)}`;
-}
-
-// ── Sub Head Field ─────────────────────────────────────────────────────────────
-
-interface SubHeadFieldProps {
-  head: string;
-  value: string;
-  onChange: (v: string) => void;
-}
-
-function SubHeadField({ head, value, onChange }: SubHeadFieldProps) {
-  const options = head ? (SUB_HEAD_MAP[head] ?? []) : [];
-  const [showCustom, setShowCustom] = useState(false);
-
-  if (!head || options.length === 0) {
-    return (
-      <Input
-        className="h-9 text-sm mt-1"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Optional sub-category"
-      />
-    );
-  }
-
-  if (showCustom) {
-    return (
-      <div className="mt-1 flex gap-2">
-        <Input
-          className="h-9 text-sm flex-1"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Type custom sub-head…"
-          autoFocus
-        />
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 px-3 text-xs"
-          onClick={() => {
-            setShowCustom(false);
-            onChange("");
-          }}
-        >
-          <RotateCcw className="size-3.5" />
-        </Button>
-      </div>
-    );
-  }
-
-  const selectedIsCustom = value && !options.includes(value);
-
-  return (
-    <Select
-      value={selectedIsCustom ? "_other" : value || "_none"}
-      onValueChange={(v) => {
-        if (v === "_other") {
-          setShowCustom(true);
-          onChange("");
-        } else if (v === "_none") {
-          onChange("");
-        } else {
-          onChange(v);
-        }
-      }}
-    >
-      <SelectTrigger className="h-9 text-sm mt-1">
-        <SelectValue placeholder="Select sub-head" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="_none">— Select sub-head —</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o} value={o}>
-            {o}
-          </SelectItem>
-        ))}
-        <SelectItem value="_other">Other (specify)</SelectItem>
-      </SelectContent>
-    </Select>
-  );
-}
-
-// ── Section Divider ────────────────────────────────────────────────────────────
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="col-span-2 flex items-center gap-3 pt-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-[#073f78]">
-        {children}
-      </span>
-      <div className="flex-1 h-px bg-slate-100" />
-    </div>
-  );
-}
-
-// ── Form Field Wrapper ─────────────────────────────────────────────────────────
-
-function Field({
-  label,
-  required,
-  children,
-  span2,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-  span2?: boolean;
-}) {
-  return (
-    <div className={span2 ? "col-span-2" : "col-span-1"}>
-      <Label className="text-xs font-semibold text-slate-700">
-        {label}
-        {required && <span className="ml-0.5 text-rose-500"> *</span>}
-      </Label>
-      {children}
-    </div>
-  );
-}
-
-// ── GRN Form (Create / Submit) ─────────────────────────────────────────────────
-
-interface GrnFormState {
-  grnType: "vendor" | "imprest";
-  branchId: string;
-  processId: string;
-  costCentreId: string;
-  costClass: "direct" | "indirect";
-  vendorId: string;
-  vendorName: string;
-  head: string;
-  subHead: string;
-  amount: string;
-  billDate: string;
-  paymentTermsDays: string;
-  remarks: string;
-  financialYear: string;
-}
-
-const EMPTY_FORM: GrnFormState = {
-  grnType: "vendor",
-  branchId: "",
-  processId: "",
-  costCentreId: "",
-  costClass: "indirect",
-  vendorId: "",
-  vendorName: "",
-  head: "",
-  subHead: "",
-  amount: "",
-  billDate: "",
-  paymentTermsDays: "30",
-  remarks: "",
-  financialYear: getCurrentFinancialYear(),
-};
-
-function CreateGrnTab() {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [form, setForm] = useState<GrnFormState>(EMPTY_FORM);
-  const [file, setFile] = useState<File | null>(null);
-  const [createdId, setCreatedId] = useState<string | null>(null);
-  const [createdGrnNumber, setCreatedGrnNumber] = useState<string | null>(null);
-
-  const { data: branchData } = useQuery({
-    queryKey: ["branches-list"],
-    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200"),
-  });
-  const branches: any[] = branchData?.data ?? branchData ?? [];
-
-  const { data: vendorData } = useQuery({
-    queryKey: ["vendors-list"],
-    queryFn: () => hrmsApi.get<any>("/api/erp/vendors?limit=500"),
-  });
-  const vendors: any[] = vendorData?.data ?? vendorData ?? [];
-
-  const { data: processData } = useQuery({
-    queryKey: ["processes-list"],
-    queryFn: () => hrmsApi.get<any>("/api/org/processes?limit=500"),
-  });
-  const processes: any[] = processData?.data ?? processData ?? [];
-
-  const { data: costCentreData } = useQuery({
-    queryKey: ["cost-centres-list"],
-    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?limit=500"),
-  });
-  const costCentres: any[] = costCentreData?.data ?? costCentreData ?? [];
-
-  const availableProcesses = processes.filter((process: any) => !form.branchId || process.branch_id === form.branchId);
-  const availableCostCentres = costCentres.filter((costCentre: any) => !form.branchId || costCentre.branch_id === form.branchId);
-
-  const set = (k: keyof GrnFormState) => (v: string) =>
-    setForm((prev) => ({ ...prev, [k]: v }));
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      if (!form.branchId) throw new Error("Branch is required");
-      if (!form.head) throw new Error("Expense head is required");
-      if (!form.amount || isNaN(Number(form.amount)))
-        throw new Error("Valid amount is required");
-
-      const payload = {
-        grnType: form.grnType,
-        branchId: form.branchId,
-        processId: form.processId || undefined,
-        costCentreId: form.costCentreId || undefined,
-        costClass: form.costClass,
-        vendorId: form.vendorId || undefined,
-        vendorName: form.vendorName || undefined,
-        head: form.head,
-        subHead: form.subHead || undefined,
-        amount: Number(form.amount),
-        billDate: form.billDate || undefined,
-        paymentTermsDays: form.paymentTermsDays
-          ? Number(form.paymentTermsDays)
-          : undefined,
-        remarks: form.remarks || undefined,
-        financialYear: form.financialYear,
-      };
-      const result = await hrmsApi.post<{ id: string; grnNumber: string }>(
-        "/api/finance/grns",
-        payload
-      );
-
-      if (file) {
-        const fd = new FormData();
-        fd.append("file", file);
-        await hrmsApi.postForm(`/api/finance/grns/${result.id}/attachment`, fd);
-      }
-      return result;
-    },
-    onSuccess: (data) => {
-      toast({ title: `GRN created: ${data.grnNumber}` });
-      setCreatedId(data.id);
-      setCreatedGrnNumber(data.grnNumber);
-      setForm(EMPTY_FORM);
-      setFile(null);
-      void qc.invalidateQueries({ queryKey: ["grn-list"] });
-    },
-    onError: (e: Error) =>
-      toast({ title: "Failed", description: e.message, variant: "destructive" }),
-  });
-
-  const submitMutation = useMutation({
-    mutationFn: (id: string) =>
-      hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
-    onSuccess: () => {
-      toast({ title: "GRN submitted for approval" });
-      setCreatedId(null);
-      setCreatedGrnNumber(null);
-      void qc.invalidateQueries({ queryKey: ["grn-list"] });
-    },
-    onError: (e: Error) =>
-      toast({ title: "Failed", description: e.message, variant: "destructive" }),
-  });
-
-  return (
-    <div className="max-w-3xl mx-auto">
-      {/* Success banner */}
-      {createdId && (
-        <div className="mb-6 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm">
-          <CheckCircle2 className="size-5 shrink-0 text-emerald-600" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-emerald-900">
-              GRN <span className="font-mono">{createdGrnNumber}</span> saved as draft
-            </p>
-            <p className="text-xs text-emerald-700 mt-0.5">
-              Submit for approval to proceed with payment processing.
-            </p>
-          </div>
-          <Button
-            size="sm"
-            className="bg-emerald-600 hover:bg-emerald-700 text-white h-9 px-4 text-sm font-medium gap-1.5 shadow-sm"
-            onClick={() => submitMutation.mutate(createdId)}
-            disabled={submitMutation.isPending}
-          >
-            {submitMutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Send className="size-4" />
-            )}
-            Submit for Approval
-          </Button>
-          <button
-            onClick={() => {
-              setCreatedId(null);
-              setCreatedGrnNumber(null);
-            }}
-            className="rounded-full p-1 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 transition-colors"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Form card */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        {/* Card header */}
-        <div className="flex items-center gap-3 border-b border-slate-100 bg-gradient-to-r from-[#073f78]/5 to-transparent px-6 py-4">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-[#073f78]/10">
-            <FilePlus className="size-4.5 text-[#073f78]" />
-          </div>
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">Create New GRN</h2>
-            <p className="text-xs text-slate-500">
-              Fill in all required fields to create a Goods Receipt Note
-            </p>
-          </div>
-        </div>
-
-        <div className="p-6">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5">
-            {/* ── Section: GRN Details ── */}
-            <SectionLabel>GRN Details</SectionLabel>
-
-            <Field label="GRN Type" required>
-              <Select value={form.grnType} onValueChange={set("grnType")}>
-                <SelectTrigger className="h-9 text-sm mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="vendor">Vendor GRN</SelectItem>
-                  <SelectItem value="imprest">Imprest GRN</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Financial Year" required>
-              <Input
-                className="h-9 text-sm mt-1"
-                value={form.financialYear}
-                onChange={(e) => set("financialYear")(e.target.value)}
-                placeholder="e.g. 2025-26"
-              />
-            </Field>
-
-            {/* ── Section: Party Details ── */}
-            <SectionLabel>Party Details</SectionLabel>
-
-            <Field label="Branch" required>
-              <Select
-                value={form.branchId}
-                onValueChange={(value) => {
-                  const nextCostCentreId = form.costCentreId
-                    && costCentres.some((item: any) => item.id === form.costCentreId && item.branch_id === value)
-                    ? form.costCentreId
-                    : "";
-                  const nextProcessId = form.processId
-                    && processes.some((item: any) => item.id === form.processId && item.branch_id === value)
-                    ? form.processId
-                    : "";
-                  setForm((current) => ({
-                    ...current,
-                    branchId: value,
-                    costCentreId: nextCostCentreId,
-                    processId: nextProcessId,
-                  }));
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm mt-1">
-                  <SelectValue placeholder="Select branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  {branches.map((b: any) => (
-                    <SelectItem key={b.id} value={b.id}>
-                      {b.name ?? b.branch_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            {form.grnType === "vendor" ? (
-              <Field label="Vendor">
-                <Select
-                  value={form.vendorId || "_none"}
-                  onValueChange={(v) => {
-                    if (v === "_none") {
-                      set("vendorId")("");
-                      return;
-                    }
-                    set("vendorId")(v);
-                    const vendor = vendors.find((x: any) => x.id === v);
-                    if (vendor)
-                      set("vendorName")(vendor.vendor_name ?? vendor.name ?? "");
-                  }}
-                >
-                  <SelectTrigger className="h-9 text-sm mt-1">
-                    <SelectValue placeholder="Select vendor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none">— Select vendor —</SelectItem>
-                    {vendors.map((v: any) => (
-                      <SelectItem key={v.id} value={v.id}>
-                        {v.vendor_name ?? v.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Input
-                  className="h-9 text-sm mt-2"
-                  value={form.vendorName}
-                  onChange={(e) => set("vendorName")(e.target.value)}
-                  placeholder="Or type vendor name manually"
-                />
-              </Field>
-            ) : (
-              <Field label="Imprest Holder / Purpose">
-                <Input
-                  className="h-9 text-sm mt-1"
-                  value={form.vendorName}
-                  onChange={(e) => set("vendorName")(e.target.value)}
-                  placeholder="Name / purpose"
-                />
-              </Field>
-            )}
-
-            {/* ── Section: Expense Classification ── */}
-            <SectionLabel>Expense Classification</SectionLabel>
-
-            <Field label="Expense Head" required>
-              <Select
-                value={form.head || "_none"}
-                onValueChange={(v) => {
-                  if (v === "_none") {
-                    set("head")("");
-                    set("subHead")("");
-                  } else {
-                    set("head")(v);
-                    set("subHead")("");
-                  }
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm mt-1">
-                  <SelectValue placeholder="Select expense head" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">— Select head —</SelectItem>
-                  {EXPENSE_HEADS.map((h) => (
-                    <SelectItem key={h} value={h}>
-                      {h}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Sub Head">
-              <SubHeadField
-                head={form.head}
-                value={form.subHead}
-                onChange={set("subHead")}
-              />
-            </Field>
-
-            <Field label="Cost treatment" required>
-              <Select
-                value={form.costClass}
-                onValueChange={(value: "direct" | "indirect") => {
-                  setForm((current) => ({
-                    ...current,
-                    costClass: value,
-                    processId: value === "indirect" ? "" : current.processId,
-                    costCentreId: value === "indirect"
-                      ? (availableCostCentres.find((item: any) => item.id === current.costCentreId)?.process_id ? "" : current.costCentreId)
-                      : current.costCentreId,
-                  }));
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="indirect">Indirect / shared overhead</SelectItem>
-                  <SelectItem value="direct">Direct to process P&amp;L</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Process">
-              <Select
-                value={form.processId || "_none"}
-                onValueChange={(value) => {
-                  set("processId")(value === "_none" ? "" : value);
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm mt-1">
-                  <SelectValue placeholder="Select process" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">- Select process -</SelectItem>
-                  {availableProcesses.map((process: any) => (
-                    <SelectItem key={process.id} value={process.id}>
-                      {process.process_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field label="Cost Centre">
-              <Select
-                value={form.costCentreId || "_none"}
-                onValueChange={(value) => {
-                  if (value === "_none") {
-                    set("costCentreId")("");
-                    return;
-                  }
-                  const selected = availableCostCentres.find((item: any) => item.id === value);
-                  setForm((current) => ({
-                    ...current,
-                    costCentreId: value,
-                    processId: current.processId || selected?.process_id || "",
-                  }));
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm mt-1">
-                  <SelectValue placeholder="Select cost centre" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">- Select cost centre -</SelectItem>
-                  {availableCostCentres.map((costCentre: any) => (
-                    <SelectItem key={costCentre.id} value={costCentre.id}>
-                      {costCentre.cost_centre_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-
-            {/* ── Section: Amount & Dates ── */}
-            <SectionLabel>Amount &amp; Dates</SectionLabel>
-
-            <Field label="Amount (₹)" required>
-              <div className="relative mt-1">
-                <IndianRupee className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                <Input
-                  type="number"
-                  step="0.01"
-                  className="h-9 pl-7 text-sm"
-                  value={form.amount}
-                  onChange={(e) => set("amount")(e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-            </Field>
-
-            <Field label="Bill / Invoice Date">
-              <Input
-                type="date"
-                className="h-9 text-sm mt-1"
-                value={form.billDate}
-                onChange={(e) => set("billDate")(e.target.value)}
-              />
-            </Field>
-
-            {/* ── Payment Terms & Attachment ── */}
-            {form.grnType === "vendor" && (
-              <Field label="Payment Terms">
-                <Select
-                  value={form.paymentTermsDays}
-                  onValueChange={set("paymentTermsDays")}
-                >
-                  <SelectTrigger className="h-9 text-sm mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">Immediate</SelectItem>
-                    {PAYMENT_TERMS_OPTIONS.map((d) => (
-                      <SelectItem key={d} value={String(d)}>
-                        {d} days
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-
-            <Field label="Invoice / Bill Attachment">
-              <label className="mt-1 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:border-[#073f78]/30">
-                <Upload className="size-4 shrink-0 text-slate-400" />
-                {file ? (
-                  <span className="truncate max-w-[180px] text-slate-800 text-xs font-medium">
-                    {file.name}
-                  </span>
-                ) : (
-                  <span className="text-xs">
-                    Upload PDF / Image{" "}
-                    <span className="text-slate-400">(optional)</span>
-                  </span>
-                )}
-                <input
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.webp"
-                  className="hidden"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
-                {file && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setFile(null);
-                    }}
-                    className="ml-auto rounded-full p-0.5 text-slate-400 hover:text-rose-500 transition-colors"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                )}
-              </label>
-            </Field>
-
-            {/* ── Remarks ── */}
-            <SectionLabel>Notes</SectionLabel>
-            <Field label="Remarks" span2>
-              <Textarea
-                className="mt-1 text-sm min-h-[72px] resize-none"
-                value={form.remarks}
-                onChange={(e) => set("remarks")(e.target.value)}
-                placeholder="Internal notes or additional context…"
-              />
-            </Field>
-          </div>
-        </div>
-
-        {/* Footer actions */}
-        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-6 py-4">
-          <Button
-            variant="outline"
-            className="h-9 gap-2 text-slate-600 border-slate-200 hover:bg-slate-100"
-            onClick={() => {
-              setForm(EMPTY_FORM);
-              setFile(null);
-            }}
-          >
-            <RotateCcw className="size-4" />
-            Reset
-          </Button>
-          <Button
-            className="h-9 bg-[#073f78] hover:bg-[#052d57] text-white gap-2 px-6 shadow-sm"
-            onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending}
-          >
-            {createMutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Plus className="size-4" />
-            )}
-            Save as Draft
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Approval Queue Tab ─────────────────────────────────────────────────────────
 
 const STATUS_TABS = [
   { value: "_all", label: "All" },
@@ -835,58 +150,189 @@ const STATUS_TABS = [
   { value: "submitted", label: "Branch Head Queue" },
   { value: "branch_head_approved", label: "Finance Head Queue" },
   { value: "pending_accounts_payment", label: "Accounts Payment" },
+  { value: "partially_paid", label: "Partially Paid" },
   { value: "paid", label: "Paid" },
   { value: "rejected", label: "Rejected" },
   { value: "cancelled", label: "Cancelled" },
 ];
 
+function StatusBadge({ status }: { status: string }) {
+  const config = STATUS_CONFIG[status] ?? {
+    dot: "bg-slate-400",
+    badge: "bg-slate-50 text-slate-600 border-slate-200",
+    label: status.replaceAll("_", " "),
+  };
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold capitalize ${config.badge}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${config.dot}`} />
+      {config.label}
+    </span>
+  );
+}
+
+function fmt(value: number | string | null | undefined) {
+  return Number(value ?? 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function money(value: number | string | null | undefined) {
+  return `₹${fmt(value)}`;
+}
+
+function fmtDate(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+function unwrapData<T>(value: any): T {
+  return (value?.data ?? value) as T;
+}
+
+function validationTone(status: string) {
+  if (["passed", "completed", "matched", "overridden"].includes(status)) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  }
+  if (["warning", "manual_review", "near_match", "pending", "processing"].includes(status)) {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+  return "border-rose-200 bg-rose-50 text-rose-800";
+}
+
+function Metric({
+  label,
+  value,
+  tone = "slate",
+}: {
+  label: string;
+  value: string;
+  tone?: "slate" | "blue" | "emerald" | "amber" | "rose";
+}) {
+  const styles = {
+    slate: "border-slate-200 bg-white",
+    blue: "border-blue-200 bg-blue-50",
+    emerald: "border-emerald-200 bg-emerald-50",
+    amber: "border-amber-200 bg-amber-50",
+    rose: "border-rose-200 bg-rose-50",
+  };
+  return (
+    <div className={`rounded-2xl border p-3 ${styles[tone]}`}>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 text-sm font-bold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
 function ApprovalQueueTab() {
   const { toast } = useToast();
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("submitted");
   const [grnTypeFilter, setGrnTypeFilter] = useState("_all");
   const [search, setSearch] = useState("");
-  const [reviewTarget, setReviewTarget] = useState<any | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<GrnRow | null>(null);
   const [reviewDecision, setReviewDecision] = useState<"approved" | "rejected">(
     "approved"
   );
   const [reviewNote, setReviewNote] = useState("");
 
-  const { data, isFetching } = useQuery({
-    queryKey: ["grn-list", statusFilter, grnTypeFilter, search],
-    queryFn: () => {
-      const qs = new URLSearchParams();
-      if (statusFilter !== "_all") qs.set("status", statusFilter);
-      if (grnTypeFilter !== "_all") qs.set("grnType", grnTypeFilter);
-      if (search) qs.set("search", search);
-      qs.set("limit", "50");
-      return hrmsApi.get<any>(`/api/finance/grns?${qs}`);
+  const capabilitiesQuery = useQuery({
+    queryKey: ["finance-capabilities-for-grn"],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{
+        success: boolean;
+        data: FinanceCapabilities;
+      }>("/api/finance/pnl/budgets/capabilities");
+      return response.data;
     },
   });
-  const rows: any[] = data?.data ?? [];
+  const capabilities = capabilitiesQuery.data;
+
+  const listQuery = useQuery({
+    queryKey: ["grn-list", statusFilter, grnTypeFilter, search],
+    queryFn: async () => {
+      const query = new URLSearchParams();
+      if (statusFilter !== "_all") query.set("status", statusFilter);
+      if (grnTypeFilter !== "_all") query.set("grnType", grnTypeFilter);
+      if (search.trim()) query.set("search", search.trim());
+      query.set("limit", "100");
+      const response = await hrmsApi.get<any>(`/api/finance/grns?${query}`);
+      return (response?.data ?? response?.rows ?? []) as GrnRow[];
+    },
+  });
+  const rows = listQuery.data ?? [];
+
+  const workspaceQuery = useQuery({
+    queryKey: ["grn-review-workspace", reviewTarget?.id],
+    enabled: Boolean(reviewTarget?.id),
+    queryFn: async () => {
+      const response = await hrmsApi.get<any>(
+        `/api/finance/grns/${reviewTarget!.id}/workspace`
+      );
+      return unwrapData<SmartWorkspace>(response);
+    },
+  });
+  const workspace = workspaceQuery.data;
+  const parent = workspace?.grn ?? reviewTarget;
+  const blockingValidations = (workspace?.validations ?? []).filter(
+    (item) => Number(item.is_blocking) === 1 && item.validation_status === "failed"
+  );
+  const exactDuplicates = (workspace?.duplicates ?? []).filter(
+    (item) => ["invoice_identity", "document_hash"].includes(String(item.match_type))
+      && String(item.review_status ?? "open") === "open"
+  );
+
+  const canReview = useMemo(() => {
+    if (!reviewTarget || !capabilities) return false;
+    if (reviewTarget.status === "submitted") return capabilities.canReviewBranchStage;
+    if (reviewTarget.status === "branch_head_approved") {
+      return capabilities.canReviewFinanceStage;
+    }
+    return false;
+  }, [capabilities, reviewTarget]);
 
   const submitMutation = useMutation({
     mutationFn: (id: string) =>
       hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
     onSuccess: () => {
-      toast({ title: "GRN submitted" });
-      void qc.invalidateQueries({ queryKey: ["grn-list"] });
+      toast({ title: "GRN submitted to the Branch Head" });
+      void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
     },
-    onError: (e: Error) =>
-      toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (error: Error) =>
+      toast({ title: "Submission failed", description: error.message, variant: "destructive" }),
   });
 
   const reviewMutation = useMutation({
-    mutationFn: ({ id, decision, reviewNote }: any) =>
-      hrmsApi.post(`/api/finance/grns/${id}/review`, { decision, reviewNote }),
-    onSuccess: (_, v) => {
-      toast({ title: `GRN ${v.decision}` });
+    mutationFn: ({
+      id,
+      decision,
+      note,
+    }: {
+      id: string;
+      decision: "approved" | "rejected";
+      note: string;
+    }) =>
+      hrmsApi.post(`/api/finance/grns/${id}/review`, {
+        decision,
+        reviewNote: note || undefined,
+      }),
+    onSuccess: (_, input) => {
+      toast({ title: `GRN ${input.decision}` });
       setReviewTarget(null);
       setReviewNote("");
-      void qc.invalidateQueries({ queryKey: ["grn-list"] });
+      void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
     },
-    onError: (e: Error) =>
-      toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (error: Error) =>
+      toast({ title: "Review failed", description: error.message, variant: "destructive" }),
   });
 
   const cancelMutation = useMutation({
@@ -894,224 +340,166 @@ function ApprovalQueueTab() {
       hrmsApi.post(`/api/finance/grns/${id}/cancel`, {}),
     onSuccess: () => {
       toast({ title: "GRN cancelled" });
-      void qc.invalidateQueries({ queryKey: ["grn-list"] });
+      void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
     },
-    onError: (e: Error) =>
-      toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (error: Error) =>
+      toast({ title: "Cancellation failed", description: error.message, variant: "destructive" }),
   });
 
+  async function openDocument(documentId?: string) {
+    if (!reviewTarget) return;
+    try {
+      const path = documentId
+        ? `/api/finance/grns/${reviewTarget.id}/documents/${documentId}/file`
+        : `/api/finance/grns/${reviewTarget.id}/attachment`;
+      const blob = await hrmsApi.getBlob(path);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      toast({
+        title: "Document could not be opened",
+        description: error instanceof Error ? error.message : "Unknown file error",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function approveOrReject() {
+    if (!reviewTarget) return;
+    if (reviewDecision === "rejected" && !reviewNote.trim()) {
+      toast({
+        title: "Rejection note is mandatory",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (reviewDecision === "approved" && (blockingValidations.length || exactDuplicates.length)) {
+      toast({
+        title: "Approval is blocked",
+        description: "Resolve blocking validations and exact duplicate matches first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    reviewMutation.mutate({
+      id: reviewTarget.id,
+      decision: reviewDecision,
+      note: reviewNote.trim(),
+    });
+  }
+
   return (
-    <div>
-      {/* Toolbar */}
-      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h2 className="text-sm font-bold text-slate-900">GRN Approval Queue</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Review, submit, approve or reject GRN entries
+          <h2 className="text-base font-bold text-slate-950">GRN Approval & Control Queue</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Review invoice proof, cost-centre splits, duplicate checks, budget impact and tax facts before approval.
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Search */}
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
-              className="h-9 pl-8 text-sm w-52"
-              placeholder="Search GRN / vendor / head…"
+              className="w-56 pl-9"
+              placeholder="Search GRN, vendor, Head…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-          {/* Type filter */}
           <Select value={grnTypeFilter} onValueChange={setGrnTypeFilter}>
-            <SelectTrigger className="h-9 text-sm w-32">
-              <SelectValue placeholder="All types" />
-            </SelectTrigger>
+            <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="_all">All types</SelectItem>
               <SelectItem value="vendor">Vendor</SelectItem>
               <SelectItem value="imprest">Imprest</SelectItem>
             </SelectContent>
           </Select>
-          {/* Refresh */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 w-9 p-0 border-slate-200"
-            onClick={() => qc.invalidateQueries({ queryKey: ["grn-list"] })}
-          >
-            <RefreshCw
-              className={`size-4 text-slate-500 ${isFetching ? "animate-spin" : ""}`}
-            />
+          <Button variant="outline" size="icon" onClick={() => void listQuery.refetch()}>
+            <RefreshCw className={`h-4 w-4 ${listQuery.isFetching ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </div>
 
-      {/* Status pill tabs */}
-      <div className="mb-4 flex items-center gap-1 flex-wrap">
+      <div className="flex flex-wrap gap-1.5">
         {STATUS_TABS.map((tab) => {
           const active = statusFilter === tab.value;
-          const cfg =
-            tab.value !== "_all" ? STATUS_CONFIG[tab.value] : null;
+          const config = tab.value === "_all" ? null : STATUS_CONFIG[tab.value];
           return (
             <button
               key={tab.value}
+              type="button"
               onClick={() => setStatusFilter(tab.value)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all ${
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition ${
                 active
-                  ? "bg-[#073f78] border-[#073f78] text-white shadow-sm"
-                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300"
+                  ? "border-[#073f78] bg-[#073f78] text-white shadow-sm"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
               }`}
             >
-              {cfg && !active && (
-                <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-              )}
+              {config && !active && <span className={`h-1.5 w-1.5 rounded-full ${config.dot}`} />}
               {tab.label}
             </button>
           );
         })}
       </div>
 
-      {/* Table */}
-      {rows.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white py-16 shadow-sm">
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-slate-100 mb-4">
-            <FileText className="size-6 text-slate-400" />
-          </div>
-          <p className="text-sm font-medium text-slate-600">No GRNs found</p>
-          <p className="text-xs text-slate-400 mt-1">
-            Try adjusting your filters or create a new GRN
-          </p>
+      {listQuery.isLoading ? (
+        <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20">
+          <Loader2 className="h-7 w-7 animate-spin text-[#073f78]" />
+        </div>
+      ) : !rows.length ? (
+        <div className="rounded-3xl border border-slate-200 bg-white py-16 text-center shadow-sm">
+          <FileText className="mx-auto h-10 w-10 text-slate-300" />
+          <p className="mt-3 text-sm font-semibold text-slate-700">No GRNs match the selected filters</p>
+          <p className="mt-1 text-xs text-slate-400">Create a smart GRN or change the queue filters.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
-          <table className="w-full min-w-[900px]">
-            <thead>
-              <tr className="bg-[#073f78]">
-                {[
-                  "GRN No.",
-                  "Type",
-                  "Branch",
-                  "Vendor / Holder",
-                  "Head",
-                  "Amount (₹)",
-                  "Bill Date",
-                  "Due Date",
-                  "FY",
-                  "Status",
-                  "Actions",
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className="px-4 py-3 text-left text-[11px] font-semibold text-white/90 whitespace-nowrap first:rounded-tl-2xl last:rounded-tr-2xl"
-                  >
-                    {h}
+        <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full min-w-[1180px]">
+            <thead className="bg-[#073f78] text-white">
+              <tr>
+                {["GRN", "Type", "Branch", "Vendor / Holder", "Head", "Allocation", "Amount", "Validation", "Bill / Due", "Status", "Actions"].map((heading) => (
+                  <th key={heading} className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                    {heading}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-slate-50">
-              {rows.map((r: any) => (
-                <tr
-                  key={r.id}
-                  className="group hover:bg-slate-50/70 transition-colors"
-                >
-                  <td className="px-4 py-3 text-xs font-mono font-bold text-[#073f78] whitespace-nowrap border-b border-slate-100">
-                    {r.grn_number}
-                  </td>
-                  <td className="px-4 py-3 border-b border-slate-100">
-                    <span
-                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold capitalize ${
-                        r.grn_type === "vendor"
-                          ? "bg-blue-50 text-blue-700 border-blue-200"
-                          : "bg-purple-50 text-purple-700 border-purple-200"
-                      }`}
-                    >
-                      {r.grn_type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-700 border-b border-slate-100">
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((row) => (
+                <tr key={row.id} className="hover:bg-slate-50/70">
+                  <td className="px-4 py-3 text-xs font-bold text-[#073f78]">{row.grn_number}</td>
+                  <td className="px-4 py-3"><Badge variant="outline" className="capitalize">{row.grn_type}</Badge></td>
+                  <td className="px-4 py-3 text-xs text-slate-700"><span className="inline-flex items-center gap-1.5"><Building2 className="h-3.5 w-3.5 text-slate-400" />{row.branch_name ?? row.branch_id}</span></td>
+                  <td className="max-w-[180px] px-4 py-3 text-xs text-slate-700"><span className="block truncate">{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest / reimbursement" : "—")}</span></td>
+                  <td className="max-w-[190px] px-4 py-3 text-xs text-slate-700"><span className="block truncate">{row.head ?? "—"}</span><span className="block truncate text-[10px] text-slate-400">{row.sub_head ?? ""}</span></td>
+                  <td className="px-4 py-3"><Badge className={row.allocation_mode === "split" ? "bg-violet-50 text-violet-700 hover:bg-violet-50" : "bg-slate-100 text-slate-600 hover:bg-slate-100"}><Split className="mr-1 h-3 w-3" />{row.allocation_mode === "split" ? "Multi split" : "Single"}</Badge></td>
+                  <td className="px-4 py-3 text-right text-xs font-bold text-slate-900">{money(row.amount_with_tax ?? row.amount)}</td>
+                  <td className="px-4 py-3"><div className="flex flex-col gap-1"><Badge variant="outline">{Number(row.validation_score ?? 0).toFixed(0)}%</Badge>{row.document_match_status && row.document_match_status !== "not_checked" && <span className="text-[9px] capitalize text-slate-500">{row.document_match_status.replaceAll("_", " ")}</span>}</div></td>
+                  <td className="px-4 py-3 text-[10px] text-slate-500"><p>{fmtDate(row.bill_date)}</p><p className="mt-1">Due {fmtDate(row.due_date)}</p></td>
+                  <td className="px-4 py-3"><StatusBadge status={row.status} /></td>
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5">
-                      <Building2 className="size-3 text-slate-400 shrink-0" />
-                      {r.branch_name ?? r.branch_id}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-700 border-b border-slate-100 max-w-[140px]">
-                    <span className="truncate block">{r.vendor_name ?? "—"}</span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-700 border-b border-slate-100">
-                    {r.head}
-                    {r.sub_head && (
-                      <span className="block text-[10px] text-slate-400">
-                        {r.sub_head}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs font-mono font-semibold text-slate-900 text-right border-b border-slate-100">
-                    {fmt(r.amount)}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-600 border-b border-slate-100 whitespace-nowrap">
-                    {fmtDate(r.bill_date)}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-600 border-b border-slate-100 whitespace-nowrap">
-                    {fmtDate(r.due_date)}
-                  </td>
-                  <td className="px-4 py-3 text-xs font-mono text-slate-600 border-b border-slate-100">
-                    {r.financial_year}
-                  </td>
-                  <td className="px-4 py-3 border-b border-slate-100">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="px-4 py-3 border-b border-slate-100">
-                    <div className="flex items-center gap-1">
-                      {r.status === "draft" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2.5 text-[11px] text-blue-700 border-blue-200 hover:bg-blue-50 hover:border-blue-300 gap-1"
-                          onClick={() => submitMutation.mutate(r.id)}
-                          disabled={submitMutation.isPending}
-                        >
-                          <Send className="size-3" /> Submit
+                      {row.status === "draft" && capabilities?.canCreate && (
+                        <Button size="sm" variant="outline" onClick={() => submitMutation.mutate(row.id)} disabled={submitMutation.isPending}>
+                          <Send className="mr-1 h-3.5 w-3.5" /> Submit
                         </Button>
                       )}
-                      {["submitted", "branch_head_approved"].includes(r.status) && (
-                        <Button
-                          size="sm"
-                          className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                          onClick={() => {
-                            setReviewTarget(r);
-                            setReviewDecision("approved");
-                            setReviewNote("");
-                          }}
-                        >
-                          <Eye className="size-3" /> Review
+                      {["submitted", "branch_head_approved"].includes(row.status) && (
+                        <Button size="sm" onClick={() => { setReviewTarget(row); setReviewDecision("approved"); setReviewNote(""); }}>
+                          <Eye className="mr-1 h-3.5 w-3.5" /> Review
                         </Button>
                       )}
-                      {r.attachment_path && (
-                        <button
-                          onClick={() =>
-                            window.open(
-                              `/api/finance/grns/${r.id}/attachment`,
-                              "_blank"
-                            )
-                          }
-                          className="flex size-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-blue-600 transition-colors"
-                          title="View attachment"
-                        >
-                          <FileText className="size-3.5" />
-                        </button>
+                      {(row.attachment_path || row.attachment_file_path) && (
+                        <Button size="icon" variant="outline" title="Open legacy attachment" onClick={() => { setReviewTarget(row); window.setTimeout(() => void openDocument(), 0); }}>
+                          <FileText className="h-3.5 w-3.5" />
+                        </Button>
                       )}
-                      {["draft", "submitted"].includes(r.status) && (
-                        <button
-                          onClick={() => {
-                            if (confirm("Cancel this GRN?"))
-                              cancelMutation.mutate(r.id);
-                          }}
-                          className="flex size-7 items-center justify-center rounded-md border border-slate-200 text-slate-400 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-200 transition-colors"
-                          title="Cancel GRN"
-                        >
-                          <XCircle className="size-3.5" />
-                        </button>
+                      {["draft", "submitted"].includes(row.status) && capabilities?.canCreate && (
+                        <Button size="icon" variant="ghost" title="Cancel GRN" className="text-rose-500" onClick={() => cancelMutation.mutate(row.id)} disabled={cancelMutation.isPending}>
+                          <XCircle className="h-4 w-4" />
+                        </Button>
                       )}
                     </div>
                   </td>
@@ -1122,167 +510,121 @@ function ApprovalQueueTab() {
         </div>
       )}
 
-      {/* Review Dialog */}
-      <Dialog
-        open={!!reviewTarget}
-        onOpenChange={(v) => !v && setReviewTarget(null)}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900">
-              <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100">
-                <ClipboardList className="size-4 text-emerald-700" />
+      <Dialog open={Boolean(reviewTarget)} onOpenChange={(open) => !open && setReviewTarget(null)}>
+        <DialogContent className="max-h-[92vh] max-w-[1180px] overflow-y-auto p-0">
+          <DialogHeader className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 py-5">
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-8">
+              <div>
+                <DialogTitle className="flex items-center gap-2 text-lg"><ClipboardList className="h-5 w-5 text-[#073f78]" />Review GRN — {reviewTarget?.grn_number}</DialogTitle>
+                <p className="mt-1 text-xs text-slate-500">Verify the evidence, every cost split and all blocking financial controls before deciding.</p>
               </div>
-              Review GRN — {reviewTarget?.grn_number}
-            </DialogTitle>
+              {reviewTarget && <StatusBadge status={reviewTarget.status} />}
+            </div>
           </DialogHeader>
 
-          {reviewTarget && (
-            <div className="space-y-4">
-              {/* GRN details grid */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">
-                  GRN Details
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-[10px] text-slate-500 mb-0.5">
-                      Vendor / Holder
-                    </p>
-                    <p className="text-sm font-medium text-slate-800">
-                      {reviewTarget.vendor_name ?? "—"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 mb-0.5">
-                      GRN Type
-                    </p>
-                    <p className="text-sm font-medium capitalize text-slate-800">
-                      {reviewTarget.grn_type}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 mb-0.5">
-                      Expense Head
-                    </p>
-                    <p className="text-sm text-slate-800">{reviewTarget.head}</p>
-                    {reviewTarget.sub_head && (
-                      <p className="text-[11px] text-slate-500">
-                        {reviewTarget.sub_head}
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 mb-0.5">Amount</p>
-                    <p className="text-base font-bold text-[#073f78]">
-                      ₹{fmt(reviewTarget.amount)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 mb-0.5">
-                      Bill Date
-                    </p>
-                    <p className="text-sm text-slate-800">
-                      {fmtDate(reviewTarget.bill_date)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 mb-0.5">
-                      Due Date
-                    </p>
-                    <p className="text-sm text-slate-800">
-                      {fmtDate(reviewTarget.due_date)}
-                    </p>
-                  </div>
+          <div className="space-y-5 p-6">
+            {workspaceQuery.isLoading ? (
+              <div className="flex justify-center py-20"><Loader2 className="h-7 w-7 animate-spin text-[#073f78]" /></div>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                  <Metric label="Without tax" value={money(parent?.amount_without_tax ?? 0)} />
+                  <Metric label="Tax" value={money(parent?.tax_amount ?? 0)} tone="blue" />
+                  <Metric label="With tax" value={money(parent?.amount_with_tax ?? parent?.amount ?? 0)} tone="emerald" />
+                  <Metric label="P&L cost" value={money(parent?.pnl_cost_amount ?? parent?.amount ?? 0)} tone="amber" />
+                  <Metric label="Validation" value={`${Number(parent?.validation_score ?? 0).toFixed(0)}%`} tone={blockingValidations.length ? "rose" : "emerald"} />
+                  <Metric label="Duplicate matches" value={String(workspace?.duplicates?.length ?? 0)} tone={exactDuplicates.length ? "rose" : "slate"} />
                 </div>
-                {reviewTarget.remarks && (
-                  <div className="mt-3 pt-3 border-t border-slate-200">
-                    <p className="text-[10px] text-slate-500 mb-0.5">Remarks</p>
-                    <p className="text-xs text-slate-700">{reviewTarget.remarks}</p>
+
+                <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+                  <Card className="rounded-3xl border-slate-200">
+                    <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><FileCheck2 className="h-4 w-4 text-blue-700" />Invoice and legacy GRN fields</CardTitle></CardHeader>
+                    <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {[
+                        ["Vendor / Holder", parent?.vendor_name ?? "—"],
+                        ["Invoice Number", parent?.invoice_number ?? "—"],
+                        ["Invoice Date", fmtDate(parent?.bill_date)],
+                        ["Service Start", fmtDate(parent?.service_period_start)],
+                        ["Service End", fmtDate(parent?.service_period_end)],
+                        ["PO / Contract", parent?.purchase_reference ?? "—"],
+                        ["Vendor GSTIN", parent?.vendor_gstin ?? "—"],
+                        ["Place of Supply", parent?.place_of_supply ?? "—"],
+                        ["Payment Terms", `${Number(parent?.payment_terms_days ?? 0)} days`],
+                        ["Due Date", fmtDate(parent?.due_date)],
+                        ["Financial Year", parent?.financial_year ?? "—"],
+                        ["Allocation Mode", parent?.allocation_mode ?? "legacy single"],
+                      ].map(([label, value]) => (
+                        <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><p className="text-[9px] uppercase tracking-wide text-slate-400">{label}</p><p className="mt-1 break-words text-xs font-semibold text-slate-800">{String(value)}</p></div>
+                      ))}
+                      {parent?.remarks && <div className="sm:col-span-2 lg:col-span-3 rounded-xl bg-slate-50 p-3"><p className="text-[9px] uppercase tracking-wide text-slate-400">Remarks</p><p className="mt-1 text-xs leading-5 text-slate-700">{parent.remarks}</p></div>}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-3xl border-slate-200">
+                    <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><FileSearch className="h-4 w-4 text-violet-700" />Documents and extraction</CardTitle></CardHeader>
+                    <CardContent className="space-y-3">
+                      {(workspace?.documents ?? []).map((document) => (
+                        <button key={document.id} type="button" onClick={() => void openDocument(String(document.id))} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:bg-slate-50"><FileText className="h-5 w-5 text-blue-600" /><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-800">{document.original_name}</p><p className="mt-0.5 text-[10px] text-slate-500">{String(document.extraction_status ?? "not analyzed").replaceAll("_", " ")}</p></div><Badge className={`border ${validationTone(String(document.extraction_status ?? "pending"))}`}>{Number(document.is_primary) === 1 ? "Primary" : "Support"}</Badge></button>
+                      ))}
+                      {!workspace?.documents?.length && (parent?.attachment_path || parent?.attachment_file_path) && <Button variant="outline" className="w-full" onClick={() => void openDocument()}><FileText className="mr-2 h-4 w-4" />Open legacy attachment</Button>}
+                      {!workspace?.documents?.length && !(parent?.attachment_path || parent?.attachment_file_path) && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">No supporting proof is available.</div>}
+                      {workspace?.extractions?.[0] && <div className="rounded-xl border border-violet-200 bg-violet-50 p-3"><p className="text-xs font-bold text-violet-950">Latest extraction</p><p className="mt-1 text-[10px] text-violet-700">{workspace.extractions[0].provider} · confidence {Number(workspace.extractions[0].confidence_score ?? 0).toFixed(0)}% · {workspace.extractions[0].status}</p></div>}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="overflow-hidden rounded-3xl border-slate-200">
+                  <CardHeader className="border-b border-slate-100"><CardTitle className="flex items-center gap-2 text-sm"><Split className="h-4 w-4 text-emerald-700" />Cost-centre and approved budget allocation</CardTitle></CardHeader>
+                  <CardContent className="p-0">
+                    {workspace?.allocations?.length ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[1050px]">
+                          <thead className="bg-slate-50"><tr>{["#", "Budget / Item", "Cost Centre", "Process", "Qty × Rate", "Without Tax", "Tax", "With Tax", "P&L", "%", "State"].map((heading) => <th key={heading} className="px-4 py-3 text-left text-[9px] font-semibold uppercase tracking-wide text-slate-500">{heading}</th>)}</tr></thead>
+                          <tbody className="divide-y divide-slate-100">{workspace.allocations.map((allocation, index) => <tr key={allocation.id}><td className="px-4 py-3 text-xs font-bold">{index + 1}</td><td className="max-w-[230px] px-4 py-3 text-xs"><p className="truncate font-semibold">{allocation.budget_number}</p><p className="truncate text-[10px] text-slate-500">{allocation.budget_head} / {allocation.budget_sub_head} · {allocation.budget_item_name}</p></td><td className="px-4 py-3 text-xs">{allocation.cost_centre_name ?? "Branch common"}</td><td className="px-4 py-3 text-xs">{allocation.process_name ?? "Shared"}</td><td className="px-4 py-3 text-xs">{Number(allocation.quantity).toLocaleString("en-IN")} × {money(allocation.unit_rate)}</td><td className="px-4 py-3 text-xs">{money(allocation.amount_without_tax)}</td><td className="px-4 py-3 text-xs">{money(allocation.tax_amount)}</td><td className="px-4 py-3 text-xs font-bold">{money(allocation.amount_with_tax)}</td><td className="px-4 py-3 text-xs">{money(allocation.pnl_cost_amount)}</td><td className="px-4 py-3 text-xs">{Number(allocation.allocation_percentage).toFixed(4)}%</td><td className="px-4 py-3"><Badge variant="outline" className="capitalize">{String(allocation.lifecycle_status).replaceAll("_", " ")}</Badge></td></tr>)}</tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="p-5 text-xs text-slate-500">Legacy single-attribution GRN. Process: {parent?.process_name ?? "Shared"}; Cost Centre: {parent?.cost_centre_name ?? "Branch common"}.</div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+                  <Card className="rounded-3xl border-slate-200">
+                    <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="h-4 w-4 text-amber-700" />Validation results</CardTitle></CardHeader>
+                    <CardContent className="grid gap-3 md:grid-cols-2">
+                      {(workspace?.validations ?? []).map((validation) => <div key={validation.id} className={`rounded-xl border p-3 ${validationTone(String(validation.validation_status))}`}><div className="flex items-start gap-2">{validation.validation_status === "passed" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}<div><p className="text-[10px] font-bold uppercase tracking-wide">{String(validation.validation_code).replaceAll("_", " ")}</p><p className="mt-1 text-[10px] leading-4">{validation.message}</p>{Number(validation.is_blocking) === 1 && validation.validation_status === "failed" && <Badge className="mt-2 bg-white/70 text-rose-700">Blocking</Badge>}</div></div></div>)}
+                      {!workspace?.validations?.length && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 md:col-span-2">No server validation record exists for this historical GRN. Review manually before approval.</div>}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-3xl border-slate-200">
+                    <CardHeader><CardTitle className="flex items-center gap-2 text-sm"><BadgeCheck className="h-4 w-4 text-rose-700" />Duplicate review</CardTitle></CardHeader>
+                    <CardContent className="space-y-2">
+                      {(workspace?.duplicates ?? []).map((duplicate) => <div key={duplicate.id} className={`rounded-xl border p-3 ${duplicate.review_status === "cleared" ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}><div className="flex items-center justify-between gap-2"><p className="text-xs font-semibold capitalize">{String(duplicate.match_type).replaceAll("_", " ")}</p><Badge variant="outline">{Number(duplicate.confidence_score).toFixed(0)}%</Badge></div><p className="mt-1 text-[10px] text-slate-600">Matched GRN: {duplicate.matched_grn_number ?? "Document hash"} · {duplicate.review_status}</p></div>)}
+                      {!workspace?.duplicates?.length && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">No duplicate match was found.</div>}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {canReview ? (
+                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                    <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
+                      <div className="space-y-2"><Label>Decision *</Label><Select value={reviewDecision} onValueChange={(value: "approved" | "rejected") => setReviewDecision(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="approved">Approve GRN</SelectItem><SelectItem value="rejected">Reject GRN</SelectItem></SelectContent></Select></div>
+                      <div className="space-y-2"><Label>Review note {reviewDecision === "rejected" ? "*" : ""}</Label><Textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="Record observations, exceptions or rejection reason" /></div>
+                    </div>
+                    {reviewDecision === "approved" && (blockingValidations.length > 0 || exactDuplicates.length > 0) && <div className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />Approval is blocked by {blockingValidations.length} validation failure(s) and {exactDuplicates.length} exact duplicate match(es).</div>}
                   </div>
+                ) : (
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs text-blue-800">You have read-only access at this workflow stage.</div>
                 )}
-              </div>
+              </>
+            )}
+          </div>
 
-              {/* Decision */}
-              <div>
-                <Label className="text-xs font-semibold text-slate-700">
-                  Decision <span className="text-rose-500">*</span>
-                </Label>
-                <Select
-                  value={reviewDecision}
-                  onValueChange={(v: any) => setReviewDecision(v)}
-                >
-                  <SelectTrigger className="h-9 text-sm mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="approved">Approve GRN</SelectItem>
-                    <SelectItem value="rejected">Reject GRN</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Review note */}
-              <div>
-                <Label className="text-xs font-semibold text-slate-700">
-                  Review Note{" "}
-                  <span className="font-normal text-slate-400">(optional)</span>
-                </Label>
-                <Textarea
-                  className="mt-1 text-sm min-h-[72px] resize-none"
-                  value={reviewNote}
-                  onChange={(e) => setReviewNote(e.target.value)}
-                  placeholder="Notes for the record…"
-                />
-              </div>
-
-              {/* Info banner for vendor approval */}
-              {reviewDecision === "approved" &&
-                reviewTarget.grn_type === "vendor" && (
-                  <div className="flex items-start gap-2.5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
-                    <AlertCircle className="size-4 text-blue-600 mt-0.5 shrink-0" />
-                    <p className="text-xs text-blue-800">
-                      Branch Head approval reserves the budget. Finance Head approval consumes it and creates the Accounts payment task.
-                    </p>
-                  </div>
-                )}
-            </div>
-          )}
-
-          <DialogFooter className="gap-2 pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9"
-              onClick={() => setReviewTarget(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className={`h-9 px-5 gap-1.5 ${
-                reviewDecision === "approved"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                  : "bg-rose-600 hover:bg-rose-700 text-white"
-              }`}
-              onClick={() =>
-                reviewMutation.mutate({
-                  id: reviewTarget.id,
-                  decision: reviewDecision,
-                  reviewNote,
-                })
-              }
-              disabled={reviewMutation.isPending}
-            >
-              {reviewMutation.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : reviewDecision === "approved" ? (
-                <CheckCircle2 className="size-4" />
-              ) : (
-                <XCircle className="size-4" />
-              )}
-              {reviewDecision === "approved" ? "Approve GRN" : "Reject GRN"}
-            </Button>
+          <DialogFooter className="sticky bottom-0 border-t border-slate-200 bg-white px-6 py-4">
+            <Button variant="outline" onClick={() => setReviewTarget(null)}>Close</Button>
+            {canReview && <Button className={reviewDecision === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"} onClick={approveOrReject} disabled={reviewMutation.isPending || workspaceQuery.isLoading}>{reviewMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : reviewDecision === "approved" ? <CheckCircle2 className="mr-2 h-4 w-4" /> : <XCircle className="mr-2 h-4 w-4" />}{reviewDecision === "approved" ? "Approve GRN" : "Reject GRN"}</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1290,72 +632,26 @@ function ApprovalQueueTab() {
   );
 }
 
-// ── Main Export ────────────────────────────────────────────────────────────────
-
 export default function NativeGRNManagement() {
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-slate-50">
-        {/* Page header */}
+      <div className="min-h-screen bg-[linear-gradient(180deg,_#f8fafc_0%,_#ffffff_45%,_#f4f7fb_100%)]">
         <div className="relative overflow-hidden border-b border-slate-200 bg-white shadow-sm">
-          <div
-            className="pointer-events-none absolute inset-0 opacity-[0.04]"
-            style={{
-              backgroundImage:
-                "repeating-linear-gradient(45deg, #073f78 0, #073f78 1px, transparent 0, transparent 50%)",
-              backgroundSize: "8px 8px",
-            }}
-          />
+          <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "repeating-linear-gradient(45deg, #073f78 0, #073f78 1px, transparent 0, transparent 50%)", backgroundSize: "8px 8px" }} />
           <div className="relative px-6 py-5">
-            {/* Breadcrumb */}
-            <nav className="mb-2 flex items-center gap-1 text-[11px] text-slate-400">
-              <span>Finance</span>
-              <ChevronRight className="size-3" />
-              <span className="text-[#073f78] font-medium">GRN Management</span>
-            </nav>
-            <div className="flex items-center gap-4">
-              <div className="flex size-11 items-center justify-center rounded-xl bg-[#073f78] shadow-md shadow-[#073f78]/20">
-                <FilePlus className="size-5 text-white" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-slate-900 leading-tight">
-                  GRN Management
-                </h1>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Create, submit and approve Goods Receipt Notes for vendor and
-                  imprest transactions
-                </p>
-              </div>
-            </div>
+            <nav className="mb-2 flex items-center gap-1 text-[11px] text-slate-400"><span>Finance</span><ChevronRight className="h-3 w-3" /><span className="font-medium text-[#073f78]">GRN Management</span></nav>
+            <div className="flex items-center gap-4"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#073f78] shadow-md shadow-[#073f78]/20"><FilePlus className="h-5 w-5 text-white" /></div><div><h1 className="text-xl font-bold text-slate-950">Smart GRN Management</h1><p className="mt-0.5 text-xs text-slate-500">Document intelligence, exact cost-centre allocation and staged finance approvals.</p></div></div>
           </div>
         </div>
 
-        {/* Content */}
-        <div className="px-6 py-6">
+        <div className="px-4 py-6 sm:px-6 lg:px-8">
           <Tabs defaultValue="create">
-            <TabsList className="mb-6 h-auto bg-white border border-slate-200 rounded-xl p-1 gap-1 w-fit shadow-sm">
-              <TabsTrigger
-                value="create"
-                className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
-              >
-                <FilePlus className="size-3.5" /> Create GRN
-              </TabsTrigger>
-              <TabsTrigger
-                value="queue"
-                className="rounded-lg px-5 py-2 text-xs font-semibold text-slate-600 gap-1.5 data-[state=active]:bg-[#073f78] data-[state=active]:text-white data-[state=active]:shadow-sm transition-all"
-              >
-                <ClipboardList className="size-3.5" /> Approval Queue
-              </TabsTrigger>
+            <TabsList className="mb-6 h-auto w-fit rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+              <TabsTrigger value="create" className="rounded-lg px-5 py-2 text-xs font-semibold data-[state=active]:bg-[#073f78] data-[state=active]:text-white"><FilePlus className="mr-2 h-3.5 w-3.5" />Create Smart GRN</TabsTrigger>
+              <TabsTrigger value="queue" className="rounded-lg px-5 py-2 text-xs font-semibold data-[state=active]:bg-[#073f78] data-[state=active]:text-white"><ClipboardList className="mr-2 h-3.5 w-3.5" />Approval & Control Queue</TabsTrigger>
             </TabsList>
-
-            <TabsContent value="create">
-              <BudgetLinkedGrnForm />
-            </TabsContent>
-            <TabsContent value="queue">
-              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
-                <ApprovalQueueTab />
-              </div>
-            </TabsContent>
+            <TabsContent value="create"><BudgetLinkedGrnForm /></TabsContent>
+            <TabsContent value="queue"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardContent className="p-5"><ApprovalQueueTab /></CardContent></Card></TabsContent>
           </Tabs>
         </div>
       </div>

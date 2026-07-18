@@ -110,7 +110,14 @@ jobs:
         run: npm --prefix backend run typecheck
 
       - name: Finance calculation and schema-contract tests
-        run: npm --prefix backend exec vitest run src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts src/modules/finance/__tests__/finance.schema-contract.test.ts
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
+          src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
+          src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
+          src/modules/finance/__tests__/finance.schema-contract.test.ts
+          src/modules/finance/__tests__/budget-coverage.contract.test.ts
+          src/modules/finance/__tests__/grn-validation-override.contract.test.ts
 
       - name: Build frontend
         run: npm run build
@@ -159,7 +166,7 @@ jobs:
               '',
               `- Result: **${result}**`,
               `- Commit: \`${context.sha.slice(0, 12)}\``,
-              `- Checks: frontend typecheck, backend typecheck, finance calculation tests, schema/API contract tests, frontend build, backend build`,
+              `- Checks: frontend typecheck, backend typecheck, branch-budget/BPO P&L calculations, finance smart-GRN/coverage/override contracts, frontend build, backend build`,
               `- Workflow: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
             ].join('\n');
 

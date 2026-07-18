@@ -10,6 +10,7 @@ import {
   resolveFinanceBranchScope,
 } from "../finance/finance-access-scope.js";
 import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
+import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { branchBudgetService } from "./branch-budget.service.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
@@ -196,6 +197,7 @@ router.post(
 );
 
 router.use(requireRole(...PNL_READ_ROLES));
+router.use("/pnl/bpo", bpoPnlRouter);
 
 function readFilters(req: AuthenticatedRequest) {
   return {

@@ -8,6 +8,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
   assertFinanceRecordBranch,
@@ -15,6 +16,7 @@ import {
 } from "./finance-access-scope.js";
 import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
+import { smartGrnRouter } from "./grn-smart.routes.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import type { RoleKey } from "../../platform/policy/index.js";
 
@@ -120,6 +122,22 @@ function grNRouterUseAuth(router: Router) {
   router.use(requireAuth);
 }
 
+// Budget save/coverage/submit controls are mounted before the Process P&L router,
+// preserving the existing public paths while enforcing 100% Head/Sub-head review.
+grNRouterBudgetCoverageRoutes(grnRouter);
+
+function grNRouterBudgetCoverageRoutes(router: Router) {
+  router.use(budgetCoverageRouter);
+}
+
+// Allocation-aware smart GRNs are handled first. Legacy GRNs fall through to the
+// existing handlers below, preserving all historical records and API contracts.
+grNRouterSmartRoutes(grnRouter);
+
+function grNRouterSmartRoutes(router: Router) {
+  router.use("/grns", smartGrnRouter);
+}
+
 // Configurable Head/Sub-Head master used by branch budget, GRN and P&L.
 grNExpenseMasterRoutes(grnRouter);
 
@@ -137,10 +155,7 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load expense master",
+          error: error instanceof Error ? error.message : "Unable to load expense master",
         });
       }
     }
@@ -160,10 +175,7 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to save expense head",
+          error: error instanceof Error ? error.message : "Unable to save expense head",
         });
       }
     }
@@ -183,10 +195,7 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to save expense sub-head",
+          error: error instanceof Error ? error.message : "Unable to save expense sub-head",
         });
       }
     }

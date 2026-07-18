@@ -1,5 +1,6 @@
 import { app } from "./app.js";
 import { env } from "./config/env.js";
+import { runFinanceSchemaHardeningMigrations } from "./db/runFinanceSchemaHardeningMigrations.js";
 import { runFinanceSupplementalMigrations } from "./db/runFinanceSupplementalMigrations.js";
 import { runPendingMigrations } from "./db/runPendingMigrations.js";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
@@ -22,9 +23,6 @@ import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recal
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 
-// Single-instance guard: if server.ts is the sole entry point, run all workers here.
-// If all-workers.ts is also running (separate process), set WORKERS_PROCESS=external
-// to prevent double-scheduling.
 const WORKERS_EXTERNAL = process.env.WORKERS_PROCESS === "external";
 
 function startServer() {
@@ -121,6 +119,7 @@ async function initializeRuntime() {
 
 runPendingMigrations()
   .then(runFinanceSupplementalMigrations)
+  .then(runFinanceSchemaHardeningMigrations)
   .then(initializeRuntime)
   .catch(async (error) => {
     console.error(

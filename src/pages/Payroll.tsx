@@ -1392,6 +1392,7 @@ function LifecyclePipelineCard() {
   );
 }
 
+
 // ── TDS Mode Panel (draft / calculating runs only) ───────────────────────────
 
 function TdsModePanel() {
@@ -1571,7 +1572,6 @@ function SignoffTab() {
       toast({ title: "Failed", description: e?.message, variant: "destructive" }),
   });
 
-
   const fmt = (n: number) =>
     `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
   const fmtDate = (d: string | null) =>
@@ -1582,7 +1582,6 @@ function SignoffTab() {
   return (
     <div className="space-y-4">
       <TdsModePanel />
-
 
       <div className="flex items-center gap-3">
         <Label className="whitespace-nowrap text-sm font-medium">Payroll Run</Label>

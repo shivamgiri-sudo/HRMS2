@@ -1,0 +1,76 @@
+name: Finance Smart Controls
+
+on:
+  push:
+    branches:
+      - "feat/finance-budget-grn-vendor-flow"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/pages/finance/**"
+      - "src/components/finance/**"
+      - "src/hooks/useBranchBudget.ts"
+      - "src/hooks/useBudgetCoverage.ts"
+      - "backend/src/modules/finance/**"
+      - "backend/src/modules/process-pnl/**"
+      - "backend/src/db/runFinance**"
+      - "backend/sql/41*.sql"
+      - "backend/sql/420*.sql"
+      - ".github/workflows/finance-smart-controls.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-smart-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Frontend typecheck
+        run: npm run typecheck
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Finance calculations and contracts
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
+          src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
+          src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
+          src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts
+          src/modules/finance/__tests__/finance.schema-contract.test.ts
+          src/modules/finance/__tests__/budget-coverage.contract.test.ts
+          src/modules/finance/__tests__/grn-validation-override.contract.test.ts
+          src/modules/finance/__tests__/grn-validation-schema-hardening.contract.test.ts
+
+      - name: Frontend build
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
+
+      - name: Backend build
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
