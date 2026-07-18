@@ -326,9 +326,8 @@ export async function getDomainHistory(domainKey: string): Promise<HistoryEntry[
   const [rows] = await db.execute<HistoryRow[]>(
     `SELECT h.id, h.domain_key, h.section_key, h.config_key,
             h.old_value, h.new_value, h.reason, h.changed_by, h.changed_at,
-            COALESCE(u.full_name, u.username, h.changed_by) AS actor_name
+            h.changed_by AS actor_name
      FROM business_policy_config_history h
-     LEFT JOIN auth_user u ON u.id = h.changed_by
      WHERE h.domain_key = ?
      ORDER BY h.changed_at DESC
      LIMIT 30`,

@@ -42,7 +42,7 @@ policyEngineRouter.put("/domains/:domainKey", async (req, res) => {
   const body = updatePayloadSchema.safeParse(req.body);
   if (!body.success) return res.status(400).json({ success: false, errors: body.error.flatten() });
 
-  const actorId = (req as any).user?.id ?? "unknown";
+  const actorId = (req as any).authUser?.id ?? "unknown";
   await updateDomain(parse.data, body.data.updates, body.data.reason, actorId, req);
 
   res.json({ success: true, message: "Policy updated" });
