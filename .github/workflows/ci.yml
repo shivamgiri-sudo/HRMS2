@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "feat/**"
   pull_request:
     branches: [main]
 
@@ -64,6 +66,7 @@ jobs:
       - name: Build application
         run: bun run build
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
 
@@ -102,11 +105,17 @@ jobs:
       - name: Backend typecheck
         run: npm --prefix backend run typecheck
 
-      - name: Budget tax calculation tests
-        run: npm --prefix backend exec vitest run src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
+      - name: Finance calculation and schema-contract tests
+        run: npm --prefix backend exec vitest run src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts src/modules/process-pnl/__tests__/finance-schema-contract.test.ts
 
-      - name: Build frontend and backend
-        run: npm run build:all
+      - name: Build frontend
+        run: npm run build
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
+
+      - name: Build backend
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
