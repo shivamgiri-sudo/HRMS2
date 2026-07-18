@@ -46,6 +46,23 @@ const STATUS_FILTER: FilterDef = {
     { value: "rejected", label: "Rejected" },
   ],
 };
+const IDENTITY_SOURCE_FILTER: FilterDef = {
+  key: "sourceSystem", label: "Source System", type: "select",
+  options: [
+    { value: "MASBIOMETRIC_EMPLOYEE", label: "Masbiometric Employees" },
+    { value: "SHIVAMGIRI_EMPLOYEE", label: "Mydashboard Employees" },
+    { value: "SHIVAMGIRI_AGENT", label: "Mydashboard Agents" },
+    { value: "MASMIS_AGENT", label: "MIS Agents" },
+  ],
+};
+const IDENTITY_MATCH_FILTER: FilterDef = {
+  key: "matchStatus", label: "Match Status", type: "select",
+  options: [
+    { value: "unmatched", label: "Unmatched" },
+    { value: "matched", label: "Matched" },
+    { value: "ambiguous", label: "Ambiguous" },
+  ],
+};
 
 const CATALOG: ReportDef[] = [
   // ── CAT 1: HR & WORKFORCE ──────────────────────────────────────────────────
@@ -177,6 +194,7 @@ const CATALOG: ReportDef[] = [
   // ── CAT 11: INTEGRATION & AUDIT ────────────────────────────────────────────
   { code: "cosec-unmapped", name: "COSEC Unmapped Users", category: "Integration & Audit", subcategory: "Integration", filters: [BRANCH_FILTER] },
   { code: "identity-mapping-exceptions", name: "Cross-System Identity Mapping Exceptions", category: "Integration & Audit", subcategory: "Integration", filters: [BRANCH_FILTER, PROCESS_FILTER, DEPT_FILTER] },
+  { code: "identity-source-snapshot", name: "Identity Source Snapshot", category: "Integration & Audit", subcategory: "Integration", filters: [IDENTITY_SOURCE_FILTER, IDENTITY_MATCH_FILTER] },
   { code: "integration-run-history", name: "Integration Run History", category: "Integration & Audit", subcategory: "Integration", filters: [{ key: "integrationKey", label: "Integration Key", type: "text" }, DATE_FROM, DATE_TO, STATUS_FILTER] },
   { code: "tat-escalation-breach", name: "TAT / Escalation Breach Report", category: "Integration & Audit", subcategory: "Audit", filters: [DATE_FROM, DATE_TO, { key: "taskType", label: "Task Type", type: "text" }, BRANCH_FILTER] },
   { code: "sensitive-action-audit", name: "Sensitive Action Audit", category: "Integration & Audit", subcategory: "Audit", filters: [DATE_FROM, DATE_TO, { key: "module", label: "Module", type: "text" }, { key: "actionType", label: "Action Type", type: "text" }] },

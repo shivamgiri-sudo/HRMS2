@@ -281,6 +281,7 @@ const MIGRATION_MANIFEST: string[] = [
   "450_policy_engine_config.sql",
   "451_company_feed_foundation.sql",
   "460_ats_performance_indexes.sql",
+  "507_identity_source_snapshot.sql",
   ];
 
 export type MigrationHealth = {

@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { buildIdentityMappingExceptionsSql } from "./identity-mapping-report.js";
+import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } from "./identity-source-snapshot.js";
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -28,6 +29,7 @@ const CATALOG = [
   { code: "increment-requests", module: "Payroll", title: "Salary Increment Request Report" },
   { code: "cosec-unmapped", module: "Integration", title: "Unmapped COSEC Users Report" },
   { code: "identity-mapping-exceptions", module: "Integration", title: "Cross-System Identity Mapping Exceptions" },
+  { code: "identity-source-snapshot", module: "Integration", title: "Identity Source Snapshot" },
 ];
 
 function dateParam(value: unknown, fallback: string) {
@@ -79,6 +81,11 @@ function fallbackReport(code: string) {
 }
 
 reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: CATALOG })));
+
+reportSuiteRouter.post("/identity-source-snapshot/sync", requireRole("admin", "super_admin"), h(async (_req, res) => {
+  const result = await runIdentitySourceSnapshotSync();
+  return res.json({ success: true, data: result });
+}));
 
 reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll", "wfm", "manager", "ceo"), h(async (req, res) => {
   const code = String(req.params.code);
@@ -2671,6 +2678,13 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
 
     case "identity-mapping-exceptions": {
       const report = buildIdentityMappingExceptionsSql(req.query);
+      sql = report.sql;
+      params.push(...report.params);
+      break;
+    }
+
+    case "identity-source-snapshot": {
+      const report = buildIdentitySourceSnapshotReportSql(req.query);
       sql = report.sql;
       params.push(...report.params);
       break;
