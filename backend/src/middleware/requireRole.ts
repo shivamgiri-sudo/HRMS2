@@ -3,8 +3,9 @@ import type { NextFunction, Response } from "express";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
 import { expandRoles } from "../platform/policy/index.js";
+import type { RoleKey } from "../platform/policy/index.js";
 
-export function requireRole(...allowedRoles: string[]) {
+export function requireRole(...allowedRoles: RoleKey[]) {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
       if (!req.authUser?.id) {
@@ -15,17 +16,17 @@ export function requireRole(...allowedRoles: string[]) {
       // instead of querying the DB. This allows mock-token-{role} to correctly
       // exercise role-based access control in tests / demo mode.
       if (req.authUser.isDemo && process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production") {
-        const demoRole = req.authUser.role || 'employee';
-        const userRoles = [demoRole];
+        const demoRole = (req.authUser.role || "employee") as RoleKey;
+        const userRoles: RoleKey[] = [demoRole];
         // Super_admin bypass still applies for the dedicated super-admin token
-        if (userRoles.includes('super_admin')) {
-          (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+        if (userRoles.includes("super_admin")) {
+          (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;
           return next();
         }
         const expandedUserRoles = expandRoles(userRoles);
         const expandedAllowed   = expandRoles(allowedRoles);
         if (expandedAllowed.some((role) => expandedUserRoles.includes(role))) {
-          (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+          (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;
           return next();
         }
         return res.status(403).json({ success: false, message: "Access denied. Required: " + allowedRoles.join(" or ") });
@@ -38,9 +39,9 @@ export function requireRole(...allowedRoles: string[]) {
         [req.authUser.id]
       );
 
-      const userRoles = (rows as { role_key: string }[]).map((r) => r.role_key);
+      const userRoles = (rows as { role_key: string }[]).map((r) => r.role_key as RoleKey);
       if (userRoles.includes("super_admin")) {
-        (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+        (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;
         return next();
       }
 
@@ -54,7 +55,7 @@ export function requireRole(...allowedRoles: string[]) {
         return res.status(403).json({ success: false, message: "Access denied. Required: " + allowedRoles.join(" or ") });
       }
 
-      (req as AuthenticatedRequest & { userRoles: string[] }).userRoles = userRoles;
+      (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;
       return next();
     } catch (err) {
       return next(err);
