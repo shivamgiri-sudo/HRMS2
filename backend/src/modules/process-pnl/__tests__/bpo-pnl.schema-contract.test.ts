@@ -61,12 +61,13 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(migration).toContain("DATE_FORMAT(COALESCE");
   });
 
-  it("keeps split-GRN P&L attribution at allocation level", () => {
+  it("keeps split-GRN P&L attribution at allocation level without trigger privileges", () => {
     const migration = backendFile("sql/418_grn_allocation_pnl_attribution.sql");
     expect(migration).toContain("ALTER TABLE grn_cost_allocation ADD COLUMN pnl_bucket");
     expect(migration).toContain("ALTER TABLE grn_cost_allocation ADD COLUMN recognition_period");
-    expect(migration).toContain("trg_grn_allocation_pnl_before_insert");
+    expect(migration).not.toContain("CREATE TRIGGER");
     expect(migration).toContain("finance_expense_sub_head_master");
+    expect(migration).toContain("COALESCE(\n    a.pnl_bucket,\n    sh.pnl_bucket");
     expect(migration).toContain("CREATE OR REPLACE VIEW vw_process_pnl_grn_allocation");
     expect(migration).toContain("a.lifecycle_status = 'consumed'");
     expect(migration).toContain("dsc_non_people");
