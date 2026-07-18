@@ -41,7 +41,7 @@ function pdDates(q: Record<string, unknown>): { from: string; to: string } {
 const PERF_ROLES = ['admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'wfm'] as const
 
 // Roles that see ALL agents (org-wide) — others get scope-filtered to their branch/process
-const WIDE_SCOPE_ROLES = new Set(['super_admin', 'admin', 'ceo', 'management', 'ho_operations', 'ho_wfm'])
+const WIDE_SCOPE_ROLES = new Set(['super_admin', 'admin', 'ceo', 'coo', 'operations_manager', 'wfm'])
 
 /**
  * Returns allowed employee_codes for the calling user.
@@ -174,7 +174,7 @@ performanceDashboardRouter.get('/ratings', requireRole('admin', 'hr', 'super_adm
  * GET /api/performance-dashboard/summary
  * Get summary statistics for performance dashboard
  */
-performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'analyst'),
+performanceDashboardRouter.get('/summary', requireRole('admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'quality_analyst'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     try {
       const [summary] = await db.execute<RowDataPacket[]>(

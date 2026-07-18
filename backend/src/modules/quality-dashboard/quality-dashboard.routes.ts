@@ -23,11 +23,11 @@ router.use(requireAuth);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-const ALLOWED_ROLES = ["admin", "hr", "super_admin", "ceo", "qa", "analyst", "manager", "process_manager", "branch_head"] as const;
+const ALLOWED_ROLES = ["admin", "hr", "super_admin", "ceo", "qa", "quality_analyst", "manager", "process_manager", "branch_head"] as const;
 
 /**
  * Resolve caller's data scope:
- * - admin/hr/ceo/qa/analyst → full access (no filter)
+ * - admin/hr/ceo/qa/quality_analyst → full access (no filter)
  * - process_manager/manager → scoped to their assigned process campaign_ids
  * - branch_head → scoped to their branch's agent emp_codes
  * Returns extra SQL conditions to AND into queries, or null for global access.
@@ -41,7 +41,7 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
   const userId = req.authUser!.id;
 
   // Global roles see everything
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa", "analyst")) {
+  if (await hasRole(userId, "admin", "hr", "ceo", "qa", "quality_analyst")) {
     return { global: true, campaignIds: null, agentCodes: null };
   }
 

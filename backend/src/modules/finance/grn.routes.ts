@@ -7,7 +7,7 @@ import { grnService } from "./grn.service.js";
 import type { RoleKey } from "../../platform/policy/index.js";
 
 const GRN_WRITE_ROLES: RoleKey[] = ["accounts_head", "finance_head", "super_admin", "admin", "branch_head", "branch_admin"];
-const GRN_READ_ROLES: RoleKey[]  = [...GRN_WRITE_ROLES, "finance", "hr_admin"];
+const GRN_READ_ROLES: RoleKey[]  = [...GRN_WRITE_ROLES, "finance", "hr"];
 const GRN_REVIEW_ROLES: RoleKey[] = ["accounts_head", "finance_head", "super_admin"];
 
 const UPLOAD_DIR = "uploads/grn-attachments";

@@ -18,8 +18,8 @@ biRouter.use(requireAuth);
 const h = (fn: (req: any, res: Response) => Promise<any>) => (req: any, res: Response, next: any) =>
   fn(req, res).catch(next);
 
-const OPS_ROLES = ['super_admin', 'admin', 'ceo', 'management', 'manager', 'process_manager', 'branch_head', 'operations_manager', 'ho_operations', 'ho_wfm', 'wfm', 'wfm_spoc'] as const;
-const FINANCE_ROLES = ['super_admin', 'admin', 'ceo', 'payroll_head', 'finance_head', 'ho_payroll'] as const;
+const OPS_ROLES = ['super_admin', 'admin', 'ceo', 'coo', 'manager', 'process_manager', 'branch_head', 'operations_manager', 'wfm'] as const;
+const FINANCE_ROLES = ['super_admin', 'admin', 'ceo', 'payroll_head', 'finance_head'] as const;
 
 // GET /api/bi/daily-operations-pulse
 biRouter.get('/daily-operations-pulse', requireRole(...OPS_ROLES),
@@ -30,7 +30,7 @@ biRouter.get('/daily-operations-pulse', requireRole(...OPS_ROLES),
   }));
 
 // GET /api/bi/attrition-risk-signal
-biRouter.get('/attrition-risk-signal', requireRole(...OPS_ROLES, 'hr', 'branch_hr'),
+biRouter.get('/attrition-risk-signal', requireRole(...OPS_ROLES, 'hr'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
@@ -55,14 +55,14 @@ biRouter.get('/training-readiness-pulse', requireRole(...OPS_ROLES, 'hr', 'train
   }));
 
 // GET /api/bi/revenue-at-risk
-biRouter.get('/revenue-at-risk', requireRole('super_admin', 'admin', 'ceo', 'management', 'manager', 'process_manager', 'finance_head', 'ho_operations'),
+biRouter.get('/revenue-at-risk', requireRole('super_admin', 'admin', 'ceo', 'coo', 'manager', 'process_manager', 'branch_head', 'operations_manager', 'finance_head'),
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const data = await getRevenueAtRisk();
     return res.json({ success: true, data });
   }));
 
 // GET /api/bi/quality-intervention
-biRouter.get('/quality-intervention', requireRole(...OPS_ROLES, 'qa', 'qa_manager', 'quality_analyst'),
+biRouter.get('/quality-intervention', requireRole(...OPS_ROLES, 'qa', 'quality_analyst'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;

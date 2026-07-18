@@ -309,7 +309,7 @@ rtaRouter.get("/live-stream", (req, res) => {
 // GET /api/rta/final-roster-state?processId=&date=
 // Returns per-employee RTA state from wfm_roster_assignment.
 // Only returns records with final_roster_status suitable for live tracking.
-rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations"), h(async (req: any, res: any) => {
+rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, date } = req.query;
   if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
 

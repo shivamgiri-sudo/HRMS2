@@ -18,7 +18,7 @@ import {
 export const joiningControlRoomRouter = Router();
 
 import type { RoleKey } from "../../platform/policy/index.js";
-const roles: RoleKey[] = ["super_admin", "admin", "hr", "payroll_hr", "branch_head", "finance", "operations", "it_admin"];
+const roles: RoleKey[] = ["super_admin", "admin", "hr", "payroll_hr", "branch_head", "finance", "operations_manager", "it"];
 joiningControlRoomRouter.use(requireRole(...roles));
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (
