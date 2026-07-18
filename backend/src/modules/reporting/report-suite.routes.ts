@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { buildIdentityMappingExceptionsSql } from "./identity-mapping-report.js";
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -26,6 +27,7 @@ const CATALOG = [
   { code: "bank-missing", module: "Payroll", title: "Missing/Unverified Bank Details Report" },
   { code: "increment-requests", module: "Payroll", title: "Salary Increment Request Report" },
   { code: "cosec-unmapped", module: "Integration", title: "Unmapped COSEC Users Report" },
+  { code: "identity-mapping-exceptions", module: "Integration", title: "Cross-System Identity Mapping Exceptions" },
 ];
 
 function dateParam(value: unknown, fallback: string) {
@@ -2664,6 +2666,13 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
               WHERE ${clauses.join(" AND ")}
               GROUP BY adr.record_date, p.process_name, b.branch_name
               ORDER BY adr.record_date DESC, shrinkage_pct DESC`;
+      break;
+    }
+
+    case "identity-mapping-exceptions": {
+      const report = buildIdentityMappingExceptionsSql(req.query);
+      sql = report.sql;
+      params.push(...report.params);
       break;
     }
 

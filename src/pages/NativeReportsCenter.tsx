@@ -176,6 +176,7 @@ const CATALOG: ReportDef[] = [
 
   // ── CAT 11: INTEGRATION & AUDIT ────────────────────────────────────────────
   { code: "cosec-unmapped", name: "COSEC Unmapped Users", category: "Integration & Audit", subcategory: "Integration", filters: [BRANCH_FILTER] },
+  { code: "identity-mapping-exceptions", name: "Cross-System Identity Mapping Exceptions", category: "Integration & Audit", subcategory: "Integration", filters: [BRANCH_FILTER, PROCESS_FILTER, DEPT_FILTER] },
   { code: "integration-run-history", name: "Integration Run History", category: "Integration & Audit", subcategory: "Integration", filters: [{ key: "integrationKey", label: "Integration Key", type: "text" }, DATE_FROM, DATE_TO, STATUS_FILTER] },
   { code: "tat-escalation-breach", name: "TAT / Escalation Breach Report", category: "Integration & Audit", subcategory: "Audit", filters: [DATE_FROM, DATE_TO, { key: "taskType", label: "Task Type", type: "text" }, BRANCH_FILTER] },
   { code: "sensitive-action-audit", name: "Sensitive Action Audit", category: "Integration & Audit", subcategory: "Audit", filters: [DATE_FROM, DATE_TO, { key: "module", label: "Module", type: "text" }, { key: "actionType", label: "Action Type", type: "text" }] },
