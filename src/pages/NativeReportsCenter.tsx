@@ -312,7 +312,7 @@ export default function NativeReportsCenter() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState("");
   const [searchQ, setSearchQ] = useState("");
-  const [expandedCat, setExpandedCat] = useState<string | null>(null);
+  const [selectedCat, setSelectedCat] = useState<string | null>(null);
   const [recentCodes, setRecentCodes] = useState<string[]>(() => loadList(LS_RECENT));
   const [favCodes, setFavCodes] = useState<Set<string>>(() => new Set(loadList(LS_FAVS)));
   const [filtersOpen, setFiltersOpen] = useState(true);
@@ -398,7 +398,7 @@ export default function NativeReportsCenter() {
   }
 
   const toggleCategory = useCallback((cat: string) => {
-    setExpandedCat(prev => prev === cat ? null : cat);
+    setSelectedCat(prev => prev === cat ? null : cat);
   }, []);
 
   async function runReport() {
@@ -562,7 +562,7 @@ export default function NativeReportsCenter() {
               const grad = CATEGORY_GRADIENTS[cat];
               const Icon = grad?.icon ?? BarChart3;
               const count = grouped[cat].length;
-              const isExpanded = expandedCat === cat;
+              const isExpanded = selectedCat === cat;
 
               return (
                 <div key={cat} className={`${isExpanded ? "sm:col-span-2 lg:col-span-3 xl:col-span-4" : ""}`}>
