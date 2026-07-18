@@ -73,6 +73,21 @@ describe("finance database and API contract", () => {
     expect(runner).toContain('"413_vendor_payment_transaction_ledger.sql"');
   });
 
+  it("allocates GRN numbers atomically by branch and financial year", () => {
+    const sql414 = read("sql/414_finance_grn_sequence.sql");
+    const allocator = read("src/modules/finance/grn-number.service.ts");
+    const grnService = read("src/modules/finance/grn.service.ts");
+    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    expect(sql414).toContain("CREATE TABLE IF NOT EXISTS finance_grn_sequence");
+    expect(sql414).toContain("PRIMARY KEY (branch_id, financial_year)");
+    expect(sql414).toContain("uq_grn_number");
+    expect(allocator).toContain("FOR UPDATE");
+    expect(allocator).toContain("next_sequence = next_sequence + 1");
+    expect(grnService).toContain("allocateGrnNumber");
+    expect(grnService).not.toContain("SELECT COUNT(*) AS cnt");
+    expect(runner).toContain('"414_finance_grn_sequence.sql"');
+  });
+
   it("requires current authentication and branch scoping on finance routes", () => {
     const grnRoutes = read("src/modules/finance/grn.routes.ts");
     const paymentRoutes = read("src/modules/finance/vendor-payment.routes.ts");
