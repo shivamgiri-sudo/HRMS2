@@ -14,9 +14,9 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
 
 const authLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100, // 100 attempts per minute per IP (dev-friendly)
-  message: { success: false, message: "Too many attempts, please try again later" },
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,                   // 10 attempts per IP per window
+  message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -115,12 +115,14 @@ function validateTemporaryPassword(password: string): string | null {
   return null;
 }
 
-async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId: string): Promise<boolean> {
+async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId: string, maxDepth = 25): Promise<boolean> {
   let currentEmployeeId: string | null = targetEmployeeId;
   const visited = new Set<string>();
+  let depth = 0;
 
-  while (currentEmployeeId && !visited.has(currentEmployeeId)) {
+  while (currentEmployeeId && !visited.has(currentEmployeeId) && depth < maxDepth) {
     visited.add(currentEmployeeId);
+    depth++;
     const result: [ReportingRow[], unknown] = await db.execute<ReportingRow[]>(
       `SELECT reporting_manager_id
          FROM employees
@@ -342,7 +344,7 @@ router.post("/reset-password", h(async (req, res) => {
   }
 }));
 
-router.post("/change-password", requireAuth, h(async (req, res) => {
+router.post("/change-password", requireAuth, authLimiter, h(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: "currentPassword and newPassword are required" });

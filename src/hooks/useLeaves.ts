@@ -96,26 +96,25 @@ export function useLeaveRequests() {
       const rows = await fetchAllLeaveRows();
       return rows.map(mapRawToLeaveRequest);
     },
-    staleTime: 30_000,       // fresh for 30s — mutations invalidate immediately
-    gcTime: 2 * 60_000,      // keep in background cache for 2 min
-    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+    gcTime: 2 * 60_000,
   });
 }
 
 export function useLeaveStats() {
   return useQuery({
-    queryKey: ["leave-stats"],
+    queryKey: ["leave-requests"],
     queryFn: async () => {
-      const data = await fetchAllLeaveRows();
-      return {
-        pending: data.filter((r) => String(r.status ?? "").startsWith("pending")).length,
-        approved: data.filter((r) => r.status === "approved").length,
-        rejected: data.filter((r) => r.status === "rejected").length,
-      };
+      const rows = await fetchAllLeaveRows();
+      return rows.map(mapRawToLeaveRequest);
     },
     staleTime: 30_000,
     gcTime: 2 * 60_000,
-    refetchOnWindowFocus: true,
+    select: (data) => ({
+      pending: data.filter((r) => String(r.status ?? "").startsWith("pending")).length,
+      approved: data.filter((r) => r.status === "approved").length,
+      rejected: data.filter((r) => r.status === "rejected").length,
+    }),
   });
 }
 

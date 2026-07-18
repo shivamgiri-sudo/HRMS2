@@ -1,8 +1,18 @@
 import { randomUUID } from "crypto";
+import nodemailer from "nodemailer";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { env } from "../../config/env.js";
+import { logger } from "../../lib/logger.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
+
+// Singleton transporter — created once at module load, not per-call
+const mailer = nodemailer.createTransport({
+  host: env.SMTP_HOST,
+  port: env.SMTP_PORT,
+  auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined,
+});
 
 async function notifyManagerOfResignation(employeeId: string, exitRequestId: string) {
   try {
@@ -17,15 +27,8 @@ async function notifyManagerOfResignation(employeeId: string, exitRequestId: str
     const emp = (rows as RowDataPacket[])[0];
     if (!emp?.mgr_email) return; // no manager email — skip silently
 
-    const nodemailer = await import('nodemailer');
-    const transporter = nodemailer.default.createTransport({
-      host: process.env.SMTP_HOST ?? 'smtp.gmail.com',
-      port: Number(process.env.SMTP_PORT ?? 587),
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
-
-    await transporter.sendMail({
-      from: `"MAS HRMS" <${process.env.SMTP_USER ?? 'noreply@teammas.in'}>`,
+    await mailer.sendMail({
+      from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM}>`,
       to: emp.mgr_email,
       subject: `Resignation Notice — ${emp.first_name} ${emp.last_name}`,
       html: `<p>Dear ${emp.mgr_first ?? 'Manager'},</p>
@@ -34,7 +37,7 @@ async function notifyManagerOfResignation(employeeId: string, exitRequestId: str
              <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
     });
   } catch (err) {
-    console.error('[exit] manager notification email failed:', err instanceof Error ? err.message : err);
+    logger.error({ err }, '[exit] manager notification email failed');
   }
 }
 
@@ -191,13 +194,13 @@ export const exitService = {
     );
 
     await createExitHealthSnapshot(id).catch((err: unknown) => {
-      console.error('[exit] Health snapshot creation failed for exit request', id, ':', err instanceof Error ? err.message : String(err));
+      logger.error({ err, exitRequestId: id }, '[exit] Health snapshot creation failed');
       return null;
     });
 
     // Fire-and-forget: notify manager of resignation
     notifyManagerOfResignation(input.employeeId, id).catch((err: unknown) => {
-      console.error('[exit] Manager notification failed for exit request', id, ':', err instanceof Error ? err.message : String(err));
+      logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
       return null;
     });
 
@@ -236,7 +239,7 @@ export const exitService = {
 
     if (["accepted", "notice_serving"].includes(nextStatus)) {
       await createDefaultClearanceTasks(id, (existing as any).employee_id).catch((err: unknown) => {
-        console.error('[exit] Clearance task creation failed for exit request', id, ':', err instanceof Error ? err.message : String(err));
+        logger.error({ err, exitRequestId: id }, '[exit] Clearance task creation failed');
         return null;
       });
     }
@@ -246,7 +249,7 @@ export const exitService = {
         `UPDATE employees SET employment_status = 'inactive', updated_at = NOW() WHERE id = ?`,
         [(existing as any).employee_id]
       ).catch((err: unknown) => {
-        console.error('[exit] Employee status update failed for exit request', id, ':', err instanceof Error ? err.message : String(err));
+        logger.error({ err, exitRequestId: id }, '[exit] Employee status update failed');
         return null;
       });
 
@@ -259,7 +262,7 @@ export const exitService = {
             advances_recovery, net_payable, status, is_ff_provisional, prepared_by)
          VALUES (UUID(), ?, ?, CURDATE(), 0, 0, 0, 0, 0, 0, 0, 0, 'draft', 1, ?)`,
         [id, (existing as any).employee_id, userId]
-      ).catch((err: unknown) => console.warn('[exit] F&F record creation failed:', err instanceof Error ? err.message : err));
+      ).catch((err: unknown) => logger.warn({ err }, '[exit] F&F record creation failed'));
 
       // Fire IT exit provisioning tasks — fire-and-forget, must not throw
       const exitRec = existing as any;
@@ -272,8 +275,8 @@ export const exitService = {
           lastWorkingDay: exitRec.last_working_day_proposed ?? null,
           exitRequestId:  id,
           actorUserId:    userId,
-        }).catch((err: unknown) => console.error('[it-provisioning] exit dispatch failed:', err));
-      }).catch((err: unknown) => console.error('[it-provisioning] module load failed:', err));
+        }).catch((err: unknown) => logger.error({ err }, '[it-provisioning] exit dispatch failed'));
+      }).catch((err: unknown) => logger.error({ err }, '[it-provisioning] module load failed'));
     }
 
     return this.getExitRequest(id);

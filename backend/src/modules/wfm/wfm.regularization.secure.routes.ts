@@ -512,6 +512,174 @@ wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async
   });
 }));
 
+// ── Date-range attendance scan (for batch mode) ───────────────────────────
+wfmRegularizationSecureRouter.get("/regularizations/date-range-preview", h(async (req: any, res: any) => {
+  const fromDate = String(req.query.fromDate ?? "").trim();
+  const toDate   = String(req.query.toDate ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return res.status(400).json({ success: false, message: "fromDate and toDate must be YYYY-MM-DD" });
+  }
+  if (fromDate > toDate) {
+    return res.status(400).json({ success: false, message: "fromDate must be <= toDate" });
+  }
+  // Guard: max 31 days in a single scan
+  const diffDays = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000);
+  if (diffDays > 30) {
+    return res.status(400).json({ success: false, message: "Range cannot exceed 31 days" });
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (toDate > today) {
+    return res.status(400).json({ success: false, message: "toDate cannot be a future date" });
+  }
+
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.query.employeeId ?? callerEmp?.id ?? "").trim();
+  if (!requestedEmployeeId) return res.status(403).json({ success: false, message: "No employee record" });
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+
+  // Fetch all ADR rows for the range in one query
+  const [adrRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
+            attendance_status,
+            clock_in_time,
+            clock_out_time,
+            lwp_value
+       FROM attendance_daily_record
+      WHERE employee_id = ?
+        AND record_date BETWEEN ? AND ?
+      ORDER BY record_date ASC`,
+    [requestedEmployeeId, fromDate, toDate]
+  );
+
+  // Fetch existing pending/approved regularizations in this range to avoid duplicates
+  const [existingRegs] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(session_date, '%Y-%m-%d') AS session_date, status
+       FROM attendance_regularization
+      WHERE employee_id = ?
+        AND session_date BETWEEN ? AND ?
+        AND status NOT IN ('rejected', 'cancelled')`,
+    [requestedEmployeeId, fromDate, toDate]
+  );
+  const alreadyRequested = new Set((existingRegs as RowDataPacket[]).map((r: any) => r.session_date));
+
+  // Build a map keyed by date
+  const adrMap = new Map<string, any>();
+  for (const r of adrRows as any[]) {
+    adrMap.set(r.record_date, r);
+  }
+
+  // Enumerate every calendar date in the range
+  const days: {
+    date: string;
+    currentStatus: string;
+    loginTime: string | null;
+    logoutTime: string | null;
+    lwpValue: number;
+    hasRecord: boolean;
+    alreadyRequested: boolean;
+    selectable: boolean;
+  }[] = [];
+
+  const cur = new Date(fromDate + "T00:00:00Z");
+  const end = new Date(toDate + "T00:00:00Z");
+  while (cur <= end) {
+    const d = cur.toISOString().slice(0, 10);
+    const adr = adrMap.get(d);
+    const status = adr ? normalizePreviewStatus(adr.attendance_status, adr.clock_in_time ? 1 : 0) : "No Record";
+    days.push({
+      date: d,
+      currentStatus: status,
+      loginTime: adr?.clock_in_time ? formatPreviewTime(adr.clock_in_time) : null,
+      logoutTime: adr?.clock_out_time ? formatPreviewTime(adr.clock_out_time) : null,
+      lwpValue: Number(adr?.lwp_value ?? 0),
+      hasRecord: !!adr,
+      alreadyRequested: alreadyRequested.has(d),
+      // Selectable = has a record that can be corrected and no pending request exists
+      selectable: !!adr && !alreadyRequested.has(d),
+    });
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  return res.json({ success: true, data: { employeeId: requestedEmployeeId, fromDate, toDate, days } });
+}));
+
+// ── Batch regularization submit ───────────────────────────────────────────
+wfmRegularizationSecureRouter.post("/regularizations/batch", h(async (req: any, res: any) => {
+  const sessionDates: string[] = Array.isArray(req.body.sessionDates)
+    ? req.body.sessionDates.map(String).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    : [];
+  if (!sessionDates.length) {
+    return res.status(400).json({ success: false, message: "sessionDates array is required" });
+  }
+  if (sessionDates.length > 31) {
+    return res.status(400).json({ success: false, message: "Cannot batch submit more than 31 dates at once" });
+  }
+
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const requestedEmployeeId = String(req.body.employeeId ?? callerEmp?.id ?? "");
+  if (!requestedEmployeeId) return res.status(403).json({ success: false, message: "No employee record" });
+  if (!(await canAccessEmployee(req.authUser.id, requestedEmployeeId, true))) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "branch_head", "process_manager", "ceo");
+  const requestedByType = isPrivileged && callerEmp?.id !== requestedEmployeeId ? "manager" : "employee";
+
+  const commonFields = {
+    requestedStatus: req.body.requestedStatus ?? null,
+    disputeType:     req.body.disputeType ?? null,
+    reason:          String(req.body.reason ?? "Batch attendance correction").trim() || "Batch attendance correction",
+    supportingNote:  req.body.supportingNote ?? null,
+    oldPunchIn:      req.body.oldPunchIn ?? null,
+    oldPunchOut:     req.body.oldPunchOut ?? null,
+    newPunchIn:      req.body.newPunchIn ?? null,
+    newPunchOut:     req.body.newPunchOut ?? null,
+    latitude:        req.body.latitude ?? null,
+    longitude:       req.body.longitude ?? null,
+    requestedByType,
+    employeeId:      requestedEmployeeId,
+  };
+
+  const results: Array<{ date: string; success: boolean; id?: string; message?: string }> = [];
+  for (const sessionDate of sessionDates) {
+    try {
+      const data = await wfmService.submitRegularization(
+        { ...commonFields, sessionDate, reasonCode: req.body.reasonCode ?? undefined } as any,
+        req.authUser.id,
+      );
+      void logSensitiveAction({
+        actor_user_id: req.authUser.id,
+        actor_role: requestedByType,
+        action_type: "REGULARIZATION_SUBMITTED",
+        module_key: "attendance",
+        entity_type: "attendance_regularization",
+        entity_id: data.id,
+        employee_id: requestedEmployeeId,
+        reason: commonFields.reason,
+        new_value_json: { session_date: sessionDate, ...commonFields },
+        req,
+      });
+      results.push({ date: sessionDate, success: true, id: data.id });
+    } catch (err: any) {
+      results.push({ date: sessionDate, success: false, message: err?.message ?? String(err) });
+    }
+  }
+
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.length - succeeded;
+  return res.status(201).json({
+    success: failed === 0,
+    succeeded,
+    failed,
+    data: results,
+    message: failed > 0
+      ? `${succeeded} submitted, ${failed} skipped — see data for details`
+      : `${succeeded} regularization request(s) submitted`,
+  });
+}));
+
 wfmRegularizationSecureRouter.get("/regularizations/mine", h(async (req: any, res: any) => {
   const emp = await getEmployeeForUser(req.authUser.id);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });

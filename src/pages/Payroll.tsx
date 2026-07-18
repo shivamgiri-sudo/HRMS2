@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CreditCard,
@@ -48,7 +48,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useToast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Pagination,
@@ -67,6 +67,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -949,12 +951,13 @@ const Payroll = () => {
                 </p>
               </div>
 
-              <TabsList className="grid w-full grid-cols-5 lg:w-auto">
+              <TabsList className="grid w-full grid-cols-6 lg:w-auto">
                 <TabsTrigger value="current">Current Payroll</TabsTrigger>
                 <TabsTrigger value="history">Payroll History</TabsTrigger>
                 <TabsTrigger value="analytics">Analytics</TabsTrigger>
                 <TabsTrigger value="salary">Salary Structure</TabsTrigger>
                 <TabsTrigger value="finance">Finance Queue</TabsTrigger>
+                <TabsTrigger value="signoff">Signoff</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1298,6 +1301,10 @@ const Payroll = () => {
             <TabsContent value="finance" className="mt-0">
               <FinanceApprovalQueue />
             </TabsContent>
+
+            <TabsContent value="signoff" className="mt-0 space-y-4">
+              <SignoffTab />
+            </TabsContent>
           </Tabs>
         </section>
 
@@ -1381,6 +1388,266 @@ function LifecyclePipelineCard() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Payroll Signoff Tab ──────────────────────────────────────────────────────
+
+function SignoffTab() {
+  const { toast } = useToast();
+  const { data: roleData } = useUserRole();
+  const roleKeys = roleData?.roleKeys ?? [];
+  const qc = useQueryClient();
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const [remarks, setRemarks] = useState("");
+
+  const { data: runs = [], isLoading: loadingRuns } = useQuery<any[]>({
+    queryKey: ["payroll-signoff-runs"],
+    queryFn: () =>
+      hrmsApi
+        .get<{ success: boolean; data: any[] }>("/api/payroll/signoff/runs")
+        .then((r) => (r as any).data ?? []),
+    staleTime: 30_000,
+  });
+
+  const { data: status } = useQuery<any>({
+    queryKey: ["payroll-signoff-status", selectedRunId],
+    queryFn: () =>
+      hrmsApi
+        .get<{ success: boolean; data: any }>(
+          `/api/payroll/signoff/runs/${selectedRunId}/status`
+        )
+        .then((r) => (r as any).data),
+    enabled: !!selectedRunId,
+    staleTime: 15_000,
+  });
+
+  const { data: tdsSummary } = useQuery<{
+    total_tds: number;
+    employee_count_with_tds: number;
+    avg_tds: number;
+    regime_breakdown: { new: number; old: number };
+  }>({
+    queryKey: ["payroll-signoff-tds-summary", selectedRunId],
+    queryFn: () =>
+      hrmsApi
+        .get<{ success: boolean; data: any }>(
+          `/api/payroll/signoff/runs/${selectedRunId}/tds-summary`
+        )
+        .then((r) => (r as any).data),
+    enabled: !!selectedRunId,
+    staleTime: 60_000,
+  });
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["payroll-signoff-runs"] });
+    void qc.invalidateQueries({ queryKey: ["payroll-signoff-status", selectedRunId] });
+    void qc.invalidateQueries({ queryKey: ["payroll-signoff-tds-summary", selectedRunId] });
+  };
+
+  const financeApproveMut = useMutation({
+    mutationFn: () =>
+      hrmsApi.post(`/api/payroll/signoff/runs/${selectedRunId}/finance-approve`, { remarks }),
+    onSuccess: () => { toast({ title: "Finance approved" }); setRemarks(""); invalidate(); },
+    onError: (e: any) =>
+      toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const ceoAckMut = useMutation({
+    mutationFn: () =>
+      hrmsApi.post(`/api/payroll/signoff/runs/${selectedRunId}/ceo-acknowledge`, { remarks }),
+    onSuccess: () => { toast({ title: "CEO acknowledged" }); setRemarks(""); invalidate(); },
+    onError: (e: any) =>
+      toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const revokeMut = useMutation({
+    mutationFn: () =>
+      hrmsApi.post(`/api/payroll/signoff/runs/${selectedRunId}/finance-revoke`, {}),
+    onSuccess: () => { toast({ title: "Finance approval revoked" }); invalidate(); },
+    onError: (e: any) =>
+      toast({ title: "Revoke failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const fmt = (n: number) =>
+    `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  const fmtDate = (d: string | null) =>
+    d
+      ? new Date(d).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
+      : "—";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Label className="whitespace-nowrap text-sm font-medium">Payroll Run</Label>
+        <select
+          className="border border-slate-200 rounded-md px-3 py-1.5 text-sm w-64"
+          value={selectedRunId}
+          onChange={(e) => setSelectedRunId(e.target.value)}
+        >
+          <option value="">Select run…</option>
+          {loadingRuns && <option disabled>Loading…</option>}
+          {runs.map((r: any) => (
+            <option key={r.id} value={r.id}>
+              {r.run_month} — {r.status}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {!selectedRunId && (
+        <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-slate-400 text-sm">
+          Select a payroll run to review sign-off status.
+        </div>
+      )}
+
+      {selectedRunId && status && (
+        <>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Run Summary</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Month</span>
+                  <span className="font-medium">{status.run_month}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Status</span>
+                  <Badge variant="secondary">{status.status}</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Total Net Payable</span>
+                  <span className="font-semibold text-emerald-700">
+                    {fmt(status.total_net_salary ?? 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">CEO Sign-off Required</span>
+                  <span>{status.ceo_required ? "Yes" : "No"}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Approval Chain</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div className="rounded-md bg-slate-50 p-3 space-y-1">
+                  <p className="font-medium text-slate-700">Finance Approval</p>
+                  {status.finance_approved_at ? (
+                    <p className="text-emerald-700">
+                      ✓ Approved on {fmtDate(status.finance_approved_at)}
+                      {status.finance_remarks ? ` — "${status.finance_remarks}"` : ""}
+                    </p>
+                  ) : (
+                    <p className="text-amber-600">Pending</p>
+                  )}
+                </div>
+                {status.ceo_required && (
+                  <div className="rounded-md bg-slate-50 p-3 space-y-1">
+                    <p className="font-medium text-slate-700">CEO Acknowledgement</p>
+                    {status.ceo_acknowledged_at ? (
+                      <p className="text-emerald-700">
+                        ✓ Acknowledged on {fmtDate(status.ceo_acknowledged_at)}
+                        {status.ceo_remarks ? ` — "${status.ceo_remarks}"` : ""}
+                      </p>
+                    ) : (
+                      <p className="text-amber-600">Pending</p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {tdsSummary && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">TDS Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
+                  <div>
+                    <p className="text-slate-500 text-xs">Total TDS</p>
+                    <p className="font-semibold text-slate-900">{fmt(tdsSummary.total_tds)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Employees with TDS</p>
+                    <p className="font-semibold text-slate-900">{tdsSummary.employee_count_with_tds}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Avg TDS / Employee</p>
+                    <p className="font-semibold text-slate-900">{fmt(tdsSummary.avg_tds)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Regime</p>
+                    <p className="font-semibold text-slate-900">
+                      {tdsSummary.regime_breakdown.new}N / {tdsSummary.regime_breakdown.old}O
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <Label className="text-sm">Remarks (optional)</Label>
+                <Input
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="Add approval remarks…"
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {!status.finance_approved_at &&
+                  roleKeys.some((r) => ["finance", "super_admin", "payroll_head", "admin"].includes(r)) && (
+                    <Button
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700"
+                      onClick={() => financeApproveMut.mutate()}
+                      disabled={financeApproveMut.isPending}
+                    >
+                      {financeApproveMut.isPending ? "Approving…" : "Finance Approve"}
+                    </Button>
+                  )}
+                {status.ceo_required &&
+                  !status.ceo_acknowledged_at &&
+                  status.finance_approved_at &&
+                  roleKeys.some((r) => ["ceo", "super_admin"].includes(r)) && (
+                    <Button
+                      size="sm"
+                      onClick={() => ceoAckMut.mutate()}
+                      disabled={ceoAckMut.isPending}
+                    >
+                      {ceoAckMut.isPending ? "Acknowledging…" : "CEO Acknowledge"}
+                    </Button>
+                  )}
+                {status.finance_approved_at && roleKeys.includes("super_admin") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-600 border-red-300 hover:bg-red-50"
+                    onClick={() => revokeMut.mutate()}
+                    disabled={revokeMut.isPending}
+                  >
+                    {revokeMut.isPending ? "Revoking…" : "Revoke Finance Approval"}
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

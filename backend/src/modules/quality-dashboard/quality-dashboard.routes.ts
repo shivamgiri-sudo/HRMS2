@@ -1,8 +1,7 @@
 import { Router } from "express";
-import mysql from "mysql2/promise";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { env } from "../../config/env.js";
+import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 import { db } from "../../db/mysql.js";
 import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
 import type { RowDataPacket } from "mysql2";
@@ -24,11 +23,11 @@ router.use(requireAuth);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-const ALLOWED_ROLES = ["admin", "hr", "super_admin", "ceo", "qa", "analyst", "manager", "process_manager", "branch_head"] as const;
+const ALLOWED_ROLES = ["admin", "hr", "super_admin", "ceo", "qa", "quality_analyst", "manager", "process_manager", "branch_head"] as const;
 
 /**
  * Resolve caller's data scope:
- * - admin/hr/ceo/qa/analyst → full access (no filter)
+ * - admin/hr/ceo/qa/quality_analyst → full access (no filter)
  * - process_manager/manager → scoped to their assigned process campaign_ids
  * - branch_head → scoped to their branch's agent emp_codes
  * Returns extra SQL conditions to AND into queries, or null for global access.
@@ -42,7 +41,7 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
   const userId = req.authUser!.id;
 
   // Global roles see everything
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa", "analyst")) {
+  if (await hasRole(userId, "admin", "hr", "ceo", "qa", "quality_analyst")) {
     return { global: true, campaignIds: null, agentCodes: null };
   }
 
@@ -90,19 +89,8 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
   return { global: false, campaignIds: [], agentCodes: [] };
 }
 
-let ciPool: mysql.Pool | null = null;
-function getCiPool(): mysql.Pool {
-  if (!ciPool) ciPool = mysql.createPool({
-    host: env.DB_HOST,
-    port: env.DB_PORT,
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: "Shivamgiri",
-    waitForConnections: true,
-    connectionLimit: 5,
-    connectTimeout: 10000,
-  });
-  return ciPool;
+function getCiPool() {
+  return getShivamgiriPool();
 }
 
 function dateDefaults(query: Record<string, unknown>): { from: string; to: string } {

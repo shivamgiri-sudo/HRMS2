@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 
+const IS_PROD = process.env.NODE_ENV === "production";
+
 export function notFoundHandler(req: Request, res: Response) {
   return res.status(404).json({
     success: false,
@@ -26,20 +28,23 @@ export function errorHandler(
 
   if (error instanceof Error) {
     const statusCode = (error as Error & { statusCode?: number }).statusCode;
-    if (statusCode && statusCode >= 400 && statusCode < 600) {
+    // 4xx errors are operational (bad request, unauthorized, etc.) — safe to surface message
+    if (statusCode && statusCode >= 400 && statusCode < 500) {
       return res.status(statusCode).json({
         success: false,
         message: error.message
       });
     }
-    return res.status(500).json({
+    // 5xx errors: never leak internal details (DB schema, stack traces) in production
+    const clientMessage = IS_PROD ? "An unexpected server error occurred" : error.message;
+    return res.status(statusCode && statusCode >= 500 ? statusCode : 500).json({
       success: false,
-      message: error.message
+      message: clientMessage
     });
   }
 
   return res.status(500).json({
     success: false,
-    message: "Unexpected server error"
+    message: IS_PROD ? "An unexpected server error occurred" : "Unexpected server error"
   });
 }

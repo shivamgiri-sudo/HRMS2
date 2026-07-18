@@ -1,8 +1,6 @@
 import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-backend-wasm";
 import * as faceapi from "@vladmandic/face-api/dist/face-api.node-wasm.js";
 import { Canvas, Image, ImageData, loadImage } from "canvas";
 import { db } from "../../db/mysql.js";
@@ -11,6 +9,7 @@ faceapi.env.monkeyPatch({ Canvas, Image, ImageData } as any);
 
 let modelsLoaded = false;
 let runtimeReady = false;
+let runtimeReadyPromise: Promise<void> | null = null;
 const MODELS_PATH = path.resolve(
   process.env.FACE_MODELS_PATH ??
   path.join(process.cwd(), "face-models")
@@ -18,11 +17,22 @@ const MODELS_PATH = path.resolve(
 
 async function ensureRuntime() {
   if (runtimeReady) return;
+  if (runtimeReadyPromise) {
+    await runtimeReadyPromise;
+    return;
+  }
 
-  await tf.setBackend("wasm");
-  await tf.ready();
+  runtimeReadyPromise = (async () => {
+    const tf = await import("@tensorflow/tfjs");
+    await import("@tensorflow/tfjs-backend-wasm");
+    await tf.setBackend("wasm");
+    await tf.ready();
+    runtimeReady = true;
+  })().finally(() => {
+    runtimeReadyPromise = null;
+  });
 
-  runtimeReady = true;
+  await runtimeReadyPromise;
 }
 
 async function ensureModels() {

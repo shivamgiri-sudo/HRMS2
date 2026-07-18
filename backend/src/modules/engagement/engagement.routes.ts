@@ -12,7 +12,7 @@ router.use(requireAuth);
 
 router.get("/me", h(c.getMySummary));
 router.get("/badges", h(c.listBadges));
-router.post("/badges/award", requireRole("admin", "hr", "super_admin", "payroll_hr", "branch_hr", "process_manager", "team_leader", "manager", "tl"), h(c.awardBadge));
+router.post("/badges/award", requireRole("admin", "hr", "super_admin", "payroll_hr", "process_manager", "team_leader", "manager"), h(c.awardBadge));
 router.get("/badges/:employeeId", selfOrAdminHr("employeeId"), h(c.getEmployeeBadges));
 
 router.get("/leaderboard", h(c.getLeaderboard));

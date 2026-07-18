@@ -67,7 +67,7 @@ router.post("/scores", requireRole("admin", "manager", "qa"), h(c.recordScore));
 
 // Summary + Leaderboard
 router.get("/summary/:employeeId/:templateId/:period", requireRole("admin", "hr", "super_admin", "manager", "qa"), h(c.getEmployeeSummary));  // TODO: Add self-scope
-router.get("/leaderboard", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager", "branch_head", "ceo", "tl"), h(c.getLeaderboard));
+router.get("/leaderboard", requireRole("admin", "hr", "super_admin", "manager", "qa", "process_manager", "branch_head", "ceo", "team_leader"), h(c.getLeaderboard));
 
 // Family summary — aggregated scores per family for a process/period
 router.get("/family-summary/:processId/:period", requireRole("admin", "hr", "super_admin", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {

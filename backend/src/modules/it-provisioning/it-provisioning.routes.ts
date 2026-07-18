@@ -18,7 +18,7 @@ import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const PROVISIONING_ROLES = ['admin', 'super_admin', 'it', 'branch_it', 'wfm', 'hr', 'branch_admin'];
+const PROVISIONING_ROLES = ['admin', 'super_admin', 'it', 'wfm', 'hr', 'branch_admin'];
 
 router.use(requireAuth);
 
@@ -227,7 +227,7 @@ router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: Authen
 
   if (!isAdmin) {
     // Scoped: functional roles see their own assigned queue by default.
-    const isIT       = await hasRole(userId, 'it', 'branch_it');
+    const isIT       = await hasRole(userId, 'it');
     const isWFM      = await hasRole(userId, 'wfm');
     const isBranchAdmin = await hasRole(userId, 'branch_admin');
 
@@ -258,7 +258,7 @@ router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async 
   };
   if (req.path.endsWith('/my')) filters.assignedUserId = userId;
   if (!isAdmin && !filters.assignedRole) {
-    if (await hasRole(userId, 'it', 'branch_it')) filters.assignedRole = 'it';
+    if (await hasRole(userId, 'it')) filters.assignedRole = 'it';
     else if (await hasRole(userId, 'wfm')) filters.assignedRole = 'wfm';
     else if (await hasRole(userId, 'branch_admin')) filters.assignedRole = 'admin';
   }
@@ -417,7 +417,7 @@ router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(
 }));
 
 // ── POST /api/it-provisioning/tasks/bulk-complete ────────────────────────────
-router.post('/tasks/bulk-complete', requireRole('it', 'branch_it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body.rows as Array<{ employee_code: string; official_email?: string; domain_account?: string; asset_tag?: string }>;
   if (!Array.isArray(rows) || !rows.length) {
     return res.status(400).json({ success: false, message: 'rows array required' });

@@ -36,7 +36,8 @@ export const payrollService = {
 
   async listStructures(): Promise<SalaryStructure[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_structure_master ORDER BY structure_name ASC"
+      `SELECT id, structure_code, structure_name, description, basic_pct, hra_pct, active_status, created_at
+       FROM salary_structure_master ORDER BY structure_name ASC`
     );
     return rows as SalaryStructure[];
   },
@@ -165,7 +166,8 @@ export const payrollService = {
 
   async listComponents(employeeId?: string): Promise<SalaryComponent[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_component_master WHERE active_status = 1 ORDER BY component_name ASC"
+      `SELECT id, component_code, component_name, component_type, taxable, active_status, created_at
+       FROM salary_component_master WHERE active_status = 1 ORDER BY component_name ASC`
     );
     let components = rows as SalaryComponent[];
 
@@ -394,12 +396,31 @@ export const payrollService = {
 
   // ─── Prep Lines ────────────────────────────────────────────────────────────
 
-  async listLines(runId: string): Promise<SalaryPrepLine[]> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM salary_prep_line WHERE run_id = ? ORDER BY employee_code ASC",
-      [runId]
-    );
-    return rows as SalaryPrepLine[];
+  async listLines(runId: string, page: number = 1, limit: number = 50, search?: string): Promise<{ lines: SalaryPrepLine[]; total: number; page: number; limit: number }> {
+    const offset = (page - 1) * limit;
+    let query = "SELECT * FROM salary_prep_line WHERE run_id = ?";
+    const params: any[] = [runId];
+
+    if (search) {
+      query += " AND (employee_code LIKE ? OR employee_name LIKE ? OR employee_id LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    query += " ORDER BY employee_code ASC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+
+    const [rows] = await db.execute<RowDataPacket[]>(query, params);
+
+    let countQuery = "SELECT COUNT(*) as total FROM salary_prep_line WHERE run_id = ?";
+    const countParams: any[] = [runId];
+    if (search) {
+      countQuery += " AND (employee_code LIKE ? OR employee_name LIKE ? OR employee_id LIKE ?)";
+      countParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
+    const total = (countRows as any[])[0]?.total ?? 0;
+
+    return { lines: rows as SalaryPrepLine[], total, page, limit };
   },
 
   async getLine(id: string): Promise<SalaryPrepLine> {

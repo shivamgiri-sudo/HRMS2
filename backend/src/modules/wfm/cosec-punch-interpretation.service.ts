@@ -69,13 +69,16 @@ export function assessAggregatePunches(input: {
   }
 
   if (totalPunches % 2 === 1) {
+    // Odd punch counts are still treated as a real in/out interval when the
+    // first and last punches span a valid work window. Keep the odd-count
+    // reason for review, but do not discard the punch-out.
     return {
       effectivePunchIn: firstPunch,
-      effectivePunchOut: null,
+      effectivePunchOut: lastPunch,
       effectivePunchCount: totalPunches,
-      effectiveWorkingMinutes: 0,
+      effectiveWorkingMinutes: workingMinutes,
       elapsedSeconds,
-      state: "PUNCHED_IN",
+      state: "PUNCHED_OUT",
       reason: "odd_punch_count",
     };
   }

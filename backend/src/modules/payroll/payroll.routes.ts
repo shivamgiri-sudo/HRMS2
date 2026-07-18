@@ -484,18 +484,55 @@ router.get("/advances/:employeeId", h(async (req: AuthenticatedRequest, res: Res
   return c.listAdvances(req as any, res);
 }));
 
-// GET /api/payroll/advances — list ALL advances for HO queue (finance/admin view)
+// GET /api/payroll/advances — paginated advances list scoped to the caller's branch/process
 router.get("/advances",
   requireRole("admin", "hr", "super_admin", "finance", "payroll", "payroll_head"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const page  = Math.max(1, Number(req.query.page  ?? 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
+    const offset = (page - 1) * limit;
+
+    // super_admin sees everything; everyone else is scoped to their branch/process
+    let scoped: { sql: string; params: unknown[] };
+    try {
+      const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
+      if (isSuperAdmin) {
+        scoped = { sql: "1=1", params: [] };
+      } else {
+        scoped = await buildScopeWhereClause(
+          req.authUser!.id,
+          ["admin", "hr", "finance", "payroll", "payroll_head"],
+          { branchId: "e.branch_id", processId: "e.process_id" },
+          { allowCeoAllRead: true }
+        );
+      }
+    } catch {
+      scoped = { sql: "1=0", params: [] };
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT sal.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name
+      `SELECT sal.id, sal.employee_id, sal.advance_amount, sal.advance_date,
+              sal.status, sal.approved_by, sal.approved_at, sal.rejection_reason,
+              sal.recovery_month, sal.created_at,
+              e.employee_code,
+              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name
          FROM salary_advance_log sal
          JOIN employees e ON e.id = sal.employee_id
+        WHERE ${scoped.sql}
         ORDER BY sal.advance_date DESC
-        LIMIT 500`
+        LIMIT ? OFFSET ?`,
+      [...scoped.params, limit, offset]
     );
-    res.json(rows);
+
+    const [[countRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM salary_advance_log sal
+         JOIN employees e ON e.id = sal.employee_id
+        WHERE ${scoped.sql}`,
+      scoped.params
+    );
+
+    res.json({ success: true, data: rows, total: Number((countRow as any).total), page, limit });
   })
 );
 
@@ -577,15 +614,15 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
-       LEFT JOIN employees e ON CAST(e.id AS CHAR) = CAST(spl.employee_id AS CHAR)
+       LEFT JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
-       LEFT JOIN designation_master des ON CAST(des.id AS CHAR) = CAST(e.designation_id AS CHAR)
-       LEFT JOIN department_master dept ON CAST(dept.id AS CHAR) = CAST(e.department_id AS CHAR)
-       LEFT JOIN branch_master br ON CAST(br.id AS CHAR) = CAST(e.branch_id AS CHAR)
-       LEFT JOIN location_master loc ON CAST(loc.id AS CHAR) = CAST(e.location_id AS CHAR)
+       LEFT JOIN designation_master des ON des.id = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN branch_master br ON br.id = e.branch_id
+       LEFT JOIN location_master loc ON loc.id = e.location_id
        LEFT JOIN salary_run_disbursal srd
-         ON CAST(srd.run_id AS CHAR) = CAST(spl.run_id AS CHAR)
-        AND CAST(srd.employee_id AS CHAR) = CAST(spl.employee_id AS CHAR)
+         ON srd.run_id = spl.run_id
+        AND srd.employee_id = spl.employee_id
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('draft')
@@ -674,14 +711,13 @@ router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Respon
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT sp.payslip_ref, sp.generated_at,
-            spl.net_salary, spl.gross_salary,
             spr.run_month,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
             e.employee_code
        FROM salary_payslip sp
-       JOIN salary_prep_line spl ON CAST(spl.id AS CHAR) = CAST(sp.prep_line_id AS CHAR)
-       JOIN salary_prep_run spr  ON CAST(spr.id AS CHAR) = CAST(spl.run_id AS CHAR)
-       JOIN employees e          ON CAST(e.id AS CHAR)   = CAST(sp.employee_id AS CHAR)
+       JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
+       JOIN salary_prep_run spr  ON spr.id = spl.run_id
+       JOIN employees e          ON e.id   = sp.employee_id
       WHERE e.employee_code = ?
         AND spr.run_month   = ?
       LIMIT 1`,
@@ -693,13 +729,13 @@ router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Respon
     return res.json({ verified: false, message: "Payslip not found for this employee and period" });
   }
 
+  // Salary figures are NOT returned here — this endpoint is public (QR verification only).
+  // Compensation data is only accessible through authenticated payslip endpoints.
   return res.json({
     verified: true,
     employee_name: rec.employee_name,
     employee_code: rec.employee_code,
     run_month: rec.run_month,
-    net_salary: Number(rec.net_salary ?? 0),
-    gross_salary: Number(rec.gross_salary ?? 0),
     payslip_ref: rec.payslip_ref,
     generated_at: rec.generated_at,
   });
@@ -746,6 +782,23 @@ router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", 
     [employeeId],
   );
   return res.json({ success: true, data: rows, total: Number(countRow.total), page, limit });
+}));
+
+// GET /api/payroll/payslip/history/:employeeId — HR/admin view of any employee's payslip list
+router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 24)));
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT spl.run_id, spl.gross_salary, spl.total_deductions, spl.net_salary,
+            spl.status, spr.disbursed_at AS paid_at, spr.status AS run_status, spr.run_month
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+      WHERE spl.employee_id = ?
+      ORDER BY spr.run_month DESC
+      LIMIT ?`,
+    [employeeId, limit]
+  );
+  return res.json({ success: true, data: rows });
 }));
 
 // POST /api/payroll/payslip/:runId/generate — admin/hr/finance/payroll only

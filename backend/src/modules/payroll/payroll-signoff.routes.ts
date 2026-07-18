@@ -317,4 +317,62 @@ router.post(
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /runs/:runId/tds-summary
+// Aggregates TDS from salary_prep_line for a run; joins tax_declaration for
+// regime breakdown.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get(
+  "/runs/:runId/tds-summary",
+  requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId } = req.params;
+
+    const [runCheck] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM salary_prep_run WHERE id = ? LIMIT 1`,
+      [runId],
+    );
+    if (!(runCheck as RowDataPacket[])[0]) {
+      return res.status(404).json({ success: false, message: "Payroll run not found" });
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(SUM(spl.tds), 0)                                                          AS total_tds,
+         COUNT(CASE WHEN spl.tds > 0 THEN 1 END)                                            AS employee_count_with_tds,
+         ROUND(AVG(CASE WHEN spl.tds > 0 THEN spl.tds END), 2)                              AS avg_tds,
+         COUNT(CASE WHEN COALESCE(td.regime, 'new') = 'new' AND spl.tds > 0 THEN 1 END)    AS regime_new,
+         COUNT(CASE WHEN td.regime = 'old'           AND spl.tds > 0 THEN 1 END)            AS regime_old
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+       LEFT JOIN tax_declaration td
+         ON td.employee_id = spl.employee_id
+        AND td.financial_year = CASE
+              WHEN MONTH(STR_TO_DATE(spr.run_month, '%Y-%m')) >= 4
+              THEN CONCAT(YEAR(STR_TO_DATE(spr.run_month, '%Y-%m')), '-',
+                          LPAD(MOD(YEAR(STR_TO_DATE(spr.run_month, '%Y-%m')) - 2000 + 1, 100), 2, '0'))
+              ELSE CONCAT(YEAR(STR_TO_DATE(spr.run_month, '%Y-%m')) - 1, '-',
+                          LPAD(MOD(YEAR(STR_TO_DATE(spr.run_month, '%Y-%m')) - 2000, 100), 2, '0'))
+            END
+       WHERE spl.run_id = ?`,
+      [runId],
+    );
+
+    const row = (rows as RowDataPacket[])[0] ?? {};
+
+    return res.json({
+      success: true,
+      data: {
+        total_tds:               Number(row.total_tds ?? 0),
+        employee_count_with_tds: Number(row.employee_count_with_tds ?? 0),
+        avg_tds:                 Number(row.avg_tds ?? 0),
+        regime_breakdown: {
+          new: Number(row.regime_new ?? 0),
+          old: Number(row.regime_old ?? 0),
+        },
+      },
+    });
+  }),
+);
+
 export { router as payrollSignoffRouter };

@@ -162,7 +162,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, processId, branchId, departmentId, search, scopeFilter } = filters;
+    const { page, limit, status, processId, branchId, departmentId, designationId, search, scopeFilter } = filters;
     const offset = (page - 1) * limit;
     const conds: string[] = ["e.active_status = 1"];
     const params: unknown[] = [];
@@ -171,6 +171,7 @@ export const employeeService = {
     if (processId)    { conds.push("e.process_id = ?");        params.push(processId); }
     if (branchId)     { conds.push("e.branch_id = ?");         params.push(branchId); }
     if (departmentId) { conds.push("e.department_id = ?");     params.push(departmentId); }
+    if (designationId){ conds.push("e.designation_id = ?");    params.push(designationId); }
     if (search)    { conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ? OR e.email LIKE ? OR e.official_email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
 
     // Apply scope filter from middleware
@@ -186,14 +187,20 @@ export const employeeService = {
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.*,
-              COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
-              desig.designation_name,
-              dept.dept_name        AS department_name,
-              cc.cost_centre_name,
-              pm.process_name,
-              bm.branch_name,
-              CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
+      `SELECT
+         e.id, e.employee_code,
+         e.first_name, e.last_name,
+         e.mobile, e.avatar_url, e.photo_url,
+         e.date_of_joining, e.employment_status, e.employment_type,
+         e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
+         e.reporting_manager_id,
+         COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+         desig.designation_name,
+         dept.dept_name        AS department_name,
+         cc.cost_centre_name,
+         pm.process_name,
+         bm.branch_name,
+         CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
        FROM employees e
        LEFT JOIN designation_master  desig ON desig.id = e.designation_id
        LEFT JOIN department_master   dept  ON dept.id  = e.department_id

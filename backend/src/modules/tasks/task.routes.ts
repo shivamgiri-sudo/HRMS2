@@ -11,7 +11,7 @@ router.use(requireAuth);
 // Employee onboarding tasks
 router.post(
   '/employee/:employeeId/create-onboarding',
-  requireRole('admin', 'hr', 'hr_admin'),
+  requireRole('admin', 'hr'),
   taskController.createOnboardingTasks
 );
 

@@ -25,7 +25,7 @@ const router = express.Router();
  * Executive summary: top 10% profile, key traits, teachability
  * Access: QA/T&Q Manager, Quality Manager, Operations Manager, HR Admin
  */
-router.get('/summary', requireRole('QA_Manager', 'Quality_Manager', 'Operations_Manager', 'HR_Admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/summary', requireRole('qa', 'operations_manager', 'hr'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const summary = await generateExecutiveSummary();
     res.json(summary);
@@ -38,7 +38,7 @@ router.get('/summary', requireRole('QA_Manager', 'Quality_Manager', 'Operations_
  * GET /api/analytics/top-performers/profile
  * Top 10% profile summary (count, avg quality, tenure, etc.)
  */
-router.get('/profile', requireRole('QA_Manager', 'Quality_Manager', 'Operations_Manager', 'HR_Admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/profile', requireRole('qa', 'operations_manager', 'hr'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const profile = await getTop10PercentSummary();
     if (!profile) {
@@ -62,7 +62,7 @@ router.get('/profile', requireRole('QA_Manager', 'Quality_Manager', 'Operations_
  * - excellence_delta: difference (top - overall)
  * - excellence_category: KEY_DIFFERENTIATOR | STRONG_ADVANTAGE | MODERATE_ADVANTAGE | MINOR_ADVANTAGE
  */
-router.get('/trait-mastery', requireRole('QA_Manager', 'Quality_Manager', 'Operations_Manager', 'HR_Admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/trait-mastery', requireRole('qa', 'operations_manager', 'hr'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const traits = await getTraitMasteryComparison();
     res.json({
@@ -93,7 +93,7 @@ router.get('/trait-mastery', requireRole('QA_Manager', 'Quality_Manager', 'Opera
  * - replication_difficulty: LOW (<15 stddev) | MODERATE (15-25) | HIGH (>25)
  * - replication_notes: interpretation for coaching programs
  */
-router.get('/teachability', requireRole('QA_Manager', 'Quality_Manager', 'Operations_Manager', 'HR_Admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/teachability', requireRole('qa', 'operations_manager', 'hr'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const metrics = await getTeachabilityMetrics();
     res.json({
@@ -126,7 +126,7 @@ router.get('/teachability', requireRole('QA_Manager', 'Quality_Manager', 'Operat
  * - trait_empathy, professionalism, listening, grammar, closure
  * - excellence_profile: ALL_ROUNDED | SPECIALIST | BALANCED
  */
-router.get('/profiles', requireRole('QA_Manager', 'Quality_Manager', 'Operations_Manager', 'HR_Admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/profiles', requireRole('qa', 'operations_manager', 'hr'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
     const profiles = await getTopPerformerProfiles(limit);

@@ -1,20 +1,13 @@
-/**
- * Simple logger module for backend services
- */
+import pino from 'pino';
 
-export const logger = {
-  info: (message: string, data?: unknown) => {
-    console.log(`[INFO] ${message}`, data || '');
+export const logger = pino({
+  level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  transport:
+    process.env.NODE_ENV !== 'production'
+      ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss', ignore: 'pid,hostname' } }
+      : undefined,
+  formatters: {
+    level: (label) => ({ level: label }),
   },
-  warn: (message: string, data?: unknown) => {
-    console.warn(`[WARN] ${message}`, data || '');
-  },
-  error: (message: string, data?: unknown) => {
-    console.error(`[ERROR] ${message}`, data || '');
-  },
-  debug: (message: string, data?: unknown) => {
-    if (process.env.DEBUG) {
-      console.debug(`[DEBUG] ${message}`, data || '');
-    }
-  },
-};
+  base: undefined,
+});

@@ -128,8 +128,10 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const attWeekOff  = eligibleWeekoff;
   const attHoliday  = eligibleHoliday;
   // payable = present + approved_leave + eligible_weekoff + eligible_holiday − lwp
-  const finalPayableDays = record.finalPayableDays ??
-    ((attPresent + attLeave + eligibleWeekoff + eligibleHoliday - attLwp) || paidWorkingDays);
+  // Use DB value only when it's actually > 0; if 0 it means payroll hasn't computed it yet
+  const finalPayableDays = (record.finalPayableDays != null && record.finalPayableDays > 0)
+    ? record.finalPayableDays
+    : ((attPresent + attLeave + eligibleWeekoff + eligibleHoliday - attLwp) || paidWorkingDays);
 
   // Deduction components from salary_prep_line
   const pfEmployee     = record.pfEmployee     ?? 0;

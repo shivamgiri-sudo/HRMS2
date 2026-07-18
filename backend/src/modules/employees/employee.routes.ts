@@ -7,9 +7,11 @@ import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
 import { employeeService } from "./employee.service.js";
+import { employeeFiltersSchema } from "./employee.validation.js";
 import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from "./journeyLog.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,12 +25,28 @@ router.get("/me", h(async (req: any, res: any) => {
   if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
 
   const [rows] = await db.execute(
-    `SELECT e.*,
-            d.designation_name  AS designation,
-            dept.dept_name      AS department_name,
-            b.branch_name,
-            b.branch_name       AS branch_display_name,
-            CONCAT(mgr.first_name, ' ', mgr.last_name) AS reporting_manager_name
+    `SELECT
+       e.id, e.employee_code, e.user_id,
+       e.first_name, e.last_name,
+       e.email, e.official_email, e.official_email_compliant,
+       e.mobile, e.personal_email, e.personal_phone, e.personal_mobile, e.alternate_mobile,
+       e.avatar_url, e.photo_url,
+       e.gender, e.date_of_birth, e.marital_status, e.blood_group,
+       e.address, e.address_line1, e.city, e.state, e.country, e.pincode,
+       e.status, e.employment_status, e.employment_type,
+       e.designation_id, e.department_id, e.branch_id, e.process_id,
+       e.reporting_manager_id, e.manager_id,
+       e.date_of_joining, e.hire_date, e.salary_start_date,
+       e.working_hours_start, e.working_hours_end, e.working_days,
+       e.is_manager, e.emergency_contact_name,
+       e.pan_verified_on, e.aadhaar_verified_on,
+       e.pan_number, e.uan_number, e.epf_number, e.esic_number,
+       e.aadhaar_number, e.aadhaar_last4,
+       d.designation_name  AS designation,
+       dept.dept_name      AS department_name,
+       b.branch_name,
+       b.branch_name       AS branch_display_name,
+       CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')) AS reporting_manager_name
      FROM employees e
      LEFT JOIN designation_master d    ON d.id    = e.designation_id
      LEFT JOIN department_master  dept ON dept.id = e.department_id
@@ -109,7 +127,66 @@ router.get("/me", h(async (req: any, res: any) => {
   return res.json({
     success: true,
     data: {
-      ...emp,
+      // Identity
+      id:                       emp.id,
+      employee_code:            emp.employee_code,
+      user_id:                  emp.user_id,
+      // Name
+      first_name:               emp.first_name,
+      last_name:                emp.last_name,
+      full_name:                [emp.first_name, emp.last_name].filter(Boolean).join(" "),
+      // Contact
+      email:                    emp.email,
+      official_email:           emp.official_email,
+      official_email_compliant: emp.official_email_compliant,
+      mobile:                   emp.mobile,
+      personal_email:           emp.personal_email,
+      personal_phone:           emp.personal_phone,
+      personal_mobile:          emp.personal_mobile,
+      alternate_mobile:         emp.alternate_mobile,
+      // Avatar
+      avatar_url:               emp.avatar_url,
+      photo_url:                emp.photo_url,
+      // Personal details
+      gender:                   emp.gender,
+      date_of_birth:            emp.date_of_birth,
+      marital_status:           emp.marital_status,
+      blood_group:              emp.blood_group,
+      // Address
+      address:                  emp.address,
+      address_line1:            emp.address_line1,
+      city:                     emp.city,
+      state:                    emp.state,
+      country:                  emp.country,
+      pincode:                  emp.pincode,
+      // Employment
+      status:                   emp.status,
+      employment_status:        emp.employment_status,
+      employment_type:          emp.employment_type,
+      designation:              emp.designation,
+      designation_id:           emp.designation_id,
+      department_name:          emp.department_name,
+      department_id:            emp.department_id,
+      branch_name:              emp.branch_name,
+      branch_display_name:      emp.branch_display_name,
+      branch_id:                emp.branch_id,
+      process_name:             emp.process_name ?? null,
+      process_id:               emp.process_id,
+      reporting_manager_name:   emp.reporting_manager_name,
+      reporting_manager_id:     emp.reporting_manager_id,
+      manager_id:               emp.manager_id,
+      date_of_joining:          emp.date_of_joining,
+      hire_date:                emp.hire_date,
+      salary_start_date:        emp.salary_start_date,
+      // Schedule
+      working_hours_start:      emp.working_hours_start,
+      working_hours_end:        emp.working_hours_end,
+      working_days:             emp.working_days,
+      // Flags
+      is_manager:               emp.is_manager,
+      // Presence-only flag (boolean, never the raw value)
+      bank_account_number:      emp.bank_account_number != null ? true : null,
+      emergency_contact_name:   emp.emergency_contact_name,
       // Nested shapes expected by frontend
       department: emp.department_name ? { name: emp.department_name } : null,
       bank_details: (() => {
@@ -358,6 +435,29 @@ router.put("/me/statutory-details", h(async (req: any, res: any) => {
     await db.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, empId]).catch(() => {});
   }
 
+  // Audit every self-service statutory change — these fields feed payroll, PF filings, and TDS.
+  // Record which fields were submitted (not values — PAN/Aadhaar are sensitive).
+  const changedFields = [
+    epf_number  !== undefined && "epf_number",
+    esi_number  !== undefined && "esi_number",
+    uan_number  !== undefined && "uan_number",
+    pan_number  !== undefined && "pan_number",
+    aadhaar_id  !== undefined && "aadhaar_id",
+    pf_eligible !== undefined && "pf_eligible",
+    esi_eligible!== undefined && "esi_eligible",
+    epf_date    !== undefined && "epf_date",
+  ].filter(Boolean);
+
+  void logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "STATUTORY_SELF_UPDATE",
+    module_key: "employees",
+    entity_type: "employee",
+    entity_id: empId,
+    change_summary: { fields_updated: changedFields },
+    req,
+  });
+
   return res.json({ success: true, message: "Statutory details saved" });
 }));
 
@@ -456,6 +556,165 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
+// GET /api/employees/hr-hub/today-summary — live today attendance counts for the hub header strip
+router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+  // IST today: UTC+5:30
+  const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const today = nowIST.toISOString().slice(0, 10);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_with_record,
+       SUM(adr.attendance_status = 'present')        AS present,
+       SUM(adr.attendance_status = 'half_day')       AS half_day,
+       SUM(adr.attendance_status = 'absent')         AS absent,
+       SUM(adr.attendance_status = 'missing_punch')  AS missing_punch,
+       SUM(adr.attendance_status = 'leave_approved') AS on_leave,
+       SUM(adr.attendance_status = 'week_off')       AS week_off,
+       SUM(adr.attendance_status = 'holiday')        AS holiday
+     FROM employees e
+     LEFT JOIN attendance_daily_record adr
+       ON adr.employee_id = e.id AND adr.record_date = ?
+     WHERE e.active_status = 1 AND e.employment_status = 'Active'`,
+    [today]
+  );
+  const [totalRow] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND employment_status = 'Active'`
+  );
+  const total_active = Number((totalRow[0] as any)?.total ?? 0);
+  const r = rows[0] as any;
+  return res.json({
+    success: true,
+    date: today,
+    data: {
+      total_active,
+      present:       Number(r.present ?? 0),
+      half_day:      Number(r.half_day ?? 0),
+      absent:        Number(r.absent ?? 0),
+      missing_punch: Number(r.missing_punch ?? 0),
+      on_leave:      Number(r.on_leave ?? 0),
+      week_off:      Number(r.week_off ?? 0),
+      holiday:       Number(r.holiday ?? 0),
+      no_record:     total_active - Number(r.total_with_record ?? 0),
+    },
+  });
+}));
+
+// GET /api/employees/hr-hub — enriched employee list for People Attendance & Earnings Hub
+router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+  const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ success: false, error: "month must be YYYY-MM" });
+  }
+  const monthStart = `${month}-01`;
+  const [y, m] = month.split("-").map(Number);
+  const monthEnd = `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["hr", "manager"],
+    { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true }
+  );
+
+  const parsed = employeeFiltersSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { page, status, processId, branchId, departmentId, search } = parsed.data;
+  const designationId = parsed.data.designationId;
+  const limit = Math.min(200, Math.max(1, Math.trunc(Number(parsed.data.limit) || 50)));
+  const safeOffset = Math.max(0, Math.trunc((page - 1) * limit));
+  const offset = safeOffset;
+
+  const anomalyOnly = req.query.anomalyOnly === "1" || req.query.anomalyOnly === "true";
+
+  const conds: string[] = ["e.active_status = 1"];
+  const params: unknown[] = [];
+  if (status)        { conds.push("e.employment_status = ?");  params.push(status); }
+  if (processId)     { conds.push("e.process_id = ?");         params.push(processId); }
+  if (branchId)      { conds.push("e.branch_id = ?");          params.push(branchId); }
+  if (departmentId)  { conds.push("e.department_id = ?");      params.push(departmentId); }
+  if (designationId) { conds.push("e.designation_id = ?");     params.push(designationId); }
+  if (search) {
+    conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ? OR e.official_email LIKE ?)");
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (scoped.sql && scoped.sql !== "1=1") {
+    conds.push(`(${scoped.sql.replace(/^WHERE\s+/i, "").trim()})`);
+    params.push(...(scoped.params ?? []));
+  }
+  const where = `WHERE ${conds.join(" AND ")}`;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code,
+            CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS full_name,
+            e.employment_status, e.date_of_joining,
+            bm.branch_name, pm.process_name, dm.designation_name, dept.dept_name,
+            (SELECT COUNT(*) FROM attendance_daily_record adr
+               WHERE adr.employee_id = e.id
+                 AND adr.record_date BETWEEN ? AND ?
+                 AND adr.attendance_status = 'present') AS present_days,
+            (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
+               WHERE adr2.employee_id = e.id
+                 AND adr2.record_date BETWEEN ? AND ?
+                 AND adr2.attendance_status NOT IN ('week_off','holiday','leave_approved')) AS lwp_days,
+            (SELECT COALESCE(SUM(adr3.late_mark),0) FROM attendance_daily_record adr3
+               WHERE adr3.employee_id = e.id
+                 AND adr3.record_date BETWEEN ? AND ?) AS late_marks,
+            (SELECT COUNT(*) FROM attendance_daily_record adr4
+               WHERE adr4.employee_id = e.id
+                 AND adr4.record_date BETWEEN ? AND ?
+                 AND adr4.attendance_status = 'missing_punch') AS missing_punch_count,
+            (SELECT spl.net_salary FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+               WHERE spl.employee_id = e.id
+               ORDER BY spr.run_month DESC LIMIT 1) AS last_salary_net,
+            (SELECT spr2.run_month FROM salary_prep_line spl2
+               JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id
+               WHERE spl2.employee_id = e.id
+               ORDER BY spr2.run_month DESC LIMIT 1) AS last_salary_month
+       FROM employees e
+       LEFT JOIN branch_master bm       ON bm.id   = e.branch_id
+       LEFT JOIN process_master pm      ON pm.id   = e.process_id
+       LEFT JOIN designation_master dm  ON dm.id   = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       ${where}
+       ${anomalyOnly ? "HAVING lwp_days > 2 OR missing_punch_count > 0" : ""}
+       ORDER BY e.employee_code ASC
+       LIMIT ${limit} OFFSET ${offset}`,
+    // month dates first (8 params for the 4 subqueries), then WHERE filter params
+    [monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, ...params]
+  );
+
+  const countQuery = anomalyOnly
+    ? `SELECT COUNT(*) AS total FROM (
+         SELECT e.id,
+           (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
+              WHERE adr2.employee_id = e.id
+                AND adr2.record_date BETWEEN ? AND ?
+                AND adr2.attendance_status NOT IN ('week_off','holiday','leave_approved')) AS lwp_days,
+           (SELECT COUNT(*) FROM attendance_daily_record adr4
+              WHERE adr4.employee_id = e.id
+                AND adr4.record_date BETWEEN ? AND ?
+                AND adr4.attendance_status = 'missing_punch') AS missing_punch_count
+         FROM employees e ${where}
+         HAVING lwp_days > 2 OR missing_punch_count > 0
+       ) AS anomaly_count`
+    : `SELECT COUNT(*) AS total FROM employees e ${where}`;
+
+  const countParams = anomalyOnly
+    ? [monthStart, monthEnd, monthStart, monthEnd, ...params]
+    : params;
+
+  const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
+
+  const data = (rows as any[]).map((r: any) => ({
+    ...r,
+    has_anomaly: Number(r.lwp_days) > 2 || Number(r.missing_punch_count) > 0,
+  }));
+
+  return res.json({ success: true, data, total: Number((countRows as any[])[0]?.total ?? 0), page, limit });
+}));
+
 router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
@@ -545,14 +804,20 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   if (selfEmp?.id === targetId) {
     // Always allowed
   } else {
-    // Requesting someone else's card — check role + scope
-    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
-    const isPayroll = await hasRole(req.authUser!.id, "payroll_head", "payroll");
-    const isCEO = await hasRole(req.authUser!.id, "ceo");
-    const isAdmin = await hasRole(req.authUser!.id, "admin");
-    const isHR = await hasRole(req.authUser!.id, "hr");
-    const isBranchHead = await hasRole(req.authUser!.id, "branch_head");
-    const isManager = await hasRole(req.authUser!.id, "manager");
+    // Requesting someone else's card — resolve all roles in a single DB query
+    // (req.authUser.role holds the primary role from middleware; fetch full list for multi-role users)
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+      [req.authUser!.id]
+    );
+    const userRoleSet = new Set((roleRows as { role_key: string }[]).map(r => r.role_key));
+    const isSuperAdmin = userRoleSet.has("super_admin");
+    const isPayroll = userRoleSet.has("payroll_head") || userRoleSet.has("payroll");
+    const isCEO = userRoleSet.has("ceo");
+    const isAdmin = userRoleSet.has("admin");
+    const isHR = userRoleSet.has("hr");
+    const isBranchHead = userRoleSet.has("branch_head");
+    const isManager = userRoleSet.has("manager") || userRoleSet.has("process_manager");
 
     // Super Admin, Payroll, CEO see all
     if (isSuperAdmin || isPayroll || isCEO) {

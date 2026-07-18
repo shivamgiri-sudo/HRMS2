@@ -334,6 +334,7 @@ SOURCE sql/405_finance_grn_vendor_cost_attribution.sql;
 SOURCE sql/406_process_pnl_financial_controls.sql;
 SOURCE sql/408_ats_candidate_assessment_engine.sql;
 SOURCE sql/409_visitor_management_foundation.sql;
+SOURCE sql/410_visitor_configuration_branch_fk.sql;
 SOURCE sql/411_branch_budget_grn_approval_flow.sql;
 
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────

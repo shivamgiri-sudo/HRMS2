@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useDepartments } from "@/hooks/useEmployees";
+import { useDepartments } from "@/hooks/useDepartments";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useIsAdminOrHR, useUserRole } from "@/hooks/useUserRole";

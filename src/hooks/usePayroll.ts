@@ -196,7 +196,7 @@ export function usePayrollRecords(filters: PayrollRecordFilters = {}) {
     queryKey: ["payroll-records", filters],
     queryFn: () => fetchPayrollRecordPage(filters),
     placeholderData: (prev) => prev,
-    staleTime: 0, // Always consider data stale to ensure search updates immediately
+    staleTime: 5_000,
   });
 }
 

@@ -67,6 +67,49 @@ export const leaveService = {
       [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
        input.totalDays, input.reason ?? null]
     );
+
+    // Notify reporting manager — they are Stage 1 approver
+    try {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code,
+                CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
+                e.reporting_manager_id,
+                e.manager_id
+         FROM employees e WHERE e.id = ? LIMIT 1`,
+        [input.employeeId]
+      );
+      const emp = (empRows[0] as any);
+      const managerEmpId = emp?.reporting_manager_id ?? emp?.manager_id ?? null;
+
+      if (managerEmpId) {
+        const [mgRows] = await db.execute<RowDataPacket[]>(
+          `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
+          [managerEmpId]
+        );
+        const managerUserId = (mgRows[0] as any)?.user_id ?? null;
+        if (managerUserId) {
+          const [ltRows] = await db.execute<RowDataPacket[]>(
+            `SELECT leave_name FROM leave_type_master WHERE id = ? LIMIT 1`,
+            [input.leaveTypeId]
+          );
+          const leaveType = (ltRows[0] as any)?.leave_name ?? 'Leave';
+          const { inboxService } = await import('../inbox/inbox.service.js');
+          await inboxService.createItem({
+            user_id: managerUserId,
+            type: 'leave_request',
+            title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
+            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${input.totalDays} day${input.totalDays === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+            entity_type: 'leave',
+            entity_id: input.employeeId,
+            action_url: `/leave/requests`,
+            priority: 'high',
+          });
+        }
+      }
+    } catch {
+      // Non-fatal — notification failure should not block submission
+    }
+
     return this.getRequest(id);
   },
 
@@ -101,127 +144,133 @@ export const leaveService = {
       );
     }
 
-    // Handle approval - deduct leave balance
-    if (input.status === 'approved') {
-      // Validate leave_type_id exists
-      if (!request.leave_type_id) {
-        throw new Error("Leave type is required for approval");
-      }
-      
-      const duration = request.total_days;
-      const employeeId = request.employee_id;
-      const leaveTypeId = request.leave_type_id;
-      const year = new Date(request.from_date).getFullYear();
-      
-      // Fetch leave type master for max_days_per_year enforcement
-      const [typeRows] = await db.execute<RowDataPacket[]>(
-        `SELECT max_days_per_year FROM leave_type_master WHERE id = ? LIMIT 1`,
-        [leaveTypeId]
-      );
-      const maxDaysPerYear: number = Number((typeRows as RowDataPacket[])[0]?.max_days_per_year ?? 0);
+    const conn = await (db as any).getConnection();
+    try {
+      await conn.beginTransaction();
 
-      // Check current balance
-      const [balanceRows] = await db.execute<RowDataPacket[]>(
-        `SELECT * FROM leave_balance_ledger
-         WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [employeeId, leaveTypeId, year]
-      );
-
-      if (balanceRows.length === 0) {
-        // No allocation exists — block approval if requested days exceed the type's annual cap.
-        if (maxDaysPerYear > 0 && duration > maxDaysPerYear) {
-          throw new Error(
-            `No leave allocation found for this employee. ` +
-            `Requested ${duration} day(s) exceeds the annual maximum of ${maxDaysPerYear} for this leave type.`
-          );
+      // Handle approval - deduct leave balance
+      if (input.status === 'approved') {
+        if (!request.leave_type_id) {
+          throw new Error("Leave type is required for approval");
         }
-        await db.execute(
-          `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
-           VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
-          [employeeId, leaveTypeId, year, duration]
+
+        const duration = request.total_days;
+        const employeeId = request.employee_id;
+        const leaveTypeId = request.leave_type_id;
+        const year = new Date(request.from_date).getFullYear();
+
+        const [typeRows] = await conn.execute(
+          `SELECT max_days_per_year FROM leave_type_master WHERE id = ? LIMIT 1`,
+          [leaveTypeId]
         );
-      } else {
-        const balance = balanceRows[0];
-        const allocatedDays = Number(balance.allocated_days ?? 0);
-        const adjustedDays  = Number(balance.adjusted_days ?? 0);
-        const usedDays      = Number(balance.used_days ?? 0);
-        const availableBalance = allocatedDays + adjustedDays - usedDays;
+        const maxDaysPerYear: number = Number((typeRows as RowDataPacket[])[0]?.max_days_per_year ?? 0);
 
-        // Block if exceeding allocated balance
-        if (duration > availableBalance) {
-          throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
-        }
-
-        // Also block if the total used this year would exceed the type's annual max
-        if (maxDaysPerYear > 0 && (usedDays + duration) > maxDaysPerYear) {
-          throw new Error(
-            `Approving this request would exceed the annual limit of ${maxDaysPerYear} day(s) ` +
-            `for this leave type. Already used: ${usedDays}.`
-          );
-        }
-
-        // Update used_days
-        await db.execute(
-          `UPDATE leave_balance_ledger
-           SET used_days = used_days + ?
+        const [balanceRows] = await conn.execute(
+          `SELECT * FROM leave_balance_ledger
            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-          [duration, employeeId, leaveTypeId, year]
+          [employeeId, leaveTypeId, year]
         );
-      }
-    }
-    
-    // Restore balance when rejecting or cancelling a previously approved leave
-    if ((input.status === 'rejected' || input.status === 'cancelled') && request.status === 'approved') {
-      const duration = request.total_days;
-      const employeeId = request.employee_id;
-      const leaveTypeId = request.leave_type_id;
-      const year = new Date(request.from_date).getFullYear();
-      await db.execute(
-        `UPDATE leave_balance_ledger
-            SET used_days = GREATEST(0, used_days - ?)
-          WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
-        [duration, employeeId, leaveTypeId, year]
-      );
 
-      // Revert attendance_daily_record rows that were marked leave_approved by this request
-      const revDates = this._dateRange(request.from_date as string, request.to_date as string);
-      for (const d of revDates) {
-        await db.execute(
-          `UPDATE attendance_daily_record
-              SET attendance_status = 'absent', lwp_value = 1.00, override_reason = ?
-            WHERE employee_id = ? AND record_date = ?
-              AND attendance_status = 'leave_approved'
-              AND is_locked = 0`,
-          [`Leave ${input.status} — auto-reverted by leave service`, employeeId, d]
-        );
-      }
-    }
+        if ((balanceRows as RowDataPacket[]).length === 0) {
+          if (maxDaysPerYear > 0 && duration > maxDaysPerYear) {
+            throw new Error(
+              `No leave allocation found for this employee. ` +
+              `Requested ${duration} day(s) exceeds the annual maximum of ${maxDaysPerYear} for this leave type.`
+            );
+          }
+          await conn.execute(
+            `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+             VALUES (UUID(), ?, ?, ?, 0, ?, 0)`,
+            [employeeId, leaveTypeId, year, duration]
+          );
+        } else {
+          const balance = (balanceRows as RowDataPacket[])[0];
+          const allocatedDays = Number(balance.allocated_days ?? 0);
+          const adjustedDays  = Number(balance.adjusted_days ?? 0);
+          const usedDays      = Number(balance.used_days ?? 0);
+          const availableBalance = allocatedDays + adjustedDays - usedDays;
 
-    // Sync attendance_daily_record when a leave is approved
-    if (input.status === 'approved') {
-      const appDates = this._dateRange(request.from_date as string, request.to_date as string);
-      for (const d of appDates) {
-        await db.execute(
+          if (duration > availableBalance) {
+            throw new Error(`Insufficient leave balance. Available: ${availableBalance}, Requested: ${duration}`);
+          }
+          if (maxDaysPerYear > 0 && (usedDays + duration) > maxDaysPerYear) {
+            throw new Error(
+              `Approving this request would exceed the annual limit of ${maxDaysPerYear} day(s) ` +
+              `for this leave type. Already used: ${usedDays}.`
+            );
+          }
+
+          await conn.execute(
+            `UPDATE leave_balance_ledger
+             SET used_days = used_days + ?
+             WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+            [duration, employeeId, leaveTypeId, year]
+          );
+        }
+
+        // Sync attendance records for the approved date range in a single query
+        await conn.execute(
           `INSERT INTO attendance_daily_record
                (id, employee_id, record_date, attendance_status, lwp_value, created_by)
-             VALUES (UUID(), ?, ?, 'leave_approved', 0.00, 'leave_service')
-             ON DUPLICATE KEY UPDATE
-               attendance_status = IF(is_locked = 0, 'leave_approved', attendance_status),
-               lwp_value         = IF(is_locked = 0, 0.00, lwp_value)`,
-          [request.employee_id, d]
+           SELECT UUID(), ?, cal_date, 'leave_approved', 0.00, 'leave_service'
+           FROM (
+             WITH RECURSIVE cal AS (
+               SELECT ? AS cal_date
+               UNION ALL
+               SELECT DATE_ADD(cal_date, INTERVAL 1 DAY) FROM cal WHERE cal_date < ?
+             ) SELECT cal_date FROM cal
+           ) AS dates
+           ON DUPLICATE KEY UPDATE
+             attendance_status = IF(is_locked = 0, 'leave_approved', attendance_status),
+             lwp_value         = IF(is_locked = 0, 0.00, lwp_value)`,
+          [request.employee_id, request.from_date, request.to_date]
         );
       }
+
+      // Restore balance when rejecting or cancelling a previously approved leave
+      if ((input.status === 'rejected' || input.status === 'cancelled') && request.status === 'approved') {
+        const duration = request.total_days;
+        const employeeId = request.employee_id;
+        const leaveTypeId = request.leave_type_id;
+        const year = new Date(request.from_date).getFullYear();
+
+        await conn.execute(
+          `UPDATE leave_balance_ledger
+              SET used_days = GREATEST(0, used_days - ?)
+            WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+          [duration, employeeId, leaveTypeId, year]
+        );
+
+        // Revert attendance records in a single BETWEEN query
+        await conn.execute(
+          `UPDATE attendance_daily_record
+              SET attendance_status = 'absent', lwp_value = 1.00, override_reason = ?
+            WHERE employee_id = ?
+              AND record_date BETWEEN ? AND ?
+              AND attendance_status = 'leave_approved'
+              AND is_locked = 0`,
+          [`Leave ${input.status} — auto-reverted by leave service`, employeeId, request.from_date, request.to_date]
+        );
+      }
+
+      await conn.execute(
+        "UPDATE leave_request SET status = ? WHERE id = ?",
+        [input.status, id]
+      );
+      await conn.execute(
+        `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
+         VALUES (UUID(), ?, ?, ?, ?)`,
+        [id, input.status, reviewerId, input.remarks ?? null]
+      );
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
     }
 
-    await db.execute(
-      "UPDATE leave_request SET status = ? WHERE id = ?",
-      [input.status, id]
-    );
-    await db.execute(
-      `INSERT INTO leave_approval_log (id, leave_request_id, action, action_by, remarks)
-       VALUES (UUID(), ?, ?, ?, ?)`,
-      [id, input.status, reviewerId, input.remarks ?? null]
-    );
     return this.getRequest(id);
   },
 

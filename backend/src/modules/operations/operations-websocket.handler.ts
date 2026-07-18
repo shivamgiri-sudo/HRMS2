@@ -53,13 +53,13 @@ class OperationsWebSocketHandler {
       ws.on('message', (data: WebSocket.Data) => this.handleMessage(clientId, data));
       ws.on('close', () => this.handleDisconnection(clientId));
       ws.on('error', (error: Error) => {
-        logger.error(`[OperationsWS] Client error (${clientId}):`, error);
+        logger.error({ err: error, clientId }, '[OperationsWS] Client error');
       });
 
       // Start broadcast if not already running
       this.ensureBroadcasting();
     } catch (error) {
-      logger.error('[OperationsWS] Connection handler error:', error);
+      logger.error({ err: error }, '[OperationsWS] Connection handler error');
       ws.close(1011, 'Internal server error');
     }
   }
