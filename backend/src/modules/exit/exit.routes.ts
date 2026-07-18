@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { exitController } from "./exit.controller.js";
@@ -228,6 +229,63 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   }
   return exitController.getExitRequest(req, res);
 }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /ff/:exitRequestId/outstanding-advances
+// Returns outstanding (not fully recovered) salary advances for the employee
+// linked to the given exit request. Used by F&F panel to pre-fill advances
+// recovery field (requires HR/Finance to explicitly click to accept).
+// ─────────────────────────────────────────────────────────────────────────────
+exitRouter.get(
+  "/ff/:exitRequestId/outstanding-advances",
+  requireRole("admin", "hr", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { exitRequestId } = req.params;
+
+    // Look up employee_id from exit_request
+    const [exitRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id FROM exit_request WHERE id = ? LIMIT 1`,
+      [exitRequestId],
+    );
+    const exitRow = (exitRows as RowDataPacket[])[0];
+    if (!exitRow) {
+      return res.status(404).json({ success: false, message: "Exit request not found" });
+    }
+    const employeeId: string = exitRow.employee_id;
+
+    // Fetch active advances with remaining balance
+    const [advRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, advance_date, amount, recovered_amount,
+              ROUND(amount - recovered_amount, 2) AS remaining,
+              notes
+         FROM salary_advance_log
+        WHERE employee_id = ?
+          AND status = 'active'
+          AND recovered_amount < amount
+        ORDER BY advance_date ASC`,
+      [employeeId],
+    );
+
+    const advances = (advRows as RowDataPacket[]).map((r) => ({
+      id:               String(r.id),
+      advance_date:     r.advance_date,
+      amount:           Number(r.amount),
+      recovered_amount: Number(r.recovered_amount),
+      remaining:        Number(r.remaining),
+      notes:            r.notes ?? null,
+    }));
+
+    const outstanding_amount = advances.reduce((sum, a) => sum + a.remaining, 0);
+
+    return res.json({
+      success: true,
+      data: {
+        outstanding_amount: Math.round(outstanding_amount * 100) / 100,
+        advances,
+      },
+    });
+  }),
+);
 
 // ── Resignation Routes (mounted sub-router) ───────────────────────────────────
 // All /resignation/* routes are handled by resignation.routes.ts

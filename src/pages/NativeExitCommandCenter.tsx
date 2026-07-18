@@ -90,6 +90,11 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
   const [loadingFf, setLoadingFf] = useState(false);
   const [saving, setSaving] = useState(false);
   const [acting, setActing] = useState(false);
+  const [advances, setAdvances] = useState<{
+    outstanding_amount: number;
+    advances: Array<{ id: string; advance_date: string; amount: number; recovered_amount: number; remaining: number; notes: string | null }>;
+  } | null>(null);
+  const [loadingAdvances, setLoadingAdvances] = useState(false);
   const [form, setForm] = useState({
     noticePeriodDays: 0,
     noticeShortfallDays: 0,
@@ -130,6 +135,18 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
     if (id) void loadFf(id);
     else setFf(null);
   };
+
+  useEffect(() => {
+    if (!selectedId) { setAdvances(null); return; }
+    setLoadingAdvances(true);
+    hrmsApi
+      .get<{ success: boolean; data: { outstanding_amount: number; advances: any[] } }>(
+        `/api/exit/ff/${selectedId}/outstanding-advances`
+      )
+      .then((r) => setAdvances((r as any).data))
+      .catch(() => setAdvances(null))
+      .finally(() => setLoadingAdvances(false));
+  }, [selectedId]);
 
   const handleSave = async () => {
     if (!selectedId) return;
@@ -248,6 +265,23 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
                   />
                 </div>
               ))}
+              {!loadingAdvances && advances && advances.outstanding_amount > 0 && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 flex items-start justify-between gap-3">
+                  <span>
+                    Auto-detected outstanding advances: <strong>{fmt(advances.outstanding_amount)}</strong>
+                    {advances.advances.length > 1 ? ` (${advances.advances.length} advance records)` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded bg-amber-700 px-2 py-1 text-xs font-bold text-white hover:bg-amber-800"
+                    onClick={() =>
+                      setForm((prev) => ({ ...prev, advancesRecovery: advances.outstanding_amount }))
+                    }
+                  >
+                    Use this amount
+                  </button>
+                </div>
+              )}
               <Button
                 size="sm"
                 className="w-full mt-2"
