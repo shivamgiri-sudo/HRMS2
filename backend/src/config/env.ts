@@ -69,6 +69,7 @@ const envSchema = z.object({
 
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
   JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
+  OTP_HMAC_SECRET: z.string().min(32).default('change-me-otp-hmac-secret-32chars!'),
   PORTAL_DEMO_BYPASS: z.string().default("false"),
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),
   ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be a 64-character hex string').default('0000000000000000000000000000000000000000000000000000000000000000'),
@@ -147,6 +148,9 @@ const envSchema = z.object({
   BILL_DB_USER:     z.string().default(""),
   BILL_DB_PASSWORD: z.string().default(""),
   BILL_DB_NAME:     z.string().default("db_bill"),
+
+  // Shivamgiri quality/APR database (shared by quality-dashboard module)
+  SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -160,6 +164,7 @@ if (!parsed.success) {
 const KNOWN_INSECURE_DEFAULTS = [
   "change-me-in-production-portal-secret-32ch",
   "change-me-jwt-secret-32characters!!",
+  "change-me-otp-hmac-secret-32chars!",
 ];
 
 if (parsed.data.NODE_ENV === "production") {
@@ -169,6 +174,10 @@ if (parsed.data.NODE_ENV === "production") {
   }
   if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.JWT_SECRET)) {
     console.error("[FATAL] JWT_SECRET must be changed from the default value in production.");
+    process.exit(1);
+  }
+  if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.OTP_HMAC_SECRET)) {
+    console.error("[FATAL] OTP_HMAC_SECRET must be changed from the default value in production.");
     process.exit(1);
   }
   if (parsed.data.PAYROLL_BANK_KEY === "hrms-bank-key-dev") {

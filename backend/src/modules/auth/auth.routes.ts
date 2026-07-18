@@ -115,12 +115,14 @@ function validateTemporaryPassword(password: string): string | null {
   return null;
 }
 
-async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId: string): Promise<boolean> {
+async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId: string, maxDepth = 25): Promise<boolean> {
   let currentEmployeeId: string | null = targetEmployeeId;
   const visited = new Set<string>();
+  let depth = 0;
 
-  while (currentEmployeeId && !visited.has(currentEmployeeId)) {
+  while (currentEmployeeId && !visited.has(currentEmployeeId) && depth < maxDepth) {
     visited.add(currentEmployeeId);
+    depth++;
     const result: [ReportingRow[], unknown] = await db.execute<ReportingRow[]>(
       `SELECT reporting_manager_id
          FROM employees

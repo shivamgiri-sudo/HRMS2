@@ -56,7 +56,7 @@ export const OperationsDashboard: React.FC = () => {
     try {
       setState((prev) => ({ ...prev, loading: true, error: null }));
 
-      const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+      const token = localStorage.getItem('hrms_access_token') || sessionStorage.getItem('hrms_access_token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       // Parallel fetch for all data
@@ -98,7 +98,7 @@ export const OperationsDashboard: React.FC = () => {
 
   // Initialize WebSocket connection and subscriptions
   useEffect(() => {
-    const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+    const token = localStorage.getItem('hrms_access_token') || sessionStorage.getItem('hrms_access_token');
     if (!token) {
       setState((prev) => ({ ...prev, error: 'Not authenticated' }));
       return;

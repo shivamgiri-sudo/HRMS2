@@ -240,7 +240,9 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/backfill-from-candidates"
        LIMIT 20000
     `);
 
-    let inserted = 0;
+    // Build all row parameter arrays first (no DB calls), then batch-insert in groups of 500
+    // inside a single transaction — avoids 20,000 sequential round-trips.
+    const rowParams: unknown[][] = [];
     for (const c of candidates as RowDataPacket[]) {
       const endStage = (c.walkin_end_stage || c.current_stage || "").toLowerCase().trim();
       const finalDec = (c.final_decision || "").toLowerCase().trim();
@@ -283,18 +285,7 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/backfill-from-candidates"
 
       const activityDate = c.walk_in_date || (c.created_at ? new Date(c.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
 
-      await db.execute(`
-        INSERT INTO ats_recruiter_hiring_activity
-          (id, activity_date, activity_month, recruiter_name_snapshot,
-           hiring_source, position_name, location_name, branch_name, process_name,
-           candidate_name, gender, mobile, candidate_email,
-           hr_interview_status, ops_interview_status,
-           current_status, joining_status,
-           walkin_flag, contacted_flag, final_selection_flag, joined_flag,
-           linked_candidate_id, employee_id, joined_candidate_emp_code,
-           source_system, created_by, created_at)
-        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `, [
+      rowParams.push([
         activityDate,
         activityDate ? String(activityDate).substring(0, 7) : null,
         c.recruiter_assigned_name || "Unknown",
@@ -318,7 +309,41 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/backfill-from-candidates"
         "BACKFILL",
         req.authUser!.id,
       ]);
-      inserted++;
+    }
+
+    // Batch-insert all rows in a single transaction (groups of 500 to stay within packet limits)
+    const BATCH_SIZE = 500;
+    const conn = await db.getConnection();
+    let inserted = 0;
+    try {
+      await conn.beginTransaction();
+      for (let i = 0; i < rowParams.length; i += BATCH_SIZE) {
+        const slice = rowParams.slice(i, i + BATCH_SIZE);
+        const placeholders = slice.map(() =>
+          "(UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())"
+        ).join(", ");
+        const flatValues = slice.flat();
+        await conn.execute(
+          `INSERT INTO ats_recruiter_hiring_activity
+            (id, activity_date, activity_month, recruiter_name_snapshot,
+             hiring_source, position_name, location_name, branch_name, process_name,
+             candidate_name, gender, mobile, candidate_email,
+             hr_interview_status, ops_interview_status,
+             current_status, joining_status,
+             walkin_flag, contacted_flag, final_selection_flag, joined_flag,
+             linked_candidate_id, employee_id, joined_candidate_emp_code,
+             source_system, created_by, created_at)
+           VALUES ${placeholders}`,
+          flatValues
+        );
+        inserted += slice.length;
+      }
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
     }
 
     return res.json({ success: true, inserted, message: `Backfilled ${inserted} candidates into hiring activity` });

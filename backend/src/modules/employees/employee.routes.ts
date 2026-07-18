@@ -804,14 +804,20 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   if (selfEmp?.id === targetId) {
     // Always allowed
   } else {
-    // Requesting someone else's card — check role + scope
-    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
-    const isPayroll = await hasRole(req.authUser!.id, "payroll_head", "payroll");
-    const isCEO = await hasRole(req.authUser!.id, "ceo");
-    const isAdmin = await hasRole(req.authUser!.id, "admin");
-    const isHR = await hasRole(req.authUser!.id, "hr");
-    const isBranchHead = await hasRole(req.authUser!.id, "branch_head");
-    const isManager = await hasRole(req.authUser!.id, "manager");
+    // Requesting someone else's card — resolve all roles in a single DB query
+    // (req.authUser.role holds the primary role from middleware; fetch full list for multi-role users)
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+      [req.authUser!.id]
+    );
+    const userRoleSet = new Set((roleRows as { role_key: string }[]).map(r => r.role_key));
+    const isSuperAdmin = userRoleSet.has("super_admin");
+    const isPayroll = userRoleSet.has("payroll_head") || userRoleSet.has("payroll");
+    const isCEO = userRoleSet.has("ceo");
+    const isAdmin = userRoleSet.has("admin");
+    const isHR = userRoleSet.has("hr");
+    const isBranchHead = userRoleSet.has("branch_head");
+    const isManager = userRoleSet.has("manager") || userRoleSet.has("process_manager");
 
     // Super Admin, Payroll, CEO see all
     if (isSuperAdmin || isPayroll || isCEO) {

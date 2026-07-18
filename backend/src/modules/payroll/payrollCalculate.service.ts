@@ -344,7 +344,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     processedCount++;
 
     // Step 1: Load designation and department to determine attendance source
-    const [desigRows] = await db.execute<RowDataPacket[]>(
+    // Use conn (transaction connection) for all reads inside the loop to ensure
+    // a consistent snapshot and avoid dirty reads from concurrent payroll runs.
+    const [desigRows] = await conn.execute<RowDataPacket[]>(
       `SELECT dm.designation_name, dept.dept_name
        FROM employees e
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
@@ -525,7 +527,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
     // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
     // fall back to salary_structure_component via structure_id.
-    const [scaRows] = await db.execute<RowDataPacket[]>(
+    // Use conn so reads are within the transaction snapshot.
+    const [scaRows] = await conn.execute<RowDataPacket[]>(
       `SELECT basic, hra, conveyance, special_allowance, gross
          FROM salary_component_assignments
         WHERE employee_id = ? AND status = 'active'
@@ -534,7 +537,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     );
     const scaRow = (scaRows as any[])[0];
 
-    const [compRows] = await db.execute<RowDataPacket[]>(
+    const [compRows] = await conn.execute<RowDataPacket[]>(
       `SELECT scm.component_code, ssc.calc_type, ssc.value
          FROM salary_structure_component ssc
          JOIN salary_component_master scm ON scm.id = ssc.component_id
@@ -626,7 +629,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       : att.working_days;
 
     // 5a. Fetch tax declaration for this employee / financial year
-    const [declRows] = await db.execute<RowDataPacket[]>(
+    const [declRows] = await conn.execute<RowDataPacket[]>(
       "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
       [emp.employee_id, financialYear]
     );
@@ -671,7 +674,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     }
 
     // 5d. Salary advance monthly recovery
-    const [advRows] = await db.execute<RowDataPacket[]>(
+    const [advRows] = await conn.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(ROUND(amount / recovery_months, 2)), 0) AS monthly_recovery
          FROM salary_advance_log
         WHERE employee_id = ? AND status = 'active'`,
@@ -730,7 +733,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       : stat.professional_tax;
 
     // Check for approved PF / ESI opt-outs (employee voluntary declaration approved by Payroll HO)
-    const [overrideRows] = await db.execute<RowDataPacket[]>(
+    const [overrideRows] = await conn.execute<RowDataPacket[]>(
       `SELECT override_type FROM employee_statutory_override
        WHERE employee_id = ? AND status = 'approved'
          AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
