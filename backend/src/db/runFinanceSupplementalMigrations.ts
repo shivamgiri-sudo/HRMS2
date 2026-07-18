@@ -23,6 +23,7 @@ const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "416_smart_grn_allocation_document_intelligence.sql",
   "417_budget_subhead_coverage_control.sql",
   "418_grn_allocation_pnl_attribution.sql",
+  "419_grn_validation_override_control.sql",
 ] as const;
 
 export async function runFinanceSupplementalMigrations() {
