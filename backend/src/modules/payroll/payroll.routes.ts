@@ -614,15 +614,15 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
        LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
-       LEFT JOIN employees e ON CAST(e.id AS CHAR) = CAST(spl.employee_id AS CHAR)
+       LEFT JOIN employees e ON e.id = spl.employee_id
        LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
-       LEFT JOIN designation_master des ON CAST(des.id AS CHAR) = CAST(e.designation_id AS CHAR)
-       LEFT JOIN department_master dept ON CAST(dept.id AS CHAR) = CAST(e.department_id AS CHAR)
-       LEFT JOIN branch_master br ON CAST(br.id AS CHAR) = CAST(e.branch_id AS CHAR)
-       LEFT JOIN location_master loc ON CAST(loc.id AS CHAR) = CAST(e.location_id AS CHAR)
+       LEFT JOIN designation_master des ON des.id = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN branch_master br ON br.id = e.branch_id
+       LEFT JOIN location_master loc ON loc.id = e.location_id
        LEFT JOIN salary_run_disbursal srd
-         ON CAST(srd.run_id AS CHAR) = CAST(spl.run_id AS CHAR)
-        AND CAST(srd.employee_id AS CHAR) = CAST(spl.employee_id AS CHAR)
+         ON srd.run_id = spl.run_id
+        AND srd.employee_id = spl.employee_id
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('draft')
@@ -715,9 +715,9 @@ router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Respon
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
             e.employee_code
        FROM salary_payslip sp
-       JOIN salary_prep_line spl ON CAST(spl.id AS CHAR) = CAST(sp.prep_line_id AS CHAR)
-       JOIN salary_prep_run spr  ON CAST(spr.id AS CHAR) = CAST(spl.run_id AS CHAR)
-       JOIN employees e          ON CAST(e.id AS CHAR)   = CAST(sp.employee_id AS CHAR)
+       JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
+       JOIN salary_prep_run spr  ON spr.id = spl.run_id
+       JOIN employees e          ON e.id   = sp.employee_id
       WHERE e.employee_code = ?
         AND spr.run_month   = ?
       LIMIT 1`,

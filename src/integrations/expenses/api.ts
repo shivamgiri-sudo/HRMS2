@@ -11,43 +11,20 @@ import type {
   ExpenseStatus,
   ExpenseReportQuery
 } from './types';
-import { apiBaseUrl } from '@/lib/apiBase';
+import { hrmsApi } from '@/lib/hrmsApi';
 
-const API_BASE = apiBaseUrl();
-const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
-
-function getAuthHeaders(): Record<string, string> {
-  const mysqlToken = localStorage.getItem('hrms_access_token');
-  if (mysqlToken) return { 'Content-Type': 'application/json', Authorization: `Bearer ${mysqlToken}` };
-
-  const demoRaw = DEMO_LOGIN_ENABLED ? localStorage.getItem('hrms_demo_session') : null;
-  if (demoRaw) {
-    try {
-      const demo = JSON.parse(demoRaw);
-      const token = demo?.access_token;
-      if (token) return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-    } catch {
-      // fall through
-    }
+// Re-use the centralized hrmsApi client so token handling, refresh logic,
+// and demo-session fallback are maintained in a single place.
+const request = <T>(method: string, path: string, body?: unknown): Promise<T> => {
+  switch (method) {
+    case 'GET':    return hrmsApi.get<T>(path);
+    case 'POST':   return hrmsApi.post<T>(path, body);
+    case 'PUT':    return hrmsApi.put<T>(path, body);
+    case 'PATCH':  return hrmsApi.patch<T>(path, body);
+    case 'DELETE': return hrmsApi.delete<T>(path);
+    default:       return hrmsApi.get<T>(path);
   }
-  return { 'Content-Type': 'application/json' };
-}
-
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: getAuthHeaders(),
-    body: body !== undefined ? JSON.stringify(body) : undefined
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    let message = `HTTP ${res.status}`;
-    try { message = JSON.parse(text)?.error ?? JSON.parse(text)?.message ?? text; } catch { message = text || message; }
-    throw new Error(message);
-  }
-  if (res.status === 204) return null as T;
-  return res.json() as Promise<T>;
-}
+};
 
 export const expenseApi = {
   async listCategories(): Promise<ExpenseCategory[]> {
@@ -128,12 +105,7 @@ export const expenseApi = {
     const params = new URLSearchParams({ status });
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
-    const headers: Record<string, string> = {};
-    const mysqlToken = localStorage.getItem('hrms_access_token');
-    if (mysqlToken) headers.Authorization = `Bearer ${mysqlToken}`;
-    const res = await fetch(`${API_BASE}/api/expenses/claims/export-for-payment?${params}`, { headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.blob();
+    return hrmsApi.getBlob(`/api/expenses/claims/export-for-payment?${params}`);
   },
 
   async getExpenseSummary(query: ExpenseReportQuery) {

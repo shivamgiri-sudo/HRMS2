@@ -1,8 +1,7 @@
 import { Router } from "express";
-import mysql from "mysql2/promise";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { env } from "../../config/env.js";
+import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 import { db } from "../../db/mysql.js";
 import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
 import type { RowDataPacket } from "mysql2";
@@ -90,19 +89,8 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
   return { global: false, campaignIds: [], agentCodes: [] };
 }
 
-let ciPool: mysql.Pool | null = null;
-function getCiPool(): mysql.Pool {
-  if (!ciPool) ciPool = mysql.createPool({
-    host: env.DB_HOST,
-    port: env.DB_PORT,
-    user: env.DB_USER,
-    password: env.DB_PASSWORD,
-    database: "Shivamgiri",
-    waitForConnections: true,
-    connectionLimit: 5,
-    connectTimeout: 10000,
-  });
-  return ciPool;
+function getCiPool() {
+  return getShivamgiriPool();
 }
 
 function dateDefaults(query: Record<string, unknown>): { from: string; to: string } {
