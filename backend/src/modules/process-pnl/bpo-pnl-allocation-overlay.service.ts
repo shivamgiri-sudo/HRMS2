@@ -3,6 +3,8 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, type BpoPnlRow } from "./bpo-pnl.service.js";
 
+type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
+
 type AllocationDriver =
   | "direct"
   | "active_hc"
@@ -201,7 +203,7 @@ async function legacyAllocatedGrnRows(period: string) {
               vpt.recognition_period,
               DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')
             ) = ?
-        AND LOWER(REPLACE(COALESCE(vpt.payment_status, vpt.status, ''), '_', ' ')) IN (
+        AND LOWER(REPLACE(COALESCE(vpt.payment_status, ''), '_', ' ')) IN (
           'payment pending','pending','approved','posted','scheduled','payment scheduled',
           'partially paid','paid','closed'
         )
@@ -333,8 +335,7 @@ function adjustedRow(
     + buckets.depreciation + buckets.amortization + buckets.financeCost + buckets.tax;
   const removedLegacyGrn = legacy.direct + legacy.bmc;
   const grnVendorActual = row.grnVendorActual - removedLegacyGrn + includedNewGrn;
-  const ebitdaMarginPct = pct(ebitda, row.recognizedRevenue);
-  const processStatus = ebitda < 0
+  const processStatus: BpoPnlRow["processStatus"] = ebitda < 0
     ? "loss-making"
     : row.recognizedRevenue <= 0 || row.revenueAtRisk > 0 || (row.deliveryAttainmentPct != null && row.deliveryAttainmentPct < 90)
     ? "at-risk"
@@ -352,7 +353,7 @@ function adjustedRow(
     contribution,
     contributionMarginPct: pct(contribution, row.recognizedRevenue),
     ebitda,
-    ebitdaMarginPct,
+    ebitdaMarginPct: pct(ebitda, row.recognizedRevenue),
     depreciation,
     amortization,
     ebit,
@@ -375,14 +376,11 @@ function sum(rows: BpoPnlRow[], field: keyof BpoPnlRow) {
   return rows.reduce((total, row) => total + n(row[field]), 0);
 }
 
-function applySummaryTotals<T extends Awaited<ReturnType<typeof bpoPnlService.getSummary>>>(
-  summary: T,
-  rows: BpoPnlRow[]
-): T {
+function applySummaryTotals(summary: BpoPnlSummary, rows: BpoPnlRow[]): BpoPnlSummary {
   const revenue = sum(rows, "recognizedRevenue");
   const ebitda = sum(rows, "ebitda");
   const operatingProfit = sum(rows, "operatingProfit");
-  const alerts = summary.alerts.filter((alert) => alert.code !== "NEGATIVE_EBITDA");
+  const alerts: BpoPnlSummary["alerts"] = summary.alerts.filter((alert) => alert.code !== "NEGATIVE_EBITDA");
   for (const row of rows.filter((item) => item.ebitda < 0)) {
     alerts.push({
       type: "critical",
