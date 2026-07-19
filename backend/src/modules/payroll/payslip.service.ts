@@ -194,35 +194,25 @@ export const payslipService = {
               srd.payment_date
          FROM salary_prep_line spl
          JOIN salary_prep_run spr
-           ON CONVERT(spr.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(spl.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON spr.id = spl.run_id
          LEFT JOIN salary_payslip sp
-           ON CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON sp.prep_line_id = spl.id
          LEFT JOIN employees e
-           ON CONVERT(e.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(spl.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON e.id = spl.employee_id
          LEFT JOIN employee_uan eu
-           ON CONVERT(eu.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(e.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-          AND eu.is_active = 1
+           ON eu.employee_id = e.id
+           AND eu.is_active = 1
          LEFT JOIN designation_master d
-           ON CONVERT(d.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(e.designation_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON d.id = e.designation_id
          LEFT JOIN department_master dept
-           ON CONVERT(dept.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(e.department_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON dept.id = e.department_id
          LEFT JOIN branch_master br
-           ON CONVERT(br.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(e.branch_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON br.id = e.branch_id
          LEFT JOIN location_master loc
-           ON CONVERT(loc.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           ON loc.id = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_0900_ai_ci
          LEFT JOIN salary_run_disbursal srd
-          ON CONVERT(srd.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(spl.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-          AND CONVERT(srd.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(spl.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+          ON srd.run_id = spl.run_id
+          AND srd.employee_id = spl.employee_id
         WHERE spl.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
       [employeeId, runId]
