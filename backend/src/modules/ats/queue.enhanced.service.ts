@@ -28,6 +28,12 @@ export interface QueueEntry {
   interview_completed_at: string | null;
   estimated_wait_time: number | null;
   position_in_queue: number;
+  // Score columns
+  skilltest_typing: number | null;
+  skilltest_ai: number | null;
+  skilltest_result: string | null;
+  assessment_percentage: number | null;
+  typing_net_wpm: number | null;
 }
 
 export interface QueueFilters {
@@ -125,13 +131,26 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
         WHERE ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
           AND DATE(${queueTimeExpr('qt2')}) = DATE(${queueTimeExpr('qt')})
           AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
-      ) as position_in_queue
+      ) as position_in_queue,
+      c.skilltest_typing,
+      c.skilltest_ai,
+      c.skilltest_result,
+      scores.assessment_percentage,
+      scores.typing_net_wpm
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
     LEFT JOIN process_master pm ON pm.id = c.applied_for_process
     LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
     LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
     LEFT JOIN employees e ON e.id = rr.employee_id
+    LEFT JOIN (
+      SELECT aca.candidate_id,
+             MAX(aca.percentage)  AS assessment_percentage,
+             MAX(ata.net_wpm)     AS typing_net_wpm
+      FROM ats_candidate_assessment aca
+      LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
+      GROUP BY aca.candidate_id
+    ) scores ON scores.candidate_id = c.id
     WHERE ${conditions.join(' AND ')}
       AND (
         qt.queue_status IN ('waiting','called','in_interview')

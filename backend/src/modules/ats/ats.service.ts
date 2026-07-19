@@ -78,11 +78,23 @@ export const atsService = {
     const offset = (filters.page - 1) * filters.limit;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM ats_candidate ${where} ORDER BY created_at DESC LIMIT ${filters.limit} OFFSET ${offset}`,
+      `SELECT c.*,
+              scores.assessment_percentage,
+              scores.typing_net_wpm
+       FROM ats_candidate c
+       LEFT JOIN (
+         SELECT aca.candidate_id,
+                MAX(aca.percentage) AS assessment_percentage,
+                MAX(ata.net_wpm)    AS typing_net_wpm
+         FROM ats_candidate_assessment aca
+         LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
+         GROUP BY aca.candidate_id
+       ) scores ON scores.candidate_id = c.id
+       ${where} ORDER BY c.created_at DESC LIMIT ${filters.limit} OFFSET ${offset}`,
       params
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM ats_candidate ${where}`,
+      `SELECT COUNT(*) AS total FROM ats_candidate c ${where}`,
       params
     );
     return { data: rows as AtsCandidate[], total: Number(countRows[0]?.total ?? 0), page: filters.page, limit: filters.limit };

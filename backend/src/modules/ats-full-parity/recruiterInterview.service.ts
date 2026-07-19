@@ -1143,6 +1143,17 @@ export async function submitInterviewUpdate(
       ]
     );
 
+    // Close the queue token so the candidate leaves the live queue display
+    await conn.execute(
+      `UPDATE ats_queue_token
+       SET queue_status = CASE WHEN ? = 'No Show' THEN 'no_show' ELSE 'completed' END,
+           interview_completed_at = COALESCE(interview_completed_at, NOW()),
+           updated_at = NOW()
+       WHERE candidate_id = ?
+         AND queue_status IN ('waiting', 'called', 'in_interview')`,
+      [finalDecision, candidate.id]
+    );
+
     // Stage log
     await conn.execute(
       `INSERT INTO ats_candidate_stage_log (id, candidate_id, from_stage, to_stage, remarks, updated_by)

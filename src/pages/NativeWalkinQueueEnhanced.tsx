@@ -29,6 +29,11 @@ interface QueueToken {
   recruiter_id: string | null;
   recruiter_name: string | null;
   created_at: string;
+  skilltest_typing?: number | null;
+  skilltest_ai?: number | null;
+  skilltest_result?: string | null;
+  assessment_percentage?: number | null;
+  typing_net_wpm?: number | null;
 }
 
 interface QueueMetrics {
@@ -329,6 +334,12 @@ export default function NativeWalkinQueueEnhanced() {
                     Wait Time
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
+                    Typing
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
+                    Assessment
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
                     Recruiter
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
@@ -375,6 +386,33 @@ export default function NativeWalkinQueueEnhanced() {
                     </td>
                     <td className="px-4 py-4 text-sm text-gray-600">
                       {formatWaitTime(token.estimated_wait_time)}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-700">
+                      {(() => {
+                        const wpm = token.typing_net_wpm ?? token.skilltest_typing;
+                        return wpm != null ? (
+                          <span className="font-medium">{Number(wpm).toFixed(0)} WPM</span>
+                        ) : <span className="text-gray-400">—</span>;
+                      })()}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-700">
+                      {(() => {
+                        const pct = token.assessment_percentage ?? token.skilltest_ai;
+                        const result = token.skilltest_result;
+                        if (pct == null) return <span className="text-gray-400">—</span>;
+                        const isPass = result?.toLowerCase() === 'pass';
+                        const isFail = result?.toLowerCase() === 'fail' || result?.toLowerCase() === 'rejected';
+                        return (
+                          <span className="flex items-center gap-1">
+                            <span className="font-medium">{Number(pct).toFixed(1)}%</span>
+                            {result && (
+                              <span className={`inline-flex px-1.5 py-0.5 text-xs font-semibold rounded ${isPass ? 'bg-emerald-100 text-emerald-700' : isFail ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
+                                {result}
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-4 text-sm text-gray-600">
                       {token.recruiter_name || "-"}

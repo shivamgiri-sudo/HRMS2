@@ -40,6 +40,12 @@ type Candidate = {
   walkin_end_stage?: string;
   created_at?: string;
   updated_at?: string;
+  // Score fields from ats_candidate + assessment engine
+  skilltest_typing?: number | null;
+  skilltest_ai?: number | null;
+  skilltest_result?: string | null;
+  assessment_percentage?: number | null;
+  typing_net_wpm?: number | null;
 };
 
 type Assignment = {
@@ -807,9 +813,14 @@ export default function NativeATSCandidateMaster() {
         role_applied: c.process ?? c.applied_for_process ?? undefined,
         recruiter_name: c.recruiter_name ?? c.recruiter_assigned_name ?? undefined,
         status: c.status ?? c.current_stage ?? "Applied",
-        walkin_end_stage: c.status ?? c.current_stage ?? undefined,
+        walkin_end_stage: c.walkin_end_stage ?? c.current_stage ?? undefined,
         created_at: c.created_at,
         updated_at: c.updated_at,
+        skilltest_typing: c.skilltest_typing ?? null,
+        skilltest_ai: c.skilltest_ai ?? null,
+        skilltest_result: c.skilltest_result ?? null,
+        assessment_percentage: c.assessment_percentage ?? null,
+        typing_net_wpm: c.typing_net_wpm ?? null,
         assignment: undefined,
         logs: [],
       }));
@@ -990,6 +1001,8 @@ export default function NativeATSCandidateMaster() {
                     <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Branch / Role</th>
                     {!isRecruiter && <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Recruiter</th>}
                     <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</th>
+                    <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Typing</th>
+                    <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Assessment</th>
                     <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Registered</th>
                     <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 text-right">Actions</th>
                   </tr>
@@ -1021,6 +1034,33 @@ export default function NativeATSCandidateMaster() {
                           <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${statusBadgeClass(r.status)}`}>
                             {r.status || "Waiting"}
                           </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-700">
+                          {(() => {
+                            const wpm = r.typing_net_wpm ?? r.skilltest_typing;
+                            return wpm != null
+                              ? <span className="font-medium">{Number(wpm).toFixed(0)} WPM</span>
+                              : <span className="text-slate-300">—</span>;
+                          })()}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-700">
+                          {(() => {
+                            const pct = r.assessment_percentage ?? r.skilltest_ai;
+                            const result = r.skilltest_result;
+                            if (pct == null) return <span className="text-slate-300">—</span>;
+                            const isPass = result?.toLowerCase() === 'pass';
+                            const isFail = result?.toLowerCase() === 'fail' || result?.toLowerCase() === 'rejected';
+                            return (
+                              <span className="flex items-center gap-1">
+                                <span className="font-medium">{Number(pct).toFixed(1)}%</span>
+                                {result && (
+                                  <span className={`inline-flex px-1 py-0.5 text-[10px] font-bold rounded ${isPass ? 'bg-emerald-100 text-emerald-700' : isFail ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>
+                                    {result}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-3 py-2 text-[10px] text-slate-400 whitespace-nowrap">
                           {r.created_at ? new Date(toUtc(r.created_at)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}

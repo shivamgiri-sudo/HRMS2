@@ -7,6 +7,7 @@ import { startAnnualLeaveWorker } from "./leave-annual-el-credit.worker.js";
 import { startLeaveMonthlyWorker } from "./leave-monthly-credit.worker.js";
 import { startOfficialEmailComplianceScheduler } from "./official-email-compliance.worker.js";
 import { startSLABreachWorker } from "./sla-breach-worker.js";
+import { startInterviewDelayAlertWorker } from "./interview-delay-alert.worker.js";
 import { startLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
 import { startAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
@@ -78,6 +79,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "sla-breach",
     start: startSLABreachWorker,
+  },
+  {
+    name: "interview-delay-alert",
+    start: () => { startInterviewDelayAlertWorker(); return Promise.resolve(); },
   },
   {
     name: "lms-sync",
