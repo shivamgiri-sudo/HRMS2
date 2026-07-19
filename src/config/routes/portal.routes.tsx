@@ -14,7 +14,7 @@ export const portalRouteElements = (
       <Route path="/portal/processes/:id" element={<PortalRoute><PortalProcessDashboard /></PortalRoute>} />
 
       {/* Super admin portal */}
-      <Route path="/super-admin/dashboard" element={<ProtectedRoute roles={['admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
+      <Route path="/super-admin/dashboard" element={<ProtectedRoute roles={['super_admin','admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
 
       {/* Public kiosk displays and candidate portal are declared in public.routes */}
   </>

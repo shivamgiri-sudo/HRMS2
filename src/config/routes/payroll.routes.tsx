@@ -55,7 +55,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/package-admin"  element={<ProtectedRoute roles={['admin','super_admin','payroll']}><NativeSalaryPackageAdmin /></ProtectedRoute>} />
       <Route path="/payroll/incentives"     element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
       <Route path="/payroll/overtime"       element={<ProtectedRoute roles={['admin','super_admin','wfm','payroll','payroll_head']}><PayrollOvertimeManagement /></ProtectedRoute>} />
-      <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','finance']}><DisbursalManagement /></ProtectedRoute>} />
+      <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><DisbursalManagement /></ProtectedRoute>} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><PayrollConfigFlags /></ProtectedRoute>} />
       <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><RecalculationQueue /></ProtectedRoute>} />
       <Route path="/payroll/running-breakdown"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm','employee']}><RunningPayrollBreakdown /></ProtectedRoute>} />

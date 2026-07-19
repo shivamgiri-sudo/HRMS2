@@ -24,12 +24,12 @@ export const navGroups: NavGroup[] = [
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
       { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], description: "Team attendance, leave, KPI & approvals" },
       { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Reports" },
-      { label: "My Dashboard",     href: "/my-dashboard",     icon: ic(LayoutDashboard), pageCode: "EMPLOYEE_DASHBOARD", description: "Employee dashboard" },
+      { label: "My Dashboard",     href: "/my-dashboard",     icon: ic(LayoutDashboard), pageCode: "EMPLOYEE_SELF_DASHBOARD", description: "Employee dashboard" },
       { label: "CEO Dashboard",    href: "/ceo/dashboard",    icon: ic(Crown),           pageCode: "CEO_DASHBOARD", roles: ["ceo"], description: "CEO dashboard" },
       { label: "HR Dashboard",     href: "/hr/dashboard",     icon: ic(Users),           pageCode: "HR_DASHBOARD", roles: ["hr", "admin"], description: "HR dashboard" },
       { label: "WFM Dashboard",    href: "/wfm/dashboard",    icon: ic(Calendar),        pageCode: "WFM_DASHBOARD", roles: ["wfm"], description: "WFM dashboard" },
-      { label: "Payroll Dashboard", href: "/payroll-hr/dashboard", icon: ic(Receipt),    pageCode: "PAYROLL_DASHBOARD", roles: ["payroll_head", "payroll"], description: "Payroll dashboard" },
-      { label: "Manager Dashboard", href: "/manager/dashboard", icon: ic(Briefcase),     pageCode: "MANAGER_DASHBOARD", roles: ["manager", "process_manager"], description: "Manager dashboard" },
+      { label: "Payroll Dashboard", href: "/payroll-hr/dashboard", icon: ic(Receipt),    pageCode: "PAYROLL_HR_DASHBOARD", roles: ["payroll_head", "payroll"], description: "Payroll dashboard" },
+      { label: "Manager Dashboard", href: "/manager/dashboard", icon: ic(Briefcase),     pageCode: "MANAGEMENT_DASHBOARD", roles: ["manager", "process_manager"], description: "Manager dashboard" },
     ],
   },
 
@@ -139,7 +139,7 @@ export const navGroups: NavGroup[] = [
       {
         label: "Lifecycle",    href: "/employee-lifecycle", icon: ic(Users), pageCode: "EMPLOYEE_LIFECYCLE", description: "Employee lifecycle",
         children: [
-          { label: "Employee Stat Card",      href: "/employee-stat-card",    icon: ic(Users),     description: "Employee metrics dashboard" },
+          { label: "Employee Directory",        href: "/employees",             icon: ic(Users),     description: "Employee directory and stat cards" },
           { label: "Career Timeline",         href: "/employee-journey",      icon: ic(TrendingUp), description: "Career progression timeline" },
           { label: "Employee Lifecycle", href: "/employee-lifecycle",    icon: ic(Users),     pageCode: "EMPLOYEE_LIFECYCLE", roles: ["admin","hr"], description: "Lifecycle" },
           { label: "Career Planning",    href: "/career-planning",       icon: ic(TrendingUp),pageCode: "CAREER_PLANNING",   description: "Career paths" },

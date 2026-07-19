@@ -98,12 +98,12 @@ export const workforceRouteElements = (
 
       {/* Business command */}
       <Route path="/business-command-center" element={
-        <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager']}>
+        <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager','ceo','coo','hr','manager','process_manager']}>
           <NativeBusinessCommandCenter />
         </ProtectedRoute>
       } />
       <Route path="/business-actions" element={
-        <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager']}>
+        <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager','ceo','coo','hr','manager','process_manager','team_leader','tl']}>
           <NativeBusinessActionQueue />
         </ProtectedRoute>
       } />

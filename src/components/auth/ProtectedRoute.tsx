@@ -2,7 +2,7 @@ import { Navigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEmployeeStatus } from "@/hooks/useEmployeeStatus";
 import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
-import { Loader2, ShieldX } from "lucide-react";
+import { Loader2, ShieldX, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -16,14 +16,38 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
-  const { isAdminOrHR, isLoading: isRoleLoading, roleKeys } = useIsAdminOrHR();
-  const { isLoading: isAccessLoading } = useWorkforceAccess();
+  const { isAdminOrHR, isLoading: isRoleLoading, error: roleError, roleKeys } = useIsAdminOrHR();
+  const { isLoading: isAccessLoading, isError: isAccessError } = useWorkforceAccess();
   const isEmployee = employeeStatus?.isEmployee ?? false;
 
   if (isLoading || isEmployeeLoading || isRoleLoading || isAccessLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (roleError || isAccessError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-yellow-100">
+              <AlertTriangle className="h-8 w-8 text-yellow-600" />
+            </div>
+            <CardTitle>Unable to load page</CardTitle>
+            <CardDescription>
+              There was a problem verifying your access. Please refresh the page or try again.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center space-y-2">
+            <Button onClick={() => window.location.reload()}>Refresh</Button>
+            <Button variant="outline" asChild>
+              <Link to="/dashboard">Go to Dashboard</Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
