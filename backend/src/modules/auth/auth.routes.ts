@@ -12,6 +12,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
+import { classifyLoginError } from "./auth-login-error.js";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -19,6 +20,9 @@ const authLimiter = rateLimit({
   message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
   standardHeaders: true,
   legacyHeaders: false,
+  // Count invalid credentials, but do not lock users out because the database returned 5xx.
+  skipFailedRequests: true,
+  requestWasSuccessful: (_req, res) => res.statusCode < 500,
 });
 
 const twoFactorLimiter = rateLimit({
@@ -152,7 +156,8 @@ router.post("/login", authLimiter, h(async (req, res) => {
     const tokens = await authService.login(identifier, password, req);
     return res.json({ data: tokens });
   } catch (error: unknown) {
-    return res.status(401).json({ error: error instanceof Error ? error.message : "Authentication failed" });
+    const failure = classifyLoginError(error);
+    return res.status(failure.status).json({ error: failure.message });
   }
 }));
 
