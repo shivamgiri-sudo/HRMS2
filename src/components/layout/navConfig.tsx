@@ -336,6 +336,7 @@ export const navGroups: NavGroup[] = [
           { label: "Module Access",    href: "/super-admin/module-access",  icon: ic(Lock),       pageCode: "MODULE_ACCESS", roles: ["super_admin"], description: "Module permissions" },
           { label: "Policy Engine",    href: "/super-admin/policy-engine",  icon: ic(Settings2),  roles: ["super_admin"], description: "Master business policy configuration" },
           { label: "Feed Creators",    href: "/super-admin/company-feed-creators", icon: ic(UsersRound), roles: ["super_admin"], description: "Grant company feed posting rights" },
+          { label: "AI Providers",     href: "/settings/ai-providers",           icon: ic(Settings2), roles: ["super_admin"], description: "Configure AI models" },
           { label: "Super Admin Dashboard", href: "/super-admin/dashboard", icon: ic(Shield),     pageCode: "SUPER_ADMIN_DASHBOARD", roles: ["super_admin"], description: "Super admin dashboard" },
           { label: "Security Center",  href: "/security-center",            icon: ic(ShieldAlert),pageCode: "SECURITY_CENTER", roles: ["super_admin", "admin"], description: "Security monitoring" },
           { label: "DPDP / Privacy",   href: "/compliance/dpdp",            icon: ic(ShieldCheck),roles: ["admin","hr"],       description: "DPDP" },

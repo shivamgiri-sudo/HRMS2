@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import CookieConsent from "@/components/layout/CookieConsent";
 import { OfflineFallback } from "@/components/layout/OfflineFallback";
+import { FloatingChatWidget } from "@/components/ai/FloatingChatWidget";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -49,6 +50,7 @@ const App = () => (
           </ErrorBoundary>
           <CookieConsent />
           <OfflineFallback />
+          <FloatingChatWidget />
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
