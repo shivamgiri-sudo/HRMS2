@@ -1,4 +1,4 @@
-import { Award, Zap, Clock, TrendingUp, Target } from "lucide-react";
+import { Award, Zap, Clock, TrendingUp, TrendingDown, Target } from "lucide-react";
 
 const RAG_BORDER_SHADOW = {
   green: "border-l-green-500 shadow-green-950/20 shadow-lg border border-slate-800/80 hover:border-green-500/30",
@@ -25,12 +25,12 @@ function MetricIcon({ code }: { code: string }) {
   return <Zap className="w-5 h-5" />;
 }
 
-function Sparkline({ points, rag }: { points: Array<{ value: number }>; rag: string }) {
+function Sparkline({ points, rag, metricId }: { points: Array<{ value: number }>; rag: string; metricId: string }) {
   if (!points || points.length < 2) return <div className="h-8 w-24 bg-slate-800 rounded opacity-25" />;
   const vals = points.map(p => p.value);
   const min = Math.min(...vals), max = Math.max(...vals);
   const range = max - min || 1;
-  
+
   const w = 110, h = 40;
   const padding = 2;
   const pointsString = vals
@@ -44,7 +44,8 @@ function Sparkline({ points, rag }: { points: Array<{ value: number }>; rag: str
   const fillPointsString = `${padding},${h} ` + pointsString + ` ${w - padding},${h}`;
 
   const strokeColor = rag === "green" ? "#10b981" : rag === "amber" ? "#f59e0b" : "#f43f5e";
-  const gradientId = `spark-grad-${Math.random().toString(36).substring(7)}`;
+  // Stable ID derived from metricId — avoids Math.random() breaking React reconciliation
+  const gradientId = `spark-grad-${metricId.replace(/[^a-z0-9]/gi, "_")}`;
 
   return (
     <svg width={w} height={h} className="overflow-visible">
@@ -100,7 +101,7 @@ export function KpiScorecardGrid({ scorecards }: { scorecards: any[] }) {
                     {trend ? (
                       <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
                     ) : (
-                      <TrendingUp className="w-3.5 h-3.5 text-rose-400 transform rotate-180" />
+                      <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
                     )}
                   </div>
                   <h3 className="text-sm font-bold text-slate-100 mt-0.5 line-clamp-1">{m.metric_name}</h3>
@@ -127,7 +128,7 @@ export function KpiScorecardGrid({ scorecards }: { scorecards: any[] }) {
 
               <div className="flex flex-col items-end gap-1">
                 <span className="text-[10px] text-slate-500 font-semibold tracking-wider uppercase mb-0.5">6M Trend</span>
-                <Sparkline points={m.sparkline} rag={m.rag} />
+                <Sparkline points={m.sparkline} rag={m.rag} metricId={String(m.metric_id ?? m.metric_code ?? "m")} />
               </div>
             </div>
           </div>

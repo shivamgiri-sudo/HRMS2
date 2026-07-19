@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { portalApi, clearPortalToken } from "@/lib/portalApi";
 import { KpiScorecardGrid } from "@/components/portal/KpiScorecardGrid";
 import { GlidePathChart } from "@/components/portal/GlidePathChart";
 import {
-  Loader2, LogOut, Briefcase, RefreshCw, CheckCircle, Clock, AlertCircle, XCircle,
-  FileText, Activity, Users, MessageSquare, ClipboardList, Shield, User, ArrowRight
+  Loader2, LogOut, Briefcase, CheckCircle, Clock, AlertCircle, RefreshCw,
+  FileText, Activity, Users, MessageSquare, ClipboardList, Shield, User, ArrowRight,
+  TrendingUp
 } from "lucide-react";
 import { formatISTDate } from "@/lib/utils";
 
@@ -17,9 +18,16 @@ function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function clientInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "C";
+  return (words[0][0] + (words[1]?.[0] ?? "")).toUpperCase();
+}
+
 export default function PortalProcessDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("Performance");
   const [period, setPeriod] = useState(currentPeriod());
 
@@ -86,16 +94,17 @@ export default function PortalProcessDashboard() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-slate-800/40 border border-slate-800/60 rounded-full px-2.5 py-1 text-slate-300">
               <div className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold">
-                CP
+                {clientInitials(clientName)}
               </div>
-              <span className="text-xs font-medium hidden md:inline">Client Partner</span>
+              <span className="text-xs font-medium hidden md:inline">{clientName || "Client"}</span>
             </div>
             <button
               onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all duration-200 border border-transparent hover:border-rose-500/20"
-              title="Logout from portal"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all duration-200 border border-transparent hover:border-rose-500/20"
+              title="Sign out of portal"
             >
               <LogOut className="w-4 h-4" />
+              <span className="text-xs font-medium hidden md:inline">Sign Out</span>
             </button>
           </div>
         </div>
@@ -131,7 +140,7 @@ export default function PortalProcessDashboard() {
                 type="month"
                 value={period}
                 onChange={(e) => setPeriod(e.target.value)}
-                className="bg-transparent text-xs font-bold text-slate-300 outline-none cursor-pointer"
+                className="bg-slate-950 border border-slate-700 rounded-md px-2 py-1 text-xs font-bold text-slate-300 outline-none cursor-pointer focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
               />
             </div>
           </div>
@@ -141,7 +150,7 @@ export default function PortalProcessDashboard() {
       {/* TAB SLIDER MENU */}
       <div className="bg-slate-900/20 border-b border-slate-800/50 sticky top-16 z-30 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6">
-          <div className="flex gap-1 overflow-x-auto no-scrollbar py-2">
+          <div role="tablist" aria-label="Dashboard tabs" className="flex gap-1 overflow-x-auto no-scrollbar py-2">
             {TABS.map(t => {
               const isActive = tab === t;
               return (
@@ -155,7 +164,7 @@ export default function PortalProcessDashboard() {
                   }`}
                 >
                   {t === "Performance" && <Activity className="w-3.5 h-3.5" />}
-                  {t === "Glide Paths" && <RefreshCw className="w-3.5 h-3.5" />}
+                  {t === "Glide Paths" && <TrendingUp className="w-3.5 h-3.5" />}
                   {t === "Action Plans" && <ClipboardList className="w-3.5 h-3.5" />}
                   {t === "Governance" && <Shield className="w-3.5 h-3.5" />}
                   {t === "Attrition" && <Users className="w-3.5 h-3.5" />}
@@ -213,7 +222,7 @@ export default function PortalProcessDashboard() {
         )}
 
         {tab === "Commentary" && (
-          <CommentaryTab data={commentary.data?.data} loading={commentary.isLoading} processId={id!} period={period} />
+          <CommentaryTab data={commentary.data?.data} loading={commentary.isLoading} processId={id!} period={period} queryClient={queryClient} />
         )}
       </main>
     </div>
@@ -555,12 +564,14 @@ function CommentaryTab({
   data,
   loading,
   processId,
-  period
+  period,
+  queryClient,
 }: {
   data: any;
   loading: boolean;
   processId: string;
   period: string;
+  queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [replyText, setReplyText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -587,7 +598,7 @@ function CommentaryTab({
     setBusy(true);
     try {
       await portalApi.acknowledgeCommentary(data.id);
-      window.location.reload();
+      queryClient.invalidateQueries({ queryKey: ["portal-commentary", processId, period] });
     } catch (e: any) {
       alert(e.message || "Failed to acknowledge comment.");
     } finally {
@@ -602,7 +613,7 @@ function CommentaryTab({
     try {
       await portalApi.replyCommentary(data.id, replyText);
       setReplyText("");
-      window.location.reload();
+      queryClient.invalidateQueries({ queryKey: ["portal-commentary", processId, period] });
     } catch (e: any) {
       alert(e.message || "Failed to submit comment reply.");
     } finally {

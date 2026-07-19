@@ -285,6 +285,8 @@ const MIGRATION_MANIFEST: string[] = [
   "505_performance_source_connector_keys.sql",
   "506_sales_performance_metric_foundation.sql",
   "507_identity_source_snapshot.sql",
+  "509_portal_client_master_fixes.sql",
+  "510_portal_superadmin_user.sql",
   ];
 
 export type MigrationHealth = {

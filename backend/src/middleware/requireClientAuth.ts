@@ -22,6 +22,17 @@ export function requireClientAuth(req: ClientAuthRequest, res: Response, next: N
     return res.status(401).json({ error: "Invalid or expired portal token" });
   }
 
+  // Demo bypass — skip DB revocation check for synthetic demo users.
+  // Guard: only activates when PORTAL_DEMO_BYPASS is explicitly true AND
+  // the userId is the well-known demo sentinel (never a real user UUID).
+  if (
+    process.env.PORTAL_DEMO_BYPASS === "true" &&
+    payload.clientUserId.startsWith("u-demo-")
+  ) {
+    req.portalUser = payload;
+    return next();
+  }
+
   // Revocation check — ensure the user account is still active in DB.
   // This lets admins cut off a client instantly by deactivating the user,
   // without waiting for the 7-day JWT to expire.

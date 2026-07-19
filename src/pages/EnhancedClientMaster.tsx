@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Building2, Users, Activity, Upload, Plus, Search, Edit2, X,
-  Shield, ChevronRight, TrendingUp, Download, AlertCircle, CheckCircle2,
-  Clock, Globe, Mail, Phone, MapPin, Calendar, BarChart3
+  Building2, Users, Activity, Upload, Plus, Search, Edit2,
+  TrendingUp, Download, Link2, Trash2,
+  Globe, Mail, MapPin, BarChart3
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -38,7 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
+import { formatISTDate } from "@/lib/utils";
 
 // Types
 interface Client {
@@ -72,13 +72,51 @@ interface PortalUser {
   created_at: string;
 }
 
+interface KpiAssignment {
+  id: string;
+  process_id: string;
+  template_id: string;
+  process_name: string;
+  template_name: string;
+  effective_from: string;
+  effective_to?: string;
+  assigned_by: string;
+  created_at: string;
+}
+
+interface KpiTemplate {
+  id: string;
+  template_name: string;
+}
+
+interface ProcessItem {
+  id: string;
+  process_name: string;
+}
+
 export default function EnhancedClientMaster() {
   const [activeTab, setActiveTab] = useState("clients");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Client dialog state
   const [showClientDialog, setShowClientDialog] = useState(false);
-  const [showUserDialog, setShowUserDialog] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+
+  // User dialog state — lifted out of table row
+  const [showUserDialog, setShowUserDialog] = useState(false);
   const [selectedUser, setSelectedUser] = useState<PortalUser | null>(null);
+
+  // Deactivate dialog state — replaces prompt()
+  const [showDeactivateDialog, setShowDeactivateDialog] = useState(false);
+  const [pendingDeactivateUser, setPendingDeactivateUser] = useState<PortalUser | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState("");
+
+  // KPI assignment dialog state
+  const [showAssignDialog, setShowAssignDialog] = useState(false);
+  const [assignProcessId, setAssignProcessId] = useState("");
+  const [assignTemplateId, setAssignTemplateId] = useState("");
+  const [assignEffectiveFrom, setAssignEffectiveFrom] = useState("");
+  const [assignEffectiveTo, setAssignEffectiveTo] = useState("");
 
   const queryClient = useQueryClient();
 
@@ -126,11 +164,45 @@ export default function EnhancedClientMaster() {
     },
   });
 
-  // Create client mutation
-  const createClientMutation = useMutation({
-    mutationFn: async (data: any) => {
-      return hrmsApi.post("/api/clients", data);
+  // Fetch KPI assignments
+  const { data: kpiAssignments = [], isLoading: assignmentsLoading } = useQuery<KpiAssignment[]>({
+    queryKey: ["kpi-assignments"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: KpiAssignment[] }>(
+        "/api/portal/internal/kpi-assignments"
+      );
+      return res.data ?? [];
     },
+    enabled: activeTab === "kpi-assignments",
+  });
+
+  // Fetch KPI templates for dropdown
+  const { data: kpiTemplates = [] } = useQuery<KpiTemplate[]>({
+    queryKey: ["kpi-templates"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: KpiTemplate[] }>(
+        "/api/portal/internal/kpi-templates"
+      );
+      return res.data ?? [];
+    },
+    enabled: activeTab === "kpi-assignments",
+  });
+
+  // Fetch processes for dropdown
+  const { data: processList = [] } = useQuery<ProcessItem[]>({
+    queryKey: ["process-list-simple"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: ProcessItem[] }>(
+        "/api/processes?fields=id,process_name"
+      );
+      return res.data ?? [];
+    },
+    enabled: activeTab === "kpi-assignments",
+  });
+
+  // Mutations — clients
+  const createClientMutation = useMutation({
+    mutationFn: async (data: any) => hrmsApi.post("/api/clients", data),
     onSuccess: () => {
       toast.success("Client created successfully");
       queryClient.invalidateQueries({ queryKey: ["clients"] });
@@ -142,11 +214,9 @@ export default function EnhancedClientMaster() {
     },
   });
 
-  // Update client mutation
   const updateClientMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      return hrmsApi.put(`/api/clients/${id}`, data);
-    },
+    mutationFn: async ({ id, data }: { id: string; data: any }) =>
+      hrmsApi.put(`/api/clients/${id}`, data),
     onSuccess: () => {
       toast.success("Client updated successfully");
       queryClient.invalidateQueries({ queryKey: ["clients"] });
@@ -158,11 +228,10 @@ export default function EnhancedClientMaster() {
     },
   });
 
-  // Update portal user mutation
+  // Mutations — portal users
   const updateUserMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      return hrmsApi.put(`/api/portal-users/${id}`, data);
-    },
+    mutationFn: async ({ id, data }: { id: string; data: any }) =>
+      hrmsApi.put(`/api/portal-users/${id}`, data),
     onSuccess: () => {
       toast.success("User updated successfully");
       queryClient.invalidateQueries({ queryKey: ["portal-users"] });
@@ -174,25 +243,23 @@ export default function EnhancedClientMaster() {
     },
   });
 
-  // Deactivate user mutation
   const deactivateUserMutation = useMutation({
-    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
-      return hrmsApi.post(`/api/portal-users/${id}/deactivate`, { reason });
-    },
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) =>
+      hrmsApi.post(`/api/portal-users/${id}/deactivate`, { reason }),
     onSuccess: () => {
       toast.success("User deactivated successfully");
       queryClient.invalidateQueries({ queryKey: ["portal-users"] });
+      setShowDeactivateDialog(false);
+      setPendingDeactivateUser(null);
+      setDeactivateReason("");
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || "Failed to deactivate user");
     },
   });
 
-  // Reactivate user mutation
   const reactivateUserMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return hrmsApi.post(`/api/portal-users/${id}/reactivate`);
-    },
+    mutationFn: async (id: string) => hrmsApi.post(`/api/portal-users/${id}/reactivate`),
     onSuccess: () => {
       toast.success("User reactivated successfully");
       queryClient.invalidateQueries({ queryKey: ["portal-users"] });
@@ -202,11 +269,41 @@ export default function EnhancedClientMaster() {
     },
   });
 
+  // Mutations — KPI assignments
+  const createAssignmentMutation = useMutation({
+    mutationFn: async (data: any) =>
+      hrmsApi.post("/api/portal/internal/kpi-assignments", data),
+    onSuccess: () => {
+      toast.success("KPI template assigned successfully");
+      queryClient.invalidateQueries({ queryKey: ["kpi-assignments"] });
+      setShowAssignDialog(false);
+      setAssignProcessId("");
+      setAssignTemplateId("");
+      setAssignEffectiveFrom("");
+      setAssignEffectiveTo("");
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || "Failed to assign template");
+    },
+  });
+
+  const deleteAssignmentMutation = useMutation({
+    mutationFn: async (id: string) =>
+      hrmsApi.delete(`/api/portal/internal/kpi-assignments/${id}`),
+    onSuccess: () => {
+      toast.success("Assignment removed");
+      queryClient.invalidateQueries({ queryKey: ["kpi-assignments"] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || "Failed to remove assignment");
+    },
+  });
+
+  // Form handlers
   const handleClientSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const data = Object.fromEntries(formData.entries());
-
     if (selectedClient) {
       updateClientMutation.mutate({ id: selectedClient.id, data });
     } else {
@@ -216,12 +313,26 @@ export default function EnhancedClientMaster() {
 
   const handleUserSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!selectedUser) return;
     const formData = new FormData(e.currentTarget);
     const data = Object.fromEntries(formData.entries());
+    updateUserMutation.mutate({ id: selectedUser.id, data });
+  };
 
-    if (selectedUser) {
-      updateUserMutation.mutate({ id: selectedUser.id, data });
-    }
+  const handleDeactivateConfirm = () => {
+    if (!pendingDeactivateUser || !deactivateReason.trim()) return;
+    deactivateUserMutation.mutate({ id: pendingDeactivateUser.id, reason: deactivateReason });
+  };
+
+  const handleAssignSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignProcessId || !assignTemplateId || !assignEffectiveFrom) return;
+    createAssignmentMutation.mutate({
+      process_id: assignProcessId,
+      template_id: assignTemplateId,
+      effective_from: assignEffectiveFrom,
+      effective_to: assignEffectiveTo || undefined,
+    });
   };
 
   return (
@@ -247,9 +358,7 @@ export default function EnhancedClientMaster() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{clientStats.total_clients}</div>
-                <p className="text-xs text-muted-foreground">
-                  {clientStats.active_clients} active
-                </p>
+                <p className="text-xs text-muted-foreground">{clientStats.active_clients} active</p>
               </CardContent>
             </Card>
 
@@ -260,9 +369,7 @@ export default function EnhancedClientMaster() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{clientStats.total_portal_users}</div>
-                <p className="text-xs text-muted-foreground">
-                  {clientStats.active_portal_users} active
-                </p>
+                <p className="text-xs text-muted-foreground">{clientStats.active_portal_users} active</p>
               </CardContent>
             </Card>
 
@@ -292,7 +399,7 @@ export default function EnhancedClientMaster() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <TabsList>
               <TabsTrigger value="clients">
                 <Building2 className="h-4 w-4 mr-2" />
@@ -301,6 +408,10 @@ export default function EnhancedClientMaster() {
               <TabsTrigger value="users">
                 <Users className="h-4 w-4 mr-2" />
                 Portal Users
+              </TabsTrigger>
+              <TabsTrigger value="kpi-assignments">
+                <Link2 className="h-4 w-4 mr-2" />
+                KPI Assignments
               </TabsTrigger>
               <TabsTrigger value="analytics">
                 <BarChart3 className="h-4 w-4 mr-2" />
@@ -313,7 +424,7 @@ export default function EnhancedClientMaster() {
             </TabsList>
 
             <div className="flex gap-2">
-              <div className="relative w-[300px]">
+              <div className="relative w-[280px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search..."
@@ -337,9 +448,7 @@ export default function EnhancedClientMaster() {
                         {selectedClient ? "Edit Client" : "Add New Client"}
                       </DialogTitle>
                       <DialogDescription>
-                        {selectedClient
-                          ? "Update client information"
-                          : "Create a new client entity"}
+                        {selectedClient ? "Update client information" : "Create a new client entity"}
                       </DialogDescription>
                     </DialogHeader>
 
@@ -437,13 +546,23 @@ export default function EnhancedClientMaster() {
                         <Button type="button" variant="outline" onClick={() => setShowClientDialog(false)}>
                           Cancel
                         </Button>
-                        <Button type="submit" disabled={createClientMutation.isPending || updateClientMutation.isPending}>
+                        <Button
+                          type="submit"
+                          disabled={createClientMutation.isPending || updateClientMutation.isPending}
+                        >
                           {selectedClient ? "Update Client" : "Create Client"}
                         </Button>
                       </div>
                     </form>
                   </DialogContent>
                 </Dialog>
+              )}
+
+              {activeTab === "kpi-assignments" && (
+                <Button onClick={() => setShowAssignDialog(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Assign Template
+                </Button>
               )}
             </div>
           </div>
@@ -459,9 +578,7 @@ export default function EnhancedClientMaster() {
                 {clientsLoading ? (
                   <div className="text-center py-8">Loading clients...</div>
                 ) : clients.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No clients found
-                  </div>
+                  <div className="text-center py-8 text-muted-foreground">No clients found</div>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
                     {clients.map((client) => (
@@ -528,6 +645,89 @@ export default function EnhancedClientMaster() {
 
           {/* Tab: Portal Users */}
           <TabsContent value="users" className="space-y-4">
+            {/* Edit user dialog — rendered once at component level, outside the table */}
+            <Dialog open={showUserDialog} onOpenChange={(open) => { setShowUserDialog(open); if (!open) setSelectedUser(null); }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Edit Portal User</DialogTitle>
+                  <DialogDescription>Update user profile and access settings</DialogDescription>
+                </DialogHeader>
+                {selectedUser && (
+                  <form onSubmit={handleUserSubmit} className="space-y-4">
+                    <div>
+                      <Label htmlFor="edit_full_name">Full Name</Label>
+                      <Input id="edit_full_name" name="full_name" defaultValue={selectedUser.full_name} />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_designation">Designation</Label>
+                      <Input id="edit_designation" name="designation" defaultValue={selectedUser.designation} />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_phone">Phone</Label>
+                      <Input id="edit_phone" name="phone" defaultValue={selectedUser.phone} />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_access_level">Access Level</Label>
+                      <Select name="access_level" defaultValue={selectedUser.access_level || "READ_ONLY"}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="READ_ONLY">Read Only</SelectItem>
+                          <SelectItem value="FULL_ACCESS">Full Access</SelectItem>
+                          <SelectItem value="ADMIN">Admin</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" onClick={() => setShowUserDialog(false)}>
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={updateUserMutation.isPending}>
+                        Update User
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            {/* Deactivate confirm dialog */}
+            <Dialog open={showDeactivateDialog} onOpenChange={(open) => { setShowDeactivateDialog(open); if (!open) { setPendingDeactivateUser(null); setDeactivateReason(""); } }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Deactivate Portal User</DialogTitle>
+                  <DialogDescription>
+                    This will immediately revoke {pendingDeactivateUser?.full_name || pendingDeactivateUser?.email}'s portal access. Provide a reason for the audit trail.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="deactivate_reason">Reason *</Label>
+                    <Textarea
+                      id="deactivate_reason"
+                      value={deactivateReason}
+                      onChange={(e) => setDeactivateReason(e.target.value)}
+                      placeholder="e.g. Contract ended, security concern..."
+                      className="h-24"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setShowDeactivateDialog(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      disabled={!deactivateReason.trim() || deactivateUserMutation.isPending}
+                      onClick={handleDeactivateConfirm}
+                    >
+                      Confirm Deactivation
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             <Card>
               <CardHeader>
                 <CardTitle>Portal Users</CardTitle>
@@ -537,20 +737,20 @@ export default function EnhancedClientMaster() {
                 {usersLoading ? (
                   <div className="text-center py-8">Loading users...</div>
                 ) : (
-                  <Table className="smarthr-table">
+                  <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>User</TableHead>
                         <TableHead>Access Level</TableHead>
                         <TableHead>Last Login</TableHead>
-                        <TableHead>Login Count</TableHead>
+                        <TableHead>Logins</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {portalUsers.map((user) => (
-                        <TableRow key={user.id} className="hover:bg-gray-50 transition-colors">
+                        <TableRow key={user.id}>
                           <TableCell>
                             <div>
                               <div className="font-medium">{user.full_name || user.email}</div>
@@ -561,18 +761,16 @@ export default function EnhancedClientMaster() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline">{user.access_level}</Badge>
+                            <Badge variant="outline">{user.access_level || "READ_ONLY"}</Badge>
                           </TableCell>
                           <TableCell>
                             {user.last_login_at ? (
-                              <div className="text-sm">
-                                {formatISTDate(user.last_login_at)}
-                              </div>
+                              <span className="text-sm">{formatISTDate(user.last_login_at)}</span>
                             ) : (
                               <span className="text-muted-foreground">Never</span>
                             )}
                           </TableCell>
-                          <TableCell>{user.login_count}</TableCell>
+                          <TableCell>{user.login_count ?? 0}</TableCell>
                           <TableCell>
                             <Badge variant={user.is_active ? "default" : "secondary"}>
                               {user.is_active ? "Active" : "Inactive"}
@@ -580,63 +778,19 @@ export default function EnhancedClientMaster() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
-                              <Dialog>
-                                <DialogTrigger asChild>
-                                  <Button size="sm" variant="outline" onClick={() => setSelectedUser(user)}>
-                                    <Edit2 className="h-3 w-3" />
-                                  </Button>
-                                </DialogTrigger>
-                                <DialogContent>
-                                  <DialogHeader>
-                                    <DialogTitle>Edit Portal User</DialogTitle>
-                                  </DialogHeader>
-                                  <form onSubmit={handleUserSubmit} className="space-y-4">
-                                    <div>
-                                      <Label htmlFor="full_name">Full Name</Label>
-                                      <Input
-                                        id="full_name"
-                                        name="full_name"
-                                        defaultValue={user.full_name}
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label htmlFor="designation">Designation</Label>
-                                      <Input
-                                        id="designation"
-                                        name="designation"
-                                        defaultValue={user.designation}
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label htmlFor="access_level">Access Level</Label>
-                                      <Select name="access_level" defaultValue={user.access_level}>
-                                        <SelectTrigger>
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="READ_ONLY">Read Only</SelectItem>
-                                          <SelectItem value="FULL_ACCESS">Full Access</SelectItem>
-                                          <SelectItem value="ADMIN">Admin</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                    <div className="flex justify-end gap-2">
-                                      <Button type="submit">Update User</Button>
-                                    </div>
-                                  </form>
-                                </DialogContent>
-                              </Dialog>
-
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => { setSelectedUser(user); setShowUserDialog(true); }}
+                              >
+                                <Edit2 className="h-3 w-3 mr-1" />
+                                Edit
+                              </Button>
                               {user.is_active ? (
                                 <Button
                                   size="sm"
                                   variant="destructive"
-                                  onClick={() => {
-                                    const reason = prompt("Reason for deactivation:");
-                                    if (reason) {
-                                      deactivateUserMutation.mutate({ id: user.id, reason });
-                                    }
-                                  }}
+                                  onClick={() => { setPendingDeactivateUser(user); setShowDeactivateDialog(true); }}
                                 >
                                   Deactivate
                                 </Button>
@@ -660,6 +814,143 @@ export default function EnhancedClientMaster() {
             </Card>
           </TabsContent>
 
+          {/* Tab: KPI Assignments */}
+          <TabsContent value="kpi-assignments" className="space-y-4">
+            {/* Assign dialog */}
+            <Dialog open={showAssignDialog} onOpenChange={setShowAssignDialog}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Assign KPI Template to Process</DialogTitle>
+                  <DialogDescription>
+                    Link a KPI template to a client process so the portal scorecard is populated.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleAssignSubmit} className="space-y-4">
+                  <div>
+                    <Label>Process *</Label>
+                    <Select value={assignProcessId} onValueChange={setAssignProcessId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select process..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {processList.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>KPI Template *</Label>
+                    <Select value={assignTemplateId} onValueChange={setAssignTemplateId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select template..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {kpiTemplates.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>{t.template_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="effective_from">Effective From *</Label>
+                      <Input
+                        id="effective_from"
+                        type="date"
+                        value={assignEffectiveFrom}
+                        onChange={(e) => setAssignEffectiveFrom(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="effective_to">Effective To</Label>
+                      <Input
+                        id="effective_to"
+                        type="date"
+                        value={assignEffectiveTo}
+                        onChange={(e) => setAssignEffectiveTo(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setShowAssignDialog(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={!assignProcessId || !assignTemplateId || !assignEffectiveFrom || createAssignmentMutation.isPending}
+                    >
+                      Assign Template
+                    </Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>KPI Template Assignments</CardTitle>
+                <CardDescription>
+                  Controls which KPI scorecard template populates each client's portal dashboard
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {assignmentsLoading ? (
+                  <div className="text-center py-8">Loading assignments...</div>
+                ) : kpiAssignments.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Link2 className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p className="font-medium">No KPI assignments yet</p>
+                    <p className="text-sm mt-1">Click "Assign Template" to link a KPI template to a process</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Process</TableHead>
+                        <TableHead>KPI Template</TableHead>
+                        <TableHead>Effective From</TableHead>
+                        <TableHead>Effective To</TableHead>
+                        <TableHead>Assigned By</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {kpiAssignments.map((a) => (
+                        <TableRow key={a.id}>
+                          <TableCell className="font-medium">{a.process_name}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{a.template_name}</Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">{formatISTDate(a.effective_from)}</TableCell>
+                          <TableCell className="text-sm">
+                            {a.effective_to ? formatISTDate(a.effective_to) : <span className="text-muted-foreground">Ongoing</span>}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{a.assigned_by}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => {
+                                if (confirm("Remove this KPI assignment?")) {
+                                  deleteAssignmentMutation.mutate(a.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           {/* Tab: Analytics */}
           <TabsContent value="analytics" className="space-y-4">
             <Card>
@@ -668,7 +959,7 @@ export default function EnhancedClientMaster() {
                 <CardDescription>Last 30 days activity</CardDescription>
               </CardHeader>
               <CardContent>
-                <Table className="smarthr-table">
+                <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Client</TableHead>
@@ -681,16 +972,14 @@ export default function EnhancedClientMaster() {
                   </TableHeader>
                   <TableBody>
                     {usageSummary.map((usage: any) => (
-                      <TableRow key={usage.client_id} className="hover:bg-gray-50 transition-colors">
+                      <TableRow key={usage.client_id}>
                         <TableCell className="font-medium">{usage.client_name}</TableCell>
                         <TableCell>{usage.active_users}</TableCell>
                         <TableCell>{usage.last_30_days_logins}</TableCell>
                         <TableCell>{usage.api_calls}</TableCell>
                         <TableCell>{usage.report_views}</TableCell>
                         <TableCell>
-                          {usage.last_activity
-                            ? formatISTDate(usage.last_activity)
-                            : "N/A"}
+                          {usage.last_activity ? formatISTDate(usage.last_activity) : "N/A"}
                         </TableCell>
                       </TableRow>
                     ))}

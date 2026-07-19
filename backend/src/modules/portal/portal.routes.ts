@@ -92,6 +92,19 @@ router.get(
   })
 );
 
+// ── KPI templates list (for frontend dropdown) ───────────────────────────────
+router.get(
+  "/internal/kpi-templates",
+  requireRole("admin", "hr", "finance_head", "operations_manager", "ceo"),
+  h(async (_req, res) => {
+    const dbMod = await import("../../db/mysql.js");
+    const [rows] = await dbMod.db.execute(
+      `SELECT id, template_name FROM kpi_template WHERE active_status = 1 ORDER BY template_name`
+    );
+    return res.json({ data: rows });
+  })
+);
+
 // ── KPI template assignments for portal processes ────────────────────────────
 // GET  /api/portal/internal/kpi-assignments?process_id=X  — list assignments
 // POST /api/portal/internal/kpi-assignments               — assign template to process

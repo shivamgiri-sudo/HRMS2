@@ -190,7 +190,7 @@ export async function getClientStats(): Promise<ClientStats> {
     `SELECT
       COUNT(*) as total_clients,
       SUM(CASE WHEN active_status = 1 THEN 1 ELSE 0 END) as active_clients,
-      0 as trial_clients
+      SUM(CASE WHEN subscription_status = 'TRIAL' THEN 1 ELSE 0 END) as trial_clients
      FROM client_master`
   );
 
@@ -201,13 +201,17 @@ export async function getClientStats(): Promise<ClientStats> {
      FROM client_user`
   );
 
+  const [procRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) as total_processes FROM process_master WHERE active_status = 1`
+  );
+
   if (!clientRows[0]) return { total_clients: 0, active_clients: 0, trial_clients: 0, total_processes: 0, total_portal_users: 0, active_portal_users: 0 };
 
   return {
     total_clients: Number(clientRows[0].total_clients) || 0,
     active_clients: Number(clientRows[0].active_clients) || 0,
-    trial_clients: 0,
-    total_processes: 0,
+    trial_clients: Number(clientRows[0].trial_clients) || 0,
+    total_processes: procRows[0] ? Number(procRows[0].total_processes) || 0 : 0,
     total_portal_users: userRows[0] ? Number(userRows[0].total_portal_users) || 0 : 0,
     active_portal_users: userRows[0] ? Number(userRows[0].active_portal_users) || 0 : 0,
   };
