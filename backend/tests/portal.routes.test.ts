@@ -53,13 +53,23 @@ vi.mock("../src/modules/portal/portal.commentary.service.js", () => ({
 }));
 
 import { app } from "../src/app.js";
+import { db } from "../src/db/mysql.js";
 import { portalAuthService } from "../src/modules/portal/portal.auth.service.js";
 
+const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const svcAuth = portalAuthService as unknown as { [K: string]: ReturnType<typeof vi.fn> };
 const PORTAL_AUTH = { Authorization: "Bearer mock.jwt.token" };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    if (typeof sql === "string" && sql.includes("FROM client_user")) {
+      return [[{ is_active: 1 }], []];
+    }
+    return [[], []];
+  });
+});
 
 describe("POST /api/portal/auth/request-otp", () => {
   it("returns 200 for valid email", async () => {

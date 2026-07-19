@@ -70,8 +70,12 @@ const PORTAL_TOKEN = { Authorization: "Bearer mock.jwt.token" };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: logAccess INSERT succeeds silently
-  mockExecute.mockResolvedValue([[], []]);
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    if (typeof sql === "string" && sql.includes("FROM client_user")) {
+      return [[{ is_active: 1 }], []];
+    }
+    return [[], []];
+  });
 });
 
 // ── 1. Demo bypass disabled by default ───────────────────────────────────────
