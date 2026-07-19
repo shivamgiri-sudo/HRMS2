@@ -84,6 +84,7 @@ interface EmployeeStatsResponse {
   total_employees?: number;
   active_employees?: number;
   onboarding_employees?: number;
+  new_joiners_90d?: number;
   inactive_employees?: number;
   department_count?: number;
 }
@@ -268,7 +269,7 @@ export function useEmployeeStats() {
       return {
         total: stats.total_employees ?? 0,
         active: stats.active_employees ?? 0,
-        onboarding: stats.onboarding_employees ?? 0,
+        onboarding: stats.onboarding_employees ?? stats.new_joiners_90d ?? 0,
       };
     },
   });

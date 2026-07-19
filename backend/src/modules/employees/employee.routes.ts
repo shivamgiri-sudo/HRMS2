@@ -30,7 +30,7 @@ router.get("/me", h(async (req: any, res: any) => {
        e.id, e.employee_code, e.user_id,
        e.first_name, e.last_name,
        e.email, e.official_email,
-       e.mobile, e.personal_email, e.personal_phone, e.personal_mobile, e.alternate_mobile,
+       e.mobile, e.personal_email, e.personal_phone, e.alternate_mobile,
        e.avatar_url, e.photo_url,
        e.gender, e.date_of_birth, e.marital_status, e.blood_group,
        e.address, e.address_line1, e.city, e.state, e.country, e.pincode,
@@ -143,7 +143,7 @@ router.get("/me", h(async (req: any, res: any) => {
       mobile:                   emp.mobile,
       personal_email:           emp.personal_email,
       personal_phone:           emp.personal_phone,
-      personal_mobile:          emp.personal_mobile,
+      personal_mobile:          emp.personal_phone,
       alternate_mobile:         emp.alternate_mobile,
       // Avatar
       avatar_url:               emp.avatar_url,
