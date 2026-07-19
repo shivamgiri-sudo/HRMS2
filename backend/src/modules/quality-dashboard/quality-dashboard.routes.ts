@@ -16,6 +16,7 @@ import {
   getObjectionHealthDashboard,
   generateComprehensiveObjectionReport,
 } from "./objection-analysis.service.js";
+import { getInboundSummary } from "./inbound-ops.service.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -99,6 +100,16 @@ function dateDefaults(query: Record<string, unknown>): { from: string; to: strin
   const from = query.from ? String(query.from) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   return { from, to };
 }
+
+// GET /api/quality-dashboard/inbound-ops/summary
+router.get("/inbound-ops/summary", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  const { from, to } = dateDefaults(req.query);
+  const projectKeys = typeof req.query.projects === "string"
+    ? req.query.projects.split(",").map((key) => key.trim()).filter(Boolean)
+    : undefined;
+  const data = await getInboundSummary(from, to, projectKeys);
+  return res.json({ success: true, data });
+}));
 
 // Build scope conditions for db_audit.call_quality_assessment (filters by User = agent emp_code)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

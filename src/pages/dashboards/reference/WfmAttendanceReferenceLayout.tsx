@@ -129,7 +129,7 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
         <ReferencePanel title="Biometric Device Status" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/wfm/cosec-monitoring">View All</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             {deviceRows.length ? deviceRows.slice(0, 6).map((row, index) => (
-              <ReferenceListRow key={String(row.id ?? index)} icon={Fingerprint} title={String(row.name ?? row.device_name ?? `Device ${index + 1}`)} value={String(row.status ?? "Unknown")} tone={String(row.status).toLowerCase() === "online" ? "green" : "red"} />
+              <ReferenceListRow key={String(row.id ?? index)} icon={Fingerprint} title={String(row.name ?? row.device_name ?? `Device ${index + 1}`)} value={String(row.status ?? "Unknown")} tone={["online", "success", "completed"].includes(String(row.status).toLowerCase()) ? "green" : "red"} />
             )) : <div className="px-4 py-10 text-center text-[10px] text-[#94a3b8]">Device status is unavailable</div>}
           </div>
         </ReferencePanel>

@@ -350,6 +350,11 @@ export async function listHosts(scope: ActorScope, query: string, branchId?: str
 }
 
 export async function listVisits(scope: ActorScope, filters: VisitListFilters) {
+  // mysql2 prepared statements are not supported for LIMIT/OFFSET by every
+  // production MySQL configuration. These values have already passed the Zod
+  // integer bounds, and the defensive clamp keeps interpolation SQL-safe.
+  const limit = Math.max(1, Math.min(200, Math.trunc(Number(filters.limit) || 50)));
+  const offset = Math.max(0, Math.trunc(Number(filters.offset) || 0));
   const where: string[] = ["1=1"];
   const params: unknown[] = [];
   if (!scope.unrestricted) {
@@ -381,8 +386,8 @@ export async function listVisits(scope: ActorScope, filters: VisitListFilters) {
        JOIN branch_master bm ON bm.id = vv.branch_id
       WHERE ${where.join(" AND ")}
       ORDER BY vv.scheduled_start DESC
-      LIMIT ? OFFSET ?`,
-    [...params, filters.limit, filters.offset],
+      LIMIT ${limit} OFFSET ${offset}`,
+    params,
   );
   return rows;
 }

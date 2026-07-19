@@ -14,6 +14,7 @@ describe("attendance hub contracts", () => {
 
   it("keeps /employees/me compatible with schemas lacking a stored compliance flag", () => {
     expect(routesSource).not.toContain("e.official_email_compliant");
+    expect(routesSource).not.toContain("e.personal_mobile");
     expect(routesSource).toContain("isOfficialEmail");
   });
 
