@@ -163,16 +163,21 @@ export async function selectRandomQuestionSet(
   }
 
   const selectedQuestions: AssessmentQuestionDefinition[] = [];
+  const selectedIds: string[] = [];
   for (const [_section, sectionRows] of bySection) {
     const shuffled = shuffleArray(sectionRows);
     const selected = shuffled.slice(0, questionsPerSection);
+    selectedIds.push(...selected.map((r) => r.id));
     selectedQuestions.push(...selected.map(questionRowToDefinition));
   }
 
-  await db.execute(
-    `UPDATE ats_question_bank SET usage_count = usage_count + 1 WHERE set_number = ? AND active_status = 1`,
-    [selectedSet],
-  );
+  if (selectedIds.length > 0) {
+    const placeholders = selectedIds.map(() => "?").join(",");
+    await db.execute(
+      `UPDATE ats_question_bank SET usage_count = usage_count + 1 WHERE id IN (${placeholders})`,
+      selectedIds,
+    );
+  }
 
   return { setNumber: selectedSet, questions: shuffleArray(selectedQuestions) };
 }
@@ -223,22 +228,22 @@ export async function buildRandomizedTemplate(
   baseTemplate: AssessmentTemplateDefinition,
   excludeQuestionSets: number[] = [],
   excludePassageSets: number[] = [],
-): Promise<AssessmentTemplateDefinition> {
-  const questionResult = await selectRandomQuestionSet(
-    baseTemplate.process,
-    baseTemplate.role,
-    10,
-    excludeQuestionSets,
-  );
+): Promise<{ config: AssessmentTemplateDefinition; fromBank: boolean }> {
+  const [questionResult, passageResult] = await Promise.all([
+    selectRandomQuestionSet(baseTemplate.process, baseTemplate.role, 10, excludeQuestionSets),
+    baseTemplate.typing.required
+      ? selectRandomPassage(baseTemplate.process, baseTemplate.role, excludePassageSets)
+      : Promise.resolve(null),
+  ]);
 
-  const passageResult = baseTemplate.typing.required
-    ? await selectRandomPassage(baseTemplate.process, baseTemplate.role, excludePassageSets)
-    : null;
-
+  const fromBank = questionResult !== null || passageResult !== null;
   return {
-    ...baseTemplate,
-    questions: questionResult?.questions ?? baseTemplate.questions,
-    typing: passageResult?.typing ?? baseTemplate.typing,
+    config: {
+      ...baseTemplate,
+      questions: questionResult?.questions ?? baseTemplate.questions,
+      typing: passageResult?.typing ?? baseTemplate.typing,
+    },
+    fromBank,
   };
 }
 

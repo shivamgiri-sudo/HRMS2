@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from "crypto";
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import {
@@ -508,6 +508,7 @@ async function findCandidateByPublicCredentials(queueToken: string, mobile: stri
        c.candidate_code,
        c.full_name,
        c.mobile,
+       c.email,
        COALESCE(NULLIF(c.branch_display_name, ''), NULLIF(c.applied_for_branch, '')) AS branch_name,
        COALESCE(NULLIF(c.applied_for_process, ''), NULLIF(c.role_applied, '')) AS process_name,
        COALESCE(NULLIF(c.role_applied, ''), NULLIF(c.applied_for_process, '')) AS role_name,
@@ -549,6 +550,7 @@ async function findCandidateById(candidateId: string) {
        c.candidate_code,
        c.full_name,
        c.mobile,
+       c.email,
        COALESCE(NULLIF(c.branch_display_name, ''), NULLIF(c.applied_for_branch, '')) AS branch_name,
        COALESCE(NULLIF(c.applied_for_process, ''), NULLIF(c.role_applied, '')) AS process_name,
        COALESCE(NULLIF(c.role_applied, ''), NULLIF(c.applied_for_process, '')) AS role_name,
@@ -728,7 +730,8 @@ async function createOrReuseAssignment(
       const token = makePublicToken(attemptId, candidate.candidate_id);
 
       const baseDefinition = templateDefinition(template);
-      const randomizedConfig = await questionBankService.buildRandomizedTemplate(baseDefinition);
+      const { config: randomizedConfig, fromBank } =
+        await questionBankService.buildRandomizedTemplate(baseDefinition);
 
       await connection.execute(
         `INSERT INTO ats_candidate_assessment (
@@ -756,7 +759,7 @@ async function createOrReuseAssignment(
       await safeAudit(
         attemptId,
         "ASSESSMENT_ASSIGNED",
-        { templateCode: template.template_code, source, randomized: randomizedConfig !== baseDefinition },
+        { templateCode: template.template_code, source, randomized: fromBank },
         { ...meta, actorType: meta.actorType ?? (assignedBy ? "recruiter" : "candidate"), actorId: assignedBy },
         executor,
       );
@@ -789,7 +792,7 @@ function publicAssignmentResult(candidate: CandidateRow, attempt: AttemptRow, te
       attemptNo: 1,
       maxAssessmentAttempts: 1,
       maxTypingAttempts: 2,
-      template: publicTemplate(templateDefinition(template)),
+      template: publicTemplate(attemptDefinition(attempt, template)),
       expiresAt: attempt.expires_at,
     },
   };
@@ -2030,7 +2033,7 @@ export async function listTemplates() {
     db,
     `SELECT id, template_code, template_name, process_key, role_key, experience_level,
             difficulty_level, duration_minutes, passing_percentage, gate_mode,
-            template_version, content_hash, source_type, active_status, created_at, updated_at
+            template_version, content_hash, config_json, source_type, active_status, created_at, updated_at
      FROM ats_assessment_template
      ORDER BY process_key, role_key, template_version DESC`,
   );
@@ -2201,7 +2204,7 @@ const OTP_TTL_SECONDS = 300;
 const OTP_MAX_ATTEMPTS = 3;
 
 function generateOtp(): string {
-  const digits = Array.from({ length: 6 }, () => Math.floor(Math.random() * 10));
+  const digits = Array.from({ length: 6 }, () => randomInt(0, 10));
   return digits.join("");
 }
 
@@ -2239,9 +2242,9 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
   const mobileMasked = maskMobile(mobile);
   const emailMasked = maskEmail(email);
 
-  // Invalidate any prior unverified OTPs for this attempt
+  // Expire any prior unverified OTPs for this attempt so only the newest is active
   await db.execute(
-    `UPDATE ats_identity_otp SET verified = 0 WHERE assessment_id = ? AND verified = 0`,
+    `UPDATE ats_identity_otp SET expires_at = NOW() WHERE assessment_id = ? AND verified = 0`,
     [attempt.id],
   );
 
