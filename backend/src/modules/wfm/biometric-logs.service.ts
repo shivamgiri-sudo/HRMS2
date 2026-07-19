@@ -404,19 +404,13 @@ export const biometricLogsService = {
            FROM cosec_punch_sync cps
           WHERE cps.punch_time >= ?
             AND cps.punch_time < DATE_ADD(?, INTERVAL 1 DAY)
-            AND (
-              cps.user_id COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
-              OR (? IS NOT NULL AND cps.user_id COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci)
-              OR (? IS NOT NULL AND cps.user_id COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci)
-            )
+            AND cps.user_id IN (?, ?, ?)
           ORDER BY cps.punch_time ASC`,
         [
           safeFromDate,
           safeToDate,
           employee.employee_code,
           employee.biometric_code ?? null,
-          employee.biometric_code ?? null,
-          employee.cosec_user_id ?? null,
           employee.cosec_user_id ?? null,
         ],
       ).then(([rows]) => rows),

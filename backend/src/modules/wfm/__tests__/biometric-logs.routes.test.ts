@@ -51,4 +51,14 @@ describe("biometric logs route contract", () => {
     expect(serviceSource.indexOf("try {")).toBeLessThan(serviceSource.indexOf("await getNcosecPool()"));
     expect(serviceSource).toContain("using synced HRMS data");
   });
+
+  it("keeps the local user/date fallback query indexable", () => {
+    const serviceSource = readFileSync(
+      resolve(process.cwd(), "src/modules/wfm/biometric-logs.service.ts"),
+      "utf8",
+    );
+
+    expect(serviceSource).toContain("cps.user_id IN (?, ?, ?)");
+    expect(serviceSource).not.toMatch(/cps\.user_id\s+COLLATE/);
+  });
 });
