@@ -63,7 +63,14 @@ function RunningMonthCard({ employeeId }: { employeeId: string }) {
 
 function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: string }) {
   const [open, setOpen] = useState(false);
-  const { data: detail, isLoading } = usePayslipDetail(open ? line.run_id : null, employeeId);
+  const {
+    data: detail,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = usePayslipDetail(open ? line.run_id : null, employeeId);
 
   const [yr, mo] = (line.run_month ?? "").split("-").map(Number);
   const monthLabel = MONTH_NAMES[mo] ? `${MONTH_NAMES[mo]} ${yr}` : line.run_month;
@@ -109,10 +116,24 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
       {/* Expanded breakdown */}
       {open && (
         <div className="border-t border-slate-100 bg-slate-50 px-4 py-4">
-          {isLoading ? (
+          {isLoading || isFetching ? (
             <div className="flex items-center justify-center py-6 gap-2 text-slate-500 text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading breakdown…
+            </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-5 text-center">
+              <p className="text-sm font-medium text-rose-700">Could not load this payslip breakdown.</p>
+              <p className="max-w-md text-xs text-slate-500">
+                {(error as Error)?.message || "The payroll detail request failed."}
+              </p>
+              <button
+                type="button"
+                onClick={() => void refetch()}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Retry breakdown
+              </button>
             </div>
           ) : detail ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -199,7 +220,13 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
 interface Props { employeeId: string; }
 
 export function SalaryTab({ employeeId }: Props) {
-  const { data: history = [], isLoading } = usePayslipHistory(employeeId);
+  const {
+    data: history = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = usePayslipHistory(employeeId);
 
   return (
     <div className="space-y-4">
@@ -215,6 +242,20 @@ export function SalaryTab({ employeeId }: Props) {
         {isLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-xl" />)}
+          </div>
+        ) : isError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-6 text-center">
+            <p className="text-sm font-semibold text-rose-800">Payslip history could not be loaded.</p>
+            <p className="mt-1 text-xs text-rose-700">
+              {(error as Error)?.message || "The payroll history request failed."}
+            </p>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="mt-3 rounded-md border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+            >
+              Retry history
+            </button>
           </div>
         ) : history.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">

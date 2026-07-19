@@ -107,6 +107,7 @@ import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scop
 import { attendanceAprBulkRouter } from "./modules/wfm/attendance-apr-bulk.routes.js";
 import { attendanceManualMarkRouter } from "./modules/wfm/attendance-manual-mark.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
+import { biometricLogsRouter } from "./modules/wfm/biometric-logs.routes.js";
 import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
 import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
@@ -405,6 +406,7 @@ app.use('/api/wfm/attendance/manual-mark', attendanceManualMarkRouter);
 app.use("/api/dialer", dialerRouter);
 app.use("/api/tasks", taskRouter);
 app.use('/api/wfm/biometric-punch', biometricPunchRouter);
+app.use('/api/wfm/biometric-logs', biometricLogsRouter);
 app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
@@ -468,4 +470,3 @@ app.use("/api/policy-engine", policyEngineRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
-

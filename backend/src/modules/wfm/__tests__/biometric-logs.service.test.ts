@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mapPunchIoLabel, mergeBiometricPunchLogDays } from "../biometric-logs.service.js";
+import {
+  mapPunchIoLabel,
+  mergeBiometricPunchLogDays,
+  mergeRawPunchRows,
+} from "../biometric-logs.service.js";
 
 describe("biometric logs service helpers", () => {
   it("maps COSEC io_type values to readable labels", () => {
@@ -50,5 +54,35 @@ describe("biometric logs service helpers", () => {
     expect(result[0].rawPunches[0].ioLabel).toBe("IN");
     expect(result[0].biometricSummary?.totalPunches).toBe(1);
     expect(result[0].attendanceSummary?.attendanceStatus).toBe("missing_punch");
+  });
+
+  it("adds current NCOSEC rows while de-duplicating rows already synced locally", () => {
+    const local = [{
+      cosec_index: 10,
+      user_id: "MAS47814",
+      punch_time: "2026-07-18 12:54:40",
+      io_type: 0,
+      device_id: 15,
+      synced_at: "2026-07-18 15:00:25",
+    }];
+    const live = [
+      {
+        ...local[0],
+        synced_at: "2026-07-18 12:54:40",
+      },
+      {
+        cosec_index: 11,
+        user_id: "MAS47814",
+        punch_time: "2026-07-19 09:02:10",
+        io_type: 0,
+        device_id: 15,
+        synced_at: "2026-07-19 09:02:10",
+      },
+    ];
+
+    expect(mergeRawPunchRows(local, live)).toEqual([
+      local[0],
+      live[1],
+    ]);
   });
 });

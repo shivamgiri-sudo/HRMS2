@@ -150,6 +150,13 @@ export interface SelectOption {
   name: string;
 }
 
+export interface AttendanceHubFilterOptions {
+  branches: SelectOption[];
+  processes: SelectOption[];
+  designations: SelectOption[];
+  statuses: SelectOption[];
+}
+
 export interface TodaySummary {
   date: string;
   total_active: number;
@@ -290,38 +297,30 @@ export function useTodaySummary() {
 
 // ── Master lists for filter dropdowns ─────────────────────────────────────
 
-export function useBranchList() {
-  return useQuery({
-    queryKey: ["branches-list"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<any>("/api/branches");
-      const raw = Array.isArray(res) ? res : (res?.data ?? res?.branches ?? []);
-      return raw.map((b: any) => ({ id: b.id, name: b.branch_name ?? b.name })) as SelectOption[];
-    },
-    staleTime: 300_000,
-  });
-}
+export function useAttendanceHubFilterOptions(
+  branchId: string,
+  processId: string,
+  designationId: string,
+) {
+  const params = new URLSearchParams();
+  if (branchId) params.set("branchId", branchId);
+  if (processId) params.set("processId", processId);
+  if (designationId) params.set("designationId", designationId);
 
-export function useProcessList() {
   return useQuery({
-    queryKey: ["processes-list"],
+    queryKey: ["attendance-hub-filter-options", branchId, processId, designationId],
     queryFn: async () => {
-      const res = await hrmsApi.get<any>("/api/process");
-      const raw = Array.isArray(res) ? res : (res?.data ?? res?.processes ?? []);
-      return raw.map((p: any) => ({ id: p.id, name: p.process_name ?? p.name })) as SelectOption[];
+      const suffix = params.size > 0 ? `?${params.toString()}` : "";
+      const res = await hrmsApi.get<any>(`/api/employees/hr-hub/filter-options${suffix}`);
+      const data = (res?.data ?? res ?? {}) as Partial<AttendanceHubFilterOptions>;
+      return {
+        branches: data.branches ?? [],
+        processes: data.processes ?? [],
+        designations: data.designations ?? [],
+        statuses: data.statuses ?? [],
+      } satisfies AttendanceHubFilterOptions;
     },
     staleTime: 300_000,
-  });
-}
-
-export function useDesignationList() {
-  return useQuery({
-    queryKey: ["designations-list"],
-    queryFn: async () => {
-      const res = await hrmsApi.get<any>("/api/designations");
-      const raw = Array.isArray(res) ? res : (res?.data ?? res?.designations ?? []);
-      return raw.map((d: any) => ({ id: d.id, name: d.designation_name ?? d.name })) as SelectOption[];
-    },
-    staleTime: 300_000,
+    placeholderData: (previous) => previous,
   });
 }

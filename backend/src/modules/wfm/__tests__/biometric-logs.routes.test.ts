@@ -16,7 +16,7 @@ describe("biometric logs route contract", () => {
   it("mounts the biometric log router under /api/wfm/biometric-logs", () => {
     const appSource = readFileSync(resolve(process.cwd(), "src/app.ts"), "utf8");
 
-    expect(appSource).toContain('app.use("/api/wfm/biometric-logs"');
+    expect(appSource).toMatch(/app\.use\(['"]\/api\/wfm\/biometric-logs['"]/);
   });
 
   it("exposes both self-service and employee-scoped frontend routes", () => {
@@ -27,5 +27,28 @@ describe("biometric logs route contract", () => {
 
     expect(routesSource).toContain('path="/attendance/biometric-logs"');
     expect(routesSource).toContain('path="/attendance/biometric-logs/:employeeId"');
+  });
+
+  it("renders the biometric page inside the standard HRMS dashboard shell", () => {
+    const pageSource = readFileSync(
+      resolve(process.cwd(), "../src/pages/BiometricPunchLogs.tsx"),
+      "utf8",
+    );
+
+    expect(pageSource).toContain('import { DashboardLayout }');
+    expect(pageSource).toContain("<DashboardLayout>");
+  });
+
+  it("uses the read-only NCOSEC connection for current raw punch events", () => {
+    const serviceSource = readFileSync(
+      resolve(process.cwd(), "src/modules/wfm/biometric-logs.service.ts"),
+      "utf8",
+    );
+
+    expect(serviceSource).toContain("getNcosecPool");
+    expect(serviceSource).toContain("NCOSEC_EVENT_TABLE");
+    expect(serviceSource).toContain("employee_external_mapping");
+    expect(serviceSource.indexOf("try {")).toBeLessThan(serviceSource.indexOf("await getNcosecPool()"));
+    expect(serviceSource).toContain("using synced HRMS data");
   });
 });
