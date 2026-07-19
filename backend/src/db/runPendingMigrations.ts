@@ -20,7 +20,7 @@ const SQL_DIR = resolveSqlDir();
 // Canonical migration order, derived from 000_run_all.sql.
 // 043_demo_data.sql is excluded unless SEED_DEMO_DATA=true.
 // Non-b duplicates (020, 021, 022) are excluded — only b-variants are sourced.
-// Duplicate numeric prefixes (010/010, 012/012, 198/198, 204/204, 271/271) are intentional —
+// Duplicate numeric prefixes (010/010, 012/012, 198/198, 204/204, 271/271, 504/504) are intentional —
 // tracking is by full filename in schema_migrations, so each file runs independently.
 const MIGRATION_MANIFEST: string[] = [
   "001_core_org.sql",
