@@ -12,6 +12,7 @@ import { appendJourneyEvent, listJourneyEvents, listComprehensiveJourney } from 
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { profileApprovalService } from "./profile-approval.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { isOfficialEmail } from "../../shared/officialEmail.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +29,7 @@ router.get("/me", h(async (req: any, res: any) => {
     `SELECT
        e.id, e.employee_code, e.user_id,
        e.first_name, e.last_name,
-       e.email, e.official_email, e.official_email_compliant,
+       e.email, e.official_email,
        e.mobile, e.personal_email, e.personal_phone, e.personal_mobile, e.alternate_mobile,
        e.avatar_url, e.photo_url,
        e.gender, e.date_of_birth, e.marital_status, e.blood_group,
@@ -138,7 +139,7 @@ router.get("/me", h(async (req: any, res: any) => {
       // Contact
       email:                    emp.email,
       official_email:           emp.official_email,
-      official_email_compliant: emp.official_email_compliant,
+      official_email_compliant: isOfficialEmail(emp.official_email ?? emp.email),
       mobile:                   emp.mobile,
       personal_email:           emp.personal_email,
       personal_phone:           emp.personal_phone,
@@ -556,7 +557,103 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
   res.json({ data: rows[0] });
 }));
 
-// GET /api/employees/hr-hub/today-summary — live today attendance counts for the hub header strip
+// GET /api/employees/hr-hub/filter-options - scoped options from active employee assignments
+router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+  const parsed = employeeFiltersSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { branchId, processId, designationId } = parsed.data;
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["hr", "manager", "payroll_head", "payroll_admin"],
+    {
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+      departmentId: "e.department_id",
+      managerEmployeeId: "e.reporting_manager_id",
+    },
+    { allowAdminBypass: true, allowCeoAllRead: true },
+  );
+
+  const baseConditions = ["e.active_status = 1"];
+  const baseParams: unknown[] = [];
+  if (scoped.sql && scoped.sql !== "1=1") {
+    baseConditions.push(`(${scoped.sql.replace(/^WHERE\s+/i, "").trim()})`);
+    baseParams.push(...(scoped.params ?? []));
+  }
+
+  const whereFor = (conditions: string[], params: unknown[]) => ({
+    sql: `WHERE ${[...baseConditions, ...conditions].join(" AND ")}`,
+    params: [...baseParams, ...params],
+  });
+
+  const branchesWhere = whereFor([], []);
+  const processesWhere = whereFor(
+    branchId ? ["e.branch_id = ?"] : [],
+    branchId ? [branchId] : [],
+  );
+  const designationsWhere = whereFor(
+    [
+      ...(branchId ? ["e.branch_id = ?"] : []),
+      ...(processId ? ["e.process_id = ?"] : []),
+    ],
+    [branchId, processId].filter(Boolean),
+  );
+  const statusesWhere = whereFor(
+    [
+      ...(branchId ? ["e.branch_id = ?"] : []),
+      ...(processId ? ["e.process_id = ?"] : []),
+      ...(designationId ? ["e.designation_id = ?"] : []),
+      "NULLIF(TRIM(e.employment_status), '') IS NOT NULL",
+    ],
+    [branchId, processId, designationId].filter(Boolean),
+  );
+
+  const [branchesResult, processesResult, designationsResult, statusesResult] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT bm.id, bm.branch_name AS name
+         FROM employees e
+         JOIN branch_master bm ON bm.id = e.branch_id
+         ${branchesWhere.sql}
+        ORDER BY bm.branch_name`,
+      branchesWhere.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT pm.id, pm.process_name AS name
+         FROM employees e
+         JOIN process_master pm ON pm.id = e.process_id
+         ${processesWhere.sql}
+        ORDER BY pm.process_name`,
+      processesWhere.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT dm.id, dm.designation_name AS name
+         FROM employees e
+         JOIN designation_master dm ON dm.id = e.designation_id
+         ${designationsWhere.sql}
+        ORDER BY dm.designation_name`,
+      designationsWhere.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT e.employment_status AS id, e.employment_status AS name
+         FROM employees e
+         ${statusesWhere.sql}
+        ORDER BY e.employment_status`,
+      statusesWhere.params,
+    ),
+  ]);
+
+  return res.json({
+    success: true,
+    data: {
+      branches: branchesResult[0],
+      processes: processesResult[0],
+      designations: designationsResult[0],
+      statuses: statusesResult[0],
+    },
+  });
+}));
+
 router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
   // IST today: UTC+5:30
   const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
@@ -611,7 +708,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
 
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager"],
+    ["hr", "manager", "payroll_head", "payroll_admin"],
     { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id" },
     { allowAdminBypass: true, allowCeoAllRead: true }
   );
@@ -642,6 +739,9 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
     conds.push(`(${scoped.sql.replace(/^WHERE\s+/i, "").trim()})`);
     params.push(...(scoped.params ?? []));
   }
+  if (anomalyOnly) {
+    conds.push("(COALESCE(att.lwp_days, 0) > 2 OR COALESCE(att.missing_punch_count, 0) > 0)");
+  }
   const where = `WHERE ${conds.join(" AND ")}`;
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -649,60 +749,71 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
             CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS full_name,
             e.employment_status, e.date_of_joining,
             bm.branch_name, pm.process_name, dm.designation_name, dept.dept_name,
-            (SELECT COUNT(*) FROM attendance_daily_record adr
-               WHERE adr.employee_id = e.id
-                 AND adr.record_date BETWEEN ? AND ?
-                 AND adr.attendance_status = 'present') AS present_days,
-            (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
-               WHERE adr2.employee_id = e.id
-                 AND adr2.record_date BETWEEN ? AND ?
-                 AND adr2.attendance_status NOT IN ('week_off','holiday','leave_approved')) AS lwp_days,
-            (SELECT COALESCE(SUM(adr3.late_mark),0) FROM attendance_daily_record adr3
-               WHERE adr3.employee_id = e.id
-                 AND adr3.record_date BETWEEN ? AND ?) AS late_marks,
-            (SELECT COUNT(*) FROM attendance_daily_record adr4
-               WHERE adr4.employee_id = e.id
-                 AND adr4.record_date BETWEEN ? AND ?
-                 AND adr4.attendance_status = 'missing_punch') AS missing_punch_count,
-            (SELECT spl.net_salary FROM salary_prep_line spl
+            COALESCE(att.present_days, 0) AS present_days,
+            COALESCE(att.lwp_days, 0) AS lwp_days,
+            COALESCE(att.late_marks, 0) AS late_marks,
+            COALESCE(att.missing_punch_count, 0) AS missing_punch_count,
+            (SELECT spl.net_salary
+               FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
-               WHERE spl.employee_id = e.id
-               ORDER BY spr.run_month DESC LIMIT 1) AS last_salary_net,
-            (SELECT spr2.run_month FROM salary_prep_line spl2
-               JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id
-               WHERE spl2.employee_id = e.id
-               ORDER BY spr2.run_month DESC LIMIT 1) AS last_salary_month
+              WHERE spl.employee_id = e.id
+              ORDER BY spr.run_month DESC, spr.created_at DESC
+              LIMIT 1) AS last_salary_net,
+            (SELECT spr.run_month
+               FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+              WHERE spl.employee_id = e.id
+              ORDER BY spr.run_month DESC, spr.created_at DESC
+              LIMIT 1) AS last_salary_month
        FROM employees e
        LEFT JOIN branch_master bm       ON bm.id   = e.branch_id
        LEFT JOIN process_master pm      ON pm.id   = e.process_id
        LEFT JOIN designation_master dm  ON dm.id   = e.designation_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN (
+         SELECT employee_id,
+                SUM(attendance_status = 'present') AS present_days,
+                COALESCE(SUM(
+                  CASE
+                    WHEN attendance_status NOT IN ('week_off','holiday','leave_approved')
+                    THEN COALESCE(lwp_value, 0)
+                    ELSE 0
+                  END
+                ), 0) AS lwp_days,
+                COALESCE(SUM(late_mark), 0) AS late_marks,
+                SUM(attendance_status = 'missing_punch') AS missing_punch_count
+           FROM attendance_daily_record
+          WHERE record_date BETWEEN ? AND ?
+          GROUP BY employee_id
+       ) att ON att.employee_id = e.id
        ${where}
-       ${anomalyOnly ? "HAVING lwp_days > 2 OR missing_punch_count > 0" : ""}
        ORDER BY e.employee_code ASC
        LIMIT ${limit} OFFSET ${offset}`,
-    // month dates first (8 params for the 4 subqueries), then WHERE filter params
-    [monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, monthStart, monthEnd, ...params]
+    [monthStart, monthEnd, ...params]
   );
 
   const countQuery = anomalyOnly
-    ? `SELECT COUNT(*) AS total FROM (
-         SELECT e.id,
-           (SELECT COALESCE(SUM(adr2.lwp_value),0) FROM attendance_daily_record adr2
-              WHERE adr2.employee_id = e.id
-                AND adr2.record_date BETWEEN ? AND ?
-                AND adr2.attendance_status NOT IN ('week_off','holiday','leave_approved')) AS lwp_days,
-           (SELECT COUNT(*) FROM attendance_daily_record adr4
-              WHERE adr4.employee_id = e.id
-                AND adr4.record_date BETWEEN ? AND ?
-                AND adr4.attendance_status = 'missing_punch') AS missing_punch_count
-         FROM employees e ${where}
-         HAVING lwp_days > 2 OR missing_punch_count > 0
-       ) AS anomaly_count`
+    ? `SELECT COUNT(*) AS total
+         FROM employees e
+         LEFT JOIN (
+           SELECT employee_id,
+                  COALESCE(SUM(
+                    CASE
+                      WHEN attendance_status NOT IN ('week_off','holiday','leave_approved')
+                      THEN COALESCE(lwp_value, 0)
+                      ELSE 0
+                    END
+                  ), 0) AS lwp_days,
+                  SUM(attendance_status = 'missing_punch') AS missing_punch_count
+             FROM attendance_daily_record
+            WHERE record_date BETWEEN ? AND ?
+            GROUP BY employee_id
+         ) att ON att.employee_id = e.id
+         ${where}`
     : `SELECT COUNT(*) AS total FROM employees e ${where}`;
 
   const countParams = anomalyOnly
-    ? [monthStart, monthEnd, monthStart, monthEnd, ...params]
+    ? [monthStart, monthEnd, ...params]
     : params;
 
   const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);

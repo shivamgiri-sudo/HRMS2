@@ -745,7 +745,7 @@ router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Respon
 router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
   const { runId, employeeId } = req.params;
 
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin");
   if (!isPayrollRole) {
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
     if (!callerEmp || callerEmp.id !== employeeId) {
@@ -787,7 +787,10 @@ router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", 
 // GET /api/payroll/payslip/history/:employeeId — HR/admin view of any employee's payslip list
 router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
-  const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 24)));
+  const requestedLimit = Number(req.query.limit ?? 24);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(50, Math.max(1, Math.trunc(requestedLimit)))
+    : 24;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT spl.run_id, spl.gross_salary, spl.total_deductions, spl.net_salary,
             spl.status, spr.disbursed_at AS paid_at, spr.status AS run_status, spr.run_month
@@ -795,8 +798,8 @@ router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ?
       ORDER BY spr.run_month DESC
-      LIMIT ?`,
-    [employeeId, limit]
+      LIMIT ${limit}`,
+    [employeeId]
   );
   return res.json({ success: true, data: rows });
 }));

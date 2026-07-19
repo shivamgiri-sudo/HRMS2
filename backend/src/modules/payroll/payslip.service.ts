@@ -63,6 +63,13 @@ export interface PayslipData {
     amount: number;
     taxable: number;
   }>;
+  components?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+  }>;
 }
 
 export const payslipService = {
@@ -127,7 +134,13 @@ export const payslipService = {
    */
   async getPayslip(employeeId: string, runId: string): Promise<PayslipData> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT sp.*,
+      `SELECT COALESCE(sp.id, spl.id) AS id,
+              spl.employee_id,
+              COALESCE(sp.payslip_ref, CONCAT('CALC-', spr.run_month, '-', spl.employee_code)) AS payslip_ref,
+              sp.generated_at,
+              sp.generated_by,
+              sp.file_url,
+              sp.acknowledged_at,
               spl.id            AS prep_line_id,
               spl.run_id,
               spl.employee_code,
@@ -145,6 +158,7 @@ export const payslipService = {
               spl.tds,
               spl.basic,
               spl.hra,
+              spl.special_allowance,
               spl.special_allowance AS other_allowances,
               spl.lwp_deduction,
               spl.advance_recovery,
@@ -178,16 +192,16 @@ export const payslipService = {
               srd.cheque_no,
               srd.payment_mode,
               srd.payment_date
-         FROM salary_payslip sp
-         JOIN salary_prep_line spl
-           ON CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         FROM salary_prep_line spl
          JOIN salary_prep_run spr
            ON CONVERT(spr.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
             = CONVERT(spl.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         LEFT JOIN salary_payslip sp
+           ON CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
          LEFT JOIN employees e
            ON CONVERT(e.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(sp.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+            = CONVERT(spl.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
          LEFT JOIN employee_uan eu
            ON CONVERT(eu.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
             = CONVERT(e.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
@@ -205,11 +219,11 @@ export const payslipService = {
            ON CONVERT(loc.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
             = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
          LEFT JOIN salary_run_disbursal srd
-           ON CONVERT(srd.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+          ON CONVERT(srd.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
             = CONVERT(spl.run_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
           AND CONVERT(srd.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-            = CONVERT(sp.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-        WHERE sp.employee_id = ? AND spl.run_id = ?
+            = CONVERT(spl.employee_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+        WHERE spl.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
       [employeeId, runId]
     );
@@ -223,12 +237,15 @@ export const payslipService = {
         ORDER BY component_type, component_code`,
       [rec.prep_line_id]
     );
-    rec.earnings = (components as any[])
+    rec.components = (components as any[]).map((component) => ({
+      ...component,
+      amount: Number(component.amount ?? 0),
+      taxable: Number(component.taxable ?? 0),
+    }));
+    rec.earnings = rec.components
       .filter((component) => (component.component_type || "").toLowerCase() === "earning")
-      .map((component) => ({ ...component, amount: Number(component.amount ?? 0) }));
-    rec.deductions = (components as any[])
+    rec.deductions = rec.components
       .filter((component) => (component.component_type || "").toLowerCase() === "deduction")
-      .map((component) => ({ ...component, amount: Number(component.amount ?? 0) }));
     return rec;
   },
 

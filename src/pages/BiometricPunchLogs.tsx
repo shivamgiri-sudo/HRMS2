@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBiometricLogs } from "@/hooks/useBiometricLogs";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -182,8 +183,8 @@ export default function BiometricPunchLogs() {
   }, [searchParams]);
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
+    <DashboardLayout>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 pb-12">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Attendance</p>
@@ -383,6 +384,6 @@ export default function BiometricPunchLogs() {
           </>
         )}
       </div>
-    </div>
+    </DashboardLayout>
   );
 }
