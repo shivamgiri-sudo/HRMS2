@@ -53,9 +53,23 @@ describe("payslip display service", () => {
     const result = await payslipService.getPayslip("employee-1", "run-1");
 
     const detailQuery = String(execute.mock.calls[0][0]);
+    const normalizedDetailQuery = detailQuery.replace(/\s+/g, " ");
     expect(detailQuery).toContain("FROM salary_prep_line spl");
     expect(detailQuery).toContain("LEFT JOIN salary_payslip sp");
     expect(detailQuery).toContain("spl.employee_id = ?");
+    expect(normalizedDetailQuery).toContain(
+      "JOIN salary_prep_run spr ON spr.id = spl.run_id"
+    );
+    expect(normalizedDetailQuery).toContain(
+      "LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id"
+    );
+    expect(normalizedDetailQuery).toContain(
+      "LEFT JOIN employees e ON e.id = spl.employee_id"
+    );
+    expect(normalizedDetailQuery).toContain(
+      "LEFT JOIN location_master loc ON loc.id = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_0900_ai_ci"
+    );
+    expect(detailQuery).not.toContain("CONVERT(e.id USING");
     expect(result.earnings).toHaveLength(1);
     expect(result.deductions).toHaveLength(1);
     expect(result.components).toHaveLength(2);
