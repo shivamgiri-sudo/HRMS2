@@ -257,7 +257,7 @@ async function listCompanyPosts(
   const offset = (page - 1) * limit;
 
   const [countRows] = await executor.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM company_posts WHERE ${whereClause}`,
+    `SELECT COUNT(*) AS total FROM company_posts cp WHERE ${whereClause}`,
     params,
   );
   const total = Number((countRows[0] as { total?: unknown })?.total ?? 0);
@@ -279,8 +279,8 @@ async function listCompanyPosts(
        LEFT JOIN employees er ON er.user_id = cp.rejected_by
       WHERE ${whereClause}
       ORDER BY cp.created_at DESC
-      LIMIT ? OFFSET ?`,
-    [...params, limit, offset],
+      LIMIT ${limit} OFFSET ${offset}`,
+    params,
   );
 
   const postRows = rows as CompanyPostRow[];
@@ -619,9 +619,10 @@ export async function listCompanyPostCreators(input: { actorUserId: string }): P
     `SELECT cpa.id, cpa.employee_id, cpa.user_id, cpa.active_status,
             cpa.granted_by, cpa.granted_at, cpa.revoked_by, cpa.revoked_at,
             cpa.created_at, cpa.updated_at,
-            e.full_name AS employee_name, e.employee_code, e.department
+            e.full_name AS employee_name, e.employee_code, dept.dept_name AS department
        FROM company_post_creator_access cpa
        LEFT JOIN employees e ON e.id = cpa.employee_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE cpa.active_status = 1
       ORDER BY cpa.granted_at DESC`,
   );
@@ -686,9 +687,10 @@ export async function grantCompanyPostCreator(input: GrantInput): Promise<Compan
     `SELECT cpa.id, cpa.employee_id, cpa.user_id, cpa.active_status,
             cpa.granted_by, cpa.granted_at, cpa.revoked_by, cpa.revoked_at,
             cpa.created_at, cpa.updated_at,
-            e.full_name AS employee_name, e.employee_code, e.department
+            e.full_name AS employee_name, e.employee_code, dept.dept_name AS department
        FROM company_post_creator_access cpa
        LEFT JOIN employees e ON e.id = cpa.employee_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE cpa.employee_id = ?
       LIMIT 1`,
     [employeeId],
@@ -724,9 +726,10 @@ export async function revokeCompanyPostCreator(input: RevokeInput): Promise<Comp
     `SELECT cpa.id, cpa.employee_id, cpa.user_id, cpa.active_status,
             cpa.granted_by, cpa.granted_at, cpa.revoked_by, cpa.revoked_at,
             cpa.created_at, cpa.updated_at,
-            e.full_name AS employee_name, e.employee_code, e.department
+            e.full_name AS employee_name, e.employee_code, dept.dept_name AS department
        FROM company_post_creator_access cpa
        LEFT JOIN employees e ON e.id = cpa.employee_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE cpa.employee_id = ?
       LIMIT 1`,
     [employeeId],
