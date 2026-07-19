@@ -4,6 +4,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { resolveFinanceBranchScope } from "../finance/finance-access-scope.js";
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
 
@@ -20,28 +21,39 @@ const WRITE_ROLES = [
   "payroll_head",
 ] as const;
 
-function filters(req: AuthenticatedRequest) {
+function filters(req: AuthenticatedRequest, scopedBranchId?: string | null) {
   return {
     period: req.query.period ? String(req.query.period) : undefined,
-    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    branchId: scopedBranchId ?? (req.query.branchId ? String(req.query.branchId) : undefined),
     processId: req.query.processId ? String(req.query.processId) : undefined,
     clientId: req.query.clientId ? String(req.query.clientId) : undefined,
     search: req.query.search ? String(req.query.search) : undefined,
   };
 }
 
+async function scopedFilters(req: AuthenticatedRequest) {
+  const user = req.authUser;
+  const branchId = await resolveFinanceBranchScope({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: req.userRoles,
+    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+  });
+  return filters(req, branchId);
+}
+
 router.get("/summary", h(async (req, res) => {
-  const data = await bpoPnlAllocationOverlayService.getSummary(filters(req));
+  const data = await bpoPnlAllocationOverlayService.getSummary(await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/processes/:processId", h(async (req, res) => {
-  const data = await bpoPnlAllocationOverlayService.getProcessDetail(req.params.processId, filters(req));
+  const data = await bpoPnlAllocationOverlayService.getProcessDetail(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/export", h(async (req, res) => {
-  const csv = await bpoPnlAllocationOverlayService.exportCsv(filters(req));
+  const csv = await bpoPnlAllocationOverlayService.exportCsv(await scopedFilters(req));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",

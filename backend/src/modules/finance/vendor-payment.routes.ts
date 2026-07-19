@@ -276,7 +276,7 @@ router.post(
   authorizePaymentBranch,
   h(async (req, res) => {
     const user = actor(req);
-    const hold = req.body?.hold === true;
+    const hold = Boolean(req.body?.hold);
     const data = await vendorPaymentLedgerService.setHold(
       req.params.id,
       hold,

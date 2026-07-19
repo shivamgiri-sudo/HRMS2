@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 export interface BpoPnlRow {
@@ -203,11 +204,17 @@ export function useBpoProcessPnl(filters: BpoPnlFilters) {
 }
 
 export async function downloadBpoPnlExport(filters: BpoPnlFilters) {
-  const blob = await hrmsApi.getBlob(`/api/finance/pnl/bpo/export${queryString(filters)}`);
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `bpo-process-pnl-${filters.period ?? "current"}.csv`;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  try {
+    const blob = await hrmsApi.getBlob(`/api/finance/pnl/bpo/export${queryString(filters)}`);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `bpo-process-pnl-${filters.period ?? "current"}.csv`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch (error) {
+    toast.error("Export failed", {
+      description: error instanceof Error ? error.message : "Could not download BPO P&L export",
+    });
+  }
 }

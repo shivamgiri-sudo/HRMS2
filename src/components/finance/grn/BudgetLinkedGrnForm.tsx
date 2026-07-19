@@ -507,9 +507,11 @@ export function BudgetLinkedGrnForm() {
       });
       return;
     }
-    const grossPerRow = Number(form.invoiceTotal) / allocations.length;
-    setAllocations((current) =>
-      current.map((allocation) => {
+    const invoiceTotal = Number(form.invoiceTotal);
+    const grossPerRow = invoiceTotal / allocations.length;
+
+    setAllocations((current) => {
+      const updated = current.map((allocation) => {
         const line = budgetLines.find((item) => item.id === allocation.budgetLineId)!;
         const taxFactor = ["exclusive", "reverse_charge"].includes(line.tax_treatment)
           ? 1 + Number(line.gst_rate) / 100
@@ -519,9 +521,36 @@ export function BudgetLinkedGrnForm() {
           ...allocation,
           unitRate: Math.min(Number(line.unit_rate), Number(rate.toFixed(4))),
         };
-      })
-    );
-    window.setTimeout(autoBalanceLastRow, 0);
+      });
+
+      // Auto-balance last row to absorb rounding and rate caps
+      if (updated.length > 0) {
+        const lastIdx = updated.length - 1;
+        const last = updated[lastIdx];
+        const line = budgetLines.find((item) => item.id === last.budgetLineId);
+        if (line && Number(last.quantity) > 0) {
+          const otherGross = updated
+            .slice(0, lastIdx)
+            .reduce((sum, alloc) => {
+              const ln = budgetLines.find((item) => item.id === alloc.budgetLineId);
+              if (!ln) return sum;
+              const tf = ["exclusive", "reverse_charge"].includes(ln.tax_treatment) ? 1 + Number(ln.gst_rate) / 100 : 1;
+              return sum + Number(alloc.unitRate) * Number(alloc.quantity) * tf;
+            }, 0);
+          const remainingGross = Math.round((invoiceTotal - otherGross) * 100) / 100;
+          if (remainingGross > 0) {
+            const taxFactor = ["exclusive", "reverse_charge"].includes(line.tax_treatment)
+              ? 1 + Number(line.gst_rate) / 100
+              : 1;
+            const balancedRate = remainingGross / (Number(last.quantity) * taxFactor);
+            if (balancedRate <= Number(line.unit_rate) + 0.0001) {
+              updated[lastIdx] = { ...last, unitRate: Math.max(0, Number(balancedRate.toFixed(4))) };
+            }
+          }
+        }
+      }
+      return updated;
+    });
   }
 
   function resetForm() {

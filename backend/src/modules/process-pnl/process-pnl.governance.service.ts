@@ -554,7 +554,10 @@ export const processPnlGovernanceService = {
     );
     const row = rows[0];
     if (!row) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
-    if (String(row.maker_user_id ?? "") === actorUserId) {
+    if (!row.maker_user_id) {
+      throw Object.assign(new Error("Adjustment has no maker — cannot be approved"), { statusCode: 400 });
+    }
+    if (String(row.maker_user_id) === actorUserId) {
       throw Object.assign(new Error("Maker cannot approve their own adjustment"), { statusCode: 400 });
     }
     if (String(row.approval_status ?? "") === "reversed") {

@@ -31,7 +31,7 @@ router.post(
   "/vendors",
   requireRole("admin", "hr", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.body.vendor_code || !req.body.vendor_name) {
+    if (!req.body.vendor_code?.trim() || !req.body.vendor_name?.trim()) {
       return res.status(400).json({ error: "vendor_code and vendor_name are required" });
     }
     const data = await vendorService.create(req.body);
@@ -74,7 +74,7 @@ router.post(
   "/contracts",
   requireRole("admin", "hr", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.body.contract_code || !req.body.title || !req.body.start_date) {
+    if (!req.body.contract_code?.trim() || !req.body.title?.trim() || !req.body.start_date) {
       return res.status(400).json({ error: "contract_code, title, and start_date are required" });
     }
     const data = await contractService.create(req.body, req.authUser!.id);

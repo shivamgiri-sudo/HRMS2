@@ -706,7 +706,7 @@ export default function VendorPaymentDispatchPage() {
                     const overdue = overdueDays > 0 && !["Paid", "Closed"].includes(row.payment_status);
                     const needsBank = BANK_MODES.has(draft.paymentMode);
                     const installment = Number(draft.paymentAmount || 0);
-                    const installmentExceedsBalance = installment > Number(row.balance_amount ?? 0) + 0.01;
+                    const installmentExceedsBalance = installment - Number(row.balance_amount ?? 0) > 0.01;
                     const canDispatch = editable
                       && installment > 0
                       && !installmentExceedsBalance

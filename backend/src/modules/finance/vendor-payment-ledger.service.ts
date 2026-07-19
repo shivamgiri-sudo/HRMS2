@@ -141,7 +141,7 @@ export const vendorPaymentLedgerService = {
       const balanceBefore = roundMoney(
         Number(payment.balance_amount ?? dueAmount - currentPaid)
       );
-      if (amount > balanceBefore + 0.01) {
+      if (amount - balanceBefore > 0.01) {
         throw new Error(
           `Payment amount ${amount.toFixed(2)} exceeds outstanding balance ${balanceBefore.toFixed(2)}`
         );

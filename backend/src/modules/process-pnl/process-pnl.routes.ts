@@ -199,73 +199,84 @@ router.post(
 router.use(requireRole(...PNL_READ_ROLES));
 router.use("/pnl/bpo", bpoPnlRouter);
 
-function readFilters(req: AuthenticatedRequest) {
+function readFilters(req: AuthenticatedRequest, scopedBranchId?: string | null) {
   return {
     period: req.query.period ? String(req.query.period) : undefined,
-    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    branchId: scopedBranchId ?? (req.query.branchId ? String(req.query.branchId) : undefined),
     processId: req.query.processId ? String(req.query.processId) : undefined,
     clientId: req.query.clientId ? String(req.query.clientId) : undefined,
     search: req.query.search ? String(req.query.search) : undefined,
   };
 }
 
+async function scopedFilters(req: AuthenticatedRequest) {
+  const user = req.authUser;
+  const branchId = await resolveFinanceBranchScope({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: req.userRoles,
+    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+  });
+  return readFilters(req, branchId);
+}
+
 router.get("/pnl/summary", h(async (req, res) => {
-  const data = await processPnlService.getSummary(readFilters(req));
+  const data = await processPnlService.getSummary(await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes", h(async (req, res) => {
-  const data = await processPnlService.listProcesses(readFilters(req));
+  const data = await processPnlService.listProcesses(await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/overview", h(async (req, res) => {
-  const data = await processPnlService.getOverview(req.params.processId, readFilters(req));
+  const data = await processPnlService.getOverview(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/revenue", h(async (req, res) => {
-  const data = await processPnlService.getRevenue(req.params.processId, readFilters(req));
+  const data = await processPnlService.getRevenue(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/workforce", h(async (req, res) => {
-  const data = await processPnlService.getWorkforce(req.params.processId, readFilters(req));
+  const data = await processPnlService.getWorkforce(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/people-cost", h(async (req, res) => {
-  const data = await processPnlService.getPeopleCost(req.params.processId, readFilters(req));
+  const data = await processPnlService.getPeopleCost(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/direct-cost", h(async (req, res) => {
-  const data = await processPnlService.getDirectCost(req.params.processId, readFilters(req));
+  const data = await processPnlService.getDirectCost(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/indirect-allocation", h(async (req, res) => {
-  const data = await processPnlService.getIndirectAllocation(req.params.processId, readFilters(req));
+  const data = await processPnlService.getIndirectAllocation(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/trend", h(async (req, res) => {
-  const data = await processPnlService.getTrend(req.params.processId, readFilters(req));
+  const data = await processPnlService.getTrend(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/reconciliation", h(async (req, res) => {
-  const data = await processPnlService.getReconciliation(req.params.processId, readFilters(req));
+  const data = await processPnlService.getReconciliation(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/ledger", h(async (req, res) => {
-  const data = await processPnlService.getLedger(req.params.processId, readFilters(req));
+  const data = await processPnlService.getLedger(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/processes/:processId/detail", h(async (req, res) => {
-  const data = await processPnlService.getDetailBundle(req.params.processId, readFilters(req));
+  const data = await processPnlService.getDetailBundle(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
@@ -314,7 +325,7 @@ router.get("/pnl/period-close", h(async (req, res) => {
 }));
 
 router.get("/pnl/export", h(async (req, res) => {
-  const csv = await processPnlService.exportCsv(readFilters(req));
+  const csv = await processPnlService.exportCsv(await scopedFilters(req));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",

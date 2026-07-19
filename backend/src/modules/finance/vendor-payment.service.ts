@@ -590,7 +590,7 @@ export const vendorPaymentService = {
     if (existing[0]) return String(existing[0].id);
 
     const id = randomUUID();
-    const dueAmount = roundMoney(Number(grn.amount_with_tax || grn.amount || 0));
+    const dueAmount = roundMoney(Number(grn.amount_with_tax ?? grn.amount ?? 0));
     if (dueAmount <= 0) throw new Error("Vendor GRN payable amount must be positive");
 
     await executor.execute(

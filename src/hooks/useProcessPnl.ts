@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 export interface ProcessPnlRecord {
@@ -152,12 +153,18 @@ export function processPnlExportUrl(filters: ProcessPnlFilters) {
 }
 
 export async function downloadProcessPnlExport(filters: ProcessPnlFilters) {
-  const query = toQueryString(filters);
-  const blob = await hrmsApi.getBlob(`/api/finance/pnl/export${query}`);
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `process-pnl-${filters.period ?? "current"}.csv`;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  try {
+    const query = toQueryString(filters);
+    const blob = await hrmsApi.getBlob(`/api/finance/pnl/export${query}`);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `process-pnl-${filters.period ?? "current"}.csv`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch (error) {
+    toast.error("Export failed", {
+      description: error instanceof Error ? error.message : "Could not download P&L export",
+    });
+  }
 }
