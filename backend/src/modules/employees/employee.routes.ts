@@ -33,24 +33,30 @@ router.get("/me", h(async (req: any, res: any) => {
        e.mobile, e.personal_email, e.personal_phone, e.alternate_mobile,
        e.avatar_url, e.photo_url,
        e.gender, e.date_of_birth, e.marital_status, e.blood_group,
-       e.address, e.address_line1, e.city, e.state, e.country, e.pincode,
-       e.status, e.employment_status, e.employment_type,
+       e.address_line1 AS address, e.address_line1, e.city, e.state, e.country, e.pincode,
+       e.employment_status AS status, e.employment_status, e.employment_type,
        e.designation_id, e.department_id, e.branch_id, e.process_id,
        e.reporting_manager_id, e.manager_id,
-       e.date_of_joining, e.hire_date, e.salary_start_date,
+       e.date_of_joining, e.date_of_joining AS hire_date, e.salary_start_date,
        e.working_hours_start, e.working_hours_end, e.working_days,
-       e.is_manager, e.emergency_contact_name,
+       EXISTS(
+         SELECT 1 FROM employees direct_report
+         WHERE direct_report.reporting_manager_id = e.id
+           AND direct_report.active_status = 1
+       ) AS is_manager,
        e.pan_verified_on, e.aadhaar_verified_on,
        e.pan_number, e.uan_number, e.epf_number, e.esic_number,
        e.aadhaar_number, e.aadhaar_last4,
        d.designation_name  AS designation,
        dept.dept_name      AS department_name,
+       p.process_name,
        b.branch_name,
        b.branch_name       AS branch_display_name,
        CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')) AS reporting_manager_name
      FROM employees e
      LEFT JOIN designation_master d    ON d.id    = e.designation_id
      LEFT JOIN department_master  dept ON dept.id = e.department_id
+     LEFT JOIN process_master     p    ON p.id    = e.process_id
      LEFT JOIN branch_master      b    ON b.id    = e.branch_id
      LEFT JOIN employees          mgr  ON mgr.id  = e.reporting_manager_id
      WHERE e.user_id = ? AND e.active_status = 1
@@ -186,8 +192,8 @@ router.get("/me", h(async (req: any, res: any) => {
       // Flags
       is_manager:               emp.is_manager,
       // Presence-only flag (boolean, never the raw value)
-      bank_account_number:      emp.bank_account_number != null ? true : null,
-      emergency_contact_name:   emp.emergency_contact_name,
+      bank_account_number:      bankRows.length ? true : null,
+      emergency_contact_name:   emergRows[0]?.name ?? null,
       // Nested shapes expected by frontend
       department: emp.department_name ? { name: emp.department_name } : null,
       bank_details: (() => {
