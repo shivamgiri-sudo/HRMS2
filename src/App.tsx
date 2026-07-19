@@ -211,6 +211,7 @@ const ProcessPnlPage                = lazy(() => import("./pages/finance/Process
 const ProcessPnlDetailPage          = lazy(() => import("./pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage   = lazy(() => import("./pages/finance/ProcessPnlConfigurationPage"));
 const PnlPeriodClosePage            = lazy(() => import("./pages/finance/PnlPeriodClosePage"));
+const BranchBudgetManagementPage    = lazy(() => import("./pages/finance/BranchBudgetManagementPage"));
 const NativeWorkInbox               = lazy(() => import("./pages/NativeWorkInbox"));
 const NativeMobilityManagement      = lazy(() => import("./pages/NativeMobilityManagement"));
 const NativeSalaryIncrement         = lazy(() => import("./pages/NativeSalaryIncrement"));
@@ -419,7 +420,7 @@ const App = () => (
               <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
               <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
               <Route path="/modules" element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
-              <Route path="/ats/dashboard" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardReplica /></Gate></ProtectedRoute>} />
+              <Route path="/ats/dashboard" element={<Navigate to="/ats/command-center" replace />} />
               <Route path="/ats/candidate-registration" element={<NativeATSCandidateRegistration />} />
               <Route path="/ats/registration-enhanced" element={<ProtectedRoute><NativeATSRegistrationEnhanced /></ProtectedRoute>} />
               <Route path="/ats/recruiter/my-candidates" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_QUEUE"><NativeATSRecruiterWorkspace /></Gate></ProtectedRoute>} />
@@ -439,7 +440,7 @@ const App = () => (
               <Route path="/ats/onboarding-requests" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
               <Route path="/hr-onboarding-requests" element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
               {/* CANONICAL: /ats/offer-approvals is the primary branch-head approval page, wired to the offer submission flow in NativeHROnboardingRequests */}
-              <Route path="/ats/offer-approvals" element={<ProtectedRoute><Gate pageCode="ATS_OFFER_APPROVALS"><NativeBranchHeadApproval /></Gate></ProtectedRoute>} />
+              <Route path="/ats/offer-approvals" element={<ProtectedRoute roles={['branch_head','admin','super_admin','hr','payroll_head']}><Gate pageCode="ATS_OFFER_APPROVALS"><NativeBranchHeadApproval /></Gate></ProtectedRoute>} />
               {/* LEGACY: /ats/branch-head-approval uses a separate backend module (ats_branch_head_approval table). Keep alive while any pending approvals may exist there. */}
               <Route path="/ats/branch-head-approval" element={<ProtectedRoute><Gate pageCode="ATS_BRANCH_HEAD_APPROVAL"><BranchHeadApproval /></Gate></ProtectedRoute>} />
               <Route path="/ats/payroll-hr" element={<ProtectedRoute roles={['admin', 'hr', 'payroll_hr']}><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
@@ -469,7 +470,7 @@ const App = () => (
               <Route path="/candidate-portal/dashboard" element={<CandidatePortalDashboard />} />
               <Route path="/super-admin/module-access" element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
               <Route path="/super-admin/dashboard" element={<ProtectedRoute roles={['admin']}><SuperAdminDashboardV2 /></ProtectedRoute>} />
-              <Route path="/ats/command-centre" element={<ProtectedRoute roles={['admin', 'manager', 'hr', 'recruiter', 'recruitment_hr']}><ATSCommandCentre /></ProtectedRoute>} />
+              <Route path="/ats/command-centre" element={<Navigate to="/ats/command-center" replace />} />
               <Route path="/provisioning/wfm-alignment" element={<ProtectedRoute roles={['wfm', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_WFM_ALIGNMENT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
               <Route path="/provisioning/it" element={<ProtectedRoute roles={['it', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_IT"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
               <Route path="/provisioning/admin" element={<ProtectedRoute roles={['branch_admin', 'hr', 'admin', 'super_admin']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
@@ -478,10 +479,10 @@ const App = () => (
               {/* LMS */}
               <Route path="/lms" element={<Navigate to="/lms/my-learning" replace />} />
               <Route path="/lms/my-learning" element={<ProtectedRoute><Gate pageCode="LMS_MY_LEARNING"><NativeLMSMyLearning /></Gate></ProtectedRoute>} />
-              <Route path="/lms/coordinator" element={<ProtectedRoute><Gate pageCode="LMS_COORDINATOR"><NativeLMSCoordinator /></Gate></ProtectedRoute>} />
-              <Route path="/lms/admin" element={<ProtectedRoute><Gate pageCode="LMS_ADMIN"><LMSIntegrationAdmin /></Gate></ProtectedRoute>} />
+              <Route path="/lms/coordinator" element={<ProtectedRoute roles={['admin','super_admin','hr','trainer','training_manager']}><Gate pageCode="LMS_COORDINATOR"><NativeLMSCoordinator /></Gate></ProtectedRoute>} />
+              <Route path="/lms/admin" element={<ProtectedRoute roles={['admin','super_admin','hr']}><Gate pageCode="LMS_ADMIN"><LMSIntegrationAdmin /></Gate></ProtectedRoute>} />
               <Route path="/lms/management-dashboard" element={<Navigate to="/lms/admin" replace />} />
-              <Route path="/lms/integration" element={<ProtectedRoute><Gate pageCode="LMS_INTEGRATION"><NativeLMSIntegration /></Gate></ProtectedRoute>} />
+              <Route path="/lms/integration" element={<ProtectedRoute roles={['admin','super_admin']}><Gate pageCode="LMS_INTEGRATION"><NativeLMSIntegration /></Gate></ProtectedRoute>} />
               <Route path="/lms/progress-dashboard" element={<ProtectedRoute><Gate pageCode="LMS_PROGRESS_DASHBOARD"><LMSProgressDashboard /></Gate></ProtectedRoute>} />
               <Route path="/lms/module-launch" element={<ProtectedRoute><Gate pageCode="LMS_MODULE_LAUNCH"><LMSModuleLaunch /></Gate></ProtectedRoute>} />
 
@@ -562,6 +563,7 @@ const App = () => (
               <Route path="/procurement" element={<ProtectedRoute><Gate pageCode="PROCUREMENT"><NativeProcurementPage /></Gate></ProtectedRoute>} />
               <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeVendorPaymentTracking /></ProtectedRoute>} />
               <Route path="/finance/grn" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','payroll_head']}><NativeGRNManagement /></ProtectedRoute>} />
+              <Route path="/finance/branch-budget" element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><BranchBudgetManagementPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
               <Route path="/finance/process-pnl/period-close" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head']}><PnlPeriodClosePage /></ProtectedRoute>} />
@@ -588,9 +590,9 @@ const App = () => (
               <Route path="/payroll/pf-creation-queue" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfCreationQueuePage /></ProtectedRoute>} />
               <Route path="/payroll/pf-batches" element={<ProtectedRoute roles={['admin', 'super_admin', 'payroll_hr', 'payroll']}><PfBatchesPage /></ProtectedRoute>} />
               <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
-              <Route path="/payroll/full-final" element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/full-final" element={<ProtectedRoute roles={['super_admin','admin','payroll','payroll_head','hr']}><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
               <Route path="/payroll/disbursal" element={<ProtectedRoute roles={['super_admin', 'payroll', 'finance']}><DisbursalManagement /></ProtectedRoute>} />
-              <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
+              <Route path="/payroll/statutory-config" element={<ProtectedRoute roles={['super_admin','admin','payroll','payroll_head']}><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
               <Route path="/payroll/masters" element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
               <Route path="/payroll/ho-queues" element={<ProtectedRoute><NativePayrollHOQueues /></ProtectedRoute>} />
               <Route path="/payroll/cheque-validation" element={<ProtectedRoute roles={['payroll','payroll_head','super_admin','finance']}><NativeChequeNameValidation /></ProtectedRoute>} />
@@ -646,10 +648,9 @@ const App = () => (
               <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
               <Route path="/control-tower" element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><NativeControlTower /></ProtectedRoute>} />
               <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />
-              <Route path="/ats/walkin-queue" element={<ProtectedRoute><Gate pageCode="ATS_WALKIN_QUEUE"><NativeWalkinQueue /></Gate></ProtectedRoute>} />
               <Route path="/attendance-rules-master" element={<ProtectedRoute roles={['admin', 'hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
               <Route path="/wfm/mismatch-queue" element={<ProtectedRoute><NativeAttendanceMismatchQueue /></ProtectedRoute>} />
-              <Route path="/attendance/billing-config" element={<ProtectedRoute><NativeAttendanceBillingConfig /></ProtectedRoute>} />
+              <Route path="/attendance/billing-config" element={<ProtectedRoute roles={['super_admin','admin','wfm','hr','payroll_head']}><NativeAttendanceBillingConfig /></ProtectedRoute>} />
               <Route path="/hr/attendance-lookup" element={<ProtectedRoute roles={['super_admin', 'admin', 'hr', 'payroll_head', 'payroll_admin', 'wfm']}><AdminAttendanceView /></ProtectedRoute>} />
               <Route path="/changelog" element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
 

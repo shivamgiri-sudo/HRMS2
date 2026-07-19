@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { getCachedCandidateList } from "@/lib/atsDashboardReplicaAdapter";
 import { AIInsightPanel } from "@/components/ai";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 
 type Candidate = {

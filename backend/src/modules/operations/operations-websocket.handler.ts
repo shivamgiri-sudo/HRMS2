@@ -83,7 +83,7 @@ class OperationsWebSocketHandler {
         }
       }
     } catch (error) {
-      logger.error(`[OperationsWS] Failed to parse message (${clientId}):`, error);
+      logger.error({ err: error, clientId }, '[OperationsWS] Failed to parse message');
     }
   }
 
@@ -129,11 +129,11 @@ class OperationsWebSocketHandler {
             this.sendMessage(client.ws, 'attrition-risk', attritionRisk);
           }
         } catch (error) {
-          logger.error(`[OperationsWS] Failed to send to client ${clientId}:`, error);
+          logger.error({ err: error, clientId }, '[OperationsWS] Failed to send to client');
         }
       }
     } catch (error) {
-      logger.error('[OperationsWS] Broadcast error:', error);
+      logger.error({ err: error }, '[OperationsWS] Broadcast error');
     }
   }
 
@@ -145,7 +145,7 @@ class OperationsWebSocketHandler {
       // Broadcast every 10 seconds
       this.broadcastInterval = setInterval(() => {
         this.broadcast().catch((error) => {
-          logger.error('[OperationsWS] Broadcast failed:', error);
+          logger.error({ err: error }, '[OperationsWS] Broadcast failed');
         });
       }, 10000);
 
@@ -178,7 +178,7 @@ class OperationsWebSocketHandler {
           })
         );
       } catch (error) {
-        logger.error('[OperationsWS] Failed to send message:', error);
+        logger.error({ err: error }, '[OperationsWS] Failed to send message');
       }
     }
   }

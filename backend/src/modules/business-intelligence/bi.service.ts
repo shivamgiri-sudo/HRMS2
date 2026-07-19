@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { querySource } from '../../db/sourceDb.js';
 import { getLegacyPool } from '../../db/legacyDb.js';
 import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
 import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
@@ -562,75 +563,141 @@ export interface QualityIntervention {
   intervention_flags: InterventionFlag[];
 }
 
+function auditRag(score: number): 'red' | 'amber' | 'green' {
+  if (score >= 90) return 'green';
+  if (score >= 85) return 'amber';
+  return 'red';
+}
+
 export async function getQualityIntervention(branchId?: string, processId?: string): Promise<QualityIntervention> {
   const fromDate = getIstDateString(7);
   const toDate = getIstDateString(0);
   const prevFromDate = getIstDateString(14);
   const prevToDate = getIstDateString(8);
 
-  const whereParts: string[] = [];
-  const params: unknown[] = [fromDate, toDate];
-  if (processId) { whereParts.push('a.campaign_id = ?'); params.push(processId); }
+  // ── Overall summary from db_audit.call_quality_assessment ────────────────
+  interface SummaryRow { avg_score: number; total_agents: number; below_threshold: number }
+  const summaryRows = await querySource<SummaryRow>(`
+    SELECT
+      ROUND(AVG(quality_percentage), 1)                                              AS avg_score,
+      COUNT(DISTINCT User)                                                            AS total_agents,
+      COUNT(DISTINCT CASE WHEN avg_per_agent < 85 THEN agent END)                   AS below_threshold
+    FROM (
+      SELECT User AS agent, ROUND(AVG(quality_percentage), 1) AS avg_per_agent
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND quality_percentage IS NOT NULL
+      GROUP BY User
+      HAVING COUNT(*) >= 2
+    ) t
+    CROSS JOIN (
+      SELECT ROUND(AVG(quality_percentage), 1) AS avg_score
+      FROM db_audit.call_quality_assessment
+      WHERE CallDate BETWEEN ? AND ?
+        AND quality_percentage IS NOT NULL
+    ) g
+  `, [fromDate, toDate, fromDate, toDate]).catch(() => [] as SummaryRow[]);
 
-  const scopeSql = whereParts.length ? ` AND ${whereParts.join(' AND ')}` : '';
+  const avgScore = Number(summaryRows[0]?.avg_score ?? 0);
+  const belowThreshold = Number(summaryRows[0]?.below_threshold ?? 0);
 
-  // Current week quality from apr (uses built-in quality scores if available)
-  // Fall back to the per-agent apr data which includes shrinkage/calls as proxy
-  const [agentRows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.UserID AS agent_code,
-            COALESCE(NULLIF(e.full_name,''), a.UserID) AS agent_name,
-            SUM(a.Calls) AS call_count,
-            COALESCE(pm.process_name, a.campaign_id) AS campaign
-     FROM apr a
-     LEFT JOIN employees e ON e.employee_code = a.UserID
-     LEFT JOIN process_master pm ON pm.process_code = a.campaign_id
-     WHERE DATE(a.ReportDate) BETWEEN ? AND ?${scopeSql}
-       AND a.Calls > 50
-     GROUP BY a.UserID, a.campaign_id
-     ORDER BY call_count DESC
-     LIMIT 50`,
-    params
-  ).catch(() => [[] as any]);
+  // ── Bottom agents (min 3 audits, ordered by lowest quality_percentage) ───
+  interface AgentRow { agent_code: string; agent_name: string; call_count: number; avg_score: number; client_id: string }
+  const agentRows = await querySource<AgentRow>(`
+    SELECT
+      q.User                                                 AS agent_code,
+      COALESCE(am.AgentName, q.User)                        AS agent_name,
+      COUNT(*)                                               AS call_count,
+      ROUND(AVG(q.quality_percentage), 1)                   AS avg_score,
+      q.ClientId                                             AS client_id
+    FROM db_audit.call_quality_assessment q
+    LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+    WHERE q.CallDate BETWEEN ? AND ?
+      AND q.quality_percentage IS NOT NULL
+      AND q.User IS NOT NULL AND TRIM(q.User) != ''
+    GROUP BY q.User, am.AgentName, q.ClientId
+    HAVING call_count >= 3
+    ORDER BY avg_score ASC
+    LIMIT 10
+  `, [fromDate, toDate]).catch(() => [] as AgentRow[]);
 
-  // Process-level summary (using apr as proxy — quality data enriched if db_audit available)
-  const [procRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(pm.process_name, a.campaign_id) AS process,
-            ROUND(AVG(a.Calls), 0) AS avg_calls,
-            COUNT(DISTINCT a.UserID) AS agent_count
-     FROM apr a
-     LEFT JOIN process_master pm ON pm.process_code = a.campaign_id
-     WHERE DATE(a.ReportDate) BETWEEN ? AND ?
-     GROUP BY a.campaign_id
-     ORDER BY avg_calls DESC
-     LIMIT 15`,
-    [fromDate, toDate]
-  ).catch(() => [[] as any]);
+  // ── Per-client/process RAG with WoW change ────────────────────────────────
+  interface ProcRow { process: string; avg_score: number }
+  const [currProcRows, prevProcRows] = await Promise.all([
+    querySource<ProcRow>(`
+      SELECT
+        q.ClientId                           AS process,
+        ROUND(AVG(q.quality_percentage), 1)  AS avg_score
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY q.ClientId
+      ORDER BY avg_score ASC
+      LIMIT 15
+    `, [fromDate, toDate]).catch(() => [] as ProcRow[]),
+    querySource<ProcRow>(`
+      SELECT
+        q.ClientId                           AS process,
+        ROUND(AVG(q.quality_percentage), 1)  AS avg_score
+      FROM db_audit.call_quality_assessment q
+      WHERE q.CallDate BETWEEN ? AND ?
+        AND q.quality_percentage IS NOT NULL
+      GROUP BY q.ClientId
+      ORDER BY avg_score ASC
+      LIMIT 15
+    `, [prevFromDate, prevToDate]).catch(() => [] as ProcRow[]),
+  ]);
 
-  // Build process RAG from available data
-  const processRag = (procRows as any[]).map((r: any) => {
-    const calls = Number(r.avg_calls ?? 0);
-    // Proxy: high-volume processes get 'green' unless no data
-    const rag: 'red' | 'amber' | 'green' = calls < 20 ? 'red' : calls < 40 ? 'amber' : 'green';
-    return { process: r.process, avg_score: calls, rag, wow_change: 0 };
+  const prevMap = new Map(prevProcRows.map(r => [String(r.process), Number(r.avg_score)]));
+  const processRag = currProcRows.map(r => {
+    const score = Number(r.avg_score);
+    const prev = prevMap.get(String(r.process)) ?? score;
+    return {
+      process: String(r.process),
+      avg_score: score,
+      rag: auditRag(score),
+      wow_change: parseFloat((score - prev).toFixed(1)),
+    };
   });
 
-  const agentCount = (agentRows as any[]).length;
-  const flags: InterventionFlag[] = [];
   const redProcesses = processRag.filter(p => p.rag === 'red').length;
+  const decliningProcesses = processRag.filter(p => p.wow_change < -2).length;
 
+  const flags: InterventionFlag[] = [];
+  if (avgScore > 0 && avgScore < 85) {
+    flags.push({
+      type: 'LOW_ORG_QUALITY', severity: 'critical',
+      detail: `Org-wide quality at ${avgScore}% — below 85% threshold`,
+      action: 'QA team to prioritise coaching queue immediately',
+    });
+  }
   if (redProcesses > 2) {
     flags.push({
       type: 'MULTI_PROCESS_QUALITY_DROP', severity: 'critical',
-      detail: `${redProcesses} processes in RED quality zone`,
+      detail: `${redProcesses} client processes in RED quality zone (<85%)`,
       action: 'QA review call — assign TL coaching this week',
+    });
+  }
+  if (belowThreshold > 5) {
+    flags.push({
+      type: 'AGENTS_BELOW_THRESHOLD', severity: 'warning',
+      detail: `${belowThreshold} agents with avg quality below 85%`,
+      action: 'Schedule targeted coaching sessions for flagged agents',
     });
   }
 
   return {
-    summary: { avg_quality_score: 0, agents_below_threshold: agentCount, processes_declining: redProcesses },
-    critical_agents: (agentRows as any[]).slice(0, 10).map((r: any) => ({
-      agent_code: r.agent_code, agent_name: r.agent_name,
-      call_count: Number(r.call_count), quality_score: 0, campaign: r.campaign,
+    summary: {
+      avg_quality_score: avgScore,
+      agents_below_threshold: belowThreshold,
+      processes_declining: decliningProcesses,
+    },
+    critical_agents: agentRows.map(r => ({
+      agent_code: String(r.agent_code),
+      agent_name: String(r.agent_name),
+      call_count: Number(r.call_count),
+      quality_score: Number(r.avg_score),
+      campaign: String(r.client_id),
     })),
     process_rag: processRag,
     intervention_flags: flags,

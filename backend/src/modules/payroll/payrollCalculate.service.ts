@@ -30,13 +30,34 @@ export interface GratuityResult {
 
 /**
  * Calculate gratuity for an employee using the Payment of Gratuity Act formula:
- * amount = (lastBasicMonthly / 26) * 15 * completedYears
- * Eligibility: >= 60 months (5 years) of continuous service.
+ * amount = (lastBasicMonthly / gratuity_day_divisor) * gratuity_multiplier_days * completedYears
+ * Eligibility: >= gratuity_min_months months of continuous service.
+ * All parameters read from statutory_config — no hardcoded fallbacks.
+ * Returns eligible=false if any required config key is missing (provisional guard).
  */
 export async function calculateGratuity(
   employeeId: string,
   lastBasicMonthly: number
 ): Promise<GratuityResult> {
+  // Load statutory config parameters — no hardcoded defaults allowed
+  const [cfgRows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_key, config_value FROM statutory_config
+     WHERE config_key IN ('gratuity_min_months','gratuity_day_divisor','gratuity_multiplier_days')
+       AND is_active = 1`,
+    []
+  );
+  const cfg: Record<string, number> = {};
+  for (const row of cfgRows as Array<{ config_key: string; config_value: string }>) {
+    const val = Number(row.config_value);
+    if (!Number.isFinite(val) || val <= 0) continue;
+    cfg[row.config_key] = val;
+  }
+
+  // All three keys must be present in statutory_config — otherwise return provisional block
+  if (cfg["gratuity_min_months"] === undefined || cfg["gratuity_day_divisor"] === undefined || cfg["gratuity_multiplier_days"] === undefined) {
+    return { eligible: false, amount: 0, years: 0 };
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1",
     [employeeId]
@@ -52,11 +73,13 @@ export async function calculateGratuity(
   const totalMonths = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.4375));
   const completedYears = Math.floor(totalMonths / 12);
 
-  if (totalMonths < 60) {
+  if (totalMonths < cfg["gratuity_min_months"]) {
     return { eligible: false, amount: 0, years: completedYears };
   }
 
-  const amount = Math.round(((lastBasicMonthly / 26) * 15 * completedYears) * 100) / 100;
+  const amount = Math.round(
+    ((lastBasicMonthly / cfg["gratuity_day_divisor"]) * cfg["gratuity_multiplier_days"] * completedYears) * 100
+  ) / 100;
   return { eligible: true, amount, years: completedYears };
 }
 

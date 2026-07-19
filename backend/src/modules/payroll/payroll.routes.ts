@@ -8,6 +8,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
+import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
 import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
@@ -304,6 +305,7 @@ router.get("/lines/:lineId/attendance", requireRole("admin", "hr", "super_admin"
   return res.json({ success: true, data: summary });
 }));
 router.post("/runs",
+  payrollRunLimiter,
   requireRole("admin", "super_admin", "finance", "payroll"),
   requireScopedRole(["finance", "payroll"], async (req) => ({
     branchId: req.body.branch_id,
@@ -378,7 +380,7 @@ router.get("/runs/:id/branch-breakdown", requireRole("admin", "hr", "super_admin
   return res.json({ success: true, data: rows ?? [] });
 }));
 
-router.post("/runs/:id/calculate", requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
+router.post("/runs/:id/calculate", payrollRunLimiter, requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
   try {
     await assertRunEditable(req.params.id);
     const actorId = req.authUser?.id ?? "system";

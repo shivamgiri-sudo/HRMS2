@@ -435,7 +435,6 @@ app.use("/api/sales-upload", salesUploadRouter);
 app.use("/api/inbound-quality", inboundQualityRouter);
 app.use("/api/performance-hub", performanceIntelligenceRouter);
 app.use("/api/performance-dashboard", performanceDashboardRouter);
-app.use("/api/performance-hub", performanceIntelligenceRouter);
 app.use("/api/legacy", legacyRouter);
 app.use("/api/expenses", expenseRouter);
 app.use("/api/work-inbox", workInboxRouter);

@@ -2,6 +2,7 @@ import {
   BadgeCheck,
   BookOpen,
   CalendarDays,
+  Clock,
   Clock3,
   FileText,
   FolderOpen,
@@ -35,6 +36,31 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   const mcq = asNumber(lms.mcq_best_score ?? lms.mcqBestScore);
   const readiness = asNumber(lms.readiness_score ?? lms.readinessScore);
   const certification = String(lms.certification_status ?? lms.certificationStatus ?? "—");
+  const lmsSyncedAt = stringAt(lms, "synced_at") ?? stringAt(lms, "last_synced_at") ?? stringAt(lms, "updated_at");
+  const lmsSyncLabel = (() => {
+    if (!lmsSyncedAt) return null;
+    try {
+      const d = new Date(lmsSyncedAt);
+      if (Number.isNaN(d.getTime())) return null;
+      const diffMs = Date.now() - d.getTime();
+      const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+      if (diffH < 1) return "Synced just now";
+      if (diffH < 24) return `Synced ${diffH}h ago`;
+      const diffD = Math.floor(diffH / 24);
+      return `Synced ${diffD}d ago`;
+    } catch {
+      return null;
+    }
+  })();
+  const lmsStale = (() => {
+    if (!lmsSyncedAt) return false;
+    try {
+      const d = new Date(lmsSyncedAt);
+      return !Number.isNaN(d.getTime()) && Date.now() - d.getTime() > 24 * 60 * 60 * 1000;
+    } catch {
+      return false;
+    }
+  })();
   const onboardingPct = asNumber(onboarding.percentComplete ?? onboarding.percent_complete);
   const completedSteps = asNumber(onboarding.completedSteps ?? onboarding.completed_steps);
   const totalSteps = asNumber(onboarding.totalSteps ?? onboarding.total_steps);
@@ -62,7 +88,24 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       </ReferencePanel>
 
       <div className="grid gap-4 xl:grid-cols-[1.02fr_0.98fr]">
-        <ReferencePanel title="My Training Status" bodyClassName="p-0">
+        <ReferencePanel
+          title="My Training Status"
+          bodyClassName="p-0"
+          action={
+            lmsSyncLabel ? (
+              <span className={`flex items-center gap-1 text-[9px] font-medium ${lmsStale ? "text-[#f97316]" : "text-[#61708a]"}`}>
+                <Clock className="h-3 w-3" aria-hidden="true" />
+                {lmsSyncLabel}
+                {lmsStale ? " — data may be outdated" : ""}
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[9px] text-[#94a3b8]">
+                <Clock className="h-3 w-3" aria-hidden="true" />
+                Sync time unknown
+              </span>
+            )
+          }
+        >
           <div className="grid min-h-[118px] grid-cols-2 divide-x divide-[#edf1f6] sm:grid-cols-4">
             {[
               { label: "Completion", value: completion, suffix: "%", helper: stringAt(lms, "course_progress") ?? "Courses", icon: BookOpen, tone: "violet" as const },

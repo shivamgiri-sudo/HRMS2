@@ -8,11 +8,12 @@ export function getSourcePool(): mysql.Pool {
     pool = mysql.createPool({
       host: env.DB_HOST,
       port: env.DB_PORT,
-      user: env.DB_USER,
-      password: env.DB_PASSWORD,
+      // Prefer SOURCE_DB_USER/PASSWORD (root-level cross-DB grants) over the app user
+      user:     env.SOURCE_DB_USER     || env.DB_USER,
+      password: env.SOURCE_DB_PASSWORD || env.DB_PASSWORD,
       // No database — allows qualified cross-DB refs like db_audit.call_quality_assessment
       waitForConnections: true,
-      connectionLimit: 10,
+      connectionLimit: 8,
       queueLimit: 0,
       connectTimeout: 15000,
     });

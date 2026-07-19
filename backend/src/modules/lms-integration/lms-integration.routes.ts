@@ -122,7 +122,13 @@ lmsIntegrationRouter.get("/dashboard-summary",
 
 // ─── Per-Employee Progress ────────────────────────────────────────────────────
 // GET /api/lms/learner-progress/:employeeId — employee's own LMS progress
-lmsIntegrationRouter.get("/learner-progress/:employeeId", h(async (req, res) => {
+// Any authenticated user can request their own record; managers/hr/admin can request any.
+lmsIntegrationRouter.get("/learner-progress/:employeeId",
+  requireRole("super_admin", "admin", "hr", "manager", "process_manager", "branch_head",
+              "team_leader", "tl", "assistant_manager", "trainer", "training_manager",
+              "payroll", "payroll_head", "ceo", "coo", "employee", "agent", "trainee",
+              "wfm", "qa", "quality_analyst", "operations_manager", "recruiter", "recruitment_hr"),
+  h(async (req, res) => {
   const { employeeId } = req.params;
 
   const [trainee] = await lmsDb.execute<RowDataPacket[]>(`

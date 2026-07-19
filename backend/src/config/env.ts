@@ -151,6 +151,11 @@ const envSchema = z.object({
 
   // Shivamgiri quality/APR database (shared by quality-dashboard module)
   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
+
+  // Cross-DB source credentials — used by sourceDb.ts for db_audit, db_external, dialer_db queries
+  // Falls back to DB_USER/DB_PASSWORD if not set
+  SOURCE_DB_USER:     z.string().default(""),
+  SOURCE_DB_PASSWORD: z.string().default(""),
 });
 
 const parsed = envSchema.safeParse(process.env);

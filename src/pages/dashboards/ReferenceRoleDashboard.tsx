@@ -30,6 +30,9 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RoleSalesPerformancePanel } from "@/components/performance-hub/RoleSalesPerformancePanel";
 import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
+import { QualityReferenceLayout } from "./reference/QualityReferenceLayout";
+import { OperationsReferenceLayout } from "./reference/OperationsReferenceLayout";
+import { RecruiterReferenceLayout } from "./reference/RecruiterReferenceLayout";
 import "./role-dashboard-reference.css";
 
 const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
@@ -41,6 +44,9 @@ const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
   payroll: "PAYROLL_HR_DASHBOARD",
   manager: "MANAGEMENT_DASHBOARD",
   super_admin: "CEO_DASHBOARD",
+  quality: "MANAGEMENT_DASHBOARD",
+  operations: "MANAGEMENT_DASHBOARD",
+  recruiter: "MANAGEMENT_DASHBOARD",
 };
 
 function unwrap(value: unknown): unknown {
@@ -161,7 +167,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const atsQuery = useQuery({
     queryKey: ["reference-dashboard-ats", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/ats/stats${params}`))),
-    enabled: accessGranted && ["hr", "ceo", "manager", "super_admin"].includes(variant),
+    enabled: accessGranted && ["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -177,7 +183,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const workforceQuery = useQuery({
     queryKey: ["reference-dashboard-workforce", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/management/workforce-dashboard${params}`))),
-    enabled: accessGranted && ["ceo", "manager", "super_admin"].includes(variant),
+    enabled: accessGranted && ["ceo", "manager", "super_admin", "operations", "quality"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -201,7 +207,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const biometricQuery = useQuery({
     queryKey: ["reference-dashboard-biometric", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/wfm/biometric-summary/adherence-summary${params}`))),
-    enabled: accessGranted && ["wfm", "wfm_attendance", "manager"].includes(variant),
+    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "operations"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -217,7 +223,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const pulseQuery = useQuery({
     queryKey: ["reference-dashboard-pulse", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/daily-operations-pulse${params}`))),
-    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "ceo", "super_admin"].includes(variant),
+    enabled: accessGranted && ["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant),
     staleTime: 30_000,
     retry: 1,
   });
@@ -236,10 +242,58 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
 
   const qualityQuery = useExecutiveQualitySummary(30);
   const orgKpiQuery = useOrgKpiSummary();
+
+  // QA-role quality data via /api/bi/quality-intervention (accessible to qa/quality_analyst roles)
+  const qaQualityQuery = useQuery({
+    queryKey: ["reference-dashboard-qa-quality", variant, branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/quality-intervention${params}`))),
+    enabled: accessGranted && ["quality", "operations", "manager", "super_admin", "ceo"].includes(variant),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
   const summary = (summaryQuery.data ?? {}) as DashboardSummary;
   const metrics = summary.metrics ?? {};
   const employeeData = employeeQuery.data ?? EMPTY_EMPLOYEE;
-  const queryResults = [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery];
+  const queryResults = [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery, qaQualityQuery];
+
+  // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
+  const execQualityRecord = asRecord(unwrap(qualityQuery.data as unknown));
+  const qaQualityRecord = qaQualityQuery.data ?? {};
+  const mergedQuality: JsonRecord = {
+    // Executive fields (available to ceo/admin)
+    avg_score: execQualityRecord.metrics != null
+      ? asNumber((execQualityRecord.metrics as JsonRecord).overall_quality_score)
+      : (qaQualityRecord.summary != null ? asNumber((qaQualityRecord.summary as JsonRecord).avg_quality_score) : null),
+    total_audits: asNumber((execQualityRecord.metrics as JsonRecord | undefined)?.overall_quality_score != null
+      ? undefined
+      : (qaQualityRecord.summary as JsonRecord | undefined)?.agents_below_threshold),
+    fail_rate: null,
+    pending_audits: asNumber((execQualityRecord.risk_summary as JsonRecord | undefined)?.coaching_priority_count
+      ?? (qaQualityRecord.summary as JsonRecord | undefined)?.processes_declining),
+    // Score trend from executive summary
+    score_trend: execQualityRecord.process_performance ?? qaQualityRecord.process_rag ?? [],
+    // Defect categories — map process_rag or process_performance
+    defects: (qaQualityRecord.process_rag as JsonRecord[] | undefined)?.map((r) => ({
+      category: r.process,
+      count: r.avg_score,
+      severity: r.rag,
+    })) ?? (execQualityRecord.process_performance as JsonRecord[] | undefined)?.map((r) => ({
+      category: r.process,
+      count: r.agent_count,
+      severity: (r.status as string ?? "").toLowerCase() === "critical" ? "critical"
+        : (r.status as string ?? "").toLowerCase() === "at risk" ? "high" : "low",
+    })) ?? [],
+    // Bottom agents — from executive bottom_performers or QA critical_agents
+    bottom_agents: execQualityRecord.bottom_performers ?? (qaQualityRecord.critical_agents as JsonRecord[] | undefined)?.map((a) => ({
+      agent_name: a.agent_name,
+      score: a.quality_score,
+      process: a.campaign,
+      fail_count: null,
+    })) ?? [],
+    // Intervention flags from QA pulse
+    intervention_flags: qaQualityRecord.intervention_flags ?? [],
+  };
 
   const data: ReferenceDashboardData = {
     variant,
@@ -255,7 +309,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     devices: devicesQuery.data ?? {},
     opsPulse: pulseQuery.data ?? {},
     managerLeaves: managerLeavesQuery.data ?? [],
-    quality: asRecord(unwrap(qualityQuery.data as unknown)),
+    quality: mergedQuality,
     orgKpi: asRecord(unwrap(orgKpiQuery.data as unknown)),
     loading: roleLoading || (variant === "employee" ? employeeQuery.isLoading : summaryQuery.isLoading),
     refreshing: queryResults.some((query) => query.isFetching),
@@ -334,6 +388,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {variant === "payroll" ? <PayrollReferenceLayout data={data} /> : null}
         {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} /> : null}
         {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} /> : null}
+        {variant === "quality" ? <QualityReferenceLayout data={data} /> : null}
+        {variant === "operations" ? <OperationsReferenceLayout data={data} /> : null}
+        {variant === "recruiter" ? <RecruiterReferenceLayout data={data} /> : null}
       </main>
     </DashboardLayout>
   );
