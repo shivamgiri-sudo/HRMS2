@@ -314,10 +314,10 @@ async function getLiveRawPunches(
         CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(19), ${dateTimeColumn}, 120) AS punch_time,
         CAST(IOType AS INT) AS io_type,
-        CAST(DID AS INT) AS device_id,
+       CAST(DID AS INT) AS device_id,
         CONVERT(CHAR(19), ${dateTimeColumn}, 120) AS synced_at
       FROM ${eventTable}
-      WHERE CAST(${userIdColumn} AS NVARCHAR(100)) = @userId
+      WHERE ${userIdColumn} = @userId
         AND ${dateTimeColumn} >= @dateStart
         AND ${dateTimeColumn} <= @dateEnd
       ORDER BY ${dateTimeColumn} ASC

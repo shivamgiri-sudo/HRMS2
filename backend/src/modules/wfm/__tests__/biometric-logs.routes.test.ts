@@ -61,4 +61,14 @@ describe("biometric logs route contract", () => {
     expect(serviceSource).toContain("cps.user_id IN (?, ?, ?)");
     expect(serviceSource).not.toMatch(/cps\.user_id\s+COLLATE/);
   });
+
+  it("keeps the live NCOSEC user/date lookup indexable", () => {
+    const serviceSource = readFileSync(
+      resolve(process.cwd(), "src/modules/wfm/biometric-logs.service.ts"),
+      "utf8",
+    );
+
+    expect(serviceSource).toContain("WHERE ${userIdColumn} = @userId");
+    expect(serviceSource).not.toContain("WHERE CAST(${userIdColumn}");
+  });
 });
