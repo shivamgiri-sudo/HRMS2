@@ -60,7 +60,7 @@ export function PerformanceTrendPanel({
   }));
 
   return (
-    <section className="rounded-[var(--r-lg)] border border-[var(--border-hairline)] bg-[var(--surface-0)] p-4 shadow-[var(--shadow-xs)]">
+    <section className="min-w-0 rounded-[var(--r-lg)] border border-[var(--border-hairline)] bg-[var(--surface-0)] p-4 shadow-[var(--shadow-xs)]">
       <h2 className="text-base font-semibold text-[var(--text-primary)]">Performance trend</h2>
       <p className="mt-1 text-sm text-[var(--text-muted)]">
         Daily KPI percentages within the selected scope

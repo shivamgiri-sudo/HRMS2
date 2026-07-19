@@ -68,6 +68,14 @@ function lensesFor(context: PerformanceContext): Lens[] {
   return lenses;
 }
 
+export function defaultPerformanceLens(context: PerformanceContext): string {
+  if (context.scopeLevel === "SELF_ONLY") return "self";
+  if (["ORG_ALL", "BRANCH_ALL", "CUSTOM_SCOPE"].includes(context.scopeLevel)) {
+    return "operations";
+  }
+  return "team";
+}
+
 export function PerformanceRoleLens({ context }: { context: PerformanceContext }) {
   const lenses = lensesFor(context);
 
@@ -88,7 +96,7 @@ export function PerformanceRoleLens({ context }: { context: PerformanceContext }
         </div>
       </div>
 
-      <Tabs defaultValue={lenses[0]?.value ?? "self"} className="mt-4">
+      <Tabs defaultValue={defaultPerformanceLens(context)} className="mt-4">
         <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-[var(--r-md)] bg-[var(--surface-1)] p-1">
           {lenses.map((lens) => (
             <TabsTrigger key={lens.value} value={lens.value} className="min-h-10 gap-2 rounded-[var(--r-sm)] px-3">

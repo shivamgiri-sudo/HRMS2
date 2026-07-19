@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AppRole } from "@/types/roles";
+import { resolveActiveDemoCredential } from "@/lib/demoCreds";
 
 export type WorkforcePageAccess = {
   page_code: string;
@@ -35,6 +36,8 @@ export type UserRoleData = {
   pages: WorkforcePageAccess[];
   disabledPageCodes: string[];
 };
+
+const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === "true";
 
 const ROLE_ALIASES: Record<string, string[]> = {
   manager: ["process_manager"],
@@ -85,6 +88,31 @@ export const useUserRole = () => {
     queryKey: ["user-role-workforce-os", user?.id],
     queryFn: async (): Promise<UserRoleData | null> => {
       if (!user?.id) return null;
+
+      const demoCredential = resolveActiveDemoCredential(user, DEMO_LOGIN_ENABLED);
+      if (demoCredential) {
+        const roles = [demoCredential.role] as AppRole[];
+        const roleKeys = expandRoleKeys([...roles, "employee"]);
+
+        return {
+          roles,
+          roleKeys,
+          primaryRole: getPrimaryRole(roles),
+          employeeId: demoCredential.employeeId,
+          employeeCode: demoCredential.employeeCode,
+          employeeName: demoCredential.fullName,
+          scopes: [],
+          pages: demoCredential.pages.map((pageCode) => ({
+            page_code: pageCode,
+            can_view: true,
+            can_create: false,
+            can_edit: false,
+            can_delete: false,
+            can_export: false,
+          })),
+          disabledPageCodes: [],
+        };
+      }
 
       const response = await hrmsApi.get<{ success: boolean; data: any }>("/api/access/me");
       const data = response.data;

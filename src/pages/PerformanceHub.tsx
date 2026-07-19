@@ -111,14 +111,14 @@ export default function PerformanceHub() {
               />
             )}
 
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+            <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
               <PerformanceTrendPanel
                 trends={trendsQuery.data}
                 loading={trendsQuery.isLoading}
                 error={trendsQuery.error}
                 onRetry={() => void trendsQuery.refetch()}
               />
-              <section className="rounded-[var(--r-lg)] border border-[var(--border-hairline)] bg-[var(--surface-0)] p-5 shadow-[var(--shadow-xs)]">
+              <section className="min-w-0 rounded-[var(--r-lg)] border border-[var(--border-hairline)] bg-[var(--surface-0)] p-5 shadow-[var(--shadow-xs)]">
                 <div className="flex h-11 w-11 items-center justify-center rounded-[var(--r-md)] border border-[var(--brand-200)] bg-[var(--brand-50)] text-[var(--brand-700)]">
                   <BarChart3 className="h-5 w-5" aria-hidden="true" />
                 </div>

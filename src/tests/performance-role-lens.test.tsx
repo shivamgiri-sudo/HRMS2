@@ -1,7 +1,10 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PerformanceRoleLens } from "@/components/performance-hub/PerformanceRoleLens";
+import {
+  defaultPerformanceLens,
+  PerformanceRoleLens,
+} from "@/components/performance-hub/PerformanceRoleLens";
 import type { PerformanceContext } from "@/types/performanceHub";
 
 const baseContext: PerformanceContext = {
@@ -17,6 +20,19 @@ const baseContext: PerformanceContext = {
 };
 
 describe("PerformanceRoleLens", () => {
+  it.each([
+    ["SELF_ONLY", "self"],
+    ["TEAM_ONLY", "team"],
+    ["PROCESS_ALL", "team"],
+    ["BRANCH_ALL", "operations"],
+    ["ORG_ALL", "operations"],
+  ] as const)("defaults %s scope to the %s lens", (scopeLevel, expectedLens) => {
+    expect(defaultPerformanceLens({
+      ...baseContext,
+      scopeLevel,
+    })).toBe(expectedLens);
+  });
+
   it("renders team leader tabs and decision focus", () => {
     const html = renderToStaticMarkup(<PerformanceRoleLens context={baseContext} />);
 

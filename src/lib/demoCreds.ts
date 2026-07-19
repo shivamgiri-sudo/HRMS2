@@ -23,6 +23,8 @@ const ALL_PAGES = [
   "LMS_MY_LEARNING","LMS_COORDINATOR","LMS_ADMIN","LMS_MANAGEMENT_DASHBOARD","LMS_INTEGRATION",
   "WFM_ROSTER","WFM_LIVE_TRACKER","WFM_EXTENSIONS",
   "QUALITY_DASHBOARD","OPERATIONS_DASHBOARD","WORKFORCE_COMMAND_CENTER",
+  "CEO_DASHBOARD","PAYROLL_HR_DASHBOARD","WFM_DASHBOARD","HR_DASHBOARD",
+  "EMPLOYEE_SELF_DASHBOARD",
   "ACCESS_CONTROL","ASSETS_MANAGER","HELPDESK","LETTERS","EMPLOYEE_LIFECYCLE",
   "ORG_MASTERS","WORKFLOW_ADMIN","MANAGEMENT_DASHBOARD","BENEFITS","CAREER_PLANNING",
   "PIP_MANAGEMENT","ERP","GOALS","WORK_INBOX","MOBILITY","JOBS_PORTAL",
@@ -61,7 +63,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
       "BENEFITS","CAREER_PLANNING","MOBILITY","JOBS_PORTAL","ADVANCED_REPORTS",
       "STATUTORY_COMPLIANCE","LABOUR_COMPLIANCE","DPDP_COMPLIANCE","LEAVE_TYPES",
       "PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL","STATUTORY_CONFIG",
-      "ASSETS_MANAGER","WORK_INBOX","KPI_CONFIG","PROCESS_CONFIG",
+      "ASSETS_MANAGER","WORK_INBOX","KPI_CONFIG","PROCESS_CONFIG","HR_DASHBOARD",
     ],
   },
   {
@@ -150,6 +152,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     pages: [
       "PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL","STATUTORY_CONFIG",
       "STATUTORY_COMPLIANCE","LABOUR_COMPLIANCE","ADVANCED_REPORTS","WORK_INBOX",
+      "PAYROLL_HR_DASHBOARD",
     ],
   },
   {
@@ -163,7 +166,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     employeeCode: "EMP-STF-001",
     pages: [
       "LMS_MY_LEARNING","HELPDESK","WORK_INBOX","PAYROLL_PAYSLIPS","TAX_DECLARATION",
-      "GOALS","CAREER_PLANNING","BENEFITS",
+      "GOALS","CAREER_PLANNING","BENEFITS","EMPLOYEE_SELF_DASHBOARD",
     ],
   },
   {
@@ -178,7 +181,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     pages: [
       "MANAGEMENT_DASHBOARD","WORKFORCE_COMMAND_CENTER","OPERATIONS_DASHBOARD",
       "OPERATIONS_KPI","ADVANCED_REPORTS","KPI_CONFIG","QUALITY_DASHBOARD",
-      "PORTAL_DATA_MANAGER","CLIENT_MASTER","WORK_INBOX",
+      "PORTAL_DATA_MANAGER","CLIENT_MASTER","WORK_INBOX","CEO_DASHBOARD",
     ],
   },
   {
@@ -214,6 +217,16 @@ const _byEmail = new Map(DEMO_CREDENTIALS.map(c => [c.email.toLowerCase(), c]));
 
 export function getDemoCred(email: string): DemoCred | undefined {
   return _byEmail.get(email.toLowerCase());
+}
+
+export function resolveActiveDemoCredential(
+  user: { id: string; email?: string | null } | null | undefined,
+  demoLoginEnabled: boolean,
+): DemoCred | undefined {
+  if (!demoLoginEnabled || !user?.id || !user.email) return undefined;
+
+  const credential = getDemoCred(user.email);
+  return credential?.userId === user.id ? credential : undefined;
 }
 
 /** Build demo session for localStorage — plain shape, no external auth types */
