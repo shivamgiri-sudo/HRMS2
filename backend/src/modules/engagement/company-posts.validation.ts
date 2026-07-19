@@ -53,7 +53,13 @@ export const RevokeCompanyPostCreatorSchema = z.object({
   employee_id: z.string().uuid('Invalid employee ID'),
 });
 
+export const DeleteCompanyPostSchema = z.object({
+  post_id: z.string().uuid('Invalid post ID'),
+  reason: z.string().trim().max(500).optional(),
+});
+
 export type CreateCompanyPostInput = z.infer<typeof CreateCompanyPostSchema>;
 export type ModerateCompanyPostInput = z.infer<typeof ModerateCompanyPostSchema>;
 export type GrantCompanyPostCreatorInput = z.infer<typeof GrantCompanyPostCreatorSchema>;
 export type RevokeCompanyPostCreatorInput = z.infer<typeof RevokeCompanyPostCreatorSchema>;
+export type DeleteCompanyPostInput = z.infer<typeof DeleteCompanyPostSchema>;

@@ -12,6 +12,8 @@ import {
 } from "./assessment.catalog.js";
 import { ensureAssessmentSchema } from "./assessment.schema.js";
 import { calculateTypingScore } from "./typing-scoring.js";
+import { questionBankService } from "./question-bank.service.js";
+import { emailService } from "../communication/email.service.js";
 
 type ActorType = "candidate" | "system" | "recruiter" | "hr" | "admin";
 type Meta = {
@@ -27,6 +29,7 @@ type CandidateRow = RowDataPacket & {
   candidate_code: string | null;
   full_name: string | null;
   mobile: string | null;
+  email: string | null;
   branch_name: string | null;
   process_name: string | null;
   role_name: string | null;
@@ -117,6 +120,7 @@ type AttemptRow = RowDataPacket & {
   recommendation_json: unknown;
   integrity_flags: unknown;
   client_meta: unknown;
+  config_snapshot: unknown;
   failure_reason: string | null;
   created_at?: Date | string;
   updated_at?: Date | string;
@@ -357,6 +361,14 @@ function templateDefinition(row: TemplateRow) {
     row.config_json,
     getDefaultTemplate(row.process_key, row.role_key),
   );
+}
+
+function attemptDefinition(attempt: AttemptRow, template: TemplateRow): AssessmentTemplateDefinition {
+  if (attempt.config_snapshot) {
+    const snapshot = parseJson<AssessmentTemplateDefinition | null>(attempt.config_snapshot, null);
+    if (snapshot) return snapshot;
+  }
+  return templateDefinition(template);
 }
 
 function contentHash(template: AssessmentTemplateDefinition) {
@@ -714,12 +726,16 @@ async function createOrReuseAssignment(
     if (!attempt) {
       const attemptId = randomUUID();
       const token = makePublicToken(attemptId, candidate.candidate_id);
+
+      const baseDefinition = templateDefinition(template);
+      const randomizedConfig = await questionBankService.buildRandomizedTemplate(baseDefinition);
+
       await connection.execute(
         `INSERT INTO ats_candidate_assessment (
           id, candidate_id, queue_token_id, cycle_key, q_token_snapshot,
           template_id, template_version, public_token_hash, status, attempt_no,
-          assignment_source, assigned_by, expires_at, client_meta
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'assigned', 1, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), CAST(? AS JSON))`,
+          assignment_source, assigned_by, expires_at, client_meta, config_snapshot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'assigned', 1, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), CAST(? AS JSON), CAST(? AS JSON))`,
         [
           attemptId,
           candidate.candidate_id,
@@ -733,13 +749,14 @@ async function createOrReuseAssignment(
           assignedBy,
           ASSIGNMENT_START_WINDOW_HOURS,
           JSON.stringify({ ...meta, mappingSource: source }),
+          JSON.stringify(randomizedConfig),
         ],
       );
       attempt = await attemptById(attemptId, executor, true);
       await safeAudit(
         attemptId,
         "ASSESSMENT_ASSIGNED",
-        { templateCode: template.template_code, source },
+        { templateCode: template.template_code, source, randomized: randomizedConfig !== baseDefinition },
         { ...meta, actorType: meta.actorType ?? (assignedBy ? "recruiter" : "candidate"), actorId: assignedBy },
         executor,
       );
@@ -895,7 +912,7 @@ async function expireUnstartedAttempt(attempt: AttemptRow) {
 
 async function loadSessionData(attempt: AttemptRow) {
   const template = await loadTemplate(attempt.template_id);
-  const definition = templateDefinition(template);
+  const definition = attemptDefinition(attempt, template);
   const responses = await rows<ResponseRow>(
     db,
     `SELECT * FROM ats_assessment_response WHERE assessment_id = ? ORDER BY answered_at ASC`,
@@ -993,6 +1010,14 @@ export async function startAssessment(token: string, meta: Meta = {}) {
     const template = await loadTemplate(attempt.template_id, executor);
 
     if (attempt.status === "assigned") {
+      const identityCheckEnabled = String(process.env.ATS_IDENTITY_CHECK_ENABLED ?? "false").toLowerCase() === "true";
+      if (identityCheckEnabled && !(attempt as unknown as { identity_verified: number }).identity_verified) {
+        throw appError(
+          "Identity must be verified before starting the assessment. Request an OTP first.",
+          403,
+          "IDENTITY_NOT_VERIFIED",
+        );
+      }
       const assignmentExpiry = dateMs(attempt.expires_at);
       if (assignmentExpiry !== null && assignmentExpiry <= Date.now()) {
         await connection.execute(
@@ -1083,7 +1108,7 @@ export async function saveResponse(
   }
 
   const template = await loadTemplate(attempt.template_id);
-  const definition = templateDefinition(template);
+  const definition = attemptDefinition(attempt, template);
   const question = definition.questions.find((item) => item.id === questionId);
   if (!question) throw appError("Question not found", 404, "QUESTION_NOT_FOUND");
   const validated = validateAnswer(question, answer);
@@ -1179,7 +1204,7 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
     if (getRemainingSeconds(attempt) === 0) throw appError("Assessment time has ended", 409, "ASSESSMENT_TIME_ENDED");
 
     const template = await loadTemplate(attempt.template_id, executor);
-    const definition = templateDefinition(template);
+    const definition = attemptDefinition(attempt, template);
     if (!definition.typing.required) {
       throw appError("Typing test is not required for this assessment", 400, "TYPING_NOT_REQUIRED");
     }
@@ -1267,7 +1292,7 @@ export async function submitTypingAttempt(
     const attempt = await attemptByToken(token, executor, true);
     if (attempt.status !== "in_progress") throw appError("Assessment is not open", 409, "ASSESSMENT_NOT_OPEN");
     const template = await loadTemplate(attempt.template_id, executor);
-    const definition = templateDefinition(template);
+    const definition = attemptDefinition(attempt, template);
     const typingRows = await rows<TypingRow>(
       executor,
       `SELECT *
@@ -1614,7 +1639,7 @@ export async function submitAssessment(
       [attempt.id],
     );
     const template = await loadTemplate(attempt.template_id, executor);
-    const definition = templateDefinition(template);
+    const definition = attemptDefinition(attempt, template);
     const result = await finalizeAssessment(executor, attempt, definition, {
       allowIncomplete: Boolean(options.autoSubmit),
     });
@@ -1801,7 +1826,7 @@ export async function getAssessmentAttemptDetail(attemptId: string) {
       integrity_flags: parseJson(attempt.integrity_flags, []),
       client_meta: parseJson(attempt.client_meta, {}),
     },
-    template: templateDefinition(template),
+    template: attemptDefinition(attempt, template),
     responses: responses.map((response) => ({
       ...response,
       question_snapshot: parseJson(response.question_snapshot, {}),
@@ -1837,7 +1862,7 @@ export async function reviewAssessment(input: {
       throw appError("This assessment is not awaiting manual review", 409, "REVIEW_NOT_REQUIRED");
     }
     const template = await loadTemplate(attempt.template_id, executor);
-    const definition = templateDefinition(template);
+    const definition = attemptDefinition(attempt, template);
     const manualQuestions = definition.questions.filter((question) => question.manualReview);
     const supplied = new Map(input.scores.map((score) => [score.questionId, score]));
 
@@ -2172,6 +2197,191 @@ export async function cancelUnstartedAssessment(
   return { cancelled: true };
 }
 
+const OTP_TTL_SECONDS = 300;
+const OTP_MAX_ATTEMPTS = 3;
+
+function generateOtp(): string {
+  const digits = Array.from({ length: 6 }, () => Math.floor(Math.random() * 10));
+  return digits.join("");
+}
+
+function maskMobile(mobile: string | null): string | null {
+  if (!mobile) return null;
+  return mobile.slice(0, 2) + "XXXXXX" + mobile.slice(-2);
+}
+
+function maskEmail(email: string | null): string | null {
+  if (!email) return null;
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return null;
+  const visible = local.length > 2 ? local.slice(0, 2) : local.slice(0, 1);
+  return visible + "****@" + domain;
+}
+
+export async function issueIdentityOtp(token: string, meta: Meta = {}) {
+  await ensureReady();
+  const attempt = await attemptByToken(token);
+
+  if (attempt.status !== "assigned") {
+    throw appError("Assessment is not in a state that requires identity verification", 409, "IDENTITY_OTP_NOT_APPLICABLE");
+  }
+  if ((attempt as unknown as { identity_verified: number }).identity_verified) {
+    return { alreadyVerified: true, mobileMasked: null, emailMasked: null };
+  }
+
+  const candidate = await rows<CandidateRow>(
+    db,
+    `SELECT * FROM ats_candidate WHERE id = ? LIMIT 1`,
+    [attempt.candidate_id],
+  );
+  const mobile = candidate[0]?.mobile ?? null;
+  const email = candidate[0]?.email ?? null;
+  const mobileMasked = maskMobile(mobile);
+  const emailMasked = maskEmail(email);
+
+  // Invalidate any prior unverified OTPs for this attempt
+  await db.execute(
+    `UPDATE ats_identity_otp SET verified = 0 WHERE assessment_id = ? AND verified = 0`,
+    [attempt.id],
+  );
+
+  const otp = generateOtp();
+  const otpHash = sha256(attempt.id + ":" + otp);
+
+  const smsEnabled = process.env.ATS_OTP_SMS_ENABLED === "true";
+  // Email delivery uses the project's existing SMTP config — enabled by default if SMTP is configured
+  const emailEnabled = process.env.ATS_OTP_EMAIL_ENABLED !== "false" && emailService.isConfigured();
+
+  let channel: "sms" | "email" | "sms_email" | "display";
+  if (smsEnabled && emailEnabled) channel = "sms_email";
+  else if (smsEnabled) channel = "sms";
+  else if (emailEnabled) channel = "email";
+  else channel = "display";
+
+  await db.execute(
+    `INSERT INTO ats_identity_otp
+       (id, assessment_id, candidate_id, otp_hash, channel, mobile_masked, email_masked, expires_at, ip_address)
+     VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND), ?)`,
+    [
+      randomUUID(),
+      attempt.id,
+      attempt.candidate_id,
+      otpHash,
+      channel,
+      mobileMasked,
+      emailMasked,
+      OTP_TTL_SECONDS,
+      meta.ip ?? null,
+    ],
+  );
+
+  await safeAudit(attempt.id, "IDENTITY_OTP_ISSUED", { channel, mobileMasked, emailMasked }, meta);
+
+  // --- Delivery ---
+  if (smsEnabled && mobile) {
+    // Plug your SMS gateway here: sendSms(mobile, `Your MAS Callnet assessment OTP is ${otp}`)
+    console.info(`[OTP-SMS] ${attempt.id} → ${mobileMasked}`);
+  }
+  if (emailEnabled && email) {
+    if (emailService.isConfigured()) {
+      await emailService.send({
+        to: email,
+        subject: "Your MAS Callnet Assessment OTP",
+        html: `
+          <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:auto;padding:32px 24px;background:#f4f7fa;border-radius:12px">
+            <div style="background:#102f50;border-radius:8px 8px 0 0;padding:20px 24px">
+              <h2 style="color:#fff;margin:0;font-size:18px">MAS Callnet — Candidate Assessment</h2>
+            </div>
+            <div style="background:#fff;border-radius:0 0 8px 8px;padding:24px">
+              <p style="margin:0 0 16px;color:#122033">Hello <b>${candidate[0]?.full_name ?? "Candidate"}</b>,</p>
+              <p style="margin:0 0 16px;color:#122033">Use the OTP below to verify your identity and begin your assessment:</p>
+              <div style="text-align:center;margin:24px 0">
+                <span style="display:inline-block;font-size:36px;font-weight:900;letter-spacing:10px;color:#0c7c72;background:#eaf7f5;padding:16px 32px;border-radius:10px">${otp}</span>
+              </div>
+              <p style="margin:0 0 8px;color:#66788a;font-size:13px">This OTP is valid for <b>${Math.floor(OTP_TTL_SECONDS / 60)} minutes</b>.</p>
+              <p style="margin:0;color:#66788a;font-size:13px">Do not share this OTP with anyone. MAS Callnet staff will never ask for your OTP.</p>
+            </div>
+          </div>`,
+        text: `Your MAS Callnet assessment OTP is: ${otp}\nValid for ${Math.floor(OTP_TTL_SECONDS / 60)} minutes. Do not share this with anyone.`,
+      }).catch((err: unknown) => {
+        console.error("[OTP-EMAIL] delivery failed", { assessmentId: attempt.id, emailMasked, err });
+      });
+    } else {
+      console.warn("[OTP-EMAIL] email not configured — OTP not sent to candidate");
+    }
+  }
+
+  return {
+    alreadyVerified: false,
+    mobileMasked,
+    emailMasked,
+    channel,
+    // Only returned when no delivery channel is configured (display/kiosk mode)
+    displayOtp: channel === "display" ? otp : undefined,
+    expiresInSeconds: OTP_TTL_SECONDS,
+  };
+}
+
+export async function verifyIdentityOtp(token: string, otp: string, meta: Meta = {}) {
+  await ensureReady();
+  const attempt = await attemptByToken(token);
+
+  if ((attempt as unknown as { identity_verified: number }).identity_verified) {
+    return { verified: true, alreadyVerified: true, channel: null };
+  }
+
+  const cleanOtp = String(otp ?? "").trim();
+  const expectedHash = sha256(attempt.id + ":" + cleanOtp);
+
+  const otpRows = await rows<
+    RowDataPacket & { id: string; otp_hash: string; verified: number; attempt_count: number; expires_at: Date | string }
+  >(
+    db,
+    `SELECT id, otp_hash, verified, attempt_count, expires_at
+     FROM ats_identity_otp
+     WHERE assessment_id = ? AND verified = 0
+     ORDER BY created_at DESC LIMIT 1`,
+    [attempt.id],
+  );
+
+  const record = otpRows[0];
+  if (!record) {
+    throw appError("No active OTP found. Request a new one.", 404, "IDENTITY_OTP_NOT_FOUND");
+  }
+
+  const expiry = dateMs(record.expires_at);
+  if (expiry !== null && expiry <= Date.now()) {
+    throw appError("OTP has expired. Request a new one.", 410, "IDENTITY_OTP_EXPIRED");
+  }
+
+  if (record.attempt_count >= OTP_MAX_ATTEMPTS) {
+    throw appError("Maximum OTP attempts exceeded. Request a new one.", 429, "IDENTITY_OTP_MAX_ATTEMPTS");
+  }
+
+  await db.execute(
+    `UPDATE ats_identity_otp SET attempt_count = attempt_count + 1 WHERE id = ?`,
+    [record.id],
+  );
+
+  if (!safeEqual(record.otp_hash, expectedHash)) {
+    const remaining = OTP_MAX_ATTEMPTS - record.attempt_count - 1;
+    throw appError(`Incorrect OTP. ${remaining} attempt(s) remaining.`, 400, "IDENTITY_OTP_INCORRECT");
+  }
+
+  await db.execute(
+    `UPDATE ats_identity_otp SET verified = 1, verified_at = NOW() WHERE id = ?`,
+    [record.id],
+  );
+  await db.execute(
+    `UPDATE ats_candidate_assessment SET identity_verified = 1, identity_verified_at = NOW() WHERE id = ?`,
+    [attempt.id],
+  );
+
+  await safeAudit(attempt.id, "IDENTITY_VERIFIED", { method: "otp" }, { ...meta, actorType: "candidate" });
+
+  return { verified: true, alreadyVerified: false };
+}
+
 export const assessmentService = {
   isAssessmentEnabled,
   ensureAssessmentSchema,
@@ -2198,4 +2408,6 @@ export const assessmentService = {
   saveMapping,
   setMappingActive,
   cancelUnstartedAssessment,
+  issueIdentityOtp,
+  verifyIdentityOtp,
 };

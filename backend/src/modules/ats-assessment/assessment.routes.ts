@@ -272,6 +272,29 @@ assessmentPublicRouter.post("/assessment/session/:token/submit", h(async (req, r
   }
 }));
 
+assessmentPublicRouter.post("/assessment/session/:token/identity/otp", h(async (req, res) => {
+  try {
+    const token = tokenSchema.parse(req.params.token);
+    const data = await assessmentService.issueIdentityOtp(token, requestMeta(req, "candidate"));
+    noStore(res);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
+
+assessmentPublicRouter.post("/assessment/session/:token/identity/verify", h(async (req, res) => {
+  try {
+    const token = tokenSchema.parse(req.params.token);
+    const otp = z.string().trim().min(4).max(8).parse((req.body as { otp?: string }).otp);
+    const data = await assessmentService.verifyIdentityOtp(token, otp, requestMeta(req, "candidate"));
+    noStore(res);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
+
 assessmentPublicRouter.get("/assessment/session/:token/result", h(async (req, res) => {
   try {
     const token = tokenSchema.parse(req.params.token);
@@ -286,6 +309,7 @@ assessmentPublicRouter.get("/assessment/session/:token/result", h(async (req, re
 const readRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr", "recruiter", "manager", "qa");
 const reviewRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr", "manager", "qa");
 const configureRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr");
+const superAdminOnly = requireRole("super_admin");
 
 assessmentProtectedRouter.get("/assessment-admin/dashboard", readRoles, h(async (_req, res) => {
   try {
@@ -390,7 +414,7 @@ assessmentProtectedRouter.post("/assessment-admin/templates/sync-defaults", conf
   }
 }));
 
-assessmentProtectedRouter.patch("/assessment-admin/templates/:templateId/active", configureRoles, h(async (req, res) => {
+assessmentProtectedRouter.patch("/assessment-admin/templates/:templateId/active", superAdminOnly, h(async (req, res) => {
   try {
     const templateId = uuidSchema.parse(req.params.templateId);
     const input = activeSchema.parse(req.body);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
@@ -10,22 +10,46 @@ import {
   RefreshCcw,
   ShieldCheck,
   Sparkles,
+  X,
   XCircle,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  type CompanyPost,
+  getStatusMeta,
   useApprovalQueue,
   useApproveCompanyPost,
   useRejectCompanyPost,
 } from "@/hooks/useCompanyFeed";
 import { useToast } from "@/hooks/use-toast";
 import { apiUrl } from "@/lib/apiBase";
+
+const STATUS_BORDER_MAP: Record<string, string> = {
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  pending_approval: "border-amber-200 bg-amber-50 text-amber-700",
+  borderline_flagged: "border-orange-200 bg-orange-50 text-orange-700",
+  rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  auto_rejected: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+function statusBadgeClass(status: string): string {
+  return STATUS_BORDER_MAP[status] ?? "border-slate-200 bg-slate-100 text-slate-600";
+}
 
 function formatDateTime(value: string | null): string {
   if (!value) return "Recently";
@@ -38,14 +62,6 @@ function formatDateTime(value: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
-}
-
-function statusTone(status: CompanyPost["status"]): string {
-  if (status === "pending_approval") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (status === "borderline_flagged") return "border-orange-200 bg-orange-50 text-orange-700";
-  if (status === "approved") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "rejected" || status === "auto_rejected") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-slate-200 bg-slate-100 text-slate-600";
 }
 
 function getCompanyFeedImageUrl(fileId: string): string {
@@ -61,27 +77,46 @@ export default function NativeCompanyPostApproval() {
   const [search, setSearch] = useState("");
   const [selectedPostId, setSelectedPostId] = useState<string>("");
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
-  const posts = queueQuery.data ?? [];
+  const posts = queueQuery.data?.posts ?? [];
   const filteredPosts = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return posts;
     return posts.filter((post) =>
       [
         post.content_text ?? "",
-        post.author_employee_id,
+        post.author_name ?? "",
+        post.author_code ?? "",
         post.status,
         post.auto_reject_reason ?? "",
       ].some((value) => value.toLowerCase().includes(needle)),
     );
   }, [posts, search]);
 
-  const selectedPost = filteredPosts.find((post) => post.id === selectedPostId) ?? filteredPosts[0] ?? null;
+  const selectedPost =
+    filteredPosts.find((post) => post.id === selectedPostId) ?? filteredPosts[0] ?? null;
   const busy = approveMutation.isPending || rejectMutation.isPending;
 
-  async function handleApprove() {
+  // Clear review notes when switching posts
+  useEffect(() => {
+    setReviewNotes("");
+  }, [selectedPostId]);
+
+  function advanceToNext() {
+    const currentIdx = filteredPosts.findIndex((p) => p.id === selectedPost?.id);
+    const next = filteredPosts[currentIdx + 1] ?? filteredPosts[0];
+    if (next && next.id !== selectedPost?.id) {
+      setSelectedPostId(next.id);
+    } else {
+      setSelectedPostId("");
+    }
+  }
+
+  async function doApprove() {
     if (!selectedPost) return;
     try {
       await approveMutation.mutateAsync({
@@ -90,6 +125,7 @@ export default function NativeCompanyPostApproval() {
       });
       toast({ title: "Post approved", description: "The company feed has been updated." });
       setReviewNotes("");
+      advanceToNext();
     } catch (error) {
       toast({
         title: "Approval failed",
@@ -99,7 +135,7 @@ export default function NativeCompanyPostApproval() {
     }
   }
 
-  async function handleReject() {
+  async function doReject() {
     if (!selectedPost) return;
     try {
       await rejectMutation.mutateAsync({
@@ -111,6 +147,7 @@ export default function NativeCompanyPostApproval() {
       setRejectReason("");
       setReviewNotes("");
       setRejectOpen(false);
+      advanceToNext();
     } catch (error) {
       toast({
         title: "Rejection failed",
@@ -142,15 +179,21 @@ export default function NativeCompanyPostApproval() {
                   Review the posts waiting to go company-wide.
                 </h1>
                 <p className="max-w-2xl text-sm leading-7 text-blue-50/92 sm:text-[15px]">
-                  Moderation-eligible posts land here first. Approve to publish, or reject with a clear reason so the creator gets a useful next step.
+                  Moderation-eligible posts land here first. Approve to publish, or reject with a
+                  clear reason so the creator gets a useful next step.
                 </p>
               </div>
             </div>
-            <Button asChild className="h-auto justify-between rounded-[1.15rem] bg-white px-4 py-3 text-left text-[color:var(--brand-700)] hover:bg-blue-50">
+            <Button
+              asChild
+              className="h-auto justify-between rounded-[1.15rem] bg-white px-4 py-3 text-left text-[color:var(--brand-700)] hover:bg-blue-50"
+            >
               <Link to="/engagement/company-feed/manage">
                 <span>
                   <span className="block text-sm font-semibold">Open management deck</span>
-                  <span className="mt-1 block text-xs text-slate-500">See published and reviewed posts too.</span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    See published and reviewed posts too.
+                  </span>
                 </span>
                 <ArrowRight className="h-4 w-4 shrink-0" />
               </Link>
@@ -178,7 +221,7 @@ export default function NativeCompanyPostApproval() {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by copy, employee ID, or status"
+                placeholder="Search by name, code, or content"
                 className="rounded-2xl"
               />
 
@@ -188,10 +231,16 @@ export default function NativeCompanyPostApproval() {
                     <AlertCircle className="mt-0.5 h-4 w-4" />
                     <div>
                       <p className="font-semibold">Queue load failed</p>
-                      <p className="mt-1">{queueQuery.error?.message ?? "Unable to load moderation queue."}</p>
+                      <p className="mt-1">
+                        {queueQuery.error?.message ?? "Unable to load moderation queue."}
+                      </p>
                     </div>
                   </div>
-                  <Button variant="outline" className="mt-4 rounded-xl" onClick={() => void queueQuery.refetch()}>
+                  <Button
+                    variant="outline"
+                    className="mt-4 rounded-xl"
+                    onClick={() => void queueQuery.refetch()}
+                  >
                     <RefreshCcw className="h-4 w-4" />
                     Retry
                   </Button>
@@ -220,32 +269,40 @@ export default function NativeCompanyPostApproval() {
 
               {!queueQuery.isLoading && !queueQuery.isError ? (
                 <div className="space-y-3">
-                  {filteredPosts.map((post) => (
-                    <button
-                      key={post.id}
-                      type="button"
-                      onClick={() => setSelectedPostId(post.id)}
-                      className={`w-full rounded-[1.25rem] border p-4 text-left transition ${
-                        selectedPost?.id === post.id
-                          ? "border-[color:var(--brand-200)] bg-[color:var(--brand-50)] shadow-[var(--shadow-xs)]"
-                          : "border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-2">
-                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(post.status)}`}>
-                            {post.status.replace(/_/g, " ")}
+                  {filteredPosts.map((post) => {
+                    const statusMeta = getStatusMeta(post.status);
+                    return (
+                      <button
+                        key={post.id}
+                        type="button"
+                        onClick={() => setSelectedPostId(post.id)}
+                        className={`w-full rounded-[1.25rem] border p-4 text-left transition ${
+                          selectedPost?.id === post.id
+                            ? "border-[color:var(--brand-200)] bg-[color:var(--brand-50)] shadow-[var(--shadow-xs)]"
+                            : "border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-2">
+                            <span
+                              className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(post.status)}`}
+                            >
+                              {statusMeta.label}
+                            </span>
+                            <p className="text-xs font-medium text-slate-600">
+                              {post.author_name ?? post.author_code ?? "Unknown creator"}
+                            </p>
+                            <p className="line-clamp-2 text-sm leading-6 text-slate-700">
+                              {post.content_text?.trim() || "Image-led post awaiting review."}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                            {formatDateTime(post.submitted_at ?? post.created_at)}
                           </span>
-                          <p className="line-clamp-2 text-sm leading-6 text-slate-700">
-                            {post.content_text?.trim() || "Image-led post awaiting review."}
-                          </p>
                         </div>
-                        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
-                          {formatDateTime(post.submitted_at ?? post.created_at)}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               ) : null}
             </CardContent>
@@ -267,45 +324,62 @@ export default function NativeCompanyPostApproval() {
                 <>
                   <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 sm:flex-row sm:items-start sm:justify-between">
                     <div className="space-y-3">
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(selectedPost.status)}`}>
-                        {selectedPost.status.replace(/_/g, " ")}
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(selectedPost.status)}`}
+                      >
+                        {getStatusMeta(selectedPost.status).label}
                       </span>
                       <div>
                         <h2 className="font-['Fira_Sans'] text-2xl font-semibold tracking-[-0.03em] text-slate-950">
                           Moderation review
                         </h2>
                         <p className="mt-2 text-sm text-slate-500">
-                          Creator employee ID: <span className="font-semibold text-slate-700">{selectedPost.author_employee_id}</span>
+                          Creator:{" "}
+                          <span className="font-semibold text-slate-700">
+                            {selectedPost.author_name ?? selectedPost.author_code ?? "Unknown"}
+                          </span>
                         </p>
                       </div>
                     </div>
                     <div className="rounded-[1.2rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                       <p className="font-semibold text-slate-900">Submitted</p>
-                      <p className="mt-1">{formatDateTime(selectedPost.submitted_at ?? selectedPost.created_at)}</p>
+                      <p className="mt-1">
+                        {formatDateTime(selectedPost.submitted_at ?? selectedPost.created_at)}
+                      </p>
                     </div>
                   </div>
 
                   <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50/70 p-5">
                     <p className="whitespace-pre-wrap text-[15px] leading-7 text-slate-700">
-                      {selectedPost.content_text?.trim() || "This post was submitted with image media and no text copy."}
+                      {selectedPost.content_text?.trim() ||
+                        "This post was submitted with image media and no text copy."}
                     </p>
                     {selectedPost.media.length > 0 ? (
                       <div className="mt-4 space-y-3">
                         <div className="rounded-[1.15rem] border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                          {selectedPost.media.length} image{selectedPost.media.length === 1 ? "" : "s"} submitted with this post.
+                          {selectedPost.media.length} image
+                          {selectedPost.media.length === 1 ? "" : "s"} submitted with this post.
+                          Click any image to view full size.
                         </div>
-                        <div className={`grid gap-3 ${selectedPost.media.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                        <div
+                          className={`grid gap-3 ${selectedPost.media.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
+                        >
                           {selectedPost.media.slice(0, 4).map((media) => (
-                            <div
+                            <button
                               key={media.file_id}
-                              className="overflow-hidden rounded-[1.2rem] border border-slate-200 bg-slate-100"
+                              type="button"
+                              className="overflow-hidden rounded-[1.2rem] border border-slate-200 bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-500)]"
+                              onClick={() =>
+                                setLightboxUrl(getCompanyFeedImageUrl(media.file_id))
+                              }
+                              aria-label={`View image ${media.sort_order} full size`}
                             >
                               <img
                                 src={getCompanyFeedImageUrl(media.file_id)}
-                                alt={`Moderation preview ${media.sort_order}`}
-                                className="h-full min-h-[220px] w-full object-cover"
+                                alt={`Post image ${media.sort_order}`}
+                                className="h-full min-h-[180px] w-full cursor-zoom-in object-cover transition hover:opacity-90"
                               />
-                            </div>
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -318,8 +392,9 @@ export default function NativeCompanyPostApproval() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-900">Review notes</label>
+                    <Label htmlFor="review-notes">Review notes</Label>
                     <Textarea
+                      id="review-notes"
                       value={reviewNotes}
                       onChange={(event) => setReviewNotes(event.target.value)}
                       placeholder="Add internal moderation context for this decision."
@@ -332,9 +407,13 @@ export default function NativeCompanyPostApproval() {
                       type="button"
                       disabled={busy}
                       className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
-                      onClick={() => void handleApprove()}
+                      onClick={() => setApproveConfirmOpen(true)}
                     >
-                      {approveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      {approveMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
                       Approve and publish
                     </Button>
                     <Button
@@ -354,6 +433,32 @@ export default function NativeCompanyPostApproval() {
           </Card>
         </div>
 
+        {/* Approve confirmation dialog */}
+        <AlertDialog open={approveConfirmOpen} onOpenChange={setApproveConfirmOpen}>
+          <AlertDialogContent className="rounded-[1.6rem]">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Publish to entire company?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This post will become visible to all employees on the company feed immediately.
+                This action cannot be undone from this page.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => {
+                  setApproveConfirmOpen(false);
+                  void doApprove();
+                }}
+              >
+                Confirm and publish
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Reject dialog */}
         <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
           <DialogContent className="max-w-md rounded-[1.6rem]">
             <DialogHeader>
@@ -366,17 +471,44 @@ export default function NativeCompanyPostApproval() {
               className="min-h-[120px] rounded-[1.2rem]"
             />
             <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setRejectOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setRejectOpen(false)}>
+                Cancel
+              </Button>
               <Button
                 type="button"
                 disabled={rejectMutation.isPending}
                 className="bg-rose-600 hover:bg-rose-700"
-                onClick={() => void handleReject()}
+                onClick={() => void doReject()}
               >
-                {rejectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileWarning className="h-4 w-4" />}
+                {rejectMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileWarning className="h-4 w-4" />
+                )}
                 Confirm rejection
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Image lightbox */}
+        <Dialog open={!!lightboxUrl} onOpenChange={() => setLightboxUrl(null)}>
+          <DialogContent className="max-w-[90vw] rounded-[1.2rem] bg-slate-950 p-2">
+            <button
+              type="button"
+              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+              onClick={() => setLightboxUrl(null)}
+              aria-label="Close image"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            {lightboxUrl && (
+              <img
+                src={lightboxUrl}
+                alt="Full size post image"
+                className="max-h-[85vh] w-full object-contain"
+              />
+            )}
           </DialogContent>
         </Dialog>
       </main>

@@ -19,7 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  type CompanyPost,
+  getStatusMeta,
   useCreateCompanyPost,
   useMyCompanyPosts,
 } from "@/hooks/useCompanyFeed";
@@ -42,20 +42,16 @@ function isCreatorAccessError(message: string | undefined): boolean {
   return /creator access|required|no active company post creator access/i.test(message ?? "");
 }
 
-function statusTone(post: CompanyPost): string {
-  switch (post.status) {
-    case "approved":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "pending_approval":
-      return "border-amber-200 bg-amber-50 text-amber-700";
-    case "borderline_flagged":
-      return "border-orange-200 bg-orange-50 text-orange-700";
-    case "rejected":
-    case "auto_rejected":
-      return "border-rose-200 bg-rose-50 text-rose-700";
-    default:
-      return "border-slate-200 bg-slate-100 text-slate-600";
-  }
+const STATUS_BORDER_MAP: Record<string, string> = {
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  pending_approval: "border-amber-200 bg-amber-50 text-amber-700",
+  borderline_flagged: "border-orange-200 bg-orange-50 text-orange-700",
+  rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  auto_rejected: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+function statusBadgeClass(status: string): string {
+  return STATUS_BORDER_MAP[status] ?? "border-slate-200 bg-slate-100 text-slate-600";
 }
 
 function formatDateTime(value: string | null): string {
@@ -156,17 +152,19 @@ export default function NativeCompanyPostCreate() {
       ? myPostsQuery.error?.message || "Creator workspace could not be loaded."
       : "";
 
+  const myPosts = myPostsQuery.data?.posts ?? [];
+
   const awaitingCount = useMemo(
     () =>
-      (myPostsQuery.data ?? []).filter(
+      myPosts.filter(
         (post) => post.status === "pending_approval" || post.status === "borderline_flagged",
       ).length,
-    [myPostsQuery.data],
+    [myPosts],
   );
 
   const publishedCount = useMemo(
-    () => (myPostsQuery.data ?? []).filter((post) => post.status === "approved").length,
-    [myPostsQuery.data],
+    () => myPosts.filter((post) => post.status === "approved").length,
+    [myPosts],
   );
 
   const canSubmit = content.trim().length > 0 || draftImages.length > 0;
@@ -175,11 +173,22 @@ export default function NativeCompanyPostCreate() {
   function addFiles(fileList: FileList | null) {
     if (!fileList) return;
 
-    const incoming = Array.from(fileList).filter((file) => file.type.startsWith("image/"));
+    const all = Array.from(fileList);
+    const incoming = all.filter((file) => file.type.startsWith("image/"));
     if (incoming.length === 0) {
       toast({
         title: "Images only",
         description: "Please select image files for company feed attachments.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const oversized = incoming.filter((file) => file.size > 10 * 1024 * 1024);
+    if (oversized.length > 0) {
+      toast({
+        title: "File too large",
+        description: `${oversized.map((f) => f.name).join(", ")} exceed${oversized.length === 1 ? "s" : ""} the 10 MB limit.`,
         variant: "destructive",
       });
       return;
@@ -356,18 +365,21 @@ export default function NativeCompanyPostCreate() {
                 </Link>
               </Button>
 
-              <a
-                href="#creator-composer"
-                className="inline-flex min-h-[48px] items-center justify-between rounded-[1.15rem] border border-white/30 bg-white/10 px-4 py-3 text-left text-white transition hover:bg-white/15"
+              <Button
+                asChild
+                variant="outline"
+                className="h-auto justify-between rounded-[1.15rem] border-white/30 bg-white/10 px-4 py-3 text-left text-white hover:bg-white/15"
               >
-                <span>
-                  <span className="block text-sm font-semibold">Jump to composer</span>
-                  <span className="mt-1 block text-xs text-blue-100/80">
-                    Start with copy, image tiles, and policy notes.
+                <a href="#creator-composer">
+                  <span>
+                    <span className="block text-sm font-semibold">Jump to composer</span>
+                    <span className="mt-1 block text-xs text-blue-100/80">
+                      Start with copy, image tiles, and policy notes.
+                    </span>
                   </span>
-                </span>
-                <ArrowRight className="h-4 w-4 shrink-0" />
-              </a>
+                  <ArrowRight className="h-4 w-4 shrink-0" />
+                </a>
+              </Button>
             </div>
           </div>
         </section>
@@ -498,10 +510,16 @@ export default function NativeCompanyPostCreate() {
 
                   <form className="space-y-6" onSubmit={handleSubmit}>
                     <div className="space-y-2">
-                      <Label htmlFor="company-post-copy">Post copy</Label>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="company-post-copy">Post copy</Label>
+                        <span className={`text-xs tabular-nums ${content.length > 1900 ? "text-amber-600" : "text-slate-400"}`}>
+                          {content.length} / 2000
+                        </span>
+                      </div>
                       <Textarea
                         id="company-post-copy"
                         value={content}
+                        maxLength={2000}
                         onChange={(event) => setContent(event.target.value)}
                         placeholder="Share a townhall highlight, operations update, employee moment, or compliance-safe internal announcement."
                         className="min-h-[220px] rounded-[1.4rem] border-slate-200 bg-slate-50/60 px-4 py-3 text-[15px] leading-7 text-slate-700"
@@ -516,7 +534,7 @@ export default function NativeCompanyPostCreate() {
                         <div>
                           <Label htmlFor="company-post-images">Images</Label>
                           <p className="mt-1 text-xs text-slate-500">
-                            Up to four images. The current upload channel may still require broader file-upload permissions.
+                            Supports JPG, PNG, GIF up to 10 MB. Up to four images per post.
                           </p>
                         </div>
                         <input
@@ -692,36 +710,44 @@ export default function NativeCompanyPostCreate() {
                     </Button>
                   </div>
 
-                  {(myPostsQuery.data ?? []).length === 0 ? (
+                  {myPosts.length === 0 ? (
                     <EmptyState
                       title="No submissions yet"
                       description="Your first creator draft will start the moderation history for this workspace."
                     />
                   ) : (
                     <div className="space-y-3">
-                      {(myPostsQuery.data ?? []).slice(0, 5).map((post) => (
-                        <div
-                          key={post.id}
-                          className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-2">
-                              <span
-                                className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusTone(post)}`}
-                              >
-                                <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                                {post.status.replace(/_/g, " ")}
+                      {myPosts.slice(0, 5).map((post) => {
+                        const statusMeta = getStatusMeta(post.status);
+                        return (
+                          <div
+                            key={post.id}
+                            className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-2">
+                                <span
+                                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(post.status)}`}
+                                >
+                                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                  {statusMeta.label}
+                                </span>
+                                <p className="line-clamp-2 text-sm leading-6 text-slate-700">
+                                  {post.content_text?.trim() || "Image-led post"}
+                                </p>
+                              </div>
+                              <span className="shrink-0 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                                {formatDateTime(post.submitted_at ?? post.created_at)}
                               </span>
-                              <p className="line-clamp-2 text-sm leading-6 text-slate-700">
-                                {post.content_text?.trim() || "Image-led post"}
-                              </p>
                             </div>
-                            <span className="shrink-0 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
-                              {formatDateTime(post.submitted_at ?? post.created_at)}
-                            </span>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
+                      {(myPostsQuery.data?.total ?? 0) > 5 && (
+                        <p className="pt-1 text-center text-xs text-slate-500">
+                          Showing 5 of {myPostsQuery.data?.total} posts
+                        </p>
+                      )}
                     </div>
                   )}
                 </CardContent>

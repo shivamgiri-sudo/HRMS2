@@ -39,6 +39,8 @@ export interface CompanyPostDTO {
   id: string;
   author_user_id: string;
   author_employee_id: string;
+  author_name: string | null;
+  author_code: string | null;
   content_text: string | null;
   status: CompanyPostStatus;
   moderation_state: CompanyPostModerationState;
@@ -48,8 +50,10 @@ export interface CompanyPostDTO {
   submitted_at: string | null;
   approved_at: string | null;
   approved_by: string | null;
+  approved_by_name: string | null;
   rejected_at: string | null;
   rejected_by: string | null;
+  rejected_by_name: string | null;
   rejection_reason: string | null;
   deleted_at: string | null;
   deleted_by: string | null;
@@ -70,7 +74,16 @@ export interface CompanyPostFeedItemDTO extends Pick<
 > {
   author_user_id: string;
   author_employee_id: string;
+  author_name: string | null;
+  author_code: string | null;
   media: CompanyPostMediaDTO[];
+}
+
+export interface CompanyPostListResult {
+  posts: CompanyPostDTO[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface CompanyPostCreatorAccessRowDTO {
@@ -84,6 +97,9 @@ export interface CompanyPostCreatorAccessRowDTO {
   revoked_at: string | null;
   created_at: string;
   updated_at: string;
+  employee_name: string | null;
+  employee_code: string | null;
+  department: string | null;
 }
 
 export interface ModerateCompanyPostDTO {

@@ -9,6 +9,7 @@ import {
   assessmentBuilderProtectedRouter,
   assessmentBuilderPublicRouter,
 } from "../ats-assessment/assessment.template-builder.routes.js";
+import { questionBankRouter } from "../ats-assessment/question-bank.routes.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest | Request, res: Response) => Promise<unknown>;
@@ -38,6 +39,8 @@ router.use(requireAuth);
 // Protected builder save is mounted before the generic template endpoint so
 // strict custom-template validation is always applied.
 router.use(assessmentBuilderProtectedRouter);
+// Question bank management for randomized question sets
+router.use(questionBankRouter);
 // Protected assessment summaries/configuration. Authentication and role checks
 // are additive and do not change any existing ATS route behaviour.
 router.use(assessmentProtectedRouter);

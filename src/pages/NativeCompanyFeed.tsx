@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
@@ -5,6 +6,7 @@ import {
   Clock3,
   FileText,
   ImageIcon,
+  Loader2,
   Megaphone,
   PenSquare,
   RefreshCcw,
@@ -17,8 +19,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   useCompanyFeed,
   useMyCompanyPosts,
+  getStatusMeta,
   type CompanyPost,
-  type CompanyPostStatus,
 } from "@/hooks/useCompanyFeed";
 import { apiUrl } from "@/lib/apiBase";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -58,44 +60,18 @@ function formatPostTimestamp(value: string | null): string {
   }).format(date);
 }
 
-function getStatusMeta(status: CompanyPostStatus) {
-  switch (status) {
-    case "approved":
-      return {
-        label: "Published",
-        className: "border-emerald-200 bg-emerald-50 text-emerald-700",
-      };
-    case "pending_approval":
-      return {
-        label: "Awaiting review",
-        className: "border-amber-200 bg-amber-50 text-amber-700",
-      };
-    case "borderline_flagged":
-      return {
-        label: "Needs moderator review",
-        className: "border-orange-200 bg-orange-50 text-orange-700",
-      };
-    case "rejected":
-      return {
-        label: "Returned",
-        className: "border-rose-200 bg-rose-50 text-rose-700",
-      };
-    case "auto_rejected":
-      return {
-        label: "Auto-rejected",
-        className: "border-rose-200 bg-rose-50 text-rose-700",
-      };
-    case "deleted":
-      return {
-        label: "Removed",
-        className: "border-slate-200 bg-slate-100 text-slate-600",
-      };
-    default:
-      return {
-        label: "Draft",
-        className: "border-slate-200 bg-slate-100 text-slate-600",
-      };
-  }
+const STATUS_CLASS_MAP: Record<string, string> = {
+  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  pending_approval: "border-amber-200 bg-amber-50 text-amber-700",
+  borderline_flagged: "border-orange-200 bg-orange-50 text-orange-700",
+  rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  auto_rejected: "border-rose-200 bg-rose-50 text-rose-700",
+  deleted: "border-slate-200 bg-slate-100 text-slate-600",
+  draft: "border-slate-200 bg-slate-100 text-slate-600",
+};
+
+function statusBadgeClass(status: string): string {
+  return STATUS_CLASS_MAP[status] ?? "border-slate-200 bg-slate-100 text-slate-600";
 }
 
 function getCompanyFeedImageUrl(fileId: string): string {
@@ -103,9 +79,11 @@ function getCompanyFeedImageUrl(fileId: string): string {
 }
 
 function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?: boolean }) {
-  const status = getStatusMeta(post.status);
+  const statusMeta = getStatusMeta(post.status);
   const timestamp = formatPostTimestamp(post.approved_at ?? post.submitted_at ?? post.created_at);
   const attachmentCount = post.media.length;
+  const authorLabel = post.author_name ?? "Company Update";
+  const authorCode = post.author_code ? `@${post.author_code}` : "";
 
   return (
     <article
@@ -132,7 +110,8 @@ function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?
               MCN Broadcast
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-900">Internal company update</p>
+              <p className="text-sm font-semibold text-slate-900">{authorLabel}</p>
+              <p className="mt-0.5 text-xs text-slate-400">{authorCode}</p>
               <p className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                 <Clock3 className="h-3.5 w-3.5" />
                 Published {timestamp}
@@ -141,10 +120,10 @@ function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?
           </div>
 
           <span
-            className={`inline-flex items-center gap-2 self-start rounded-full border px-3 py-1 text-xs font-semibold ${status.className}`}
+            className={`inline-flex items-center gap-2 self-start rounded-full border px-3 py-1 text-xs font-semibold ${statusBadgeClass(post.status)}`}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
-            {status.label}
+            {statusMeta.label}
           </span>
         </header>
 
@@ -177,7 +156,8 @@ function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?
                   >
                     <img
                       src={getCompanyFeedImageUrl(media.file_id)}
-                      alt={`Company feed image ${media.sort_order}`}
+                      alt={`Post image ${media.sort_order} by ${authorLabel}`}
+                      loading="lazy"
                       className="h-full min-h-[220px] w-full object-cover"
                     />
                   </div>
@@ -264,16 +244,38 @@ function ErrorState({
   );
 }
 
+const PAGE_LIMIT = 12;
+
 export default function NativeCompanyFeed() {
-  const feedQuery = useCompanyFeed({ limit: 12 });
+  const [feedPage, setFeedPage] = useState(1);
+  const accumulatedRef = useRef<CompanyPost[]>([]);
+  const [displayedPosts, setDisplayedPosts] = useState<CompanyPost[]>([]);
+
+  const feedQuery = useCompanyFeed({ limit: PAGE_LIMIT, page: feedPage });
   const myPostsQuery = useMyCompanyPosts({ limit: 6 });
   const roleQuery = useUserRole();
 
-  const feedPosts = feedQuery.data ?? [];
-  const myPosts = myPostsQuery.data ?? [];
+  const currentPagePosts = feedQuery.data?.posts ?? [];
+  const feedTotal = feedQuery.data?.total ?? 0;
+  const hasMore = displayedPosts.length < feedTotal;
+
+  useEffect(() => {
+    if (!feedQuery.isSuccess || currentPagePosts.length === 0) return;
+    if (feedPage === 1) {
+      accumulatedRef.current = currentPagePosts;
+    } else {
+      const ids = new Set(accumulatedRef.current.map((p) => p.id));
+      const fresh = currentPagePosts.filter((p) => !ids.has(p.id));
+      accumulatedRef.current = [...accumulatedRef.current, ...fresh];
+    }
+    setDisplayedPosts([...accumulatedRef.current]);
+  }, [feedPage, feedQuery.isSuccess, currentPagePosts]);
+
+  const feedPosts = displayedPosts;
+
+  const myPosts = myPostsQuery.data?.posts ?? [];
   const roleKeys = roleQuery.data?.roleKeys ?? [];
   const isLikelyModerator = roleKeys.some((role) => MODERATOR_ROLES.has(role));
-  const hasCreatorHistory = myPosts.length > 0;
   const waitingForReview = myPosts.filter(
     (post) => post.status === "pending_approval" || post.status === "borderline_flagged",
   ).length;
@@ -388,7 +390,7 @@ export default function NativeCompanyFeed() {
                     Live cards
                   </p>
                   <p className="mt-2 text-2xl font-bold tracking-[-0.03em] text-slate-950">
-                    {feedQuery.isLoading ? "..." : feedPosts.length}
+                    {feedQuery.isLoading && feedPosts.length === 0 ? "..." : feedTotal}
                   </p>
                 </div>
                 <div className="rounded-[1.15rem] border border-slate-200 bg-slate-50 p-3">
@@ -433,11 +435,32 @@ export default function NativeCompanyFeed() {
               />
             )}
 
-            {!feedQuery.isLoading && !feedQuery.isError && feedPosts.length > 0 && (
+            {feedPosts.length > 0 && (
               <div className="space-y-4">
                 {feedPosts.map((post, index) => (
                   <FeedPostCard key={post.id} post={post} featured={index === 0} />
                 ))}
+
+                {hasMore && (
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="rounded-xl"
+                      disabled={feedQuery.isFetching}
+                      onClick={() => setFeedPage((p) => p + 1)}
+                    >
+                      {feedQuery.isFetching ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading…
+                        </>
+                      ) : (
+                        "Load more updates"
+                      )}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -519,7 +542,7 @@ export default function NativeCompanyFeed() {
                 {!myPostsQuery.isLoading && !myPostsQuery.isError && myPosts.length > 0 && (
                   <div className="space-y-3">
                     {myPosts.slice(0, 4).map((post) => {
-                      const status = getStatusMeta(post.status);
+                      const statusMeta = getStatusMeta(post.status);
                       return (
                         <div
                           key={post.id}
@@ -528,10 +551,10 @@ export default function NativeCompanyFeed() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="space-y-2">
                               <span
-                                className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${status.className}`}
+                                className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(post.status)}`}
                               >
                                 <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                                {status.label}
+                                {statusMeta.label}
                               </span>
                               <p className="line-clamp-2 text-sm leading-6 text-slate-700">
                                 {post.content_text?.trim() || "Post submitted without written copy."}
@@ -544,6 +567,11 @@ export default function NativeCompanyFeed() {
                         </div>
                       );
                     })}
+                    <div className="pt-1">
+                      <Button asChild variant="ghost" className="w-full rounded-xl text-xs text-slate-500">
+                        <Link to="/engagement/company-feed/create">View all my posts →</Link>
+                      </Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -571,42 +599,40 @@ export default function NativeCompanyFeed() {
                       <div>
                         <p className="text-sm font-semibold text-slate-900">Creator studio</p>
                         <p className="mt-1 text-sm leading-6 text-slate-500">
-                          {hasCreatorHistory
-                            ? "Your previous submission history suggests creator access. The dedicated creator route lands in the next task."
-                            : "Creator rights are granted separately. This page stays honest until the dedicated creator route is wired."}
+                          Submit posts for review. Creator access is granted by Super Admin — the
+                          backend will gate submission if access has not been assigned.
                         </p>
                       </div>
                       <Button
-                        type="button"
+                        asChild
                         variant="outline"
-                        disabled
                         className="shrink-0 rounded-xl"
                       >
-                        Soon
+                        <Link to="/engagement/company-feed/create">Open</Link>
                       </Button>
                     </div>
                   </div>
 
-                  <div id="moderation-brief" className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">Approval queue</p>
-                        <p className="mt-1 text-sm leading-6 text-slate-500">
-                          {isLikelyModerator
-                            ? "Your current role looks moderator-eligible. The route will be connected next, while backend moderation remains the authority."
-                            : "Approval access is limited to HR Head, Admin, and Super Admin. The queue opens only once the dedicated moderation page ships."}
-                        </p>
+                  {isLikelyModerator && (
+                    <div id="moderation-brief" className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">Approval queue</p>
+                          <p className="mt-1 text-sm leading-6 text-slate-500">
+                            Review pending and flagged submissions. Moderation rights are enforced
+                            server-side for your role.
+                          </p>
+                        </div>
+                        <Button
+                          asChild
+                          variant="outline"
+                          className="shrink-0 rounded-xl"
+                        >
+                          <Link to="/engagement/company-feed/approvals">Review</Link>
+                        </Button>
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled
-                        className="shrink-0 rounded-xl"
-                      >
-                        Soon
-                      </Button>
                     </div>
-                  </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

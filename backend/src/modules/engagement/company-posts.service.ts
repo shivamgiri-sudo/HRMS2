@@ -6,6 +6,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import type {
   CompanyPostDTO,
   CompanyPostCreatorAccessRowDTO,
+  CompanyPostListResult,
   CompanyPostMediaDTO,
   CompanyPostModerationState,
   CompanyPostStatus,
@@ -32,16 +33,27 @@ type CreatePostInput = CreateCompanyPostInput & {
 
 type ListMyCompanyPostsInput = {
   actorUserId: string;
+  page?: number;
+  limit?: number;
 };
 
 type ListCompanyPostApprovalsInput = {
   actorUserId: string;
+  page?: number;
+  limit?: number;
 };
 
 type DeleteCompanyPostInput = {
   postId: string;
   actorUserId: string;
   reason?: string;
+  ipAddress?: string;
+  userAgent?: string;
+};
+
+type ModerationActionInput = {
+  ipAddress?: string;
+  userAgent?: string;
 };
 
 type ModerationEvaluation = {
@@ -52,6 +64,10 @@ type ModerationEvaluation = {
 
 type CompanyPostRow = Omit<CompanyPostDTO, "media" | "active_status"> & {
   active_status: number | boolean;
+  author_name: string | null;
+  author_code: string | null;
+  approved_by_name: string | null;
+  rejected_by_name: string | null;
 };
 
 type CompanyPostMediaRow = CompanyPostMediaDTO & RowDataPacket;
@@ -227,26 +243,50 @@ async function loadCompanyPostMedia(postIds: string[]): Promise<Map<string, Comp
   return mediaMap;
 }
 
+const DEFAULT_PAGE_LIMIT = 20;
+const MAX_PAGE_LIMIT = 100;
+
 async function listCompanyPosts(
   whereClause: string,
   params: unknown[],
+  paginationOpts: { page?: number; limit?: number } = {},
   executor: QueryExecutor = db,
-): Promise<CompanyPostDTO[]> {
-  const [rows] = await executor.execute<RowDataPacket[]>(
-    `SELECT id, author_user_id, author_employee_id, content_text, status,
-            moderation_state, moderation_score, auto_reject_reason, review_notes,
-            submitted_at, approved_at, approved_by, rejected_at, rejected_by,
-            rejection_reason, deleted_at, deleted_by, active_status,
-            created_at, updated_at
-       FROM company_posts
-      WHERE ${whereClause}
-      ORDER BY created_at DESC`,
+): Promise<CompanyPostListResult> {
+  const page = Math.max(1, paginationOpts.page ?? 1);
+  const limit = Math.min(MAX_PAGE_LIMIT, Math.max(1, paginationOpts.limit ?? DEFAULT_PAGE_LIMIT));
+  const offset = (page - 1) * limit;
+
+  const [countRows] = await executor.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM company_posts WHERE ${whereClause}`,
     params,
+  );
+  const total = Number((countRows[0] as { total?: unknown })?.total ?? 0);
+
+  const [rows] = await executor.execute<RowDataPacket[]>(
+    `SELECT cp.id, cp.author_user_id, cp.author_employee_id,
+            e.full_name AS author_name, e.employee_code AS author_code,
+            cp.content_text, cp.status,
+            cp.moderation_state, cp.moderation_score, cp.auto_reject_reason, cp.review_notes,
+            cp.submitted_at, cp.approved_at, cp.approved_by,
+            ea.full_name AS approved_by_name,
+            cp.rejected_at, cp.rejected_by,
+            er.full_name AS rejected_by_name,
+            cp.rejection_reason, cp.deleted_at, cp.deleted_by, cp.active_status,
+            cp.created_at, cp.updated_at
+       FROM company_posts cp
+       LEFT JOIN employees e  ON e.id  = cp.author_employee_id
+       LEFT JOIN employees ea ON ea.user_id = cp.approved_by
+       LEFT JOIN employees er ON er.user_id = cp.rejected_by
+      WHERE ${whereClause}
+      ORDER BY cp.created_at DESC
+      LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
   );
 
   const postRows = rows as CompanyPostRow[];
   const mediaMap = await loadCompanyPostMedia(postRows.map((row) => row.id));
-  return postRows.map((row) => mapCompanyPostRow(row, mediaMap.get(row.id) ?? []));
+  const posts = postRows.map((row) => mapCompanyPostRow(row, mediaMap.get(row.id) ?? []));
+  return { posts, total, page, limit };
 }
 
 async function getCompanyPostById(postId: string, executor: QueryExecutor = db): Promise<CompanyPostDTO> {
@@ -274,15 +314,17 @@ async function getCompanyPostById(postId: string, executor: QueryExecutor = db):
 async function auditCompanyPostAction(
   executor: QueryExecutor,
   input: {
-  actorUserId: string;
-  actionType:
-    | "COMPANY_FEED_POST_APPROVED"
-    | "COMPANY_FEED_POST_REJECTED"
-    | "COMPANY_FEED_POST_DELETED"
-    | "COMPANY_FEED_POST_AUTO_REJECTED";
-  postId: string;
-  changeSummary: Record<string, unknown>;
-},
+    actorUserId: string;
+    actionType:
+      | "COMPANY_FEED_POST_APPROVED"
+      | "COMPANY_FEED_POST_REJECTED"
+      | "COMPANY_FEED_POST_DELETED"
+      | "COMPANY_FEED_POST_AUTO_REJECTED";
+    postId: string;
+    changeSummary: Record<string, unknown>;
+    ipAddress?: string;
+    userAgent?: string;
+  },
 ): Promise<void> {
   await executor.execute(
     `INSERT INTO sensitive_action_log
@@ -297,8 +339,8 @@ async function auditCompanyPostAction(
       "engagement",
       "company_post",
       input.postId,
-      null,
-      null,
+      input.ipAddress ?? null,
+      input.userAgent ? String(input.userAgent).slice(0, 512) : null,
       JSON.stringify(input.changeSummary),
       null,
       null,
@@ -401,39 +443,46 @@ export async function createCompanyPost(input: CreatePostInput): Promise<Company
   return getCompanyPostById(postId);
 }
 
-export async function listApprovedCompanyFeed(): Promise<CompanyPostDTO[]> {
-  return listCompanyPosts(`status = 'approved' AND active_status = 1`, []);
+export async function listApprovedCompanyFeed(
+  opts: { page?: number; limit?: number } = {},
+): Promise<CompanyPostListResult> {
+  return listCompanyPosts(`cp.status = 'approved' AND cp.active_status = 1`, [], opts);
 }
 
-export async function listMyCompanyPosts(input: ListMyCompanyPostsInput): Promise<CompanyPostDTO[]> {
+export async function listMyCompanyPosts(input: ListMyCompanyPostsInput): Promise<CompanyPostListResult> {
   await assertCanCreateCompanyPost(input.actorUserId);
   return listCompanyPosts(
-    `author_user_id = ? AND active_status = 1 AND status <> 'deleted'`,
+    `cp.author_user_id = ? AND cp.active_status = 1 AND cp.status <> 'deleted'`,
     [input.actorUserId],
+    { page: input.page, limit: input.limit },
   );
 }
 
 export async function listCompanyPostApprovals(
   input: ListCompanyPostApprovalsInput,
-): Promise<CompanyPostDTO[]> {
+): Promise<CompanyPostListResult> {
   await assertCanModerateCompanyPosts(input.actorUserId);
   return listCompanyPosts(
-    `status IN ('pending_approval', 'borderline_flagged') AND active_status = 1`,
+    `cp.status IN ('pending_approval', 'borderline_flagged') AND cp.active_status = 1`,
     [],
+    { page: input.page, limit: input.limit },
   );
 }
 
 export async function listCompanyPostManagement(
   input: ListCompanyPostApprovalsInput,
-): Promise<CompanyPostDTO[]> {
+): Promise<CompanyPostListResult> {
   await assertCanModerateCompanyPosts(input.actorUserId);
   return listCompanyPosts(
-    `status <> 'deleted' AND active_status = 1`,
+    `cp.status <> 'deleted' AND cp.active_status = 1`,
     [],
+    { page: input.page, limit: input.limit },
   );
 }
 
-export async function approveCompanyPost(input: ModerateCompanyPostInput): Promise<CompanyPostDTO> {
+export async function approveCompanyPost(
+  input: ModerateCompanyPostInput & ModerationActionInput,
+): Promise<CompanyPostDTO> {
   const actorUserId = normalizeActorUserId(input);
   await assertCanModerateCompanyPosts(actorUserId);
 
@@ -468,13 +517,17 @@ export async function approveCompanyPost(input: ModerateCompanyPostInput): Promi
         status: "approved",
         review_notes: input.review_notes ?? null,
       },
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
     });
   });
 
   return getCompanyPostById(input.post_id);
 }
 
-export async function rejectCompanyPost(input: ModerateCompanyPostInput): Promise<CompanyPostDTO> {
+export async function rejectCompanyPost(
+  input: ModerateCompanyPostInput & ModerationActionInput,
+): Promise<CompanyPostDTO> {
   const actorUserId = normalizeActorUserId(input);
   await assertCanModerateCompanyPosts(actorUserId);
 
@@ -513,6 +566,8 @@ export async function rejectCompanyPost(input: ModerateCompanyPostInput): Promis
         reason: input.reason ?? "Rejected by moderator",
         review_notes: input.review_notes ?? null,
       },
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
     });
   });
 
@@ -534,7 +589,7 @@ export async function deleteCompanyPost(input: DeleteCompanyPostInput): Promise<
               deleted_at = NOW(),
               deleted_by = ?,
               review_notes = COALESCE(?, review_notes)
-        WHERE id = ? AND status = ?`,
+        WHERE id = ? AND status = ? AND active_status = 1`,
       [input.actorUserId, input.reason ?? null, input.postId, current.status],
     );
 
@@ -551,6 +606,8 @@ export async function deleteCompanyPost(input: DeleteCompanyPostInput): Promise<
         status: "deleted",
         reason: input.reason ?? null,
       },
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
     });
   });
 }
@@ -559,11 +616,14 @@ export async function listCompanyPostCreators(input: { actorUserId: string }): P
   await assertCanManageCreators(input.actorUserId);
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, user_id, active_status, granted_by, granted_at,
-            revoked_by, revoked_at, created_at, updated_at
-       FROM company_post_creator_access
-      WHERE active_status = 1
-      ORDER BY granted_at DESC`,
+    `SELECT cpa.id, cpa.employee_id, cpa.user_id, cpa.active_status,
+            cpa.granted_by, cpa.granted_at, cpa.revoked_by, cpa.revoked_at,
+            cpa.created_at, cpa.updated_at,
+            e.full_name AS employee_name, e.employee_code, e.department
+       FROM company_post_creator_access cpa
+       LEFT JOIN employees e ON e.id = cpa.employee_id
+      WHERE cpa.active_status = 1
+      ORDER BY cpa.granted_at DESC`,
   );
   return rows as CompanyPostCreatorAccessRowDTO[];
 }
@@ -623,10 +683,13 @@ export async function grantCompanyPostCreator(input: GrantInput): Promise<Compan
   });
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, user_id, active_status, granted_by, granted_at,
-            revoked_by, revoked_at, created_at, updated_at
-       FROM company_post_creator_access
-      WHERE employee_id = ?
+    `SELECT cpa.id, cpa.employee_id, cpa.user_id, cpa.active_status,
+            cpa.granted_by, cpa.granted_at, cpa.revoked_by, cpa.revoked_at,
+            cpa.created_at, cpa.updated_at,
+            e.full_name AS employee_name, e.employee_code, e.department
+       FROM company_post_creator_access cpa
+       LEFT JOIN employees e ON e.id = cpa.employee_id
+      WHERE cpa.employee_id = ?
       LIMIT 1`,
     [employeeId],
   );
@@ -658,10 +721,13 @@ export async function revokeCompanyPostCreator(input: RevokeInput): Promise<Comp
   });
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, user_id, active_status, granted_by, granted_at,
-            revoked_by, revoked_at, created_at, updated_at
-       FROM company_post_creator_access
-      WHERE employee_id = ?
+    `SELECT cpa.id, cpa.employee_id, cpa.user_id, cpa.active_status,
+            cpa.granted_by, cpa.granted_at, cpa.revoked_by, cpa.revoked_at,
+            cpa.created_at, cpa.updated_at,
+            e.full_name AS employee_name, e.employee_code, e.department
+       FROM company_post_creator_access cpa
+       LEFT JOIN employees e ON e.id = cpa.employee_id
+      WHERE cpa.employee_id = ?
       LIMIT 1`,
     [employeeId],
   );

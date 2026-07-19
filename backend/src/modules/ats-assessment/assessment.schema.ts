@@ -2,6 +2,54 @@ import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 
 const TABLE_DDL = [
+  `CREATE TABLE IF NOT EXISTS ats_question_bank (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    question_code VARCHAR(120) NOT NULL,
+    process_key ENUM('inbound','outbound','backoffice','document','email','any') NOT NULL DEFAULT 'any',
+    role_key ENUM('executive','team_leader','quality_auditor','any') NOT NULL DEFAULT 'any',
+    section_key VARCHAR(100) NOT NULL,
+    section_title VARCHAR(255) NOT NULL,
+    question_type ENUM('single','multi','text') NOT NULL DEFAULT 'single',
+    difficulty_level ENUM('basic','intermediate','advanced') NOT NULL DEFAULT 'intermediate',
+    prompt TEXT NOT NULL,
+    options_json JSON NULL,
+    correct_answer_json JSON NULL,
+    keywords_json JSON NULL,
+    explanation TEXT NULL,
+    marks DECIMAL(6,2) NOT NULL DEFAULT 10,
+    manual_review TINYINT(1) NOT NULL DEFAULT 0,
+    set_number INT UNSIGNED NOT NULL DEFAULT 1,
+    active_status TINYINT(1) NOT NULL DEFAULT 1,
+    usage_count INT UNSIGNED NOT NULL DEFAULT 0,
+    created_by CHAR(36) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_question_code (question_code),
+    INDEX idx_question_bank_lookup (process_key, role_key, section_key, active_status, set_number),
+    INDEX idx_question_bank_difficulty (difficulty_level, active_status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  `CREATE TABLE IF NOT EXISTS ats_typing_passage_bank (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    passage_code VARCHAR(100) NOT NULL,
+    process_key ENUM('inbound','outbound','backoffice','document','email','any') NOT NULL DEFAULT 'any',
+    role_key ENUM('executive','team_leader','quality_auditor','any') NOT NULL DEFAULT 'any',
+    difficulty_level ENUM('basic','intermediate','advanced') NOT NULL DEFAULT 'intermediate',
+    title VARCHAR(255) NOT NULL,
+    passage_text LONGTEXT NOT NULL,
+    word_count INT UNSIGNED NOT NULL DEFAULT 0,
+    character_count INT UNSIGNED NOT NULL DEFAULT 0,
+    recommended_duration_seconds INT UNSIGNED NOT NULL DEFAULT 180,
+    min_wpm_benchmark INT UNSIGNED NOT NULL DEFAULT 30,
+    min_accuracy_benchmark DECIMAL(5,2) NOT NULL DEFAULT 92,
+    set_number INT UNSIGNED NOT NULL DEFAULT 1,
+    active_status TINYINT(1) NOT NULL DEFAULT 1,
+    usage_count INT UNSIGNED NOT NULL DEFAULT 0,
+    created_by CHAR(36) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_passage_code (passage_code),
+    INDEX idx_passage_bank_lookup (process_key, role_key, active_status, set_number)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS ats_assessment_template (
     id CHAR(36) NOT NULL PRIMARY KEY,
     template_code VARCHAR(100) NOT NULL,
@@ -143,6 +191,24 @@ const TABLE_DDL = [
     UNIQUE KEY uq_typing_assessment_attempt (assessment_id, attempt_no),
     INDEX idx_typing_assessment (assessment_id, submitted_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  `CREATE TABLE IF NOT EXISTS ats_identity_otp (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    assessment_id CHAR(36) NOT NULL,
+    candidate_id CHAR(36) NOT NULL,
+    otp_hash CHAR(64) NOT NULL,
+    channel ENUM('sms','email','sms_email','display') NOT NULL DEFAULT 'display',
+    mobile_masked VARCHAR(20) NULL,
+    email_masked VARCHAR(100) NULL,
+    verified TINYINT(1) NOT NULL DEFAULT 0,
+    attempt_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    verified_at DATETIME NULL,
+    ip_address VARCHAR(64) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_identity_otp_assessment (assessment_id, verified, expires_at),
+    INDEX idx_identity_otp_candidate (candidate_id, issued_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   `CREATE TABLE IF NOT EXISTS ats_assessment_audit_log (
     id CHAR(36) NOT NULL PRIMARY KEY,
     assessment_id CHAR(36) NOT NULL,
@@ -234,6 +300,10 @@ async function upgradeEarlierDraftSchema() {
      WHERE question_snapshot IS NULL`,
   );
   await addColumnIfMissing("ats_assessment_response", "review_remarks", "VARCHAR(2000) NULL");
+
+  await addColumnIfMissing("ats_candidate_assessment", "config_snapshot", "JSON NULL");
+  await addColumnIfMissing("ats_candidate_assessment", "identity_verified", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("ats_candidate_assessment", "identity_verified_at", "DATETIME NULL");
 
   await addColumnIfMissing("ats_typing_test_attempt", "edit_distance", "INT UNSIGNED NULL");
   await addColumnIfMissing("ats_typing_test_attempt", "passed_benchmark", "TINYINT(1) NULL");

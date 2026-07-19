@@ -1,10 +1,21 @@
-import { useMemo, useState } from "react";
-import { Search, ShieldCheck, Sparkles, UserPlus, UserX } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Loader2, Search, ShieldCheck, Sparkles, UserPlus, UserX } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  type CompanyPostCreatorAccessRow,
   useCompanyPostCreators,
   useGrantCompanyPostCreator,
   useRevokeCompanyPostCreator,
@@ -25,14 +36,30 @@ function formatDateTime(value: string | null): string {
   }).format(date);
 }
 
+const DEBOUNCE_MS = 300;
+
+function useDebounced<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
 export default function NativeCompanyFeedCreatorAccess() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounced(search, DEBOUNCE_MS);
 
   const creatorsQuery = useCompanyPostCreators();
-  const searchQuery = useEmployeeSearchOptions(search);
+  const searchQuery = useEmployeeSearchOptions(debouncedSearch);
   const grantMutation = useGrantCompanyPostCreator();
   const revokeMutation = useRevokeCompanyPostCreator();
+
+  const [pendingGrantId, setPendingGrantId] = useState<string | null>(null);
+  const [pendingRevokeId, setPendingRevokeId] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<CompanyPostCreatorAccessRow | null>(null);
 
   const activeCreatorIds = useMemo(
     () => new Set((creatorsQuery.data ?? []).map((row) => row.employee_id)),
@@ -40,9 +67,13 @@ export default function NativeCompanyFeedCreatorAccess() {
   );
 
   async function handleGrant(employeeId: string) {
+    setPendingGrantId(employeeId);
     try {
       await grantMutation.mutateAsync({ employeeId });
-      toast({ title: "Creator access granted", description: "The employee can now submit company feed posts." });
+      toast({
+        title: "Creator access granted",
+        description: "The employee can now submit company feed posts.",
+      });
       setSearch("");
     } catch (error) {
       toast({
@@ -50,19 +81,29 @@ export default function NativeCompanyFeedCreatorAccess() {
         description: error instanceof Error ? error.message : "Unable to grant creator access.",
         variant: "destructive",
       });
+    } finally {
+      setPendingGrantId(null);
     }
   }
 
-  async function handleRevoke(employeeId: string) {
+  async function handleRevoke() {
+    if (!revokeTarget) return;
+    setPendingRevokeId(revokeTarget.employee_id);
     try {
-      await revokeMutation.mutateAsync({ employeeId });
-      toast({ title: "Creator access revoked", description: "The employee can no longer submit company feed posts." });
+      await revokeMutation.mutateAsync({ employeeId: revokeTarget.employee_id });
+      toast({
+        title: "Creator access revoked",
+        description: "The employee can no longer submit company feed posts.",
+      });
     } catch (error) {
       toast({
         title: "Revoke failed",
         description: error instanceof Error ? error.message : "Unable to revoke creator access.",
         variant: "destructive",
       });
+    } finally {
+      setPendingRevokeId(null);
+      setRevokeTarget(null);
     }
   }
 
@@ -87,13 +128,15 @@ export default function NativeCompanyFeedCreatorAccess() {
                 Decide exactly who can publish into the company feed workflow.
               </h1>
               <p className="max-w-2xl text-sm leading-7 text-blue-50/92 sm:text-[15px]">
-                Creator rights stay tightly controlled here. Grant access only to trusted employees, and revoke it instantly when responsibility changes.
+                Creator rights stay tightly controlled here. Grant access only to trusted employees,
+                and revoke it instantly when responsibility changes.
               </p>
             </div>
           </div>
         </section>
 
         <div className="grid gap-6 xl:grid-cols-[24rem_minmax(0,1fr)]">
+          {/* Grant panel */}
           <Card className="rounded-[1.8rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
             <CardContent className="space-y-4 p-5">
               <div>
@@ -115,6 +158,13 @@ export default function NativeCompanyFeedCreatorAccess() {
                 />
               </div>
 
+              {searchQuery.isError ? (
+                <div className="flex items-start gap-2 rounded-[1.2rem] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  Employee search failed. Please try again.
+                </div>
+              ) : null}
+
               {searchQuery.isLoading ? (
                 <div className="space-y-3">
                   <div className="h-20 rounded-[1.2rem] skeleton" />
@@ -122,42 +172,54 @@ export default function NativeCompanyFeedCreatorAccess() {
                 </div>
               ) : null}
 
-              {search.trim().length > 0 && !searchQuery.isLoading ? (
+              {debouncedSearch.trim().length > 0 && !searchQuery.isLoading && !searchQuery.isError ? (
                 <div className="space-y-3">
                   {(searchQuery.data ?? []).length === 0 ? (
                     <div className="rounded-[1.2rem] border border-dashed border-slate-300 bg-slate-50/80 p-5 text-sm text-slate-500">
                       No matching employees found in your current scope.
                     </div>
                   ) : (
-                    (searchQuery.data ?? []).map((employee) => (
-                      <div key={employee.id} className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="font-semibold text-slate-900">{employee.name}</p>
-                            <p className="mt-1 text-sm text-slate-500">{employee.employee_code}</p>
+                    (searchQuery.data ?? []).map((employee) => {
+                      const isGranted = activeCreatorIds.has(employee.id);
+                      const isThisPending = pendingGrantId === employee.id;
+                      return (
+                        <div
+                          key={employee.id}
+                          className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">{employee.name}</p>
+                              <p className="mt-1 text-sm text-slate-500">{employee.employee_code}</p>
+                            </div>
+                            <Button
+                              type="button"
+                              disabled={isGranted || isThisPending}
+                              className="rounded-xl"
+                              onClick={() => void handleGrant(employee.id)}
+                            >
+                              {isThisPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <UserPlus className="h-4 w-4" />
+                              )}
+                              {isGranted ? "Granted" : "Grant"}
+                            </Button>
                           </div>
-                          <Button
-                            type="button"
-                            disabled={grantMutation.isPending || activeCreatorIds.has(employee.id)}
-                            className="rounded-xl"
-                            onClick={() => void handleGrant(employee.id)}
-                          >
-                            <UserPlus className="h-4 w-4" />
-                            {activeCreatorIds.has(employee.id) ? "Granted" : "Grant"}
-                          </Button>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
-              ) : (
+              ) : !searchQuery.isLoading ? (
                 <div className="rounded-[1.2rem] border border-dashed border-slate-300 bg-slate-50/80 p-5 text-sm text-slate-500">
                   Start typing to find an employee and assign posting rights.
                 </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
 
+          {/* Roster panel */}
           <Card className="rounded-[1.8rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
             <CardContent className="space-y-4 p-5 sm:p-6">
               <div className="flex items-center justify-between gap-3">
@@ -187,7 +249,9 @@ export default function NativeCompanyFeedCreatorAccess() {
                 </div>
               ) : null}
 
-              {!creatorsQuery.isLoading && !creatorsQuery.isError && (creatorsQuery.data ?? []).length === 0 ? (
+              {!creatorsQuery.isLoading &&
+              !creatorsQuery.isError &&
+              (creatorsQuery.data ?? []).length === 0 ? (
                 <div className="rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center">
                   <Sparkles className="mx-auto h-6 w-6 text-[color:var(--brand-600)]" />
                   <h3 className="mt-4 font-['Fira_Sans'] text-2xl font-semibold text-slate-950">
@@ -201,35 +265,80 @@ export default function NativeCompanyFeedCreatorAccess() {
 
               {!creatorsQuery.isLoading && !creatorsQuery.isError ? (
                 <div className="space-y-4">
-                  {(creatorsQuery.data ?? []).map((row) => (
-                    <div key={row.id} className="rounded-[1.3rem] border border-slate-200 bg-slate-50/90 p-4">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="space-y-2">
-                          <p className="font-semibold text-slate-900">Employee ID: {row.employee_id}</p>
-                          <p className="text-sm text-slate-500">Mapped user ID: {row.user_id}</p>
-                          <div className="grid gap-1 text-sm text-slate-500">
-                            <p>Granted at: <span className="font-semibold text-slate-700">{formatDateTime(row.granted_at)}</span></p>
-                            {row.revoked_at ? <p>Last revoked at: <span className="font-semibold text-slate-700">{formatDateTime(row.revoked_at)}</span></p> : null}
+                  {(creatorsQuery.data ?? []).map((row) => {
+                    const isThisPending = pendingRevokeId === row.employee_id;
+                    const displayName = row.employee_name ?? row.employee_code ?? row.employee_id;
+                    return (
+                      <div
+                        key={row.id}
+                        className="rounded-[1.3rem] border border-slate-200 bg-slate-50/90 p-4"
+                      >
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-1">
+                            <p className="font-semibold text-slate-900">{displayName}</p>
+                            {row.employee_code && row.employee_name && (
+                              <p className="text-sm text-slate-500">@{row.employee_code}</p>
+                            )}
+                            {row.department && (
+                              <p className="text-xs text-slate-400">{row.department}</p>
+                            )}
+                            <p className="text-sm text-slate-500">
+                              Granted:{" "}
+                              <span className="font-semibold text-slate-700">
+                                {formatDateTime(row.granted_at)}
+                              </span>
+                            </p>
                           </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={isThisPending}
+                            className="rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                            onClick={() => setRevokeTarget(row)}
+                          >
+                            {isThisPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <UserX className="h-4 w-4" />
+                            )}
+                            Revoke
+                          </Button>
                         </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={revokeMutation.isPending}
-                          className="rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
-                          onClick={() => void handleRevoke(row.employee_id)}
-                        >
-                          <UserX className="h-4 w-4" />
-                          Revoke
-                        </Button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null}
             </CardContent>
           </Card>
         </div>
+
+        {/* Revoke confirmation */}
+        <AlertDialog
+          open={!!revokeTarget}
+          onOpenChange={(open) => !open && setRevokeTarget(null)}
+        >
+          <AlertDialogContent className="rounded-[1.6rem]">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Revoke creator access?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {revokeTarget
+                  ? `${revokeTarget.employee_name ?? revokeTarget.employee_code ?? "This employee"} will no longer be able to submit company feed posts.`
+                  : "This employee will no longer be able to submit company feed posts."}
+                {" "}Access can be re-granted from this page at any time.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-rose-600 hover:bg-rose-700"
+                onClick={() => void handleRevoke()}
+              >
+                Confirm revoke
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </DashboardLayout>
   );
