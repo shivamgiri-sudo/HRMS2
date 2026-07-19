@@ -91,14 +91,13 @@ function RequestAccessButton({ pageCode }: { pageCode: string }) {
 export default function WorkforcePageGate({ pageCode, children }: WorkforcePageGateProps) {
   const { isLoading, canViewPage, data, isError, error } = useWorkforceAccess();
 
-  // Show loading until we have data — don't evaluate canViewPage with undefined data
+  // Show a minimal inline spinner — ProtectedRoute already waited for auth/role queries,
+  // so this loading state is almost never visible in practice after initial page load.
   if (isLoading || !data) {
     return (
-      <DashboardLayout>
-        <div className="rounded-3xl border bg-white p-8 shadow-sm">
-          <p className="text-sm font-semibold text-slate-500">Checking access...</p>
-        </div>
-      </DashboardLayout>
+      <div className="flex h-40 items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-4 border-slate-200 border-t-slate-600" />
+      </div>
     );
   }
 

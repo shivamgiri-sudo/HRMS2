@@ -199,7 +199,7 @@ const Employees = () => {
   const directoryTotal = directoryData?.total ?? 0;
   const { data: departments = [] } = useDepartments();
   const { data: directoryMasters } = useEmployeeDirectoryMasters();
-  const { data: employeeSearchOptions = [] } = useEmployeeSearchOptions(searchQuery);
+  const { data: employeeSearchOptions = [] } = useEmployeeSearchOptions(debouncedSearch);
   const { isAdminOrHR, isLoading: isLoadingRole, roleKeys } = useIsAdminOrHR();
   const canResetEmployeePassword =
     roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("wfm");

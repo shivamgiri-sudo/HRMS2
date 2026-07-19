@@ -18,7 +18,7 @@ export function lazyWithRecovery<T extends ComponentType<any>>(
         if (sessionStorage.getItem(reloadKey) !== "1") {
           sessionStorage.setItem(reloadKey, "1");
           window.location.reload();
-          return new Promise<never>(() => {});
+          // Fall through to throw — ErrorBoundary shows retry UI instead of spinning forever
         }
       }
       throw error;

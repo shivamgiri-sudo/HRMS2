@@ -10,17 +10,16 @@ const ScrollToTop = () => {
     if (prevPathname.current !== pathname) {
       prevPathname.current = pathname;
 
-      // Save sidebar scroll position before scrolling, then restore it.
-      // This prevents the sidebar from jumping to top when navigating.
+      // Save sidebar scroll position so it is not disturbed by page navigation
       const sidebarNav = document.querySelector<HTMLElement>(".mcn-sidebar-scroll");
       const savedScroll = sidebarNav ? sidebarNav.scrollTop : 0;
 
-      // Scroll the main content area to top
+      // Scroll only the main content container — #main-content-area is the real scroll owner.
+      // window.scrollTo is intentionally omitted: the window/body does not scroll in this layout.
       const mainContent = document.getElementById("main-content-area");
       if (mainContent) {
-        mainContent.scrollTo(0, 0);
+        mainContent.scrollTo({ top: 0, behavior: "instant" });
       }
-      window.scrollTo(0, 0);
 
       // Restore sidebar scroll position after browser paint
       if (sidebarNav) {

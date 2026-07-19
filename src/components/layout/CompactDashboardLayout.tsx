@@ -310,10 +310,11 @@ export function DashboardLayout({ children, subheader }: Props) {
         {SidebarContent}
       </aside>
 
-      {/* Main content area */}
+      {/* Main content area — owns the scroll so sidebar position is preserved on navigation */}
       <div
         id="main-content-area"
-        className="flex min-h-dvh min-w-0 flex-col pb-16 lg:pb-0 lg:pl-[var(--sidebar-width)]"
+        className="flex min-w-0 flex-col pb-16 lg:pb-0 lg:pl-[var(--sidebar-width)]"
+        style={{ height: "100dvh", overflowY: "auto" }}
       >
         {/* Topbar */}
         <TopBar

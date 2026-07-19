@@ -163,8 +163,8 @@ const Profile = () => {
       return res.data ?? null;
     },
     enabled: !!user?.id,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
   });
 
   useEffect(() => {
