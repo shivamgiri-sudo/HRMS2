@@ -73,19 +73,14 @@ export async function updatePortalUser(
   const updates: string[] = [];
   const params: any[] = [];
 
-  // Map full_name → name column in client_user
-  if (data.full_name !== undefined) {
-    updates.push("name = ?");
-    params.push(data.full_name);
-  }
-  if (data.designation !== undefined) {
-    updates.push("designation = ?");
-    params.push(data.designation);
-  }
-  if (data.process_ids !== undefined) {
-    updates.push("process_ids = ?");
-    params.push(JSON.stringify(data.process_ids));
-  }
+  if (data.full_name      !== undefined) { updates.push("name = ?");               params.push(data.full_name); }
+  if (data.designation    !== undefined) { updates.push("designation = ?");         params.push(data.designation); }
+  if (data.phone          !== undefined) { updates.push("phone = ?");               params.push(data.phone); }
+  if (data.department     !== undefined) { updates.push("department = ?");          params.push(data.department); }
+  if (data.access_level   !== undefined) { updates.push("access_level = ?");        params.push(data.access_level); }
+  if (data.access_start_date !== undefined) { updates.push("access_start_date = ?"); params.push(data.access_start_date); }
+  if (data.access_end_date   !== undefined) { updates.push("access_end_date = ?");   params.push(data.access_end_date); }
+  if (data.process_ids    !== undefined) { updates.push("process_ids = ?");         params.push(JSON.stringify(data.process_ids)); }
 
   if (updates.length === 0) return;
 
@@ -193,7 +188,13 @@ export async function updateLastLogin(
   userId: string,
   ipAddress: string
 ): Promise<void> {
-  await logPortalUserActivity({ user_id: userId, action_type: 'LOGIN', ip_address: ipAddress });
+  await Promise.all([
+    logPortalUserActivity({ user_id: userId, action_type: 'LOGIN', ip_address: ipAddress }),
+    db.execute(
+      `UPDATE client_user SET last_login_at = NOW(), last_login_ip = ?, login_count = login_count + 1 WHERE id = ?`,
+      [ipAddress, userId]
+    ).catch(() => { /* column may not exist on older schema — non-fatal */ }),
+  ]);
 }
 
 // ============================================================

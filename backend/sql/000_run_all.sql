@@ -339,6 +339,7 @@ SOURCE sql/411_branch_budget_grn_approval_flow.sql;
 SOURCE sql/451_company_feed_foundation.sql;
 SOURCE sql/460_ats_performance_indexes.sql;
 SOURCE sql/508_ats_onboarding_bridge_code_columns.sql;
+SOURCE sql/509_portal_client_master_fixes.sql;
 
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;

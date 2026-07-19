@@ -93,22 +93,41 @@ export async function getClient(id: string): Promise<Client | null> {
   return rows.length > 0 ? (rows[0] as Client) : null;
 }
 
+const CLIENT_WRITABLE_COLS = new Set([
+  'client_code', 'client_name', 'legal_entity_name', 'industry',
+  'primary_contact_name', 'primary_contact_email', 'primary_contact_phone',
+  'escalation_contact_name', 'escalation_contact_email', 'escalation_contact_phone',
+  'address_line1', 'address_line2', 'city', 'state', 'country', 'postal_code',
+  'logo_url', 'website', 'contract_start_date', 'contract_end_date',
+  'billing_cycle', 'subscription_status', 'webhook_url', 'active_status',
+]);
+
 export async function createClient(
   data: CreateClientInput,
   createdBy: string
 ): Promise<Client> {
   const id = (await import('crypto')).randomUUID();
+
+  const cols = ['id', 'client_code', 'client_name', 'active_status'];
+  const vals: any[] = [id, data.client_code, data.client_name, 1];
+
+  // Write all provided optional fields
+  (Object.entries(data) as [string, any][]).forEach(([key, value]) => {
+    if (value !== undefined && key !== 'client_code' && key !== 'client_name' && CLIENT_WRITABLE_COLS.has(key)) {
+      cols.push(key);
+      vals.push(value);
+    }
+  });
+
   await db.execute(
-    `INSERT INTO client_master (id, client_code, client_name, active_status) VALUES (?, ?, ?, 1)`,
-    [id, data.client_code, data.client_name]
+    `INSERT INTO client_master (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+    vals
   );
 
   const client = await getClient(id);
   if (!client) throw new Error("Failed to retrieve created client");
   return client;
 }
-
-const CLIENT_MASTER_COLS = new Set(['client_code', 'client_name', 'active_status']);
 
 export async function updateClient(
   id: string,
@@ -117,8 +136,8 @@ export async function updateClient(
   const updates: string[] = [];
   const params: any[] = [];
 
-  Object.entries(data).forEach(([key, value]) => {
-    if (value !== undefined && CLIENT_MASTER_COLS.has(key)) {
+  (Object.entries(data) as [string, any][]).forEach(([key, value]) => {
+    if (value !== undefined && CLIENT_WRITABLE_COLS.has(key)) {
       updates.push(`${key} = ?`);
       params.push(value);
     }
@@ -210,19 +229,23 @@ export async function getClientUsageSummary(
 ): Promise<ClientUsageSummary[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-      c.id as client_id,
+      c.id                                                           AS client_id,
       c.client_name,
-      COUNT(DISTINCT pu.id) as active_users,
-      0 as total_logins,
-      0 as last_30_days_logins,
-      0 as api_calls,
-      0 as report_views,
-      NULL as last_activity
+      COUNT(DISTINCT pu.id)                                          AS active_users,
+      COUNT(pal.id)                                                  AS total_logins,
+      SUM(CASE WHEN pal.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) THEN 1 ELSE 0 END)
+                                                                     AS last_30_days_logins,
+      0                                                              AS api_calls,
+      SUM(CASE WHEN pal.page NOT IN ('LOGIN','LOGOUT') THEN 1 ELSE 0 END)
+                                                                     AS report_views,
+      MAX(pal.created_at)                                            AS last_activity
      FROM client_master c
-     LEFT JOIN client_user pu ON pu.client_id = c.id AND pu.is_active = 1
+     LEFT JOIN client_user pu  ON pu.client_id = c.id AND pu.is_active = 1
+     LEFT JOIN portal_access_log pal ON pal.client_user_id = pu.id
      WHERE c.active_status = 1
      GROUP BY c.id, c.client_name
-     ORDER BY c.created_at DESC`
+     ORDER BY last_activity DESC`,
+    [days]
   );
 
   return rows as ClientUsageSummary[];

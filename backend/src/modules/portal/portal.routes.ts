@@ -92,6 +92,62 @@ router.get(
   })
 );
 
+// ── KPI template assignments for portal processes ────────────────────────────
+// GET  /api/portal/internal/kpi-assignments?process_id=X  — list assignments
+// POST /api/portal/internal/kpi-assignments               — assign template to process
+// DELETE /api/portal/internal/kpi-assignments/:id         — remove assignment
+
+router.get(
+  "/internal/kpi-assignments",
+  requireRole("admin", "hr", "finance_head", "operations_manager", "ceo"),
+  h(async (req, res) => {
+    const { process_id } = req.query as Record<string, string | undefined>;
+    const [rows] = await (await import("../../db/mysql.js")).db.execute(
+      `SELECT ka.id, ka.process_id, ka.template_id, ka.effective_from, ka.effective_to,
+              kt.template_name, pm.process_name,
+              ka.assigned_by, ka.created_at
+       FROM kpi_process_assignment ka
+       JOIN kpi_template kt ON kt.id = ka.template_id
+       JOIN process_master pm ON pm.id = ka.process_id
+       ${process_id ? "WHERE ka.process_id = ?" : ""}
+       ORDER BY ka.created_at DESC`,
+      process_id ? [process_id] : []
+    );
+    return res.json({ data: rows });
+  })
+);
+
+router.post(
+  "/internal/kpi-assignments",
+  requireRole("admin", "hr", "finance_head", "operations_manager", "ceo"),
+  h(async (req, res) => {
+    const { process_id, template_id, effective_from, effective_to } = req.body as Record<string, string>;
+    if (!process_id || !template_id || !effective_from) {
+      return res.status(400).json({ error: "process_id, template_id and effective_from are required" });
+    }
+    const assigned_by = (req as any).authUser?.id ?? "system";
+    const { randomUUID } = await import("crypto");
+    const dbMod = await import("../../db/mysql.js");
+    await dbMod.db.execute(
+      `INSERT INTO kpi_process_assignment (id, process_id, template_id, effective_from, effective_to, assigned_by)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE effective_to = VALUES(effective_to), assigned_by = VALUES(assigned_by)`,
+      [randomUUID(), process_id, template_id, effective_from, effective_to ?? null, assigned_by]
+    );
+    return res.status(201).json({ ok: true });
+  })
+);
+
+router.delete(
+  "/internal/kpi-assignments/:id",
+  requireRole("admin", "hr"),
+  h(async (req, res) => {
+    const dbMod = await import("../../db/mysql.js");
+    await dbMod.db.execute("DELETE FROM kpi_process_assignment WHERE id = ?", [req.params.id]);
+    return res.json({ ok: true });
+  })
+);
+
 // ── Client portal (portal JWT) ────────────────────────────────────────────
 router.use("/overview",   requireClientAuth);
 router.use("/processes",  requireClientAuth);
