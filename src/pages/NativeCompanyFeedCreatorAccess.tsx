@@ -64,6 +64,7 @@ export default function NativeCompanyFeedCreatorAccess() {
 
   // Multi-select state for bulk grant
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkPending, setIsBulkPending] = useState(false);
 
   const toggleSelect = (id: string) =>
     setSelectedIds(prev => {
@@ -71,6 +72,24 @@ export default function NativeCompanyFeedCreatorAccess() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+
+  const handleBulkGrant = async () => {
+    const ids = Array.from(selectedIds);
+    setIsBulkPending(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map(id => grantMutation.mutateAsync({ employeeId: id }))
+      );
+      const succeeded = ids.filter((_, i) => results[i].status === "fulfilled");
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        succeeded.forEach(id => next.delete(id));
+        return next;
+      });
+    } finally {
+      setIsBulkPending(false);
+    }
+  };
 
   // Clear selection when a new search fires
   useEffect(() => {
@@ -208,7 +227,7 @@ export default function NativeCompanyFeedCreatorAccess() {
                         return (
                           <div
                             key={employee.id}
-                            className="flex items-center gap-2 rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4 py-1.5"
+                            className="flex items-center gap-2 rounded-[1.2rem] border border-slate-200 bg-slate-50/90 px-4 py-1.5"
                           >
                             <input
                               type="checkbox"
@@ -244,15 +263,10 @@ export default function NativeCompanyFeedCreatorAccess() {
                         <div className="mt-2 flex justify-end border-t pt-2">
                           <Button
                             size="sm"
-                            onClick={() => {
-                              Array.from(selectedIds).forEach(id =>
-                                grantMutation.mutate({ employeeId: id }),
-                              );
-                              setSelectedIds(new Set());
-                            }}
-                            disabled={grantMutation.isPending}
+                            onClick={() => void handleBulkGrant()}
+                            disabled={isBulkPending}
                           >
-                            {grantMutation.isPending ? (
+                            {isBulkPending ? (
                               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                             ) : (
                               <UserPlus className="mr-1.5 h-3.5 w-3.5" />
