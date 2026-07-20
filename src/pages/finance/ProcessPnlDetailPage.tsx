@@ -1,22 +1,8 @@
 import { useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import {
-  AlertTriangle,
-  ArrowLeft,
-  BadgeIndianRupee,
-  Banknote,
-  BriefcaseBusiness,
-  Building2,
-  CheckCircle2,
-  CircleDollarSign,
-  DatabaseZap,
-  FileSpreadsheet,
-  Gauge,
-  ReceiptIndianRupee,
-  ShieldAlert,
-  UsersRound,
-} from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, ShieldAlert } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -63,15 +49,6 @@ function statusTone(status: string) {
   return "bg-amber-100 text-amber-800";
 }
 
-function MetricRow({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="flex items-center justify-between gap-4 border-b border-slate-100 py-2.5 last:border-0">
-      <span className="text-sm text-slate-600">{label}</span>
-      <span className={`text-right text-sm font-bold ${tone ?? "text-slate-950"}`}>{value}</span>
-    </div>
-  );
-}
-
 function DataTable({
   columns,
   rows,
@@ -80,13 +57,13 @@ function DataTable({
   rows: Array<Record<string, any>>;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200">
+    <div className="overflow-hidden rounded-lg border border-slate-200">
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-xs">
           <thead className="bg-slate-50 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
             <tr>
               {columns.map((column) => (
-                <th key={column.key} className={`whitespace-nowrap px-4 py-3 ${column.align === "right" ? "text-right" : "text-left"}`}>
+                <th key={column.key} className={`whitespace-nowrap px-3 py-2 ${column.align === "right" ? "text-right" : "text-left"}`}>
                   {column.label}
                 </th>
               ))}
@@ -96,7 +73,7 @@ function DataTable({
             {rows.map((row, index) => (
               <tr key={String(row.id ?? row.reference ?? index)} className="hover:bg-slate-50/80">
                 {columns.map((column) => (
-                  <td key={column.key} className={`whitespace-nowrap px-4 py-3 text-slate-700 ${column.align === "right" ? "text-right" : "text-left"}`}>
+                  <td key={column.key} className={`whitespace-nowrap px-3 py-1.5 text-slate-700 ${column.align === "right" ? "text-right" : "text-left"}`}>
                     {column.formatter ? column.formatter(row[column.key], row) : String(row[column.key] ?? "-")}
                   </td>
                 ))}
@@ -104,7 +81,7 @@ function DataTable({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-10 text-center text-slate-500">No rows are available for this section.</td>
+                <td colSpan={columns.length} className="px-4 py-8 text-center text-slate-500">No rows are available for this section.</td>
               </tr>
             )}
           </tbody>
@@ -114,28 +91,10 @@ function DataTable({
   );
 }
 
-function StatementCard({
-  title,
-  icon,
-  children,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card className="rounded-3xl border-slate-200 shadow-sm">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base font-bold text-slate-950">{icon}{title}</CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
-
 export default function ProcessPnlDetailPage() {
   const { processId = "" } = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const period = searchParams.get("period") ?? currentPeriod();
   const [activeTab, setActiveTab] = useState("statement");
   const detailQuery = useBpoProcessPnlDetail(processId, { period });
@@ -149,10 +108,10 @@ export default function ProcessPnlDetailPage() {
   if (detailQuery.isLoading) {
     return (
       <DashboardLayout>
-        <div className="mx-auto max-w-[1600px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-          <Skeleton className="h-64 rounded-[32px]" />
-          <Skeleton className="h-28 rounded-3xl" />
-          <Skeleton className="h-[620px] rounded-3xl" />
+        <div className="space-y-3 px-4 py-4">
+          <Skeleton className="h-12" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-[580px]" />
         </div>
       </DashboardLayout>
     );
@@ -162,13 +121,11 @@ export default function ProcessPnlDetailPage() {
   if (!detail) {
     return (
       <DashboardLayout>
-        <div className="mx-auto max-w-4xl px-4 py-10">
-          <Card className="rounded-3xl border-slate-200 shadow-sm">
-            <CardContent className="flex items-center gap-3 p-6 text-slate-600">
-              <ShieldAlert className="h-5 w-5 text-rose-600" />
-              This process does not have a usable P&amp;L record for {period}.
-            </CardContent>
-          </Card>
+        <div className="px-4 py-6">
+          <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-slate-700">
+            <ShieldAlert className="h-5 w-5 shrink-0 text-rose-600" />
+            This process does not have a usable P&amp;L record for {period}.
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -188,170 +145,181 @@ export default function ProcessPnlDetailPage() {
     { label: "PAT", value: row.pat, kind: "currency" as const },
   ];
 
-  const dataIcon = row.revenueDataStatus === "configured"
-    ? <CheckCircle2 className="h-4 w-4" />
-    : row.revenueDataStatus === "configured_no_delivery"
-    ? <AlertTriangle className="h-4 w-4" />
-    : <DatabaseZap className="h-4 w-4" />;
-
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(14,165,233,0.12),_transparent_25%),linear-gradient(180deg,_#f2f8f5_0%,_#ffffff_34%,_#f8fafc_100%)]">
-        <div className="mx-auto max-w-[1600px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-          <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-slate-950 text-white shadow-[0_24px_80px_rgba(15,23,42,0.24)]">
-            <div className="grid gap-6 p-6 xl:grid-cols-[1.45fr_0.85fr] xl:p-8">
-              <div className="space-y-5">
-                <Link to={`/finance/process-pnl?period=${period}`} className="inline-flex items-center gap-2 text-sm font-medium text-slate-300 hover:text-white">
-                  <ArrowLeft className="h-4 w-4" /> Back to BPO P&amp;L command centre
-                </Link>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold ${statusTone(row.processStatus)}`}>{row.processStatus}</span>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${statusTone(row.revenueDataStatus)}`}>
-                    {dataIcon} {row.revenueDataStatus.replaceAll("_", " ")}
-                  </span>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-slate-200">Period {period}</span>
-                </div>
-                <div>
-                  <h1 className="text-3xl font-black tracking-tight sm:text-4xl">{row.processName}</h1>
-                  <p className="mt-2 text-sm text-slate-300 sm:text-base">
-                    {row.clientName ?? "Unmapped client"} · {row.branchName ?? "Unassigned branch"} · Cost centre {row.costCentreCode ?? "not mapped"}
-                  </p>
-                  <p className="mt-2 text-sm text-slate-400">
-                    Billing: {row.billingModels.length ? row.billingModels.join(" + ").replaceAll("_", " ") : "not configured"}
-                  </p>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-[0.16em] text-slate-400">Mandated seats</p><p className="mt-2 text-2xl font-black">{number(row.mandatedSeats)}</p></div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-[0.16em] text-slate-400">Active HC</p><p className="mt-2 text-2xl font-black">{number(row.activeHc)}</p></div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-[0.16em] text-slate-400">Delivery</p><p className="mt-2 text-2xl font-black">{percent(row.deliveryAttainmentPct)}</p></div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-[0.16em] text-slate-400">Last refreshed</p><p className="mt-2 text-lg font-bold">{date(row.freshness)}</p></div>
-                </div>
-              </div>
+      <div className="flex h-full flex-col">
+        {/* 48px slim header */}
+        <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => navigate(-1)}>
+              ← Back
+            </Button>
+            <span className="text-sm font-semibold">{row.processName}</span>
+            {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
+          </div>
+        </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-                <Card className="border-white/10 bg-white/5 text-white shadow-none">
-                  <CardContent className="p-5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Revenue realization</p>
-                    <div className="mt-4 space-y-2 text-sm">
-                      <div className="flex justify-between"><span className="text-slate-300">Potential</span><span className="font-bold">{currency(row.grossPotentialRevenue, true)}</span></div>
-                      <div className="flex justify-between"><span className="text-slate-300">Earned</span><span className="font-bold">{currency(row.earnedRevenue, true)}</span></div>
-                      <div className="flex justify-between"><span className="text-slate-300">Recognized</span><span className="font-bold text-emerald-200">{currency(row.recognizedRevenue, true)}</span></div>
-                      <div className="flex justify-between"><span className="text-slate-300">Collected</span><span className="font-bold text-sky-200">{currency(row.collectedRevenue, true)}</span></div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-white/10 bg-white/5 text-white shadow-none">
-                  <CardContent className="p-5">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Budget control</p>
-                    <p className={`mt-3 text-3xl font-black ${row.availableBudget >= 0 ? "text-emerald-200" : "text-rose-200"}`}>{currency(row.availableBudget, true)}</p>
-                    <p className="mt-2 text-xs text-slate-300">Available after {currency(row.reservedBudget, true)} reserved and {currency(row.consumedBudget, true)} consumed</p>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-          </section>
-
+        <div className="flex-1 space-y-4 overflow-auto px-4 py-4">
           <PnlExecutiveKpiStrip items={kpiItems} />
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-            <TabsList className="h-auto flex-wrap justify-start rounded-2xl bg-white p-1 shadow-sm">
-              <TabsTrigger value="statement">P&amp;L statement</TabsTrigger>
-              <TabsTrigger value="revenue">Revenue engine</TabsTrigger>
-              <TabsTrigger value="costs">Agent / DSC / BMC</TabsTrigger>
-              <TabsTrigger value="grn-budget">GRN &amp; budget</TabsTrigger>
-              <TabsTrigger value="ledger">Ledger</TabsTrigger>
-              <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+            <TabsList className="mx-0 h-8">
+              <TabsTrigger value="statement" className="h-7 text-xs">P&amp;L statement</TabsTrigger>
+              <TabsTrigger value="revenue" className="h-7 text-xs">Revenue</TabsTrigger>
+              <TabsTrigger value="costs" className="h-7 text-xs">Costs</TabsTrigger>
+              <TabsTrigger value="grn-budget" className="h-7 text-xs">GRN &amp; budget</TabsTrigger>
+              <TabsTrigger value="ledger" className="h-7 text-xs">Ledger</TabsTrigger>
+              <TabsTrigger value="reconciliation" className="h-7 text-xs">Reconciliation</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="statement" className="space-y-5">
-              <div className="grid gap-5 xl:grid-cols-3">
-                <StatementCard title="Commercial revenue statement" icon={<Banknote className="h-4 w-4 text-emerald-600" />}>
-                  <MetricRow label="Gross potential revenue" value={currency(row.grossPotentialRevenue)} />
-                  <MetricRow label="Base earned revenue" value={currency(row.baseEarnedRevenue)} />
-                  <MetricRow label="Minimum commitment top-up" value={currency(row.minimumCommitmentTopUp)} />
-                  <MetricRow label="Incentives, rewards & other additions" value={currency(row.incentiveRevenue + row.rewardRevenue + row.trainingRevenue + row.otherRevenueIncrease)} tone="text-emerald-700" />
-                  <MetricRow label="Penalties, SLA & credit notes" value={currency(row.penalty + row.slaDeduction + row.creditNote + row.otherRevenueDecrease)} tone="text-rose-700" />
-                  <MetricRow label="Net earned revenue" value={currency(row.earnedRevenue)} />
-                  <MetricRow label="Recognized revenue" value={currency(row.recognizedRevenue)} tone="text-emerald-700" />
-                  <MetricRow label="Invoiced revenue" value={currency(row.invoicedRevenue)} />
-                  <MetricRow label="Collected revenue" value={currency(row.collectedRevenue)} tone="text-sky-700" />
-                  <MetricRow label="Outstanding receivable" value={currency(row.outstandingReceivable)} tone="text-rose-700" />
-                  <MetricRow label="Unbilled revenue" value={currency(row.unbilledRevenue)} tone="text-amber-700" />
-                </StatementCard>
+            {/* ── STATEMENT TAB ── */}
+            <TabsContent value="statement" className="space-y-3">
+              <div className="grid gap-3 xl:grid-cols-3">
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Commercial revenue statement</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Gross potential revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.grossPotentialRevenue)}</dd>
+                    <dt className="text-slate-500">Base earned revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.baseEarnedRevenue)}</dd>
+                    <dt className="text-slate-500">Minimum commitment top-up</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.minimumCommitmentTopUp)}</dd>
+                    <dt className="text-slate-500">Incentives, rewards &amp; other additions</dt>
+                    <dd className="text-right font-medium text-emerald-700">{currency(row.incentiveRevenue + row.rewardRevenue + row.trainingRevenue + row.otherRevenueIncrease)}</dd>
+                    <dt className="text-slate-500">Penalties, SLA &amp; credit notes</dt>
+                    <dd className="text-right font-medium text-rose-700">{currency(row.penalty + row.slaDeduction + row.creditNote + row.otherRevenueDecrease)}</dd>
+                    <dt className="text-slate-500">Net earned revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.earnedRevenue)}</dd>
+                    <dt className="text-slate-500">Recognized revenue</dt>
+                    <dd className="text-right font-medium text-emerald-700">{currency(row.recognizedRevenue)}</dd>
+                    <dt className="text-slate-500">Invoiced revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.invoicedRevenue)}</dd>
+                    <dt className="text-slate-500">Collected revenue</dt>
+                    <dd className="text-right font-medium text-sky-700">{currency(row.collectedRevenue)}</dd>
+                    <dt className="text-slate-500">Outstanding receivable</dt>
+                    <dd className="text-right font-medium text-rose-700">{currency(row.outstandingReceivable)}</dd>
+                    <dt className="text-slate-500">Unbilled revenue</dt>
+                    <dd className="text-right font-medium text-amber-700">{currency(row.unbilledRevenue)}</dd>
+                  </dl>
+                </section>
 
-                <StatementCard title="Cost of service statement" icon={<UsersRound className="h-4 w-4 text-amber-600" />}>
-                  <MetricRow label="Agent salary" value={currency(row.agentSalary)} />
-                  <MetricRow label="Agent salary / revenue" value={percent(row.agentSalaryPctRevenue)} />
-                  <MetricRow label="DSC people" value={currency(row.dscPeople)} />
-                  <MetricRow label="DSC non-people" value={currency(row.dscNonPeople)} />
-                  <MetricRow label="Total DSC" value={currency(row.dsc)} />
-                  <MetricRow label="DSC / revenue" value={percent(row.dscPctRevenue)} />
-                  <MetricRow label="BMC people allocation" value={currency(row.bmcPeople)} />
-                  <MetricRow label="BMC non-people allocation" value={currency(row.bmcNonPeople)} />
-                  <MetricRow label="Total BMC" value={currency(row.bmc)} />
-                  <MetricRow label="BMC / revenue" value={percent(row.bmcPctRevenue)} />
-                  <MetricRow label="GRN/vendor actual" value={currency(row.grnVendorActual)} tone="text-amber-800" />
-                  <MetricRow label="Total people cost / revenue" value={percent(row.peopleCostPctRevenue)} />
-                </StatementCard>
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Cost of service statement</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Agent salary</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.agentSalary)}</dd>
+                    <dt className="text-slate-500">Agent salary / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.agentSalaryPctRevenue)}</dd>
+                    <dt className="text-slate-500">DSC people</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dscPeople)}</dd>
+                    <dt className="text-slate-500">DSC non-people</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dscNonPeople)}</dd>
+                    <dt className="text-slate-500">Total DSC</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dsc)}</dd>
+                    <dt className="text-slate-500">DSC / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.dscPctRevenue)}</dd>
+                    <dt className="text-slate-500">BMC people allocation</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmcPeople)}</dd>
+                    <dt className="text-slate-500">BMC non-people allocation</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmcNonPeople)}</dd>
+                    <dt className="text-slate-500">Total BMC</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmc)}</dd>
+                    <dt className="text-slate-500">BMC / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.bmcPctRevenue)}</dd>
+                    <dt className="text-slate-500">GRN/vendor actual</dt>
+                    <dd className="text-right font-medium text-amber-800">{currency(row.grnVendorActual)}</dd>
+                    <dt className="text-slate-500">Total people cost / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.peopleCostPctRevenue)}</dd>
+                  </dl>
+                </section>
 
-                <StatementCard title="Profitability waterfall" icon={<Gauge className="h-4 w-4 text-violet-600" />}>
-                  <MetricRow label="Contribution" value={currency(row.contribution)} tone={moneyTone(row.contribution)} />
-                  <MetricRow label="Contribution margin" value={percent(row.contributionMarginPct)} />
-                  <MetricRow label="EBITDA" value={currency(row.ebitda)} tone={moneyTone(row.ebitda)} />
-                  <MetricRow label="EBITDA margin" value={percent(row.ebitdaMarginPct)} tone={moneyTone(row.ebitdaMarginPct ?? 0)} />
-                  <MetricRow label="Depreciation" value={currency(row.depreciation)} />
-                  <MetricRow label="Amortization" value={currency(row.amortization)} />
-                  <MetricRow label="EBIT / Operating profit" value={currency(row.ebit)} tone={moneyTone(row.ebit)} />
-                  <MetricRow label="Operating profit margin" value={percent(row.operatingProfitPct)} />
-                  <MetricRow label="Finance cost" value={currency(row.financeCost)} />
-                  <MetricRow label="PBT" value={currency(row.pbt)} tone={moneyTone(row.pbt)} />
-                  <MetricRow label="Tax" value={currency(row.tax)} />
-                  <MetricRow label="PAT" value={currency(row.pat)} tone={moneyTone(row.pat)} />
-                </StatementCard>
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Profitability waterfall</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Contribution</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.contribution)}`}>{currency(row.contribution)}</dd>
+                    <dt className="text-slate-500">Contribution margin</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.contributionMarginPct)}</dd>
+                    <dt className="text-slate-500">EBITDA</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.ebitda)}`}>{currency(row.ebitda)}</dd>
+                    <dt className="text-slate-500">EBITDA margin</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.ebitdaMarginPct ?? 0)}`}>{percent(row.ebitdaMarginPct)}</dd>
+                    <dt className="text-slate-500">Depreciation</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.depreciation)}</dd>
+                    <dt className="text-slate-500">Amortization</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.amortization)}</dd>
+                    <dt className="text-slate-500">EBIT / Operating profit</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.ebit)}`}>{currency(row.ebit)}</dd>
+                    <dt className="text-slate-500">Operating profit margin</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.operatingProfitPct)}</dd>
+                    <dt className="text-slate-500">Finance cost</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.financeCost)}</dd>
+                    <dt className="text-slate-500">PBT</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.pbt)}`}>{currency(row.pbt)}</dd>
+                    <dt className="text-slate-500">Tax</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.tax)}</dd>
+                    <dt className="text-slate-500">PAT</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.pat)}`}>{currency(row.pat)}</dd>
+                  </dl>
+                </section>
               </div>
 
-              <div className="grid gap-5 xl:grid-cols-2">
-                <StatementCard title="Delivery and workforce productivity" icon={<BriefcaseBusiness className="h-4 w-4 text-sky-600" />}>
-                  <div className="grid gap-x-8 md:grid-cols-2">
-                    <div>
-                      <MetricRow label="Mandated seats" value={number(row.mandatedSeats)} />
-                      <MetricRow label="Required productive HC" value={number(row.requiredProductiveHc)} />
-                      <MetricRow label="Required roster HC" value={number(row.requiredRosterHc)} />
-                      <MetricRow label="Active HC" value={number(row.activeHc)} />
-                      <MetricRow label="Agent HC" value={number(row.agentHeadcount)} />
-                      <MetricRow label="Support HC" value={number(row.supportHeadcount)} />
-                    </div>
-                    <div>
-                      <MetricRow label="Planned delivery units" value={number(row.plannedDeliveryUnits)} />
-                      <MetricRow label="Delivered units" value={number(row.deliveredUnits)} />
-                      <MetricRow label="Accepted units" value={number(row.acceptedUnits)} />
-                      <MetricRow label="Billable units" value={number(row.billableUnits)} />
-                      <MetricRow label="Delivery attainment" value={percent(row.deliveryAttainmentPct)} />
-                      <MetricRow label="Acceptance rate" value={percent(row.acceptancePct)} />
-                    </div>
-                  </div>
-                </StatementCard>
+              <div className="grid gap-3 xl:grid-cols-2">
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery and workforce productivity</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Mandated seats</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.mandatedSeats)}</dd>
+                    <dt className="text-slate-500">Required productive HC</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.requiredProductiveHc)}</dd>
+                    <dt className="text-slate-500">Required roster HC</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.requiredRosterHc)}</dd>
+                    <dt className="text-slate-500">Active HC</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.activeHc)}</dd>
+                    <dt className="text-slate-500">Agent HC</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.agentHeadcount)}</dd>
+                    <dt className="text-slate-500">Support HC</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.supportHeadcount)}</dd>
+                    <dt className="text-slate-500">Planned delivery units</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.plannedDeliveryUnits)}</dd>
+                    <dt className="text-slate-500">Delivered units</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.deliveredUnits)}</dd>
+                    <dt className="text-slate-500">Accepted units</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.acceptedUnits)}</dd>
+                    <dt className="text-slate-500">Billable units</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.billableUnits)}</dd>
+                    <dt className="text-slate-500">Delivery attainment</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.deliveryAttainmentPct)}</dd>
+                    <dt className="text-slate-500">Acceptance rate</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.acceptancePct)}</dd>
+                  </dl>
+                </section>
 
-                <StatementCard title="Unit economics" icon={<BadgeIndianRupee className="h-4 w-4 text-indigo-600" />}>
-                  <div className="grid gap-x-8 md:grid-cols-2">
-                    <div>
-                      <MetricRow label="Average agent salary" value={currency(row.averageAgentSalary)} />
-                      <MetricRow label="Revenue per agent" value={currency(row.revenuePerAgent)} />
-                      <MetricRow label="Revenue per active employee" value={currency(row.revenuePerActiveEmployee)} />
-                    </div>
-                    <div>
-                      <MetricRow label="Revenue per contracted seat" value={currency(row.revenuePerContractedSeat)} />
-                      <MetricRow label="Loaded cost per billable seat" value={currency(row.loadedCostPerBillableSeat)} />
-                      <MetricRow label="Total cost / revenue" value={percent(row.totalCostPctRevenue)} />
-                    </div>
-                  </div>
-                </StatementCard>
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Unit economics</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Average agent salary</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.averageAgentSalary)}</dd>
+                    <dt className="text-slate-500">Revenue per agent</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.revenuePerAgent)}</dd>
+                    <dt className="text-slate-500">Revenue per active employee</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.revenuePerActiveEmployee)}</dd>
+                    <dt className="text-slate-500">Revenue per contracted seat</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.revenuePerContractedSeat)}</dd>
+                    <dt className="text-slate-500">Loaded cost per billable seat</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.loadedCostPerBillableSeat)}</dd>
+                    <dt className="text-slate-500">Total cost / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.totalCostPctRevenue)}</dd>
+                  </dl>
+                </section>
               </div>
             </TabsContent>
 
-            <TabsContent value="revenue" className="space-y-5">
-              <div className="grid gap-5 xl:grid-cols-2">
-                <StatementCard title="Approved billing rules" icon={<CircleDollarSign className="h-4 w-4 text-emerald-600" />}>
+            {/* ── REVENUE TAB ── */}
+            <TabsContent value="revenue" className="space-y-3">
+              <div className="grid gap-3 xl:grid-cols-2">
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Approved billing rules</h3>
                   <DataTable
                     columns={[
                       { key: "rule_name", label: "Rule" },
@@ -363,9 +331,10 @@ export default function ProcessPnlDetailPage() {
                     ]}
                     rows={detail.revenueRules}
                   />
-                </StatementCard>
+                </section>
 
-                <StatementCard title="Delivery actuals" icon={<FileSpreadsheet className="h-4 w-4 text-sky-600" />}>
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery actuals</h3>
                   <DataTable
                     columns={[
                       { key: "metric_key", label: "Metric" },
@@ -377,10 +346,11 @@ export default function ProcessPnlDetailPage() {
                     ]}
                     rows={detail.deliveryActuals}
                   />
-                </StatementCard>
+                </section>
               </div>
 
-              <StatementCard title="Revenue additions and deductions" icon={<ReceiptIndianRupee className="h-4 w-4 text-violet-600" />}>
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Revenue additions and deductions</h3>
                 <DataTable
                   columns={[
                     { key: "component_type", label: "Component", formatter: (value) => String(value ?? "").replaceAll("_", " ") },
@@ -393,10 +363,11 @@ export default function ProcessPnlDetailPage() {
                   ]}
                   rows={detail.revenueComponents}
                 />
-              </StatementCard>
+              </section>
 
-              <StatementCard title="Client invoice register" icon={<Banknote className="h-4 w-4 text-emerald-600" />}>
-                {revenueQuery.isLoading ? <Skeleton className="h-64 rounded-2xl" /> : (
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Client invoice register</h3>
+                {revenueQuery.isLoading ? <Skeleton className="h-48 rounded-lg" /> : (
                   <DataTable
                     columns={[
                       { key: "invoice_number", label: "Invoice" },
@@ -409,34 +380,60 @@ export default function ProcessPnlDetailPage() {
                     rows={revenueQuery.data?.invoices ?? []}
                   />
                 )}
-              </StatementCard>
+              </section>
             </TabsContent>
 
-            <TabsContent value="costs" className="space-y-5">
-              <div className="grid gap-5 xl:grid-cols-3">
-                <StatementCard title="Agent salary" icon={<UsersRound className="h-4 w-4 text-emerald-600" />}>
-                  <MetricRow label="Agent headcount" value={number(row.agentHeadcount)} />
-                  <MetricRow label="Agent salary" value={currency(row.agentSalary)} />
-                  <MetricRow label="Average agent salary" value={currency(row.averageAgentSalary)} />
-                  <MetricRow label="Salary / revenue" value={percent(row.agentSalaryPctRevenue)} />
-                </StatementCard>
-                <StatementCard title="Direct Service Cost" icon={<BriefcaseBusiness className="h-4 w-4 text-amber-600" />}>
-                  <MetricRow label="Support headcount" value={number(row.supportHeadcount)} />
-                  <MetricRow label="DSC people" value={currency(row.dscPeople)} />
-                  <MetricRow label="DSC non-people" value={currency(row.dscNonPeople)} />
-                  <MetricRow label="Total DSC" value={currency(row.dsc)} />
-                  <MetricRow label="DSC / revenue" value={percent(row.dscPctRevenue)} />
-                </StatementCard>
-                <StatementCard title="Branch Management Cost" icon={<Building2 className="h-4 w-4 text-indigo-600" />}>
-                  <MetricRow label="Shared people allocation" value={currency(row.bmcPeople)} />
-                  <MetricRow label="Shared non-people allocation" value={currency(row.bmcNonPeople)} />
-                  <MetricRow label="Total BMC" value={currency(row.bmc)} />
-                  <MetricRow label="BMC / revenue" value={percent(row.bmcPctRevenue)} />
-                </StatementCard>
+            {/* ── COSTS TAB ── */}
+            <TabsContent value="costs" className="space-y-3">
+              <div className="grid gap-3 xl:grid-cols-3">
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Agent salary</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Agent headcount</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.agentHeadcount)}</dd>
+                    <dt className="text-slate-500">Agent salary</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.agentSalary)}</dd>
+                    <dt className="text-slate-500">Average agent salary</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.averageAgentSalary)}</dd>
+                    <dt className="text-slate-500">Salary / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.agentSalaryPctRevenue)}</dd>
+                  </dl>
+                </section>
+
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Direct Service Cost</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Support headcount</dt>
+                    <dd className="text-right font-medium text-slate-900">{number(row.supportHeadcount)}</dd>
+                    <dt className="text-slate-500">DSC people</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dscPeople)}</dd>
+                    <dt className="text-slate-500">DSC non-people</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dscNonPeople)}</dd>
+                    <dt className="text-slate-500">Total DSC</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dsc)}</dd>
+                    <dt className="text-slate-500">DSC / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.dscPctRevenue)}</dd>
+                  </dl>
+                </section>
+
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Branch Management Cost</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Shared people allocation</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmcPeople)}</dd>
+                    <dt className="text-slate-500">Shared non-people allocation</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmcNonPeople)}</dd>
+                    <dt className="text-slate-500">Total BMC</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmc)}</dd>
+                    <dt className="text-slate-500">BMC / revenue</dt>
+                    <dd className="text-right font-medium text-slate-900">{percent(row.bmcPctRevenue)}</dd>
+                  </dl>
+                </section>
               </div>
 
-              <StatementCard title="Employee-level loaded payroll" icon={<UsersRound className="h-4 w-4 text-sky-600" />}>
-                {peopleCostQuery.isLoading ? <Skeleton className="h-80 rounded-2xl" /> : (
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Employee-level loaded payroll</h3>
+                {peopleCostQuery.isLoading ? <Skeleton className="h-64 rounded-lg" /> : (
                   <DataTable
                     columns={[
                       { key: "employee_code", label: "Employee code" },
@@ -451,11 +448,12 @@ export default function ProcessPnlDetailPage() {
                     rows={peopleCostQuery.data?.employees ?? []}
                   />
                 )}
-              </StatementCard>
+              </section>
 
-              <div className="grid gap-5 xl:grid-cols-2">
-                <StatementCard title="Direct expense and vendor ledger" icon={<ReceiptIndianRupee className="h-4 w-4 text-amber-600" />}>
-                  {directCostQuery.isLoading ? <Skeleton className="h-80 rounded-2xl" /> : (
+              <div className="grid gap-3 xl:grid-cols-2">
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Direct expense and vendor ledger</h3>
+                  {directCostQuery.isLoading ? <Skeleton className="h-64 rounded-lg" /> : (
                     <DataTable
                       columns={[
                         { key: "reference", label: "Reference" },
@@ -469,9 +467,11 @@ export default function ProcessPnlDetailPage() {
                       rows={directCostQuery.data?.expenses ?? []}
                     />
                   )}
-                </StatementCard>
-                <StatementCard title="BMC allocation pools" icon={<Building2 className="h-4 w-4 text-indigo-600" />}>
-                  {indirectQuery.isLoading ? <Skeleton className="h-80 rounded-2xl" /> : (
+                </section>
+
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">BMC allocation pools</h3>
+                  {indirectQuery.isLoading ? <Skeleton className="h-64 rounded-lg" /> : (
                     <DataTable
                       columns={[
                         { key: "category", label: "Head" },
@@ -483,30 +483,49 @@ export default function ProcessPnlDetailPage() {
                       rows={indirectQuery.data?.pools ?? []}
                     />
                   )}
-                </StatementCard>
+                </section>
               </div>
             </TabsContent>
 
-            <TabsContent value="grn-budget" className="space-y-5">
-              <div className="grid gap-5 xl:grid-cols-2">
-                <StatementCard title="Budget lifecycle" icon={<Gauge className="h-4 w-4 text-indigo-600" />}>
-                  <MetricRow label="Approved allocated budget" value={currency(row.approvedBudget)} />
-                  <MetricRow label="Reserved by approved/pending GRNs" value={currency(row.reservedBudget)} tone="text-amber-700" />
-                  <MetricRow label="Consumed by Finance-approved GRNs" value={currency(row.consumedBudget)} />
-                  <MetricRow label="Available balance" value={currency(row.availableBudget)} tone={moneyTone(row.availableBudget)} />
-                  <MetricRow label="Budget utilization" value={percent(row.budgetUtilizationPct)} tone={(row.budgetUtilizationPct ?? 0) > 100 ? "text-rose-700" : undefined} />
-                </StatementCard>
-                <StatementCard title="GRN/vendor impact" icon={<ReceiptIndianRupee className="h-4 w-4 text-amber-600" />}>
-                  <MetricRow label="GRN/vendor P&L actual" value={currency(row.grnVendorActual)} />
-                  <MetricRow label="DSC non-people" value={currency(row.dscNonPeople)} />
-                  <MetricRow label="BMC non-people allocation" value={currency(row.bmcNonPeople)} />
-                  <MetricRow label="Available budget after commitment" value={currency(row.availableBudget)} tone={moneyTone(row.availableBudget)} />
-                  <MetricRow label="EBITDA variance to target" value={row.ebitdaVariance == null ? "No EBITDA budget" : currency(row.ebitdaVariance)} tone={moneyTone(row.ebitdaVariance ?? 0)} />
-                </StatementCard>
+            {/* ── GRN & BUDGET TAB ── */}
+            <TabsContent value="grn-budget" className="space-y-3">
+              <div className="grid gap-3 xl:grid-cols-2">
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Budget lifecycle</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">Approved allocated budget</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.approvedBudget)}</dd>
+                    <dt className="text-slate-500">Reserved by approved/pending GRNs</dt>
+                    <dd className="text-right font-medium text-amber-700">{currency(row.reservedBudget)}</dd>
+                    <dt className="text-slate-500">Consumed by Finance-approved GRNs</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.consumedBudget)}</dd>
+                    <dt className="text-slate-500">Available balance</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.availableBudget)}`}>{currency(row.availableBudget)}</dd>
+                    <dt className="text-slate-500">Budget utilization</dt>
+                    <dd className={`text-right font-medium ${(row.budgetUtilizationPct ?? 0) > 100 ? "text-rose-700" : "text-slate-900"}`}>{percent(row.budgetUtilizationPct)}</dd>
+                  </dl>
+                </section>
+
+                <section className="rounded-lg border p-3">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">GRN/vendor impact</h3>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <dt className="text-slate-500">GRN/vendor P&amp;L actual</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.grnVendorActual)}</dd>
+                    <dt className="text-slate-500">DSC non-people</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.dscNonPeople)}</dd>
+                    <dt className="text-slate-500">BMC non-people allocation</dt>
+                    <dd className="text-right font-medium text-slate-900">{currency(row.bmcNonPeople)}</dd>
+                    <dt className="text-slate-500">Available budget after commitment</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.availableBudget)}`}>{currency(row.availableBudget)}</dd>
+                    <dt className="text-slate-500">EBITDA variance to target</dt>
+                    <dd className={`text-right font-medium ${moneyTone(row.ebitdaVariance ?? 0)}`}>{row.ebitdaVariance == null ? "No EBITDA budget" : currency(row.ebitdaVariance)}</dd>
+                  </dl>
+                </section>
               </div>
 
-              <StatementCard title="GRN and vendor expense detail" icon={<FileSpreadsheet className="h-4 w-4 text-sky-600" />}>
-                {directCostQuery.isLoading ? <Skeleton className="h-96 rounded-2xl" /> : (
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">GRN and vendor expense detail</h3>
+                {directCostQuery.isLoading ? <Skeleton className="h-80 rounded-lg" /> : (
                   <DataTable
                     columns={[
                       { key: "sourceType", label: "Source", formatter: (value) => String(value ?? "").replaceAll("_", " ") },
@@ -522,12 +541,14 @@ export default function ProcessPnlDetailPage() {
                     rows={directCostQuery.data?.expenses ?? []}
                   />
                 )}
-              </StatementCard>
+              </section>
             </TabsContent>
 
-            <TabsContent value="ledger" className="space-y-5">
-              <StatementCard title="Process P&L ledger" icon={<FileSpreadsheet className="h-4 w-4 text-slate-600" />}>
-                {ledgerQuery.isLoading ? <Skeleton className="h-[480px] rounded-2xl" /> : (
+            {/* ── LEDGER TAB ── */}
+            <TabsContent value="ledger" className="space-y-3">
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Process P&amp;L ledger</h3>
+                {ledgerQuery.isLoading ? <Skeleton className="h-96 rounded-lg" /> : (
                   <DataTable
                     columns={[
                       { key: "entryType", label: "Entry type", formatter: (value) => String(value ?? "").replaceAll("_", " ") },
@@ -540,33 +561,37 @@ export default function ProcessPnlDetailPage() {
                     rows={ledgerQuery.data?.entries ?? []}
                   />
                 )}
-              </StatementCard>
+              </section>
             </TabsContent>
 
-            <TabsContent value="reconciliation" className="space-y-5">
-              <StatementCard title="Finance reconciliation and controls" icon={<ShieldAlert className="h-4 w-4 text-rose-600" />}>
-                {reconciliationQuery.isLoading ? <Skeleton className="h-72 rounded-2xl" /> : (
-                  <div className="space-y-3">
+            {/* ── RECONCILIATION TAB ── */}
+            <TabsContent value="reconciliation" className="space-y-3">
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Finance reconciliation and controls</h3>
+                {reconciliationQuery.isLoading ? <Skeleton className="h-56 rounded-lg" /> : (
+                  <div className="space-y-2">
                     <div className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${statusTone(reconciliationQuery.data?.status ?? "pending")}`}>
                       {reconciliationQuery.data?.status ?? "pending"}
                     </div>
                     {(reconciliationQuery.data?.issues ?? []).map((issue) => (
-                      <div key={issue.code} className={`rounded-2xl border px-4 py-3 ${issue.severity === "critical" ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}>
-                        <div className="flex items-center gap-2 text-sm font-bold text-slate-950">
-                          {issue.severity === "critical" ? <ShieldAlert className="h-4 w-4 text-rose-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                      <div key={issue.code} className={`rounded-lg border px-3 py-2 ${issue.severity === "critical" ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}>
+                        <div className="flex items-center gap-2 text-xs font-bold text-slate-950">
+                          {issue.severity === "critical"
+                            ? <ShieldAlert className="h-3.5 w-3.5 text-rose-600" />
+                            : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
                           {issue.code.replaceAll("_", " ")}
                         </div>
-                        <p className="mt-1 text-sm text-slate-600">{issue.message}</p>
+                        <p className="mt-0.5 text-xs text-slate-600">{issue.message}</p>
                       </div>
                     ))}
                     {(reconciliationQuery.data?.issues ?? []).length === 0 && (
-                      <div className="flex items-center gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                        <CheckCircle2 className="h-4 w-4" /> All configured financial controls are reconciled for this process.
+                      <div className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> All configured financial controls are reconciled for this process.
                       </div>
                     )}
                   </div>
                 )}
-              </StatementCard>
+              </section>
             </TabsContent>
           </Tabs>
         </div>
