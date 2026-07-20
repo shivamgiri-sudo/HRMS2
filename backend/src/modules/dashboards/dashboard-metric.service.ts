@@ -221,7 +221,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
                (pan_number IS NOT NULL AND pan_number != '')
              THEN 1 ELSE 0 END) AS readyCount
        FROM employees
-       WHERE status = 'active' AND ${scopeSql}`,
+       WHERE employment_status = 'active' AND ${scopeSql}`,
       scopeParams
     );
 

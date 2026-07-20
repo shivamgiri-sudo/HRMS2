@@ -41,6 +41,8 @@ import {
   WalletCards,
 } from "lucide-react";
 import {
+  Bar,
+  BarChart,
   Cell,
   Line,
   LineChart,
@@ -48,6 +50,7 @@ import {
   PieChart,
   ResponsiveContainer,
   Tooltip,
+  XAxis,
 } from "recharts";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -653,11 +656,22 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   const systemMetrics = system?.metrics ?? {};
 
   // Quality variant derived values
-  const qualityData = qualitySummaryQuery.data?.data ?? qualitySummaryQuery.data ?? {};
-  const qualityAgents: any[] = qualityAgentsQuery.data?.data ?? qualityAgentsQuery.data ?? [];
+  // Bug fix: /api/quality-dashboard/summary returns { success, summary: {...} } not { success, data: {...} }
+  const qualityRaw = qualitySummaryQuery.data ?? {};
+  const qualityData = (qualityRaw as any).summary ?? (qualityRaw as any).data ?? qualityRaw;
+  // Bug fix: /api/quality-dashboard/agents returns { success, agents: [...] } not { success, data: [...] }
+  const qualityAgents: any[] = Array.isArray((qualityAgentsQuery.data as any)?.agents)
+    ? (qualityAgentsQuery.data as any).agents
+    : Array.isArray((qualityAgentsQuery.data as any)?.data)
+    ? (qualityAgentsQuery.data as any).data
+    : [];
   const qAvgScore = asNumber(qualityData.avg_quality_score ?? qualityData.avg_score ?? qualityData.average_score);
   const qTotalAudits = asNumber(qualityData.audited_calls ?? qualityData.total_audits ?? qualityData.audits_done);
-  const qFailRate = asNumber(qualityData.fail_rate ?? qualityData.failure_rate);
+  // Bug fix: no generic fail_rate field — compute average from parameter fail rates
+  const qFailRate = asNumber(qualityData.fail_rate ?? qualityData.failure_rate ??
+    (qualityData.fail_rate_call_open !== undefined
+      ? ((Number(qualityData.fail_rate_call_open ?? 0) + Number(qualityData.fail_rate_professionalism ?? 0) + Number(qualityData.fail_rate_active_listening ?? 0)) / 3)
+      : null));
   const qPendingQueue = asNumber(qualityData.pending_audits ?? qualityData.queue_size ?? qualityData.pending_count);
 
   // Operations variant derived values
@@ -667,26 +681,43 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   const opsAht = asNumber(opsPulse.avg_aht_seconds ?? opsPulse.avg_handle_time ?? opsPulse.aht);
   const opsAgentsLoggedIn = asNumber(opsPulse.agents_logged_in ?? opsPulse.agents_scheduled);
   const opsFlags: any[] = opsPulse.intervention_flags ?? [];
-  const opsVolumeTrend: any[] = opsPulse.volume_trend ?? [];
+  // Bug fix: volume_trend doesn't exist — fall back to shrinkage_breakdown as chart data
+  const opsShrinkageBreakdown: Record<string, unknown> = opsPulse.shrinkage_breakdown ?? {};
+  const opsVolumeTrend: any[] = Array.isArray(opsPulse.volume_trend) && (opsPulse.volume_trend as any[]).length > 0
+    ? opsPulse.volume_trend as any[]
+    : Object.keys(opsShrinkageBreakdown).length > 0
+    ? Object.entries(opsShrinkageBreakdown).map(([label, value]) => ({ label: label.charAt(0).toUpperCase() + label.slice(1), value: Number(value) }))
+    : [];
+  const opsChartIsShrinkage = !(Array.isArray(opsPulse.volume_trend) && (opsPulse.volume_trend as any[]).length > 0) && Object.keys(opsShrinkageBreakdown).length > 0;
 
   // Recruiter variant derived values
-  const atsWalkins = asNumber(ats.walkin_today ?? ats.today_walkins ?? (ats.by_stage as any)?.["walk_in"] ?? (ats.by_stage as any)?.["Walk In"]);
+  // Bug fix: walkin_today/today_walkins absent — use by_stage fallback
+  const atsWalkins = asNumber(ats.walkin_today ?? ats.today_walkins
+    ?? (ats.by_stage as any)?.["Walk In"] ?? (ats.by_stage as any)?.["walk_in"]
+    ?? (ats.by_stage as any)?.["Walkin"] ?? (ats.by_stage as any)?.["Walk-in"]);
   const atsOffersExtended = asNumber(ats.selected_candidates ?? ats.offers_extended);
   const atsJoined = asNumber(ats.joined ?? ats.converted ?? (ats.by_stage as any)?.["converted"] ?? (ats.by_stage as any)?.["onboarded"]);
-  const atsOpenPositions: any[] = ats.open_positions ?? ats.open_requisitions ?? [];
+  // Bug fix: open_positions is a number not an array — wrap in array for display
+  const atsOpenPositionsRaw = ats.open_positions ?? ats.open_requisitions;
+  const atsOpenPositions: any[] = Array.isArray(atsOpenPositionsRaw)
+    ? atsOpenPositionsRaw
+    : typeof atsOpenPositionsRaw === 'number' && Number(atsOpenPositionsRaw) > 0
+    ? [{ role: `${atsOpenPositionsRaw} open position${Number(atsOpenPositionsRaw) !== 1 ? 's' : ''}`, openings: atsOpenPositionsRaw, branch: '', department: '' }]
+    : [];
   const atsRecentCandidates: any[] = ats.recent_candidates ?? ats.pipeline ?? [];
 
   // WFM Attendance variant derived values
   const biometricOnLeave = asNumber(biometric.on_leave);
   const biometricWfh = asNumber(biometric.working_remotely);
-  const biometricNotMarked = asNumber(biometric.not_marked ?? biometric.not_marked_count);
+  // Bug fix: not_marked/not_marked_count don't exist — use missed_in as closest equivalent
+  const biometricNotMarked = asNumber(biometric.missed_in ?? biometric.not_marked ?? biometric.not_marked_count);
   const biometricRegSummary = biometric.regularization_summary ?? {};
   const biometricShiftSummary: any[] = biometric.shift_summary ?? [];
   const biometricVariance0_1 = asNumber(biometric.variance_0_1);
   const biometricVariance1_4 = asNumber(biometric.variance_1_4);
   const biometricVariance4Plus = asNumber(biometric.variance_4_plus);
 
-  // CEO quality data
+  // CEO quality data — Bug fix: fields are nested under metrics/risk_summary not top-level
   const ceoQualityData = ceoQualityQuery.data?.data ?? ceoQualityQuery.data ?? {};
 
   const cards = useMemo<CardMetric[]>(() => {
@@ -866,7 +897,7 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
         { name: "Absent", value: absent ?? 0 },
         { name: "On Leave", value: biometricOnLeave ?? 0 },
         { name: "WFH", value: biometricWfh ?? 0 },
-        { name: "Not Marked", value: biometricNotMarked ?? 0 },
+        { name: "Missed Punch", value: biometricNotMarked ?? 0 },
       ]
     : [
         { name: "Present", value: present ?? 0 },
@@ -950,7 +981,7 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
           </section>
 
           <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-            <SectionCard title={variant === "employee" ? "My Attendance This Month" : variant === "wfm" || variant === "wfm_attendance" ? "Live Attendance Status" : variant === "payroll" ? "Payroll Readiness" : variant === "hr" ? "HR Operations Snapshot" : variant === "manager" ? "Team Attendance" : variant === "super_admin" ? "Organisation Attendance" : variant === "quality" ? "Quality Score Trend" : variant === "operations" ? "Volume Trend" : variant === "recruiter" ? "Hiring Funnel" : "Workforce Overview"}>
+            <SectionCard title={variant === "employee" ? "My Attendance This Month" : variant === "wfm" || variant === "wfm_attendance" ? "Live Attendance Status" : variant === "payroll" ? "Payroll Readiness" : variant === "hr" ? "HR Operations Snapshot" : variant === "manager" ? "Team Attendance" : variant === "super_admin" ? "Organisation Attendance" : variant === "quality" ? "Quality Score Trend" : variant === "operations" ? (opsChartIsShrinkage ? "Shrinkage Breakdown" : "Volume Trend") : variant === "recruiter" ? "Hiring Funnel" : "Workforce Overview"}>
               {variant === "quality" ? (
                 <div className="h-48">
                   {qualitySummaryQuery.isLoading ? (
@@ -967,12 +998,20 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                 </div>
               ) : variant === "operations" ? (
                 <div className="h-48">
-                  {opsVolumeTrend.length > 1 ? (
+                  {opsVolumeTrend.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={opsVolumeTrend.map((p: any) => ({ label: p.period ?? p.hour ?? p.label, value: Number(p.volume ?? p.calls ?? p.value ?? 0) }))}>
-                        <Tooltip />
-                        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3 }} />
-                      </LineChart>
+                      {opsChartIsShrinkage ? (
+                        <BarChart data={opsVolumeTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                          <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                          <Tooltip />
+                          <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      ) : (
+                        <LineChart data={opsVolumeTrend.map((p: any) => ({ label: p.period ?? p.hour ?? p.label, value: Number(p.volume ?? p.calls ?? p.value ?? 0) }))}>
+                          <Tooltip />
+                          <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3 }} />
+                        </LineChart>
+                      )}
                     </ResponsiveContainer>
                   ) : (
                     <div className="flex h-full flex-col items-center justify-center text-slate-400">
@@ -1031,7 +1070,7 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                   { label: "Adherence %", value: asNumber(biometric.adherence_pct ?? attendanceRate), max: 100, tone: "green" },
                   { label: "Late %", value: asNumber(biometric.late_pct), max: 100, tone: "amber" },
                   { label: "Shrinkage %", value: asNumber(biometric.shrinkage_pct), max: 100, tone: "violet" },
-                  { label: "Absent count", value: asNumber(biometric.absent_count ?? absent), max: active ?? 100, tone: "red" },
+                  { label: "Absent count", value: asNumber(biometric.absent_days ?? biometric.absent_count ?? absent), max: active ?? 100, tone: "red" },
                 ]} />
               ) : variant === "payroll" ? (
                 <div className="space-y-3">
@@ -1063,8 +1102,8 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
               ) : variant === "hr" ? (
                 <div className="space-y-3">
                   {[
-                    { label: "Walk-ins today", value: asNumber(ats.walkin_today ?? ats.today_walkins), tone: "blue" as Tone },
-                    { label: "Screened", value: asNumber(ats.screened ?? ats.hr_screened), tone: "violet" as Tone },
+                    { label: "Walk-ins today", value: asNumber(ats.walkin_today ?? ats.today_walkins ?? (ats.by_stage as any)?.["Walk In"] ?? (ats.by_stage as any)?.["walk_in"] ?? (ats.by_stage as any)?.["Walkin"]), tone: "blue" as Tone },
+                    { label: "Screened", value: asNumber(ats.screened ?? ats.hr_screened ?? (ats.by_stage as any)?.["Screening"] ?? (ats.by_stage as any)?.["Screened"] ?? (ats.by_stage as any)?.["HR Screening"]), tone: "violet" as Tone },
                     { label: "Selected", value: asNumber(ats.selected_candidates ?? ats.total_selected), tone: "green" as Tone },
                     { label: "In onboarding", value: onbPending, tone: "amber" as Tone },
                   ].map(({ label, value, tone }) => (
@@ -1235,9 +1274,10 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                   <SectionCard title="Quality Overview — Last 30 Days" className="lg:col-span-2">
                     <div className="grid gap-3 sm:grid-cols-3 mb-4">
                       {[
-                        { label: "Org Quality Score", value: ceoQualityData.avg_quality !== undefined ? `${Number(ceoQualityData.avg_quality ?? 0).toFixed(1)}%` : "—", tone: "blue" as Tone },
-                        { label: "Quality Target", value: ceoQualityData.target !== undefined ? `${Number(ceoQualityData.target ?? 80).toFixed(0)}%` : "80%", tone: "green" as Tone },
-                        { label: "Risk Agents", value: ceoQualityData.risk_agents ?? ceoQualityData.agents_below_threshold ?? "—", tone: "red" as Tone },
+                        // Bug fix: fields are nested under ceoQualityData.metrics.* not top-level
+                        { label: "Org Quality Score", value: (() => { const v = ceoQualityData.metrics?.overall_quality_score ?? ceoQualityData.avg_quality; return v !== undefined ? `${Number(v).toFixed(1)}%` : "—"; })(), tone: "blue" as Tone },
+                        { label: "Quality Target", value: (() => { const v = ceoQualityData.metrics?.target_quality_score ?? ceoQualityData.target; return v !== undefined ? `${Number(v).toFixed(0)}%` : "80%"; })(), tone: "green" as Tone },
+                        { label: "Risk Agents", value: ceoQualityData.risk_summary?.critical_agents_count ?? ceoQualityData.risk_summary?.at_risk_agents_count ?? ceoQualityData.risk_agents ?? ceoQualityData.agents_below_threshold ?? "—", tone: "red" as Tone },
                       ].map(({ label, value, tone }) => (
                         <div key={label} className={cn("rounded-xl border p-4", toneStyles[tone].soft, toneStyles[tone].border)}>
                           <p className="text-xs font-bold text-slate-500">{label}</p>
@@ -1245,12 +1285,13 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                         </div>
                       ))}
                     </div>
-                    {Array.isArray(ceoQualityData.scorecard ?? ceoQualityData.processes) && (
+                    {/* Bug fix: backend key is process_performance not scorecard/processes */}
+                    {Array.isArray(ceoQualityData.process_performance ?? ceoQualityData.scorecard ?? ceoQualityData.processes) && (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead><tr className="border-b text-xs text-slate-400">{["Process", "Avg Score", "Status"].map(h => <th key={h} className="pb-2 text-left font-semibold">{h}</th>)}</tr></thead>
                           <tbody>
-                            {(ceoQualityData.scorecard ?? ceoQualityData.processes ?? []).slice(0, 5).map((r: any, i: number) => (
+                            {(ceoQualityData.process_performance ?? ceoQualityData.scorecard ?? ceoQualityData.processes ?? []).slice(0, 5).map((r: any, i: number) => (
                               <tr key={i} className="border-b last:border-0">
                                 <td className="py-2 font-medium text-slate-800">{r.process_name ?? r.process ?? "—"}</td>
                                 <td className="py-2 font-black text-slate-700">{Number(r.avg_score ?? r.quality ?? 0).toFixed(1)}%</td>
