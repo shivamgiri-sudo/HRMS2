@@ -37,6 +37,7 @@ function formatDateTime(value: string | null): string {
 }
 
 const DEBOUNCE_MS = 300;
+const ROSTER_PAGE_SIZE = 20;
 
 function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -61,10 +62,31 @@ export default function NativeCompanyFeedCreatorAccess() {
   const [pendingRevokeId, setPendingRevokeId] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<CompanyPostCreatorAccessRow | null>(null);
 
+  // Multi-select state for bulk grant
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  // Clear selection when a new search fires
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [debouncedSearch]);
+
+  // Roster pagination
+  const [rosterPage, setRosterPage] = useState(1);
+
   const activeCreatorIds = useMemo(
     () => new Set((creatorsQuery.data ?? []).map((row) => row.employee_id)),
     [creatorsQuery.data],
   );
+
+  const paginatedRoster = (creatorsQuery.data ?? []).slice(0, rosterPage * ROSTER_PAGE_SIZE);
+  const hasMoreRoster = (creatorsQuery.data ?? []).length > rosterPage * ROSTER_PAGE_SIZE;
 
   async function handleGrant(employeeId: string) {
     setPendingGrantId(employeeId);
@@ -179,36 +201,67 @@ export default function NativeCompanyFeedCreatorAccess() {
                       No matching employees found in your current scope.
                     </div>
                   ) : (
-                    (searchQuery.data ?? []).map((employee) => {
-                      const isGranted = activeCreatorIds.has(employee.id);
-                      const isThisPending = pendingGrantId === employee.id;
-                      return (
-                        <div
-                          key={employee.id}
-                          className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-slate-900">{employee.name}</p>
-                              <p className="mt-1 text-sm text-slate-500">{employee.employee_code}</p>
+                    <>
+                      {(searchQuery.data ?? []).map((employee) => {
+                        const isGranted = activeCreatorIds.has(employee.id);
+                        const isThisPending = pendingGrantId === employee.id;
+                        return (
+                          <div
+                            key={employee.id}
+                            className="flex items-center gap-2 rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4 py-1.5"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(employee.id)}
+                              onChange={() => toggleSelect(employee.id)}
+                              disabled={isGranted}
+                              className="h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <div className="flex flex-1 items-start justify-between gap-3 py-2">
+                              <div>
+                                <p className="font-semibold text-slate-900">{employee.name}</p>
+                                <p className="mt-1 text-sm text-slate-500">{employee.employee_code}</p>
+                              </div>
+                              <Button
+                                type="button"
+                                disabled={isGranted || isThisPending}
+                                className="rounded-xl"
+                                onClick={() => void handleGrant(employee.id)}
+                              >
+                                {isThisPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <UserPlus className="h-4 w-4" />
+                                )}
+                                {isGranted ? "Granted" : "Grant"}
+                              </Button>
                             </div>
-                            <Button
-                              type="button"
-                              disabled={isGranted || isThisPending}
-                              className="rounded-xl"
-                              onClick={() => void handleGrant(employee.id)}
-                            >
-                              {isThisPending ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <UserPlus className="h-4 w-4" />
-                              )}
-                              {isGranted ? "Granted" : "Grant"}
-                            </Button>
                           </div>
+                        );
+                      })}
+
+                      {selectedIds.size > 0 && (
+                        <div className="mt-2 flex justify-end border-t pt-2">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              Array.from(selectedIds).forEach(id =>
+                                grantMutation.mutate({ employeeId: id }),
+                              );
+                              setSelectedIds(new Set());
+                            }}
+                            disabled={grantMutation.isPending}
+                          >
+                            {grantMutation.isPending ? (
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <UserPlus className="mr-1.5 h-3.5 w-3.5" />
+                            )}
+                            Grant {selectedIds.size} selected
+                          </Button>
                         </div>
-                      );
-                    })
+                      )}
+                    </>
                   )}
                 </div>
               ) : !searchQuery.isLoading ? (
@@ -265,7 +318,7 @@ export default function NativeCompanyFeedCreatorAccess() {
 
               {!creatorsQuery.isLoading && !creatorsQuery.isError ? (
                 <div className="space-y-4">
-                  {(creatorsQuery.data ?? []).map((row) => {
+                  {paginatedRoster.map((row) => {
                     const isThisPending = pendingRevokeId === row.employee_id;
                     const displayName = row.employee_name ?? row.employee_code ?? row.employee_id;
                     return (
@@ -307,6 +360,17 @@ export default function NativeCompanyFeedCreatorAccess() {
                       </div>
                     );
                   })}
+
+                  {hasMoreRoster && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-xs mt-2"
+                      onClick={() => setRosterPage(p => p + 1)}
+                    >
+                      Show more ({(creatorsQuery.data ?? []).length - paginatedRoster.length} remaining)
+                    </Button>
+                  )}
                 </div>
               ) : null}
             </CardContent>
