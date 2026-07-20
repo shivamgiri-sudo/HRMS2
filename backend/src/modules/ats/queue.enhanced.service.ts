@@ -501,3 +501,64 @@ export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Pr
 
   return rows as OpsRoundEntry[];
 }
+
+// ── Public Ops Board (no auth — branch-filtered walk-in scores) ───────────────
+
+export interface OpsBoardEntry {
+  candidate_code: string;
+  candidate_name: string;
+  current_stage: string;
+  applied_role: string | null;
+  skilltest_result: string | null;
+  assessment_percentage: number | null;
+  typing_net_wpm: number | null;
+  typing_accuracy: number | null;
+  arrived_at: string | null;
+}
+
+export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBoardEntry[]> {
+  const targetDate = date || getIstDateString();
+  const conditions: string[] = [
+    `c.current_stage IN ('Operations Interview', "Round 2- Op's", 'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test')`,
+    `DATE(COALESCE(isub.arrived_at, c.created_at)) = ?`,
+  ];
+  const params: unknown[] = [targetDate];
+
+  if (branch) {
+    conditions.push(
+      `COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,'')) = ?`
+    );
+    params.push(branch);
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+      c.candidate_code,
+      c.full_name                                                                          AS candidate_name,
+      c.current_stage,
+      COALESCE(NULLIF(c.role_applied,''), NULLIF(pm.process_name,''), NULLIF(c.applied_for_process,'')) AS applied_role,
+      c.skilltest_result,
+      scores.assessment_percentage,
+      scores.typing_net_wpm,
+      scores.typing_accuracy,
+      COALESCE(isub.arrived_at, c.created_at)                                             AS arrived_at
+    FROM ats_candidate c
+    LEFT JOIN ats_interview_submission isub ON isub.candidate_id = c.id
+    LEFT JOIN process_master pm            ON pm.id = c.applied_for_process
+    LEFT JOIN branch_master bm             ON bm.id = c.applied_for_branch
+    LEFT JOIN (
+      SELECT aca.candidate_id,
+             MAX(aca.percentage)           AS assessment_percentage,
+             MAX(ata.net_wpm)              AS typing_net_wpm,
+             MAX(ata.accuracy_percentage)  AS typing_accuracy
+      FROM ats_candidate_assessment aca
+      LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
+      GROUP BY aca.candidate_id
+    ) scores ON scores.candidate_id = c.id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY COALESCE(isub.arrived_at, c.created_at) ASC`,
+    params
+  );
+
+  return rows as OpsBoardEntry[];
+}

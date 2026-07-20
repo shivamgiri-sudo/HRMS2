@@ -15,6 +15,7 @@ import {
   getQueuePosition,
   cleanupStaleInterviews,
   getOpsRoundQueue,
+  getOpsBoard,
   type QueueFilters,
 } from './queue.enhanced.service.js';
 
@@ -102,6 +103,18 @@ queuePublicRouter.get('/public-display', h(async (req: Request, res: Response) =
     const branch = req.query.branch as string | undefined;
     const date = req.query.date as string | undefined;
     const data = await loadPublicDisplay(branch, date);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
+
+// Public ops board — no auth; returns today's walk-in candidates with scores (no PII beyond name+code)
+queuePublicRouter.get('/ops-board', h(async (req: Request, res: Response) => {
+  try {
+    const branch = req.query.branch as string | undefined;
+    const date = req.query.date as string | undefined;
+    const data = await getOpsBoard(branch, date);
     return res.json({ success: true, data });
   } catch (error: unknown) {
     return res.status(500).json({ success: false, message: getErrorMessage(error) });

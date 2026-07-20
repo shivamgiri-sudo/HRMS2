@@ -24,6 +24,7 @@ const NativeATSCandidateRegistration = lazy(() => import("@/pages/NativeATSCandi
 
 const BreakDesk            = lazy(() => import("@/pages/BreakDesk"));
 const WaitingRoomDisplay   = lazy(() => import("@/pages/WaitingRoomDisplay"));
+const OpsBoard             = lazy(() => import("@/pages/OpsBoard"));
 const CandidatePortalLogin = lazy(() => import("@/pages/CandidatePortalLogin"));
 const CandidatePortalDashboard = lazy(() => import("@/pages/CandidatePortalDashboard"));
 const PortalLogin          = lazy(() => import("@/pages/portal/PortalLogin"));
@@ -77,6 +78,7 @@ export const publicRouteElements = (
       {/* Kiosk displays — intentionally public (wall-mounted screens) */}
       <Route path="/break-desk"           element={<BreakDeskErrorBoundary><BreakDesk /></BreakDeskErrorBoundary>} />
       <Route path="/display/waiting-room" element={<WaitingRoomDisplay />} />
+      <Route path="/display/ops-board"    element={<OpsBoard />} />
 
       {/* Token-gated document review flows (token in URL, no session required) */}
       <Route path="/employee/joining-documents/esign/:token" element={<EmployeeDocumentEsignReviewPage />} />
