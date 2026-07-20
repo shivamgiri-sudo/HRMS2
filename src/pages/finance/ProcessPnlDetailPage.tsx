@@ -204,7 +204,9 @@ export default function ProcessPnlDetailPage() {
                 </section>
 
                 <section className="rounded-lg border p-3">
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Cost of service statement</h3>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Cost of service statement · Agent / DSC / BMC
+                  </h3>
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
                     <dt className="text-slate-500">Agent salary</dt>
                     <dd className="text-right font-medium text-slate-900">{currency(row.agentSalary)}</dd>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -104,7 +104,10 @@ export default function ProcessPnlPage() {
     <DashboardLayout>
       <div className="flex h-full flex-col">
         {/* Slim header */}
-        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
+        <div
+          className="flex items-center justify-between border-b px-4 h-12 shrink-0"
+          aria-label="Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT"
+        >
           <h1 className="text-sm font-semibold">Process P&amp;L</h1>
           <div className="flex items-center gap-3">
             {summary && (
@@ -121,6 +124,9 @@ export default function ProcessPnlPage() {
             )}
             <Button size="sm" variant="outline" onClick={() => void downloadBpoPnlExport(filters)}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export
+            </Button>
+            <Button size="sm" variant="outline" asChild>
+              <Link to={`/finance/branch-budget?period=${period}`}>Branch budget</Link>
             </Button>
           </div>
         </div>
