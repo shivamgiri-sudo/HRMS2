@@ -125,13 +125,7 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       qt.interview_started_at,
       qt.interview_completed_at,
       qt.estimated_wait_time,
-      (
-        SELECT COUNT(*) + 1
-        FROM ats_queue_token qt2
-        WHERE ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
-          AND DATE(${queueTimeExpr('qt2')}) = DATE(${queueTimeExpr('qt')})
-          AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
-      ) as position_in_queue,
+      0 as position_in_queue,
       c.skilltest_typing,
       c.skilltest_ai,
       c.skilltest_result,
@@ -169,7 +163,14 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
     params
   );
 
-  return rows as QueueEntry[];
+  // Assign position_in_queue in JS — the query is already sorted by arrival_time ASC
+  // so array index + 1 gives the correct queue position. This is O(N) vs the O(N²)
+  // correlated subquery it replaces.
+  const ranked = (rows as QueueEntry[]).map((row, index) => ({
+    ...row,
+    position_in_queue: index + 1,
+  }));
+  return ranked;
 }
 
 /**
@@ -352,14 +353,7 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
       qt.interview_started_at,
       qt.interview_completed_at,
       qt.estimated_wait_time,
-      (
-        SELECT COUNT(*) + 1
-        FROM ats_queue_token qt2
-        WHERE COALESCE(qt2.recruiter_id, qt2.assigned_recruiter_id) = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
-          AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
-          AND ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
-          AND DATE(${queueTimeExpr('qt2')}) = CURDATE()
-      ) as position_in_queue
+      0 as position_in_queue
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
     LEFT JOIN process_master pm ON pm.id = c.applied_for_process
@@ -376,7 +370,14 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
     [recruiterId]
   );
 
-  return rows as QueueEntry[];
+  // Assign position_in_queue in JS — the query is already sorted by arrival_time ASC
+  // so array index + 1 gives the correct queue position. This is O(N) vs the O(N²)
+  // correlated subquery it replaces.
+  const ranked = (rows as QueueEntry[]).map((row, index) => ({
+    ...row,
+    position_in_queue: index + 1,
+  }));
+  return ranked;
 }
 
 /**
