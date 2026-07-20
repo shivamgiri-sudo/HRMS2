@@ -81,6 +81,33 @@ describe("application shell routing contracts", () => {
     }
   });
 
+  it("keeps restored legacy workspaces inside the shared HRMS shell", () => {
+    const shellRequiredRoutes = [
+      "/ats/name-consistency",
+      "/ats/reconciliation",
+      "/ats/bgv-enhanced",
+      "/wfm/mismatch-queue",
+      "/attendance/billing-config",
+      "/my-kpi",
+      "/salary-increment",
+      "/peopleos/copilot",
+      "/customization",
+    ];
+
+    for (const path of shellRequiredRoutes) {
+      const routeIndex = routeSource.indexOf(`path="${path}"`);
+      expect(routeIndex).toBeGreaterThanOrEqual(0);
+      expect(routeSource.slice(routeIndex, routeIndex + 600)).toContain("<DashboardLayout>");
+    }
+  });
+
+  it("does not use empty values in vendor Select items", () => {
+    const vendorSource = read("src/pages/NativeVendorManagement.tsx");
+
+    expect(vendorSource).toContain('<SelectItem value="_all">All types</SelectItem>');
+    expect(vendorSource).not.toContain('<SelectItem value="">');
+  });
+
   it("keeps only intentional public, redirect, detail, and legacy routes outside navigation", () => {
     const intentionallyNonSidebarRoutes = new Set([
       "/",

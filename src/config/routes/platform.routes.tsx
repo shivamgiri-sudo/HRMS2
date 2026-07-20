@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { Route, Navigate } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -129,12 +130,12 @@ export const platformRouteElements = (
 
       {/* AI / Copilot */}
       <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
-      <Route path="/peopleos/copilot"            element={<ProtectedRoute><PeopleOSCopilot /></ProtectedRoute>} />
+      <Route path="/peopleos/copilot"            element={<ProtectedRoute><DashboardLayout><PeopleOSCopilot /></DashboardLayout></ProtectedRoute>} />
 
       {/* Customization */}
-      <Route path="/customization"               element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationManager /></Gate></ProtectedRoute>} />
-      <Route path="/customization/new"           element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
-      <Route path="/customization/:id/edit"      element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><NativeCustomizationRuleEditor /></Gate></ProtectedRoute>} />
+      <Route path="/customization"               element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><DashboardLayout><NativeCustomizationManager /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/customization/new"           element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><DashboardLayout><NativeCustomizationRuleEditor /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/customization/:id/edit"      element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><DashboardLayout><NativeCustomizationRuleEditor /></DashboardLayout></Gate></ProtectedRoute>} />
 
       {/* Portal data */}
       <Route path="/portal-data-manager"         element={<ProtectedRoute><Gate pageCode="PORTAL_DATA_MANAGER"><NativePortalDataManager /></Gate></ProtectedRoute>} />

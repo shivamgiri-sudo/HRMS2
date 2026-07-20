@@ -152,12 +152,15 @@ export default function NativeVendorManagement() {
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            <Select value={filterType} onValueChange={setFilterType}>
+            <Select
+              value={filterType || "_all"}
+              onValueChange={(value) => setFilterType(value === "_all" ? "" : value)}
+            >
               <SelectTrigger className="h-7 w-36 text-xs">
                 <SelectValue placeholder="All types" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All types</SelectItem>
+                <SelectItem value="_all">All types</SelectItem>
                 {Object.entries(VENDOR_TYPE_LABELS).map(([v, l]) => (
                   <SelectItem key={v} value={v}>{l}</SelectItem>
                 ))}

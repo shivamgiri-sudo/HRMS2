@@ -1,4 +1,5 @@
 import { Route, Navigate } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -62,7 +63,7 @@ export const performanceRouteElements = (
       <Route path="/kpi-config"   element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
       <Route path="/operations-kpi" element={<ProtectedRoute><Gate pageCode="OPERATIONS_KPI"><NativeOperationsKPI /></Gate></ProtectedRoute>} />
       <Route path="/kpi-master"   element={<ProtectedRoute><Gate pageCode="KPI_MASTER"><KpiMasterConfig /></Gate></ProtectedRoute>} />
-      <Route path="/my-kpi"       element={<ProtectedRoute><Gate pageCode="MY_KPI"><MyKpiDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/my-kpi"       element={<ProtectedRoute><Gate pageCode="MY_KPI"><DashboardLayout><MyKpiDashboard /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/agent-performance" element={<ProtectedRoute><NativeAgentPerformanceDashboard /></ProtectedRoute>} />
       <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
       <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />

@@ -1,4 +1,5 @@
 import { Route, Navigate } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -52,8 +53,8 @@ export const workforceRouteElements = (
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/attendance/regularizations" element={<Navigate to="/attendance-regularization" replace />} />
       <Route path="/attendance/disputes"        element={<ProtectedRoute><NativeAttendanceDisputes /></ProtectedRoute>} />
-      <Route path="/attendance/billing-config"  element={<ProtectedRoute><NativeAttendanceBillingConfig /></ProtectedRoute>} />
-      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><NativeAttendanceMismatchQueue /></ProtectedRoute>} />
+      <Route path="/attendance/billing-config"  element={<ProtectedRoute><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
       <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['admin','hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={

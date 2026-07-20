@@ -1,4 +1,5 @@
 import { Route, Navigate } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -103,11 +104,11 @@ export const recruitmentRouteElements = (
 
       {/* BGV */}
       <Route path="/ats/bgv"          element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
-      <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin','hr']}><NativeBGVEnhanced /></ProtectedRoute>} />
+      <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin','hr']}><DashboardLayout><NativeBGVEnhanced /></DashboardLayout></ProtectedRoute>} />
       <Route path="/ats/bgv-report"   element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
       <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr']}><NativeBGVReportView /></ProtectedRoute>} />
       <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
-      <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><NativeReconciliationDashboard /></ProtectedRoute>} />
+      <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><DashboardLayout><NativeReconciliationDashboard /></DashboardLayout></ProtectedRoute>} />
 
       {/* Misc ATS */}
       <Route path="/ats/registration-enhanced" element={<ProtectedRoute><NativeATSRegistrationEnhanced /></ProtectedRoute>} />
@@ -116,7 +117,7 @@ export const recruitmentRouteElements = (
       <Route path="/ats/recruiter-portal" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_PORTAL"><NativeRecruiterPortal /></Gate></ProtectedRoute>} />
       <Route path="/ats/name-consistency" element={
         <ProtectedRoute roles={['admin','hr','super_admin','recruiter']}>
-          <Gate pageCode="NAME_CONSISTENCY_MATRIX"><NativeATSNameConsistency /></Gate>
+          <Gate pageCode="NAME_CONSISTENCY_MATRIX"><DashboardLayout><NativeATSNameConsistency /></DashboardLayout></Gate>
         </ProtectedRoute>
       } />
       <Route path="/ats/bulk-import" element={<ProtectedRoute roles={['admin','super_admin']}><Gate pageCode="ATS_BULK_IMPORT"><ATSBulkImportPage /></Gate></ProtectedRoute>} />

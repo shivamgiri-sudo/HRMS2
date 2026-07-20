@@ -1,4 +1,5 @@
 import { Route } from "react-router-dom";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
@@ -80,6 +81,6 @@ export const payrollRouteElements = (
       <Route path="/payroll/epf-compliance"      element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll','hr','manager']}><PayrollEpfCompliancePage /></ProtectedRoute>} />
       <Route path="/payroll/pf-creation-queue"   element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfCreationQueuePage /></ProtectedRoute>} />
       <Route path="/payroll/pf-batches"          element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfBatchesPage /></ProtectedRoute>} />
-      <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><NativeSalaryIncrement /></Gate></ProtectedRoute>} />
+      <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><DashboardLayout><NativeSalaryIncrement /></DashboardLayout></Gate></ProtectedRoute>} />
   </>
 );
