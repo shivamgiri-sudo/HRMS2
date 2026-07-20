@@ -359,6 +359,7 @@ const MIGRATION_MANIFEST: string[] = [
   "515_employee_pii_encryption_columns.sql",    // Additive encrypted PAN/Aadhaar columns on employees
   "516_privacy_retention_worker_tables.sql",    // Retention run/candidate/approval/certificate tables
   "518_dpdp_feature_flags.sql",                 // DPDP feature flag config keys (all default OFF/dry-run)
+  "519_ats_performance_indexes.sql",            // ATS command center covering indexes
   ];
 
 export type MigrationHealth = {
