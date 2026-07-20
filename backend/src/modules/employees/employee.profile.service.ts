@@ -12,6 +12,7 @@ import type {
   StatutoryDetailsInput,
 } from "./employee.profile.validation.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
+import { maskPan } from "../privacy-engine/privacyMasking.service.js";
 
 function notFound(message = "No employee record for this user"): Error {
   return Object.assign(new Error(message), { statusCode: 404 });
@@ -395,8 +396,11 @@ export const employeeProfileService = {
     const empVals: unknown[] = [];
 
     if (input.pan_number) {
+      // Store masked PAN only — raw PAN must not persist in plaintext
       empUpdates.push("pan_number = ?");
-      empVals.push(input.pan_number);
+      empVals.push(maskPan(input.pan_number));
+      empUpdates.push("pan_number_masked = ?");
+      empVals.push(maskPan(input.pan_number));
     }
     if (input.aadhaar_last4) {
       empUpdates.push("aadhaar_last4 = ?");

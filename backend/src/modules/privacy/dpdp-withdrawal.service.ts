@@ -19,13 +19,20 @@ async function insertAuditLog(
   withdrawalId: string,
   action: string,
   performedBy: string,
-  remarks?: string
+  opts?: { fromStatus?: string; toStatus?: string; remarks?: string }
 ): Promise<void> {
   await db.execute(
     `INSERT INTO dpdp_withdrawal_audit_log
-       (id, withdrawal_id, action, performed_by, remarks, performed_at)
-     VALUES (UUID(), ?, ?, ?, ?, NOW())`,
-    [withdrawalId, action, performedBy, remarks ?? null]
+       (id, withdrawal_id, action, from_status, to_status, performed_by, remarks, performed_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      withdrawalId,
+      action,
+      opts?.fromStatus ?? null,
+      opts?.toStatus ?? null,
+      performedBy,
+      opts?.remarks ?? null,
+    ]
   );
 }
 
@@ -59,7 +66,10 @@ export async function submitRequest(
     ]
   );
 
-  await insertAuditLog(id, "submitted", requesterId, "Request submitted by principal");
+  await insertAuditLog(id, "DPDP_WITHDRAWAL_SUBMITTED", requesterId, {
+    toStatus: "submitted",
+    remarks: "Request submitted by principal",
+  });
 
   // Work item for compliance/DPO to pick up (DPDP Act §13 — 72-hour review SLA)
   await db.execute(
@@ -79,7 +89,11 @@ export async function submitRequest(
  */
 export async function getMyRequests(requesterId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM dpdp_consent_withdrawal
+    `SELECT id, requester_id, requester_type, withdrawal_scope_json, withdrawal_reason,
+            request_channel, status, processing_hold_active, hold_applied_at, hold_released_at,
+            data_restriction_applied, data_restriction_at, review_remarks, escalation_required,
+            created_at
+     FROM dpdp_consent_withdrawal
      WHERE requester_id = ?
      ORDER BY created_at DESC`,
     [requesterId]
@@ -158,7 +172,14 @@ export async function startReview(id: string, reviewedBy: string): Promise<void>
     [id, reviewedBy]
   ).catch(() => {});
 
-  await insertAuditLog(id, "review_started", reviewedBy, "Review started; processing hold applied");
+  await insertAuditLog(id, "DPDP_WITHDRAWAL_REVIEW_STARTED", reviewedBy, {
+    fromStatus: "submitted",
+    toStatus: "in_review",
+    remarks: "Review started; processing hold applied",
+  });
+  await insertAuditLog(id, "DPDP_PROCESSING_HOLD_APPLIED", reviewedBy, {
+    remarks: "Processing hold applied on review start",
+  });
 }
 
 /**
@@ -192,7 +213,17 @@ export async function approve(
     [approvedBy, id]
   ).catch(() => {});
 
-  await insertAuditLog(id, "approved", approvedBy, remarks ?? "Withdrawal approved");
+  await insertAuditLog(id, "DPDP_WITHDRAWAL_APPROVED", approvedBy, {
+    fromStatus: "in_review",
+    toStatus: "approved",
+    remarks: remarks ?? "Withdrawal approved",
+  });
+  await insertAuditLog(id, "DPDP_WITHDRAWAL_DATA_RESTRICTED", approvedBy, {
+    remarks: "data_restriction_applied set to 1 on approval",
+  });
+  await insertAuditLog(id, "DPDP_PROCESSING_HOLD_RELEASED", approvedBy, {
+    remarks: "Processing hold released on approval",
+  });
 
   // Notification work item for requester
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -236,7 +267,14 @@ export async function reject(
     [rejectedBy, id]
   ).catch(() => {});
 
-  await insertAuditLog(id, "rejected", rejectedBy, reason);
+  await insertAuditLog(id, "DPDP_WITHDRAWAL_REJECTED", rejectedBy, {
+    fromStatus: "in_review",
+    toStatus: "rejected",
+    remarks: reason,
+  });
+  await insertAuditLog(id, "DPDP_PROCESSING_HOLD_RELEASED", rejectedBy, {
+    remarks: "Processing hold released on rejection",
+  });
 }
 
 /**
@@ -257,7 +295,13 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
     [id]
   );
 
-  await insertAuditLog(id, "hold_released", releasedBy, "Processing hold manually released");
+  await insertAuditLog(id, "DPDP_PROCESSING_HOLD_RELEASED", releasedBy, {
+    remarks: "Processing hold manually released",
+  });
+  await insertAuditLog(id, "DPDP_WITHDRAWAL_CLOSED", releasedBy, {
+    toStatus: "hold_released",
+    remarks: "Hold released manually — request considered closed",
+  });
 }
 
 /**

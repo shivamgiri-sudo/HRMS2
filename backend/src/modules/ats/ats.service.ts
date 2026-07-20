@@ -101,7 +101,16 @@ export const atsService = {
   },
 
   async getCandidate(id: string): Promise<AtsCandidate> {
-    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM ats_candidate WHERE id = ? LIMIT 1", [id]);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, candidate_code, full_name, mobile, email, designation, department,
+              process_id, branch_id, source, status, stage, recruiter_id, assigned_to,
+              date_of_birth, gender, current_location, current_employer, current_ctc,
+              expected_ctc, notice_period, experience_years, education,
+              aadhar_number_masked, pan_number_masked, bank_account_no_masked,
+              aadhar_number_hash, pan_number_hash, bank_account_no_hash,
+              is_minor, guardian_consent_obtained,
+              created_at, updated_at
+       FROM ats_candidate WHERE id = ? LIMIT 1`, [id]);
     const candidate = (rows as AtsCandidate[])[0];
     if (!candidate) throw new Error("Candidate not found");
     return candidate;

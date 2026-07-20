@@ -1,6 +1,7 @@
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { buildPersonalDataExport } from "./dpdpAccessExport.service.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,9 @@ export const privacyService = {
 
   async getMyConsents(principalId: string): Promise<DataConsent[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM data_consent WHERE data_principal_id = ? ORDER BY consented_at DESC`,
+      `SELECT id, data_principal_id, principal_type, purpose_code, consent_text_version,
+              consent_text_hash, consented_at, withdrawn_at, ip_address, channel
+       FROM data_consent WHERE data_principal_id = ? ORDER BY consented_at DESC`,
       [principalId]
     );
     return rows as DataConsent[];
@@ -73,7 +76,9 @@ export const privacyService = {
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM data_consent ${where} ORDER BY consented_at DESC LIMIT 500`,
+      `SELECT id, data_principal_id, principal_type, purpose_code, consent_text_version,
+              consent_text_hash, consented_at, withdrawn_at, ip_address, channel
+       FROM data_consent ${where} ORDER BY consented_at DESC LIMIT 500`,
       params
     );
     return rows as DataConsent[];
@@ -93,31 +98,56 @@ export const privacyService = {
     principalId: string;
     principalType: DataConsent["principal_type"];
     purposeCode: DataConsent["purpose_code"];
-    consentTextVersion: string;
-    consentTextHash: string;
+    // consentTextVersion and consentTextHash from the client are IGNORED.
+    // The server loads the active version and computes the hash authoritatively.
     channel: DataConsent["channel"];
     ipAddress?: string;
   }): Promise<DataConsent> {
+    // Load the currently active consent notice version for this purpose
+    const [versionRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id AS version_id, version_tag, consent_text
+       FROM consent_text_version
+       WHERE purpose_code = ? AND status = 'active'
+       ORDER BY created_at DESC LIMIT 1`,
+      [input.purposeCode]
+    );
+    if (!versionRows.length) {
+      throw Object.assign(
+        new Error(`No active consent version for purpose '${input.purposeCode}'`),
+        { statusCode: 422, code: "CONSENT_VERSION_UNAVAILABLE" }
+      );
+    }
+    const version = versionRows[0];
+    // Server-authoritative hash — never trust client-submitted hash
+    const serverHash = createHash("sha256").update(version.consent_text as string).digest("hex");
+
     const id = randomUUID();
     await db.executeRun(
       `INSERT INTO data_consent
          (id, data_principal_id, principal_type, purpose_code, consent_text_version,
           consent_text_hash, channel, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         consent_text_version = VALUES(consent_text_version),
+         consent_text_hash = VALUES(consent_text_hash),
+         withdrawn_at = NULL,
+         ip_address = VALUES(ip_address)`,
       [
         id,
         input.principalId,
         input.principalType,
         input.purposeCode,
-        input.consentTextVersion,
-        input.consentTextHash,
+        version.version_tag,
+        serverHash,
         input.channel,
         input.ipAddress ?? null,
       ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM data_consent WHERE id = ? LIMIT 1",
-      [id]
+      `SELECT id, data_principal_id, principal_type, purpose_code, consent_text_version,
+              consent_text_hash, consented_at, withdrawn_at, ip_address, channel
+       FROM data_consent WHERE data_principal_id = ? AND purpose_code = ? ORDER BY consented_at DESC LIMIT 1`,
+      [input.principalId, input.purposeCode]
     );
     return (rows as DataConsent[])[0];
   },
@@ -135,7 +165,9 @@ export const privacyService = {
 
   async getMyRightsRequests(principalId: string): Promise<DataRightsRequest[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM data_rights_request WHERE principal_id = ? ORDER BY created_at DESC`,
+      `SELECT id, principal_id, principal_type, request_type, description,
+              field_name, status, assigned_to, resolved_at, response_notes, created_at, updated_at
+       FROM data_rights_request WHERE principal_id = ? ORDER BY created_at DESC`,
       [principalId]
     );
     return rows as DataRightsRequest[];
@@ -150,7 +182,9 @@ export const privacyService = {
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM data_rights_request ${where} ORDER BY created_at DESC LIMIT 500`,
+      `SELECT id, principal_id, principal_type, request_type, description,
+              field_name, status, assigned_to, resolved_at, response_notes, created_at, updated_at
+       FROM data_rights_request ${where} ORDER BY created_at DESC LIMIT 500`,
       params
     );
     return rows as DataRightsRequest[];
@@ -158,7 +192,7 @@ export const privacyService = {
 
   async createAccessRequest(principalId: string): Promise<{
     request: DataRightsRequest;
-    personalDataSummary: Record<string, string>;
+    personalDataExport: Awaited<ReturnType<typeof buildPersonalDataExport>>;
   }> {
     const id = randomUUID();
     await db.executeRun(
@@ -168,22 +202,15 @@ export const privacyService = {
       [id, principalId]
     );
 
-    // Return a summary of field categories stored for this principal
-    const personalDataSummary: Record<string, string> = {
-      identity: "Name, DOB, gender, national ID, Aadhaar/PAN (masked)",
-      contact: "Phone, email, address",
-      employment: "Employee code, designation, department, joining date, employment type",
-      payroll: "Salary structure, bank account (masked), PF/ESIC numbers",
-      attendance: "Attendance sessions, leave records",
-      documents: "Uploaded documents (contract, certificates)",
-      consent: "Consent records and versions",
-    };
+    const personalDataExport = await buildPersonalDataExport(principalId);
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM data_rights_request WHERE id = ? LIMIT 1",
+      `SELECT id, principal_id, principal_type, request_type, description,
+              field_name, status, assigned_to, resolved_at, response_notes, created_at, updated_at
+       FROM data_rights_request WHERE id = ? LIMIT 1`,
       [id]
     );
-    return { request: (rows as DataRightsRequest[])[0], personalDataSummary };
+    return { request: (rows as DataRightsRequest[])[0], personalDataExport };
   },
 
   async createCorrectionRequest(
@@ -250,7 +277,8 @@ export const privacyService = {
 
   async listRetentionPolicies(): Promise<RetentionPolicy[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM data_retention_policy ORDER BY entity_type ASC"
+      `SELECT id, entity_type, retention_days, action_on_expiry, legal_basis, is_active, created_at, updated_at
+       FROM data_retention_policy ORDER BY entity_type ASC`
     );
     return rows as RetentionPolicy[];
   },
@@ -285,7 +313,7 @@ export const privacyService = {
 
   async listConfig(): Promise<DpdpConfigEntry[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM dpdp_config ORDER BY config_key ASC"
+      "SELECT config_key, config_value, description, updated_at FROM dpdp_config ORDER BY config_key ASC"
     );
     return rows as DpdpConfigEntry[];
   },

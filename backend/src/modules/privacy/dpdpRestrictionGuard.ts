@@ -59,8 +59,21 @@ export async function checkDpdpRestriction(
 
     next();
   } catch (err) {
-    // Guard failures must never break primary operations — log and allow through
-    console.error("[dpdp-guard] restriction check failed:", err);
-    next();
+    // Fail CLOSED: a DB error during a restriction check must not silently allow access
+    // through an active withdrawal order. Return 503 so the caller can retry.
+    process.stderr.write(
+      JSON.stringify({
+        level: "critical",
+        module: "dpdpRestrictionGuard",
+        event: "DPDP_RESTRICTION_CHECK_FAILED",
+        error: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      }) + "\n"
+    );
+    res.status(503).json({
+      success: false,
+      message: "Privacy restriction check temporarily unavailable. Please retry.",
+      code: "DPDP_RESTRICTION_CHECK_FAILED",
+    });
   }
 }

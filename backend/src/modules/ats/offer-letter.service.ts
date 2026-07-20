@@ -117,7 +117,14 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
 
     // Get candidate details
     const [candidateRes] = await conn.execute<CandidateRow[]>(
-      'SELECT * FROM ats_candidate WHERE id = ?',
+      `SELECT id, candidate_code, full_name, mobile, email, date_of_birth, gender,
+              designation, department, process_id, branch_id, applied_for_branch,
+              applied_for_process, role_applied, branch_text, current_employer,
+              current_ctc, expected_ctc, notice_period, experience_years, education,
+              aadhar_number_masked, pan_number_masked, bank_account_no_masked,
+              aadhar_number_hash, pan_number_hash, bank_account_no_hash,
+              employee_code, status, stage, recruiter_id, created_at, updated_at
+       FROM ats_candidate WHERE id = ?`,
       [data.candidate_id]
     );
 

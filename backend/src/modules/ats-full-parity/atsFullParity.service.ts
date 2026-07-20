@@ -559,7 +559,14 @@ export const atsFullParityService = {
     const mobile = normalizeText(input.mobile || input.Mobile || input["Mobile Number"]);
     if (!mobile) throw Object.assign(new Error("Mobile number required"), { statusCode: 400 });
     const [existing] = await db.execute<CandidateLookupRow[]>(
-      `SELECT * FROM ats_candidate WHERE mobile = ? AND active_status = 1 ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, candidate_code, employee_code, full_name, mobile, email, address,
+              education, experience, gender, role_applied, branch_text, applied_for_branch,
+              applied_for_process, recruiter_selected, recruiter_id, recruiter_assigned_name,
+              recruiter_email, recruiter_mobile, q_token, status, source,
+              aadhar_number_masked, pan_number_masked, bank_account_no_masked,
+              aadhar_number_hash, pan_number_hash, bank_account_no_hash,
+              active_status, created_at, updated_at
+       FROM ats_candidate WHERE mobile = ? AND active_status = 1 ORDER BY created_at DESC LIMIT 1`,
       [mobile]
     );
     const now = new Date();

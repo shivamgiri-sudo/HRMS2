@@ -66,7 +66,17 @@ export async function writeAuditLog(entry: AuditLogEntry): Promise<void> {
       ]
     );
   } catch (err) {
-    console.error("[audit] Failed to write audit_action_log:", err);
+    process.stderr.write(
+      JSON.stringify({
+        level: "critical",
+        module: "auditLog",
+        event: "AUDIT_ACTION_LOG_WRITE_FAILED",
+        action_type: entry.action_type,
+        actor_user_id: entry.actor_user_id,
+        error: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      }) + "\n"
+    );
   }
 }
 
@@ -101,7 +111,17 @@ export async function writeSensitiveActionLog(entry: AuditLogEntry): Promise<voi
       ]
     );
   } catch (err) {
-    console.error("[audit] Failed to write sensitive_action_log:", err);
+    process.stderr.write(
+      JSON.stringify({
+        level: "critical",
+        module: "auditLog",
+        event: "SENSITIVE_ACTION_LOG_WRITE_FAILED",
+        action_type: entry.action_type,
+        actor_user_id: entry.actor_user_id,
+        error: err instanceof Error ? err.message : String(err),
+        timestamp: new Date().toISOString(),
+      }) + "\n"
+    );
   }
 }
 

@@ -39,13 +39,13 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
   const totalApplications = asNumber(a.total_candidates ?? a.total_applications ?? metricValue(m, "ats"));
   const walkins = asNumber(byStage["walk_in"] ?? byStage["Walk In"] ?? byStage["walkin"] ?? a.total_walkins);
   const offers = asNumber(
-    (byStage["selected"] ?? 0) + (byStage["Selected"] ?? 0) +
-    (byStage["Shortlisted"] ?? 0) + (byStage["shortlisted"] ?? 0) ||
-    a.selected_candidates ?? a.offers_extended
+    ((byStage["selected"] ?? 0) + (byStage["Selected"] ?? 0) +
+    (byStage["Shortlisted"] ?? 0) + (byStage["shortlisted"] ?? 0)) ||
+    (a.selected_candidates ?? a.offers_extended)
   );
   const joined = asNumber(
-    (byStage["converted"] ?? 0) + (byStage["Onboarded"] ?? 0) + (byStage["onboarded"] ?? 0) ||
-    a.joined ?? a.converted
+    ((byStage["converted"] ?? 0) + (byStage["Onboarded"] ?? 0) + (byStage["onboarded"] ?? 0)) ||
+    (a.joined ?? a.converted)
   );
 
   const funnelStages = [
