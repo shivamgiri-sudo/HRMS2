@@ -144,6 +144,17 @@ jobs:
             exit 1
           fi
 
+          wait_for_backend_health() {
+            for attempt in $(seq 1 30); do
+              if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
+                return 0
+              fi
+              echo "Waiting for backend health (${attempt}/30)"
+              sleep 2
+            done
+            return 1
+          }
+
           rm -rf "$STAGE_DIR"
           mkdir -p "$STAGE_DIR"
           cp -a "$ARTIFACT"/. "$STAGE_DIR"/
@@ -156,7 +167,6 @@ jobs:
               mv "$BACKUP_DIR" "$LIVE_DIR"
             fi
             pm2 restart hrms2-backend --update-env --no-color || true
-            sleep 3 || true
           }
 
           if [[ -d "$LIVE_DIR" ]]; then
@@ -168,14 +178,13 @@ jobs:
           mv "$STAGE_DIR" "$LIVE_DIR"
 
           pm2 restart hrms2-backend --update-env --no-color
-          sleep 3
 
-          if ! curl -fsS http://127.0.0.1:5055/api/health >/dev/null; then
+          if ! wait_for_backend_health; then
             echo "Backend health check failed, restoring previous dist"
             rollback_backend
-            if ! curl -fsS http://127.0.0.1:5055/api/health >/dev/null; then
+            if ! wait_for_backend_health; then
               echo "Backend health still failing after rollback"
-              pm2 logs hrms2-backend --lines 50 --no-color
+              pm2 logs hrms2-backend --lines 50 --nostream --no-color
             fi
             exit 1
           fi
