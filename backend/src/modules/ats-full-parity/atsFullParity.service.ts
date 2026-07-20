@@ -451,14 +451,15 @@ async function sendTemplateEmail(code: string, candidateId: string | null, to: s
   }
 }
 
-async function candidateSelect(where = "1=1", params: unknown[] = []): Promise<CandidateRow[]> {
+async function candidateSelect(where = "1=1", params: unknown[] = [], limit = 5000): Promise<CandidateRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.*,
             COALESCE(c.candidate_code, c.id) AS candidate_id
        FROM ats_candidate c
       WHERE ${where}
-      ORDER BY COALESCE(c.created_date, DATE(c.created_at)) DESC, c.created_at DESC`,
-    params
+      ORDER BY COALESCE(c.created_date, c.created_at) DESC, c.created_at DESC
+      LIMIT ?`,
+    [...params, limit]
   );
   return rows.map(enrichCandidate);
 }
@@ -469,6 +470,28 @@ export const atsFullParityService = {
     const params: unknown[] = [];
     if (filters.fromDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) >= ?"); params.push(filters.fromDate); }
     if (filters.toDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) <= ?"); params.push(filters.toDate); }
+    // Push date bounds into SQL when no explicit date range provided
+    // This prevents full-table scans for bounded periods (FTD/WTD/MTD)
+    if (!filters.fromDate && !filters.toDate) {
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const period = filters.period || "ALL";
+      if (period === "FTD") {
+        conds.push("(c.created_date = ? OR (c.created_date IS NULL AND DATE(c.created_at) = ?))");
+        params.push(todayStr, todayStr);
+      } else if (period === "WTD") {
+        const dow = new Date(now);
+        dow.setDate(now.getDate() - now.getDay());
+        const weekStart = dow.toISOString().slice(0, 10);
+        conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
+        params.push(weekStart, weekStart);
+      } else if (period === "MTD") {
+        const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+        conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
+        params.push(monthStart, monthStart);
+      }
+      // period === "ALL": no date filter added — 5000-row cap in candidateSelect still applies
+    }
     if (filters.branch) { conds.push("COALESCE(c.branch_text, c.applied_for_branch) = ?"); params.push(filters.branch); }
     if (filters.process) { conds.push("COALESCE(c.process_text, c.applied_for_process) = ?"); params.push(filters.process); }
     if (filters.recruiter) {
