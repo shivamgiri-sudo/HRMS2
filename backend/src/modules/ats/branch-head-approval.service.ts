@@ -89,7 +89,7 @@ export async function getPendingApprovals(branchHeadId: string): Promise<Pending
       c.full_name as candidate_name,
       c.mobile,
       c.email,
-      c.applied_for_role,
+      COALESCE(c.role_applied, c.applied_for_process) AS applied_for_role,
       c.applied_for_branch,
       c.branch_display_name,
       phv.employment_type,

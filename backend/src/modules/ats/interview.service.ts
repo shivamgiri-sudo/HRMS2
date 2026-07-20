@@ -59,7 +59,7 @@ export async function getAssignedCandidates(recruiterId: string): Promise<Assign
       c.full_name,
       c.mobile,
       c.email,
-      c.applied_for_role,
+      COALESCE(c.role_applied, c.applied_for_process) AS applied_for_role,
       c.applied_for_branch,
       c.branch_display_name,
       c.education,
@@ -198,7 +198,8 @@ export async function submitInterviewResult(input: InterviewResultInput) {
  */
 async function handleCandidateSelection(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, full_name, mobile, email, applied_for_branch, branch_display_name, applied_for_role
+    `SELECT id, full_name, mobile, email, applied_for_branch, branch_display_name,
+     COALESCE(role_applied, applied_for_process) AS applied_for_role
      FROM ats_candidate WHERE id = ?`,
     [candidateId]
   );

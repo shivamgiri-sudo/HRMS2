@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HrmsModernShell, HrmsBentoTile } from '@/components/ui/hrms-modern';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { Button } from '@/components/ui/button';
@@ -340,8 +339,7 @@ export default function NativeReconciliationDashboard() {
   ];
 
   return (
-    <DashboardLayout>
-      <HrmsModernShell
+    <HrmsModernShell
         eyebrow="Super Admin · Data Quality"
         title="Reconciliation Dashboard"
         description="Detect and resolve data anomalies across the candidate-to-employee lifecycle."
@@ -399,6 +397,5 @@ export default function NativeReconciliationDashboard() {
         })}
       </div>
       </HrmsModernShell>
-    </DashboardLayout>
   );
 }

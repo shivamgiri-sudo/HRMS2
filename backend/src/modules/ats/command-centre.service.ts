@@ -289,11 +289,11 @@ export async function getStageDistribution(): Promise<StageDistribution[]> {
 export async function getRoleMetrics(): Promise<{ role: string; count: number }[]> {
   const [results] = await db.execute<RowDataPacket[]>(
     `SELECT
-      applied_for_role as role,
+      COALESCE(role_applied, applied_for_process) as role,
       COUNT(*) as count
     FROM ats_candidate
     WHERE active_status = 1
-    GROUP BY applied_for_role
+    GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY count DESC
     LIMIT 10`
   );

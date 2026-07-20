@@ -285,11 +285,11 @@ export async function getTimeToHireMetrics(): Promise<{
   // By role
   const [byRole] = await db.execute<RoleDayRow[]>(
     `SELECT
-      applied_for_role as role,
+      COALESCE(role_applied, applied_for_process) as role,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
     FROM ats_candidate
     WHERE current_stage = 'joined'
-    GROUP BY applied_for_role
+    GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY avg_days`
   );
 
@@ -336,12 +336,12 @@ export async function getTimeToHireMetrics(): Promise<{
 
 // Whitelist: only these column names may appear in filter keys or groupBy
 const ALLOWED_FILTER_COLUMNS = new Set([
-  'applied_for_branch', 'applied_for_role', 'current_stage', 'sourcing_channel',
+  'applied_for_branch', 'current_stage', 'sourcing_channel',
   'years_of_experience', 'gender', 'branch_display_name', 'active_status',
 ]);
 
 const ALLOWED_GROUP_BY = new Set([
-  'applied_for_branch', 'applied_for_role', 'current_stage', 'sourcing_channel',
+  'applied_for_branch', 'current_stage', 'sourcing_channel',
   'years_of_experience', 'gender', 'branch_display_name',
   'MONTH(created_at)', 'YEAR(created_at)', 'DATE(created_at)',
 ]);

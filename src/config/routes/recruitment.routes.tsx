@@ -111,8 +111,8 @@ export const recruitmentRouteElements = (
       <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><DashboardLayout><NativeReconciliationDashboard /></DashboardLayout></ProtectedRoute>} />
 
       {/* Misc ATS */}
-      <Route path="/ats/registration-enhanced" element={<ProtectedRoute><NativeATSRegistrationEnhanced /></ProtectedRoute>} />
-      <Route path="/ats/extensions"   element={<ProtectedRoute><Gate pageCode="ATS_EXTENSIONS"><NativeATSExtensions /></Gate></ProtectedRoute>} />
+      <Route path="/ats/registration-enhanced" element={<Navigate to="/ats/command-center" replace />} />
+      <Route path="/ats/extensions"   element={<Navigate to="/ats/command-center" replace />} />
       <Route path="/ats/form-config"  element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeATSFormConfig /></ProtectedRoute>} />
       <Route path="/ats/recruiter-portal" element={<ProtectedRoute><Gate pageCode="ATS_RECRUITER_PORTAL"><NativeRecruiterPortal /></Gate></ProtectedRoute>} />
       <Route path="/ats/name-consistency" element={
