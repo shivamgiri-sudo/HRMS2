@@ -274,9 +274,9 @@ async function listCompanyPosts(
             cp.rejection_reason, cp.deleted_at, cp.deleted_by, cp.active_status,
             cp.created_at, cp.updated_at
        FROM company_posts cp
-       LEFT JOIN employees e  ON e.id  = cp.author_employee_id
-       LEFT JOIN employees ea ON ea.user_id = cp.approved_by
-       LEFT JOIN employees er ON er.user_id = cp.rejected_by
+       LEFT JOIN employees e  ON cp.author_employee_id COLLATE utf8mb4_unicode_ci = e.id
+       LEFT JOIN employees ea ON cp.approved_by COLLATE utf8mb4_unicode_ci = ea.user_id
+       LEFT JOIN employees er ON cp.rejected_by COLLATE utf8mb4_unicode_ci = er.user_id
       WHERE ${whereClause}
       ORDER BY cp.created_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
@@ -621,7 +621,7 @@ export async function listCompanyPostCreators(input: { actorUserId: string }): P
             cpa.created_at, cpa.updated_at,
             e.full_name AS employee_name, e.employee_code, dept.dept_name AS department
        FROM company_post_creator_access cpa
-       LEFT JOIN employees e ON e.id = cpa.employee_id
+       LEFT JOIN employees e ON cpa.employee_id COLLATE utf8mb4_unicode_ci = e.id
        LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE cpa.active_status = 1
       ORDER BY cpa.granted_at DESC`,
@@ -689,7 +689,7 @@ export async function grantCompanyPostCreator(input: GrantInput): Promise<Compan
             cpa.created_at, cpa.updated_at,
             e.full_name AS employee_name, e.employee_code, dept.dept_name AS department
        FROM company_post_creator_access cpa
-       LEFT JOIN employees e ON e.id = cpa.employee_id
+       LEFT JOIN employees e ON cpa.employee_id COLLATE utf8mb4_unicode_ci = e.id
        LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE cpa.employee_id = ?
       LIMIT 1`,
@@ -728,7 +728,7 @@ export async function revokeCompanyPostCreator(input: RevokeInput): Promise<Comp
             cpa.created_at, cpa.updated_at,
             e.full_name AS employee_name, e.employee_code, dept.dept_name AS department
        FROM company_post_creator_access cpa
-       LEFT JOIN employees e ON e.id = cpa.employee_id
+       LEFT JOIN employees e ON cpa.employee_id COLLATE utf8mb4_unicode_ci = e.id
        LEFT JOIN department_master dept ON dept.id = e.department_id
       WHERE cpa.employee_id = ?
       LIMIT 1`,

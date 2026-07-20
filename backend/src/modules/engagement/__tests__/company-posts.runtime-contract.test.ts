@@ -18,4 +18,10 @@ describe("company feed production SQL contracts", () => {
     expect(source).toContain("dept.dept_name AS department");
     expect(source).toContain("LEFT JOIN department_master dept ON dept.id = e.department_id");
   });
+
+  it("normalizes legacy employee ID collations in cross-table joins", () => {
+    expect(source).toContain("cp.author_employee_id COLLATE utf8mb4_unicode_ci = e.id");
+    expect(source).toContain("cp.approved_by COLLATE utf8mb4_unicode_ci = ea.user_id");
+    expect(source).toContain("cpa.employee_id COLLATE utf8mb4_unicode_ci = e.id");
+  });
 });
