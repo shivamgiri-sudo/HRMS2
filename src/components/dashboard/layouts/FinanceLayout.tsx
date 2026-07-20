@@ -176,25 +176,26 @@ export function FinanceLayout() {
     },
   ];
 
-  // PF/ESI/TDS liability cards
+  // PF/ESI/TDS liability — amounts must come from statutory_config, not hardcoded rates
+  const statutoryData = payrollData?.data?.statutory ?? null;
   const liabilityCards = [
     {
       label: "PF Liability",
-      amount: gross * 0.12,
+      amount: statutoryData?.pf_employer_liability ?? null,
       color: "text-blue-700",
       bg: "bg-blue-50",
       border: "border-blue-100",
     },
     {
       label: "ESI Liability",
-      amount: gross * 0.0325,
+      amount: statutoryData?.esi_employer_liability ?? null,
       color: "text-emerald-700",
       bg: "bg-emerald-50",
       border: "border-emerald-100",
     },
     {
       label: "TDS Liability",
-      amount: gross * 0.1,
+      amount: statutoryData?.tds_liability ?? null,
       color: "text-amber-700",
       bg: "bg-amber-50",
       border: "border-amber-100",
@@ -207,13 +208,11 @@ export function FinanceLayout() {
   const nextCycleLabel = nextMonth.toLocaleString("en-IN", { month: "long", year: "numeric" });
   const daysUntil = Math.ceil((nextMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-  // TODO: Backend should provide actual payment status counts from payroll run
-  // Currently using fixed percentages (91% success, 0.9% failed, 0.4% cash) — these should come from payment_transactions or payout_summary
   const paymentRows = [
-    { label: "Bank Transfers Initiated", count: latestRun.bank_transfers_completed ?? Math.round((latestRun.total_employees ?? 0) * 0.91), status: "Completed", color: "bg-emerald-100 text-emerald-700" },
-    { label: "Failed Transactions", count: latestRun.failed_transactions ?? Math.round((latestRun.total_employees ?? 0) * 0.009), status: "Needs Review", color: "bg-red-100 text-red-700" },
+    { label: "Bank Transfers Initiated", count: latestRun.bank_transfers_completed ?? null, status: "Completed", color: "bg-emerald-100 text-emerald-700" },
+    { label: "Failed Transactions", count: latestRun.failed_transactions ?? null, status: "Needs Review", color: "bg-red-100 text-red-700" },
     { label: "On-Hold Accounts", count: missingBank, status: "Blocked", color: "bg-amber-100 text-amber-700" },
-    { label: "Cash Payments", count: latestRun.cash_payments ?? Math.round((latestRun.total_employees ?? 0) * 0.004), status: "Manual", color: "bg-slate-100 text-slate-600" },
+    { label: "Cash Payments", count: latestRun.cash_payments ?? null, status: "Manual", color: "bg-slate-100 text-slate-600" },
   ];
 
   return (
@@ -255,7 +254,7 @@ export function FinanceLayout() {
                       className="text-sm font-bold text-slate-800 tabular-nums"
                       style={{ fontFamily: "'Fira Code', monospace" }}
                     >
-                      {row.count}
+                      {row.count == null ? "—" : row.count}
                     </span>
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${row.color}`}>
                       {row.status}

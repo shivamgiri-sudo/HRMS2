@@ -80,12 +80,13 @@ function LoadingSkeleton() {
 export default function ManagerQualityDashboard() {
   const { user } = useAuth();
   const [process, setProcess] = useState<Process>("INBOUND");
+  const [daysBack, setDaysBack] = useState<7 | 14 | 30>(7);
 
   const { data, isLoading, error } = useQuery<ManagerQualityData>({
-    queryKey: ["manager-team-quality", process],
+    queryKey: ["manager-team-quality", process, daysBack],
     queryFn: () =>
       hrmsApi
-        .get(`/api/manager/team-quality?daysBack=7&process=${process}`)
+        .get(`/api/manager/team-quality?daysBack=${daysBack}&process=${process}`)
         .then((r) => r.data),
     enabled: !!user,
   });
@@ -123,8 +124,8 @@ export default function ManagerQualityDashboard() {
           <p className="text-slate-500 mt-1 text-sm">Monitor your team's call quality, coaching needs and performance distribution</p>
         </div>
 
-        {/* Process Selector */}
-        <div className="flex flex-wrap gap-2">
+        {/* Process + Period Selectors */}
+        <div className="flex flex-wrap items-center gap-2">
           {PROCESSES.map((p) => (
             <button
               key={p}
@@ -138,6 +139,21 @@ export default function ManagerQualityDashboard() {
               {p}
             </button>
           ))}
+          <div className="ml-auto flex gap-1">
+            {([7, 14, 30] as const).map((d) => (
+              <button
+                key={d}
+                onClick={() => setDaysBack(d)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors border ${
+                  daysBack === d
+                    ? "bg-slate-800 text-white border-slate-800"
+                    : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Loading / Error */}

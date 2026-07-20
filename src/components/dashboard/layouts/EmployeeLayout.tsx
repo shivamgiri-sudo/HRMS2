@@ -192,7 +192,7 @@ export function EmployeeLayout() {
                   <p className="text-2xl font-black text-slate-900" style={{ fontFamily: "'Fira Code', monospace" }}>
                     {eng.progress_percentage ? `${Math.round(eng.progress_percentage)}%` : "—"}
                   </p>
-                  <p className="text-[10px] text-slate-400">{badges.length} / {badges.length + 4} Courses</p>
+                  <p className="text-[10px] text-slate-400">{badges.length > 0 ? `${badges.length} course${badges.length !== 1 ? "s" : ""} completed` : "No courses yet"}</p>
                 </div>
               </div>
               {/* MCQ / Points as proxy */}

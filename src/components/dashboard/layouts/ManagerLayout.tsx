@@ -46,8 +46,8 @@ export function ManagerLayout() {
   const rejectedLeave = requests.filter((r: any) => r.status === "rejected").length;
 
   const attPct = summary.attendance_pct ?? 0;
-  const presentCount = Math.round((attPct / 100) * members.length);
-  const absentCount = members.length - presentCount;
+  const presentCount = summary.present_count ?? Math.round((attPct / 100) * members.length);
+  const absentCount = summary.absent_count ?? Math.max(members.length - presentCount, 0);
 
   const kpiTiles = [
     { label: "Team Members", value: members.length, helper: "Total", icon: <Users className="w-4 h-4" />, accent: "#1B6AB5" },

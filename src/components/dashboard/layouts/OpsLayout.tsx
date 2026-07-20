@@ -49,7 +49,7 @@ export function OpsLayout() {
   const presentCount = Number(live.logged_in  ?? Math.round((attPct / 100) * total));
   const lateCount    = Number(live.late_count ?? 0);
   const absentCount  = Number(live.absent     ?? 0);
-  const onLeaveCount = 0; // populated after nightly reconciliation
+  const onLeaveCount: number | null = summary.on_leave ?? null;
 
   const kpiTiles = [
     {
@@ -65,17 +65,13 @@ export function OpsLayout() {
       helper: `${attPct.toFixed(1)}% of headcount`,
       icon: <UserCheck className="w-4 h-4" />,
       accent: "#3BAD49",
-      trend: "up" as const,
-      variancePct: 1.46,
     },
     {
       label: "Late Arrivals",
       value: lateCount,
-      helper: "vs Yesterday -5%",
+      helper: "Attendance exceptions today",
       icon: <Clock className="w-4 h-4" />,
       accent: "#F59E0B",
-      trend: "down" as const,
-      variancePct: 5.0,
     },
     {
       label: "Absent Today",
@@ -83,73 +79,47 @@ export function OpsLayout() {
       helper: "Unplanned absences",
       icon: <UserX className="w-4 h-4" />,
       accent: "#E8231A",
-      trend: "down" as const,
-      variancePct: 7.69,
     },
     {
       label: "On Leave",
       value: onLeaveCount,
-      helper: "Approved leave",
+      helper: onLeaveCount === null ? "Not yet available" : "Approved leave",
       icon: <AlertTriangle className="w-4 h-4" />,
       accent: "#8B5CF6",
     },
   ];
 
-  const workItems = [
-    {
-      icon: <Target className="w-4 h-4" />,
-      title: "Roster Disputes",
-      subtitle: "Requests pending review",
-      count: 24,
-      href: "/wfm/roster",
-      color: "bg-blue-100 text-blue-700",
-      timestamp: "12m ago",
-    },
-    {
-      icon: <AlertTriangle className="w-4 h-4" />,
-      title: "Attendance Exceptions",
-      subtitle: "Early outs, late ins, OT approvals",
-      count: 52,
-      href: "/attendance",
-      color: "bg-amber-100 text-amber-700",
-      timestamp: "25m ago",
-    },
-    {
-      icon: <Clock className="w-4 h-4" />,
-      title: "Missing Punches",
-      subtitle: "Employees with incomplete punches",
-      count: 48,
-      href: "/attendance",
-      color: "bg-red-100 text-red-700",
-      timestamp: "30m ago",
-    },
-    {
-      icon: <Users className="w-4 h-4" />,
-      title: "Staffing Gap Follow-ups",
-      subtitle: "Open actions to close staffing gaps",
-      count: 18,
-      href: "/wfm/live-tracker",
-      color: "bg-red-100 text-red-700",
-      timestamp: "45m ago",
-    },
-  ];
+  // Work inbox items: sourced from live API (AlertsData / work inbox)
+  const inboxAlerts: any[] = Array.isArray(alertsData?.data?.items) ? alertsData.data.items
+    : Array.isArray(alertsData?.data) ? alertsData.data : [];
+  const workItems = inboxAlerts.length > 0 ? inboxAlerts.map((item: any) => ({
+    icon: <Activity className="w-4 h-4" />,
+    title: item.title ?? item.type ?? "Action",
+    subtitle: item.description ?? item.subtitle ?? "",
+    count: item.count ?? 1,
+    href: item.href ?? "/work-inbox",
+    color: "bg-blue-100 text-blue-700",
+    timestamp: "",
+  })) : [];
 
-  // TODO: Shift summary should come from /api/wfm/shifts/summary or similar endpoint for real adherence data
-  // Current values use fixed percentages; need backend integration for actual scheduled vs actual coverage
-  const shifts = [
-    { name: "Morning (06:00–14:00)", scheduled: Math.round(total * 0.38), actual: Math.round(total * 0.36), adherence: 94.7 },
-    { name: "Afternoon (14:00–22:00)", scheduled: Math.round(total * 0.41), actual: Math.round(total * 0.39), adherence: 95.1 },
-    { name: "Night (22:00–06:00)", scheduled: Math.round(total * 0.21), actual: Math.round(total * 0.19), adherence: 90.5 },
-  ];
+  // Shift coverage: from API if available, otherwise empty (no fabricated ratios)
+  const shiftsRaw: any[] = Array.isArray(wfData?.data?.shifts) ? wfData.data.shifts : [];
+  const shifts = shiftsRaw.map((s: any) => ({
+    name: s.shift_name ?? s.name ?? "Shift",
+    scheduled: s.scheduled ?? s.required ?? 0,
+    actual: s.actual ?? s.present ?? 0,
+    adherence: s.adherence_pct ?? s.adherence ?? null,
+  }));
 
-  // TODO: Regularization requests should come from /api/wfm/regularization/requests if endpoint exists
-  // Currently static placeholder — need real pending regularization counts from backend
-  const regularizationRows = [
-    { reason: "Missing Punch-In", count: 18, status: "Pending", color: "bg-red-100 text-red-700" },
-    { reason: "Missing Punch-Out", count: 12, status: "Pending", color: "bg-amber-100 text-amber-700" },
-    { reason: "Early Out Request", count: 7, status: "Pending", color: "bg-blue-100 text-blue-700" },
-    { reason: "OT Regularization", count: 11, status: "Pending", color: "bg-violet-100 text-violet-700" },
-  ];
+  // Regularization: from API if available, otherwise empty (no fabricated counts)
+  const regRaw: any[] = Array.isArray(metrics?.regularization?.rows) ? metrics.regularization.rows
+    : Array.isArray(wfData?.data?.regularization) ? wfData.data.regularization : [];
+  const regularizationRows = regRaw.map((r: any) => ({
+    reason: r.reason ?? r.type ?? "Request",
+    count: r.count ?? 0,
+    status: r.status ?? "Pending",
+    color: "bg-amber-100 text-amber-700",
+  }));
 
   return (
     <div className="space-y-6">

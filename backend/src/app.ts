@@ -465,6 +465,10 @@ app.use("/api/ai", aiInsightsRouter);
 import { biRouter } from "./modules/business-intelligence/bi.routes.js";
 app.use("/api/bi", biRouter);
 
+// ── Operations live — live status, roster vs actual, attrition risk ───────────
+import operationsLiveRouter from "./modules/operations/operations-live.routes.js";
+app.use("/api/operations", operationsLiveRouter);
+
 import { policyEngineRouter } from "./modules/policy-engine/policy-engine.routes.js";
 app.use("/api/policy-engine", policyEngineRouter);
 

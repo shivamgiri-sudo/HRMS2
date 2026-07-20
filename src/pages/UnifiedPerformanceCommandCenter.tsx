@@ -92,7 +92,7 @@ export default function UnifiedPerformanceCommandCenter() {
       setQualityRows(Array.isArray(qa) ? qa : []);
       setOpsRows(Array.isArray(ops) ? ops : []);
     } catch (err: any) {
-      setMessage(err.message || "Unable to load unified command center. Make sure Phase 7, 8A, 8B, 8C and 8D SQL have passed.");
+      setMessage("Some performance data sources are unavailable. Please contact your system administrator.");
     } finally {
       setLoading(false);
     }

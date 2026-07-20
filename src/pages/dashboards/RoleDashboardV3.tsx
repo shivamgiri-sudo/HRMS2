@@ -786,7 +786,7 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
               )}
             </SectionCard>
 
-            <SectionCard title={variant === "employee" ? "My Training & Onboarding" : variant === "wfm" ? "Biometric Compliance" : variant === "payroll" ? "Payment Summary" : variant === "super_admin" ? "System Health" : "Operational Indicators"}>
+            <SectionCard title={variant === "employee" ? "My Training & Onboarding" : variant === "wfm" ? "Biometric Compliance" : variant === "payroll" ? "Payment Summary" : variant === "super_admin" ? "System Health" : variant === "hr" ? "Hiring Pipeline" : variant === "manager" ? "Team Leave Summary" : "Operational Indicators"}>
               {variant === "employee" ? (
                 <ProgressList items={[
                   { label: "Course completion", value: asNumber(employee?.lms?.completion_pct), max: 100, tone: "violet" },
@@ -828,6 +828,22 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                   ))}
                   {(!Array.isArray(system?.modules) || system.modules.length === 0) && <p className="py-8 text-center text-sm text-slate-400">System module data is unavailable.</p>}
                 </div>
+              ) : variant === "hr" ? (
+                <div className="space-y-3">
+                  {[
+                    { label: "Walk-ins today", value: asNumber(ats.walkin_today ?? ats.today_walkins), tone: "blue" as Tone },
+                    { label: "Screened", value: asNumber(ats.screened ?? ats.hr_screened), tone: "violet" as Tone },
+                    { label: "Selected", value: asNumber(ats.selected_candidates ?? ats.total_selected), tone: "green" as Tone },
+                    { label: "In onboarding", value: onbPending, tone: "amber" as Tone },
+                  ].map(({ label, value, tone }) => (
+                    <div key={label} className="flex items-center justify-between border-b border-slate-100 pb-2.5 last:border-0 last:pb-0">
+                      <span className="text-sm text-slate-500">{label}</span>
+                      <span className={cn("text-sm font-black", toneStyles[tone].value)}>{formatValue(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : variant === "manager" ? (
+                <ManagerTeamLeavePanel />
               ) : (
                 <div className="h-48">
                   {trendData.length > 1 ? (
@@ -901,6 +917,8 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
 
           <WorkInboxPanel maxItems={variant === "employee" ? 6 : 8} />
 
+          {variant === "employee" && <CompanyFeedWidget />}
+
           {variant === "ceo" && (
             <section className="grid gap-5 lg:grid-cols-3">
               <SectionCard title="Executive Financial Snapshot" className="lg:col-span-2">
@@ -914,21 +932,228 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                 </div>
               </SectionCard>
               <SectionCard title="Good / Bad Signals">
-                <div className="space-y-3 text-sm">
-                  <div className="rounded-xl bg-emerald-50 p-3 text-emerald-800">
-                    <p className="font-black">Positive</p>
-                    <p className="mt-1 text-xs">Attendance, headcount and payroll metrics that meet configured targets appear here.</p>
-                  </div>
-                  <div className="rounded-xl bg-red-50 p-3 text-red-800">
-                    <p className="font-black">Needs attention</p>
-                    <p className="mt-1 text-xs">TAT breaches, BGV, mismatch and readiness blockers are surfaced in the action strip.</p>
-                  </div>
-                </div>
+                <CeoSignals
+                  attendanceRate={attendanceRate}
+                  payrollReadiness={payrollReadiness}
+                  bgvPending={bgvPending}
+                  payrollBlocked={payrollBlocked}
+                  tatBreached={tatBreached}
+                  nameMismatch={nameMismatch}
+                />
               </SectionCard>
             </section>
           )}
         </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+// ── CompanyFeedWidget ──────────────────────────────────────────────────────────
+
+interface FeedPost {
+  id: string;
+  content_text: string | null;
+  author_name: string | null;
+  submitted_at: string | null;
+  approved_at: string | null;
+  media: { file_id: string; sort_order: number }[];
+}
+
+function timeAgoShort(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60_000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  } catch {
+    return "";
+  }
+}
+
+function CompanyFeedWidget() {
+  const feedQuery = useQuery({
+    queryKey: ["company-feed-dashboard"],
+    queryFn: () => hrmsApi.get<{ success: boolean; data: FeedPost[] }>("/api/engagement/company-posts/feed"),
+    staleTime: 120_000,
+  });
+
+  const posts: FeedPost[] = (feedQuery.data?.data ?? []).slice(0, 3);
+
+  return (
+    <SectionCard
+      title="Company Updates"
+      action={
+        <Link to="/engagement/company-feed" className="inline-flex items-center gap-1 text-xs font-bold text-blue-600">
+          View all <ArrowRight className="h-3 w-3" />
+        </Link>
+      }
+    >
+      {feedQuery.isLoading ? (
+        <div className="space-y-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="flex gap-3">
+              <Skeleton className="h-8 w-8 rounded-full flex-shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-3 w-1/3" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-2/3" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : posts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 text-center text-slate-400">
+          <Sparkles className="h-7 w-7 mb-2 text-slate-300" />
+          <p className="text-sm">No company updates yet</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {posts.map(post => (
+            <div key={post.id} className="flex gap-3 py-3 first:pt-0 last:pb-0">
+              {post.media.length > 0 ? (
+                <img
+                  src={`/api/files/${post.media[0].file_id}`}
+                  alt=""
+                  className="h-12 w-12 flex-shrink-0 rounded-lg object-cover border border-slate-200"
+                />
+              ) : (
+                <div className="h-12 w-12 flex-shrink-0 rounded-lg bg-blue-50 flex items-center justify-center">
+                  <Sparkles className="h-5 w-5 text-blue-400" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-700 truncate">{post.author_name ?? "MAS Callnet"}</p>
+                  <span className="text-[11px] text-slate-400 flex-shrink-0">{timeAgoShort(post.approved_at ?? post.submitted_at)}</span>
+                </div>
+                <p className="mt-0.5 text-sm text-slate-600 line-clamp-2">{post.content_text ?? ""}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// ── CeoSignals ─────────────────────────────────────────────────────────────────
+
+interface CeoSignalsProps {
+  attendanceRate: number | null;
+  payrollReadiness: number | null;
+  bgvPending: number | null;
+  payrollBlocked: number | null;
+  tatBreached: number | null;
+  nameMismatch: number | null;
+}
+
+function CeoSignals({ attendanceRate, payrollReadiness, bgvPending, payrollBlocked, tatBreached, nameMismatch }: CeoSignalsProps) {
+  const positive: string[] = [];
+  const attention: string[] = [];
+
+  if (attendanceRate !== null) {
+    if (attendanceRate >= 90) positive.push(`Attendance ${attendanceRate}% — on target`);
+    else attention.push(`Attendance ${attendanceRate}% — below 90% target`);
+  }
+  if (payrollReadiness !== null) {
+    if (payrollReadiness >= 90) positive.push(`Payroll readiness ${payrollReadiness}%`);
+    else attention.push(`Payroll readiness ${payrollReadiness}% — below 90%`);
+  }
+  if (!bgvPending || bgvPending === 0) positive.push("No BGV cases pending");
+  else attention.push(`${bgvPending} BGV case${bgvPending > 1 ? "s" : ""} pending`);
+  if (!payrollBlocked || payrollBlocked === 0) positive.push("No payroll blockers");
+  else attention.push(`${payrollBlocked} payroll blocker${payrollBlocked > 1 ? "s" : ""}`);
+  if (tatBreached && tatBreached > 0) attention.push(`${tatBreached} TAT breach${tatBreached > 1 ? "es" : ""}`);
+  if (nameMismatch && nameMismatch > 0) attention.push(`${nameMismatch} name mismatch${nameMismatch > 1 ? "es" : ""}`);
+
+  return (
+    <div className="space-y-3 text-sm">
+      {positive.length > 0 && (
+        <div className="rounded-xl bg-emerald-50 p-3">
+          <p className="font-black text-emerald-800 mb-1.5">Positive</p>
+          <ul className="space-y-1">
+            {positive.map(s => (
+              <li key={s} className="flex items-center gap-1.5 text-xs text-emerald-700">
+                <CheckCircle2 className="h-3 w-3 flex-shrink-0" />{s}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {attention.length > 0 && (
+        <div className="rounded-xl bg-red-50 p-3">
+          <p className="font-black text-red-800 mb-1.5">Needs attention</p>
+          <ul className="space-y-1">
+            {attention.map(s => (
+              <li key={s} className="flex items-center gap-1.5 text-xs text-red-700">
+                <AlertTriangle className="h-3 w-3 flex-shrink-0" />{s}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {positive.length === 0 && attention.length === 0 && (
+        <p className="py-6 text-center text-slate-400 text-xs">Dashboard data loading…</p>
+      )}
+    </div>
+  );
+}
+
+// ── ManagerTeamLeavePanel ──────────────────────────────────────────────────────
+
+interface LeaveRequest {
+  employee_name?: string;
+  full_name?: string;
+  leave_type?: string;
+  leave_name?: string;
+  from_date?: string;
+  start_date?: string;
+  status?: string;
+}
+
+function ManagerTeamLeavePanel() {
+  const leaveQuery = useQuery({
+    queryKey: ["manager-team-leave-panel"],
+    queryFn: () => hrmsApi.get<any>("/api/leave/requests?scope=team&status=pending&limit=5").catch(() => null),
+    staleTime: 60_000,
+  });
+
+  const raw = leaveQuery.data;
+  const requests: LeaveRequest[] = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : Array.isArray(raw?.requests) ? raw.requests : [];
+  const pendingCount = requests.length;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        <span className="text-sm text-slate-500">Pending approvals</span>
+        <span className={cn("text-sm font-black", pendingCount > 0 ? "text-amber-600" : "text-emerald-600")}>{leaveQuery.isLoading ? "…" : pendingCount}</span>
+      </div>
+      {leaveQuery.isLoading ? (
+        <div className="space-y-2">
+          {[1, 2].map(i => <Skeleton key={i} className="h-8 w-full rounded-lg" />)}
+        </div>
+      ) : requests.length === 0 ? (
+        <p className="py-4 text-center text-xs text-slate-400">No pending leave requests</p>
+      ) : (
+        <ul className="space-y-2">
+          {requests.slice(0, 4).map((r, i) => (
+            <li key={i} className="flex items-center justify-between rounded-lg bg-amber-50 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-700 truncate">{r.employee_name ?? r.full_name ?? "Employee"}</p>
+                <p className="text-[11px] text-slate-400">{r.leave_type ?? r.leave_name ?? "Leave"}</p>
+              </div>
+              <Link to="/approvals/leave" className="text-[11px] font-bold text-amber-600 flex-shrink-0 ml-2">Review</Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Link to="/approvals/leave" className="flex items-center gap-1 text-xs font-bold text-blue-600 pt-1">
+        All leave requests <ArrowRight className="h-3 w-3" />
+      </Link>
+    </div>
   );
 }

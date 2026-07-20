@@ -732,7 +732,7 @@ export function HrAdminLayout() {
                 },
                 {
                   label: "Expiring Docs",
-                  value: bgvPending > 0 ? bgvPending.toLocaleString() : "—",
+                  value: "—",
                   bg: "bg-amber-50 border-amber-200",
                   color: "text-amber-700",
                   icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />,
