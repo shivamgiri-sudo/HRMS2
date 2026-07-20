@@ -16,6 +16,9 @@ import { aiAuditService } from './ai-audit.service.js';
 import { checkAndIncrement } from './ai-rate-limiter.js';
 import { validateQuestion, validateContextType, validateEntityId } from './ai-input-guard.js';
 import type { AiGenerateRequest } from './ai-provider.types.js';
+import { detectAndEnrich } from './ai-intent.service.js';
+import type { Pool } from 'mysql2/promise';
+import { db } from '../../db/mysql.js';
 
 export const aiInsightsRouter = Router();
 
@@ -241,6 +244,17 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     entity_id: safeEntityId,
     timestamp: new Date().toISOString(),
   };
+
+  // Intent enrichment — fetch real HRMS data for employee self-service questions
+  try {
+    const { intent, data } = await detectAndEnrich(safeQuestion, userId, db as unknown as Pool);
+    if (intent !== 'unknown') {
+      rawContext.intent = intent;
+      Object.assign(rawContext, data);
+    }
+  } catch {
+    // non-blocking — continue without enrichment
+  }
 
   // Sanitize context
   const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
