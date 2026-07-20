@@ -1,4 +1,6 @@
 import type { Request, Response } from "express";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { PerformanceFeedbackService } from "./performance-feedback.service.js";
 import {
   createCycleSchema,
@@ -15,6 +17,40 @@ import {
 } from "./performance-feedback.validation.js";
 
 const service = new PerformanceFeedbackService();
+
+async function resolveReportScope(req: AuthenticatedRequest, includeOwnForManager = false) {
+  const userId = req.authUser.id;
+  const requestedEmployeeId = typeof req.query.employee_id === "string"
+    ? req.query.employee_id
+    : typeof req.query.employeeId === "string" ? req.query.employeeId : undefined;
+  const canViewAll = await hasRole(userId, "admin", "hr");
+  if (canViewAll) {
+    if (!requestedEmployeeId) return { authorized: true, filters: {} };
+    if (requestedEmployeeId !== userId) {
+      return { authorized: true, filters: { employee_id: requestedEmployeeId } };
+    }
+
+    const ownEmployee = await getEmployeeForUser(userId);
+    return ownEmployee
+      ? { authorized: true, filters: { employee_id: ownEmployee.id } }
+      : { authorized: false, filters: {} };
+  }
+
+  const employee = await getEmployeeForUser(userId);
+  if (!employee) return { authorized: false, filters: {} };
+
+  const isManager = await hasRole(userId, "manager", "process_manager", "assistant_manager");
+  if (isManager && !requestedEmployeeId) {
+    return {
+      authorized: true,
+      filters: includeOwnForManager
+        ? { employee_id: employee.id, manager_id: employee.id }
+        : { manager_id: employee.id },
+    };
+  }
+
+  return { authorized: true, filters: { employee_id: employee.id } };
+}
 
 export const performanceFeedbackController = {
   // ================== Cycle Management (5 endpoints) ==================
@@ -433,15 +469,23 @@ export const performanceFeedbackController = {
    */
   async getReports(req: Request, res: Response) {
     try {
-      // This method is not yet implemented in service layer
-      // For now, return empty array or implement basic query
-      return res.status(501).json({
-        error: "Not implemented",
-        message: "getReports method needs to be added to service layer"
+      const authReq = req as AuthenticatedRequest;
+      const scope = await resolveReportScope(authReq);
+      if (!scope.authorized) {
+        return res.status(403).json({ success: false, error: "No employee record for authenticated user" });
+      }
+
+      const requestedCycle = typeof req.query.cycle_id === "string"
+        ? req.query.cycle_id
+        : typeof req.query.cycleId === "string" ? req.query.cycleId : undefined;
+      const reports = await service.getReports({
+        ...scope.filters,
+        cycle_id: requestedCycle,
       });
+      return res.status(200).json({ success: true, data: reports });
     } catch (error) {
       console.error("Error fetching reports:", error);
-      return res.status(500).json({ error: "Failed to fetch reports" });
+      return res.status(500).json({ success: false, error: "Failed to fetch reports" });
     }
   },
 
@@ -450,14 +494,19 @@ export const performanceFeedbackController = {
    */
   async getReportById(req: Request, res: Response) {
     try {
-      // This method is not yet implemented in service layer
-      return res.status(501).json({
-        error: "Not implemented",
-        message: "getReportById method needs to be added to service layer"
-      });
+      const scope = await resolveReportScope(req as AuthenticatedRequest, true);
+      if (!scope.authorized) {
+        return res.status(403).json({ success: false, error: "No employee record for authenticated user" });
+      }
+
+      const report = await service.getReportById(req.params.id, scope.filters);
+      if (!report) {
+        return res.status(404).json({ success: false, error: "Report not found" });
+      }
+      return res.status(200).json({ success: true, data: report });
     } catch (error) {
       console.error("Error fetching report:", error);
-      return res.status(500).json({ error: "Failed to fetch report" });
+      return res.status(500).json({ success: false, error: "Failed to fetch report" });
     }
   },
 

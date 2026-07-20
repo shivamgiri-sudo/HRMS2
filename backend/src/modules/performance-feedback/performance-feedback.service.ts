@@ -15,6 +15,7 @@ import {
   CompetencyScore,
   KpiScore,
   FormTemplateDto,
+  ReportResponseDto,
 } from "./performance-feedback.types.js";
 
 export class PerformanceFeedbackService {
@@ -591,6 +592,97 @@ export class PerformanceFeedbackService {
     }
 
     return { report_id: reportId, training_need_ids: trainingNeedIds };
+  }
+
+  /**
+   * Get generated reports constrained to an employee or a manager's team.
+   * An empty filter is reserved for callers whose role grants organization-wide access.
+   */
+  async getReports(filters: {
+    cycle_id?: string;
+    employee_id?: string;
+    manager_id?: string;
+  }): Promise<ReportResponseDto[]> {
+    let query = `
+      SELECT
+        pfr.report_id AS id,
+        pfr.cycle_id,
+        pfr.employee_id,
+        NULL AS self_rating,
+        NULL AS peer_avg_rating,
+        NULL AS manager_rating,
+        pfr.overall_score AS final_rating,
+        pfr.strengths AS consolidated_strengths,
+        pfr.development_areas AS consolidated_improvements,
+        pfr.report_generated_at,
+        pfc.cycle_name,
+        e.full_name AS employee_name
+      FROM performance_feedback_report pfr
+      JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
+      JOIN employees e ON e.id = pfr.employee_id
+      WHERE 1=1`;
+    const params: string[] = [];
+
+    if (filters.cycle_id) {
+      query += " AND pfr.cycle_id = ?";
+      params.push(filters.cycle_id);
+    }
+    if (filters.employee_id) {
+      query += " AND pfr.employee_id = ?";
+      params.push(filters.employee_id);
+    }
+    if (filters.manager_id) {
+      query += " AND e.reporting_manager_id = ?";
+      params.push(filters.manager_id);
+    }
+
+    query += " ORDER BY pfr.report_generated_at DESC";
+    const [rows] = await db.execute<RowDataPacket[]>(query, params);
+    return rows as ReportResponseDto[];
+  }
+
+  /**
+   * Get one generated report while enforcing the same employee/team scope.
+   */
+  async getReportById(
+    reportId: string,
+    scope: { employee_id?: string; manager_id?: string },
+  ): Promise<ReportResponseDto | null> {
+    let query = `
+      SELECT
+        pfr.report_id AS id,
+        pfr.cycle_id,
+        pfr.employee_id,
+        NULL AS self_rating,
+        NULL AS peer_avg_rating,
+        NULL AS manager_rating,
+        pfr.overall_score AS final_rating,
+        pfr.strengths AS consolidated_strengths,
+        pfr.development_areas AS consolidated_improvements,
+        pfr.report_generated_at,
+        pfc.cycle_name,
+        e.full_name AS employee_name
+      FROM performance_feedback_report pfr
+      JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
+      JOIN employees e ON e.id = pfr.employee_id
+      WHERE pfr.report_id = ?`;
+    const params = [reportId];
+
+    if (scope.employee_id && scope.manager_id) {
+      query += " AND (pfr.employee_id = ? OR e.reporting_manager_id = ?)";
+      params.push(scope.employee_id, scope.manager_id);
+    } else if (scope.employee_id) {
+      query += " AND pfr.employee_id = ?";
+      params.push(scope.employee_id);
+    } else if (scope.manager_id) {
+      query += " AND e.reporting_manager_id = ?";
+      params.push(scope.manager_id);
+    }
+
+    query += " LIMIT 1";
+    const [rows] = await db.execute<RowDataPacket[]>(query, params);
+    const report = rows[0] as ReportResponseDto | undefined;
+    return report ? { ...report, feedback_details: [] } : null;
   }
 
   /**

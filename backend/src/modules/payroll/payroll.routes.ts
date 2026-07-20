@@ -920,28 +920,35 @@ router.post("/tax-declaration/:employeeId/:year/document", (req: any, res: any, 
   let { employeeId } = req.params;
   const { year } = req.params;
   const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+  const callerEmp = employeeId === "me" || !isPayrollRole
+    ? await getEmployeeForUser(req.authUser!.id)
+    : null;
 
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  if (employeeId === "me") {
+    if (!callerEmp) {
+      return res.status(403).json({ success: false, message: "No employee record" });
+    }
+    employeeId = callerEmp.id;
+  } else if (!isPayrollRole) {
     if (!callerEmp || callerEmp.id !== employeeId) {
       return res.status(403).json({ success: false, message: "Forbidden: you may only upload your own tax documents" });
     }
     employeeId = callerEmp.id;
   }
 
-  const documentType = (req.body?.document_type as string) || "tax_declaration";
+  const documentType = `tax_declaration_${year}`;
   const documentName = (req.body?.document_name as string) || req.file.originalname;
   const fileUrl = `/api/files/tax-documents/${req.file.filename}`;
   const id = randomUUID();
 
   await db.execute(
-    `INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, employeeId, documentType, documentName, fileUrl, req.authUser!.id, JSON.stringify({ financial_year: year })]
+    `INSERT INTO employee_documents (id, employee_id, doc_type, doc_category, doc_name, file_url, uploaded_by)
+     VALUES (?, ?, ?, 'tax', ?, ?, ?)`,
+    [id, employeeId, documentType, documentName, fileUrl, req.authUser!.id]
   );
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
+    `SELECT id, employee_id, 'tax_declaration' AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
      FROM employee_documents WHERE id = ? LIMIT 1`,
     [id]
   );
@@ -954,9 +961,16 @@ router.get("/tax-declaration/:employeeId/:year/documents", h(async (req: Authent
   let { employeeId } = req.params;
   const { year } = req.params;
   const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+  const callerEmp = employeeId === "me" || !isPayrollRole
+    ? await getEmployeeForUser(req.authUser!.id)
+    : null;
 
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  if (employeeId === "me") {
+    if (!callerEmp) {
+      return res.status(403).json({ success: false, message: "No employee record" });
+    }
+    employeeId = callerEmp.id;
+  } else if (!isPayrollRole) {
     if (!callerEmp || callerEmp.id !== employeeId) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
@@ -964,11 +978,11 @@ router.get("/tax-declaration/:employeeId/:year/documents", h(async (req: Authent
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
+    `SELECT id, employee_id, 'tax_declaration' AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
      FROM employee_documents
-     WHERE employee_id = ? AND doc_type LIKE 'tax_%' AND (metadata_json IS NULL OR metadata_json LIKE ?)
+     WHERE employee_id = ? AND doc_type = ?
      ORDER BY created_at DESC`,
-    [employeeId, `%${year}%`]
+    [employeeId, `tax_declaration_${year}`]
   );
 
   res.json({ success: true, data: rows });

@@ -20,4 +20,17 @@ describe("payslip display routes", () => {
       'hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin")',
     );
   });
+
+  it("stores tax proofs using the live employee_documents schema and scopes them by year", () => {
+    expect(routeSource).toContain("const documentType = `tax_declaration_${year}`");
+    expect(routeSource).toContain("doc_type, doc_category, doc_name");
+    expect(routeSource).toContain("WHERE employee_id = ? AND doc_type = ?");
+    expect(routeSource).not.toContain("uploaded_by, metadata_json");
+    expect(routeSource).not.toContain("metadata_json LIKE");
+  });
+
+  it("resolves the self alias before tax document reads and uploads", () => {
+    expect(routeSource.match(/if \(employeeId === "me"\)/g)).toHaveLength(2);
+    expect(routeSource).toContain('employeeId = callerEmp.id');
+  });
 });
