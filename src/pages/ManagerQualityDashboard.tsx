@@ -82,7 +82,7 @@ export default function ManagerQualityDashboard() {
   const [process, setProcess] = useState<Process>("INBOUND");
   const [daysBack, setDaysBack] = useState<7 | 14 | 30>(7);
 
-  const { data, isLoading, error } = useQuery<ManagerQualityData>({
+  const { data, isLoading, error } = useQuery<ManagerQualityData & { _unavailable?: boolean }>({
     queryKey: ["manager-team-quality", process, daysBack],
     queryFn: () =>
       hrmsApi
@@ -90,6 +90,8 @@ export default function ManagerQualityDashboard() {
         .then((r) => r.data),
     enabled: !!user,
   });
+
+  const isUnavailable = !!(data as any)?._unavailable;
 
   // Auth gate
   if (!user) {
@@ -156,9 +158,23 @@ export default function ManagerQualityDashboard() {
           </div>
         </div>
 
-        {/* Loading / Error */}
+        {/* Loading / Error / Unavailable */}
         {isLoading && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><LoadingSkeleton /><LoadingSkeleton /><LoadingSkeleton /></div>
+        )}
+
+        {!isLoading && isUnavailable && (
+          <Card className="p-6 border-amber-200 bg-amber-50">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold text-amber-900">Quality data source unavailable</p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  The audit database is not reachable. Contact your system administrator to check cross-schema DB grants.
+                </p>
+              </div>
+            </div>
+          </Card>
         )}
 
         {!isLoading && error && (

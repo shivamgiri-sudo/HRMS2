@@ -8,6 +8,7 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  PieChart, Pie, Cell,
 } from "recharts";
 import {
   Shield, TrendingUp, TrendingDown, Users, AlertTriangle, Target,
@@ -654,6 +655,76 @@ export default function NativeQualityDashboard() {
             })}
           </div>
         )}
+      </div>
+
+      {/* Pass / Fail donut + Agents Needing Coaching (from reference layout) */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* Pass/Fail Split */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-1 font-black text-slate-900">Pass / Fail Split</h2>
+          <p className="mb-4 text-xs text-slate-500">Audited calls above vs below 60% threshold</p>
+          {summaryQ.isLoading ? <Spinner size="sm" /> : s ? (() => {
+            const passed = n(s.calls_above_80) + n((s as any).calls_60_80);
+            const failed = n(s.calls_below_50) + n((s as any).calls_50_60);
+            const total  = passed + failed || 1;
+            const passPct = Math.round(passed / total * 100);
+            const failPct = 100 - passPct;
+            return (
+              <div className="flex items-center gap-6">
+                <ResponsiveContainer width={130} height={130}>
+                  <PieChart>
+                    <Pie data={[{ name: "Pass", value: passed }, { name: "Fail", value: failed }]}
+                      cx="50%" cy="50%" innerRadius={38} outerRadius={58} paddingAngle={2} dataKey="value" startAngle={90} endAngle={-270}>
+                      <Cell fill="#22c55e" />
+                      <Cell fill="#ef4444" />
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full bg-emerald-500 flex-shrink-0" />
+                    <span className="text-sm text-slate-600">Pass</span>
+                    <span className="ml-auto font-black text-emerald-700">{passPct}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full bg-red-500 flex-shrink-0" />
+                    <span className="text-sm text-slate-600">Fail</span>
+                    <span className="ml-auto font-black text-red-600">{failPct}%</span>
+                  </div>
+                  <p className="text-xs text-slate-400">{n(s.audited_calls).toLocaleString()} audits</p>
+                </div>
+              </div>
+            );
+          })() : null}
+        </div>
+
+        {/* Agents Needing Coaching */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-1 font-black text-slate-900">Agents Needing Coaching</h2>
+          <p className="mb-4 text-xs text-slate-500">Quality score below 70% — priority coaching list</p>
+          {agentsQ.isLoading ? <Spinner size="sm" /> : (
+            <div className="space-y-2">
+              {(agentsQ.data ?? [])
+                .filter((a) => n(a.avg_score) < 70)
+                .slice(0, 6)
+                .map((a) => (
+                  <div key={a.agent_name} className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-slate-800 truncate">{a.agent_name}</p>
+                      <p className="text-xs text-slate-500">{a.agent_code || a.band || "—"}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-sm font-black text-red-700">{n(a.avg_score).toFixed(1)}%</span>
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 uppercase">Coaching</span>
+                    </div>
+                  </div>
+                ))}
+              {(agentsQ.data ?? []).filter((a) => n(a.avg_score) < 70).length === 0 && (
+                <p className="py-6 text-center text-sm text-emerald-600 font-semibold">All agents above 70% — no coaching priority</p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

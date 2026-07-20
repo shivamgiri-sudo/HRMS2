@@ -21,24 +21,41 @@ function parseFilters(q: Record<string, unknown>) {
 }
 
 // Overall (all projects)
-router.get("/summary",             h(async (req, res) => {
-  const f = parseFilters(req.query as Record<string, unknown>);
-  res.json({ data: await svc.getProjectSummary(f) });
+router.get("/summary", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectSummary(f) });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: [] });
+  }
 }));
-router.get("/today",               h(async (_req, res) => {
-  const today = getIstDateString();
-  res.json({ data: await svc.getProjectSummary({ startDate: today, endDate: today }) });
+router.get("/today", h(async (_req, res) => {
+  try {
+    const today = getIstDateString();
+    res.json({ success: true, data: await svc.getProjectSummary({ startDate: today, endDate: today }) });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: [] });
+  }
 }));
-router.get("/trend",               h(async (req, res) => {
-  const f = parseFilters(req.query as Record<string, unknown>);
-  res.json({ data: await svc.getProjectTrend(f) });
+router.get("/trend", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectTrend(f) });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: [] });
+  }
 }));
-router.get("/consolidated-trend",  h(async (req, res) => {
-  const f = parseFilters(req.query as Record<string, unknown>);
-  res.json({ data: await svc.getConsolidatedTrend(f) });
+router.get("/consolidated-trend", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getConsolidatedTrend(f) });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: [] });
+  }
 }));
-router.get("/projects",            h(async (_req, res) => {
+router.get("/projects", h(async (_req, res) => {
   res.json({
+    success: true,
     data: svc.PROJECTS.map((p) => ({
       key: p.key, name: p.name, icon: p.icon, color: p.color,
       mandate: p.mandate, required: p.required, hasFCR: p.hasFCR,
@@ -47,19 +64,31 @@ router.get("/projects",            h(async (_req, res) => {
 }));
 
 // Per-project
-router.get("/project/:key",        h(async (req, res) => {
-  const f = parseFilters(req.query as Record<string, unknown>);
-  const data = await svc.getProjectSummary(f, req.params.key);
-  res.json({ data: data[0] ?? null });
+router.get("/project/:key", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    const data = await svc.getProjectSummary(f, req.params.key);
+    res.json({ success: true, data: data[0] ?? null });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: null });
+  }
 }));
-router.get("/project/:key/trend",  h(async (req, res) => {
-  const f = parseFilters(req.query as Record<string, unknown>);
-  const data = await svc.getProjectTrend(f, req.params.key);
-  res.json({ data: data[0]?.trend ?? [] });
+router.get("/project/:key/trend", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    const data = await svc.getProjectTrend(f, req.params.key);
+    res.json({ success: true, data: data[0]?.trend ?? [] });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: [] });
+  }
 }));
 router.get("/project/:key/hourly", h(async (req, res) => {
-  const f = parseFilters(req.query as Record<string, unknown>);
-  res.json({ data: await svc.getProjectHourly(f, req.params.key) });
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectHourly(f, req.params.key) });
+  } catch {
+    res.json({ success: true, _unavailable: true, data: [] });
+  }
 }));
 
 export { router as inboundRouter };

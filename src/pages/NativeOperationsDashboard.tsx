@@ -873,6 +873,7 @@ export default function NativeOperationsDashboard() {
   const [mgmtLoading, setMgmtLoading] = useState(false);
   const [mgmtError, setMgmtError] = useState("");
   const [opsFlags, setOpsFlags] = useState<InterventionFlag[]>([]);
+  const [slaAdherence, setSlaAdherence] = useState<number | null>(null);
 
   const loadMgmt = async () => {
     setMgmtLoading(true);
@@ -896,8 +897,12 @@ export default function NativeOperationsDashboard() {
 
   useEffect(() => {
     void loadMgmt();
-    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[] } }>("/api/bi/daily-operations-pulse")
-      .then((res) => setOpsFlags((res as any)?.data?.intervention_flags ?? []))
+    hrmsApi.get<{ success: boolean; data: { intervention_flags?: InterventionFlag[]; login_adherence_pct?: number } }>("/api/bi/daily-operations-pulse")
+      .then((res) => {
+        const d = (res as any)?.data;
+        setOpsFlags(d?.intervention_flags ?? []);
+        if (d?.login_adherence_pct != null) setSlaAdherence(Number(d.login_adherence_pct));
+      })
       .catch(() => setOpsFlags([]));
   }, []);
 
@@ -929,7 +934,7 @@ export default function NativeOperationsDashboard() {
         {mgmtError && <ErrorBanner message={mgmtError} />}
 
         {/* Header Stats Bar */}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-7">
           <StatCard
             title="Headcount"
             value={mgmt?.headcount ?? "—"}
@@ -968,6 +973,16 @@ export default function NativeOperationsDashboard() {
               mgmt && mgmt.attrition_rate > 10
                 ? "bg-rose-50 text-rose-700"
                 : "bg-slate-100 text-slate-700"
+            }
+          />
+          <StatCard
+            title="SLA Adherence"
+            value={slaAdherence != null ? `${slaAdherence.toFixed(1)}%` : "—"}
+            icon={<Target className="h-5 w-5" />}
+            tone={
+              slaAdherence != null && slaAdherence < 90
+                ? "bg-amber-50 text-amber-700"
+                : "bg-emerald-50 text-emerald-700"
             }
           />
         </div>

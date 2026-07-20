@@ -69,7 +69,7 @@ export const performanceRouteElements = (
       <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />
 
       {/* Quality */}
-      <Route path="/quality/dashboard" element={<ProtectedRoute><Gate pageCode="QUALITY_DASHBOARD"><NativeQualityDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/quality/dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','branch_head','operations_manager','qa','quality_analyst']}><NativeQualityDashboard /></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/quality/audit"     element={<Navigate to="/quality/dashboard" replace />} />
       <Route path="/quality/executive" element={<ProtectedRoute roles={['super_admin','admin','ceo']}><ExecutiveQualityDashboard /></ProtectedRoute>} />

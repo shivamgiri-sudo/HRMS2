@@ -113,15 +113,18 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [trend, setTrend] = useState<ConsolidatedPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dialerUnavailable, setDialerUnavailable] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setDialerUnavailable(false);
     const qs = `startDate=${from}&endDate=${to}`;
     try {
       const [projRes, trendRes] = await Promise.all([
-        hrmsApi.get<{ data: ProjectSummary[] }>(`/api/inbound/summary?${qs}`),
-        hrmsApi.get<{ data: ConsolidatedPoint[] }>(`/api/inbound/consolidated-trend?${qs}`),
+        hrmsApi.get<{ data: ProjectSummary[]; _unavailable?: boolean }>(`/api/inbound/summary?${qs}`),
+        hrmsApi.get<{ data: ConsolidatedPoint[]; _unavailable?: boolean }>(`/api/inbound/consolidated-trend?${qs}`),
       ]);
+      if ((projRes as any)._unavailable) setDialerUnavailable(true);
       setProjects(projRes.data ?? []);
       setTrend(trendRes.data ?? []);
     } finally { setLoading(false); }
@@ -140,6 +143,12 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
 
   return (
     <div className="space-y-5">
+      {dialerUnavailable && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-amber-600" />
+          <span>Dialler data source is not connected. Contact your system administrator to configure <code className="font-mono text-xs">DIALER_DB_*</code> environment variables.</span>
+        </div>
+      )}
       {/* Summary strip */}
       <div className="grid grid-cols-3 gap-3">
         {[

@@ -100,18 +100,21 @@ export default function NativeCallMasterDashboard() {
   const [aiInsights, setAiInsights] = useState<AIInsight[]>([]);
   const [loading, setLoading]     = useState(true);
   const [flags, setFlags]         = useState<InterventionFlag[]>([]);
+  const [sourceUnavailable, setSourceUnavailable] = useState(false);
 
   const qs = `startDate=${from}&endDate=${to}&lob=${lob}`;
 
   const load = useCallback(async () => {
     setLoading(true);
+    setSourceUnavailable(false);
     try {
       const [kpiRes, trendRes, agentsRes, clientRes] = await Promise.all([
-        hrmsApi.get<{ data: KPIData }>(`/api/call-master/kpis?${qs}`),
-        hrmsApi.get<{ data: TrendPoint[] }>(`/api/call-master/quality-trend?${qs}&granularity=daily`),
+        hrmsApi.get<{ data: KPIData; _unavailable?: boolean }>(`/api/call-master/kpis?${qs}`),
+        hrmsApi.get<{ data: TrendPoint[]; _unavailable?: boolean }>(`/api/call-master/quality-trend?${qs}&granularity=daily`),
         hrmsApi.get<{ data: AgentRow[] }>(`/api/call-master/top-agents?${qs}&limit=10`),
         hrmsApi.get<{ data: ClientRow[] }>(`/api/call-master/calls-by-client?${qs}`),
       ]);
+      if ((kpiRes as any)._unavailable) setSourceUnavailable(true);
       setKpis(kpiRes.data);
       setTrend(trendRes.data ?? []);
       setTopAgents(agentsRes.data ?? []);
@@ -199,6 +202,14 @@ export default function NativeCallMasterDashboard() {
             </button>
           </div>
         </div>
+
+        {/* Source unavailable banner */}
+        {sourceUnavailable && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-amber-600" />
+            <span>Call Master data source is not connected — the audit and external call databases are unreachable. All metrics will show 0 until the source DB is configured. Contact your system administrator.</span>
+          </div>
+        )}
 
         {/* Intervention flags */}
         {flags.length > 0 && (

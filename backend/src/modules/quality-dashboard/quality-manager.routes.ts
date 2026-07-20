@@ -66,7 +66,25 @@ router.get(
       });
     } catch (error) {
       logger.error('Error fetching team quality:', error);
-      res.status(500).json({ success: false, error: 'Internal server error' });
+      // Return graceful empty payload so the frontend renders an empty state
+      // rather than entering TanStack Query error mode and blanking the page.
+      return res.json({
+        success: true,
+        _unavailable: true,
+        data: {
+          team_summary: {
+            avg_quality: 0,
+            agent_count: 0,
+            calls_handled: 0,
+            top_performer: { agent_code: '', agent_name: '—', quality: 0 },
+            bottom_performer: { agent_code: '', agent_name: '—', quality: 0 },
+            quality_distribution: { excellent: 0, good: 0, average: 0, poor: 0 },
+          },
+          agent_breakdown: [],
+          last_updated: new Date(),
+          filter: { daysBack: 7, process: 'INBOUND' },
+        },
+      });
     }
   }
 );

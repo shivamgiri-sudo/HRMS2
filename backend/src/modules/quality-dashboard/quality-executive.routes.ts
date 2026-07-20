@@ -49,7 +49,7 @@ function buildQualityFallback(daysBack: number, reason: string) {
 router.get(
   '/quality-summary',
   requireAuth,
-  requireRole('ceo', 'super_admin', 'admin'),
+  requireRole('ceo', 'coo', 'super_admin', 'admin'),
   async (req: AuthenticatedRequest, res: Response) => {
     const daysBack = parseInt(req.query.daysBack as string) || 30;
     try {
