@@ -61,58 +61,54 @@ export interface StageDistribution {
 }
 
 /**
- * Get dashboard metrics
+ * Get dashboard metrics — all 7 counts fetched in parallel via Promise.all
  */
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
-  // Total candidates
-  const [totalRes] = await db.execute<RowDataPacket[]>(
-    'SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1'
-  );
+  const [
+    [totalRes],
+    [activeRes],
+    [selectedRes],
+    [rejectedRes],
+    [todayRes],
+    [pendingRes],
+    [joinedRes],
+  ] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      'SELECT COUNT(*) as total FROM ats_candidate WHERE active_status = 1'
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as active FROM ats_candidate
+       WHERE active_status = 1
+       AND current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as selected FROM ats_candidate
+       WHERE current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as rejected FROM ats_candidate
+       WHERE current_stage IN ('rejected', 'rejected_by_branch_head')`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as today_interviews FROM ats_interview_result
+       WHERE DATE(interviewed_at) = CURDATE()`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
+       WHERE validation_status NOT IN ('approved', 'rejected')
+       AND candidate_id IN (
+         SELECT id FROM ats_candidate WHERE current_stage = 'payroll_validated'
+       )`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT sl.candidate_id) as joined
+       FROM ats_candidate_stage_log sl
+       WHERE sl.to_stage = 'joined'
+         AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
+         AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())`
+    ),
+  ]);
 
-  // Active candidates (in process)
-  const [activeRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as active FROM ats_candidate
-     WHERE active_status = 1
-     AND current_stage NOT IN ('rejected', 'joined', 'rejected_by_branch_head')`
-  );
-
-  // Selected candidates
-  const [selectedRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as selected FROM ats_candidate
-     WHERE current_stage IN ('selected', 'bgv_pending', 'bgv_verified', 'payroll_validated', 'offer_pending', 'offer_accepted')`
-  );
-
-  // Rejected candidates
-  const [rejectedRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as rejected FROM ats_candidate
-     WHERE current_stage IN ('rejected', 'rejected_by_branch_head')`
-  );
-
-  // Today's interviews
-  const [todayRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as today_interviews FROM ats_interview_result
-     WHERE DATE(interviewed_at) = CURDATE()`
-  );
-
-  // Pending approvals — rows not yet approved or rejected
-  const [pendingRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as pending FROM ats_payroll_hr_validation
-     WHERE validation_status NOT IN ('approved', 'rejected')
-     AND candidate_id IN (
-       SELECT id FROM ats_candidate WHERE current_stage = 'payroll_validated'
-     )`
-  );
-
-  // Employees joined this month — use stage_log transition date, not candidate created_at
-  const [joinedRes] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT sl.candidate_id) as joined
-     FROM ats_candidate_stage_log sl
-     WHERE sl.to_stage = 'joined'
-       AND MONTH(sl.stage_date) = MONTH(CURRENT_DATE())
-       AND YEAR(sl.stage_date) = YEAR(CURRENT_DATE())`
-  );
-
-  // Calculate conversion rate
   const totalCandidates = totalRes[0]?.total || 0;
   const selectedCandidates = selectedRes[0]?.selected || 0;
   const conversionRate = totalCandidates > 0
@@ -239,27 +235,29 @@ export async function getTimelineData(days: number = 30): Promise<TimelineData[]
     LEFT JOIN (
       SELECT DATE(created_at) as date, COUNT(*) as registrations
       FROM ats_candidate
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       GROUP BY DATE(created_at)
     ) reg ON date_series.date = reg.date
     LEFT JOIN (
       SELECT DATE(interviewed_at) as date, COUNT(*) as interviews
       FROM ats_interview_result
+      WHERE interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       GROUP BY DATE(interviewed_at)
     ) int ON date_series.date = int.date
     LEFT JOIN (
       SELECT DATE(interviewed_at) as date, COUNT(*) as selections
       FROM ats_interview_result
-      WHERE interview_status = 'selected'
+      WHERE interview_status = 'selected' AND interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       GROUP BY DATE(interviewed_at)
     ) sel ON date_series.date = sel.date
     LEFT JOIN (
       SELECT DATE(interviewed_at) as date, COUNT(*) as rejections
       FROM ats_interview_result
-      WHERE interview_status = 'rejected'
+      WHERE interview_status = 'rejected' AND interviewed_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       GROUP BY DATE(interviewed_at)
     ) rej ON date_series.date = rej.date
     ORDER BY date_series.date ASC`,
-    [safeDays]
+    [safeDays, safeDays, safeDays, safeDays, safeDays]
   );
 
   return results as TimelineData[];
