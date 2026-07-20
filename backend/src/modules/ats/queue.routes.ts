@@ -14,6 +14,7 @@ import {
   markNoShow,
   getQueuePosition,
   cleanupStaleInterviews,
+  getOpsRoundQueue,
   type QueueFilters,
 } from './queue.enhanced.service.js';
 
@@ -153,6 +154,31 @@ queuePublicRouter.get('/display-stream', async (req: Request, res: Response) => 
 
 // All routes require authentication
 queueRouter.use(requireAuth);
+
+// Ops round queue — read-only, registered before the recruiter-only middleware
+queueRouter.get(
+  '/ops-round',
+  requireRole('operations_manager', 'admin', 'hr', 'super_admin'),
+  h(async (req: Request, res: Response) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+        [authReq.authUser!.id]
+      );
+      const opsEmployeeId = (empRows as RowDataPacket[])[0]?.id as string | undefined;
+      if (!opsEmployeeId) {
+        return res.status(400).json({ success: false, message: 'No employee record linked to this account' });
+      }
+      const date = req.query.date as string | undefined;
+      const data = await getOpsRoundQueue(opsEmployeeId, date);
+      return res.json({ success: true, data });
+    } catch (error: unknown) {
+      return res.status(500).json({ success: false, message: getErrorMessage(error) });
+    }
+  })
+);
+
 queueRouter.use(requireRole('admin', 'hr', 'recruiter', 'manager'));
 
 // ── 1. Get live queue with filters ────────────────────────────────────────────

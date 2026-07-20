@@ -310,6 +310,7 @@ const readRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr", "r
 const reviewRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr", "manager", "qa");
 const configureRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr");
 const superAdminOnly = requireRole("super_admin");
+const candidateSummaryRoles = requireRole("admin", "super_admin", "hr", "recruitment_hr", "recruiter", "manager", "qa", "operations_manager");
 
 assessmentProtectedRouter.get("/assessment-admin/dashboard", readRoles, h(async (_req, res) => {
   try {
@@ -319,7 +320,7 @@ assessmentProtectedRouter.get("/assessment-admin/dashboard", readRoles, h(async 
   }
 }));
 
-assessmentProtectedRouter.get("/assessment-admin/candidates/:candidateId/summary", readRoles, h(async (req, res) => {
+assessmentProtectedRouter.get("/assessment-admin/candidates/:candidateId/summary", candidateSummaryRoles, h(async (req, res) => {
   try {
     const candidateId = uuidSchema.parse(req.params.candidateId);
     return res.json({ success: true, data: await assessmentService.getCandidateAssessmentSummary(candidateId) });

@@ -162,3 +162,100 @@ Task 12: Complete
     - `cd backend && npx vitest run src/modules/engagement/__tests__/company-posts.routes.test.ts src/modules/engagement/__tests__/company-posts.service.test.ts` -> PASS (46/46)
     - `cd backend && npx tsc --noEmit --pretty false --incremental false` -> PASS
     - `npm run build` -> PASS
+
+---
+
+# Compact UI Redesign
+
+Plan: docs/superpowers/plans/2026-07-20-vendor-payment-compact-ui.md + grn + pnl + company-feed
+Started: 2026-07-20
+Branch base commit: 8d629be3
+
+## Tasks
+
+Vendor Task 1: Complete (commit 8d629be3..ede49567, review clean)
+  - Created src/components/finance/vendor/PaymentDispatchSheet.tsx (286 lines)
+  - 3-tab Sheet (Dispatch/Hold/Details), 480px wide, VendorPayment interface, mutations wired
+  - tsc: 0 errors
+Vendor Task 2: Complete (commit ede49567..a74800dd, review clean)
+  - Rewrote VendorPaymentDispatchPage JSX: 7-col compact table, Sheet wired
+  - Preserved all hooks/mutations/filters/pagination state
+  - Minor: some dead mutations remain (out-of-scope cleanup)
+  - tsc: 0 errors
+Vendor Task 3: Complete (commit a74800dd..330f0d51, review clean)
+  - Created src/components/finance/vendor/VendorSheet.tsx (137 lines)
+  - Unified create/edit/detail Sheet, w-[420px], 10 fields, isReadOnly mode
+  - Note: range includes pre-existing 0f234186 commit unrelated to task
+  - tsc: 0 errors
+Vendor Task 4: Complete (commit 330f0d51..990a9d5d, review clean)
+  - Rewrote NativeVendorManagement: removed HrmsModernShell/HrmsBentoTile
+  - 6-col compact vendor table, VendorSheet wired for create/edit/detail
+  - Contracts tab preserved unchanged
+  - tsc: 0 errors
+GRN Task 1: Complete (commit 990a9d5d..9d9bd3b8, review clean)
+  - Converted BudgetLinkedGrnForm from 3-panel wizard to single-scroll
+  - Deleted hero, left step-nav sidebar, right summary sidebar, sticky bottom footer
+  - Added sticky top summary bar with invoice total / allocated / diff / buttons
+  - 5 unconditional sections: proof, invoice, allocations, validation, review
+  - tsc: 0 errors
+GRN Task 2: Complete (commit 9d9bd3b8..4db2f3a1, review clean)
+  - Replaced Dialog with w-[560px] tabbed Sheet (4 tabs: Details/Allocations/Validation/Decision)
+  - Table compacted: min-w-[1160px] removed, 8-col responsive, h-9 rows
+  - decision type kept "approved"/"rejected" only (backend constraint)
+  - tsc: 0 errors
+GRN Task 3: Complete (commit 4db2f3a1..1f0099d1, review clean)
+  - Deleted 397-line inline ApprovalQueueTab from NativeGRNManagement
+  - Now delegates to <SmartGrnApprovalQueue />
+  - Removed dark hero, added 48px header, slim tab bar
+  - File: 660 → 29 lines (-95%)
+  - npm run build: ✓ 0 errors
+PnL Task 1: Complete (commit 1f0099d1..4cf5240f, review clean)
+  - ProcessPnlPage: removed hero, slim 48px header, filter bar, 3-tab layout
+  - Process Matrix / Charts / KPI Strip tabs, all child components preserved
+  - tsc: 0 errors
+PnL Task 2: Complete (commit 4cf5240f..378e9cc6, review clean)
+  - ProcessPnlDetailPage: removed hero, 48px header, 6-tab structure preserved
+  - All StatementCard/Card metric rows → compact dl grids (grid-cols-2 gap-y-1.5)
+  - 576 → 395 lines, 0 data fields lost
+  - tsc: 0 errors
+PnL Task 3: Complete (commit 378e9cc6..51ef5b3b, review ACCEPT with minor notes)
+  - PnlMasterControlCenterPage: hero + MetricCard rows removed
+  - 48px header added, split-pane SplitPane component applied to 6 data tabs
+  - Minor: 4 KPI cards replaced with compact equivalents (not fully deleted per brief)
+  - Minor: delivery tab dual-pane shares formOpen state (cosmetic only)
+  - All 9 mutations retained, tab reset wired, tsc: 0 errors
+PnL Task 4: Complete (commit 51ef5b3b..5acaab39, review clean)
+  - PnlPeriodClosePage: removed hero, 48px header, period selector + status badge in header
+  - Recalculate/Signoff/Lock moved to sticky bottom action bar
+  - All hooks + child components retained
+  - npm run build: ✓ 0 errors
+Feed Task 1: Complete (commit 5acaab39..f9a11691, review clean after fix)
+  - NativeCompanyFeed: removed HERO_PANEL_COPY + hero section, 48px toolbar added
+  - Sidebar trimmed to My Submissions only (workflow shortcuts + publishing rules removed)
+  - line-clamp-3 on post content; sidebar Awaiting badge aligned to waitingForReview predicate
+  - tsc: 0 errors
+Feed Task 2: Complete (commit f9a11691..4fc8b21e, review clean)
+  - NativeCompanyPostCreate: removed hero section, 48px header with Feed back link
+  - Right sidebar collapsed to compact 1-line policy + 3 recent posts only
+  - Image previews: aspect-video max-h-24
+  - tsc: 0 errors
+Feed Task 3: Complete (commit 4fc8b21e..2835c1e0, review clean after fix)
+  - NativeCompanyPostManage: removed hero, 48px header with search input
+  - Card-list → PostTable sub-component (5-col: Status/Author/Content/Date/Actions)
+  - useMemo tab counts shown in TabsTrigger labels
+  - Fix: stale deleteReason cleared on dismiss; isPending guard added to Approve button
+  - tsc: 0 errors
+Feed Task 4: Complete (commit 2835c1e0..9137f842, review ACCEPT after fix)
+  - NativeCompanyPostApproval: removed hero, 48px header, list panel fixed w-72
+  - Lightbox Dialog removed; replaced with expandedImage inline overlay per image
+  - Fix: keyboard accessibility restored (role=button, tabIndex, onKeyDown, Escape useEffect, h-44)
+  - tsc: 0 errors
+Feed Task 5: Complete (commit 9137f842..5f8b8aa9, review clean after fix)
+  - NativeCompanyFeedCreatorAccess: multi-select checkboxes + "Grant X selected" bulk button
+  - Bulk grant uses mutateAsync + Promise.allSettled (only succeeded IDs cleared)
+  - isBulkPending state flag prevents duplicate grant firing
+  - ROSTER_PAGE_SIZE=20 pagination with "Show more" ghost button
+  - tsc: 0 errors
+Feed Task 6: Complete — Final build verification
+  - npm run build: ✓ built in 13.86s, 0 errors
+  - All 5 Company Feed pages: heroes removed, compact 48px headers, tabular data

@@ -438,3 +438,66 @@ export async function cleanupStaleInterviews(): Promise<number> {
 
   return (result as any).affectedRows || 0;
 }
+
+export interface OpsRoundEntry {
+  candidate_id: string;
+  candidate_code: string;
+  candidate_name: string;
+  mobile: string;
+  current_stage: string;
+  applied_role: string | null;
+  branch_name: string | null;
+  skilltest_typing: number | null;
+  skilltest_result: string | null;
+  assessment_percentage: number | null;
+  typing_net_wpm: number | null;
+  typing_accuracy: number | null;
+  arrived_at: string | null;
+}
+
+export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Promise<OpsRoundEntry[]> {
+  const params: unknown[] = [opsEmployeeId, date ?? null, date ?? null];
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+      c.id                                                                AS candidate_id,
+      c.candidate_code,
+      c.full_name                                                         AS candidate_name,
+      c.mobile,
+      c.current_stage,
+      COALESCE(NULLIF(c.role_applied,''), NULLIF(pm.process_name,''), NULLIF(c.applied_for_process,''))  AS applied_role,
+      COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,''))                               AS branch_name,
+      c.skilltest_typing,
+      c.skilltest_result,
+      scores.assessment_percentage,
+      scores.typing_net_wpm,
+      scores.typing_accuracy,
+      COALESCE(isub.arrived_at, c.created_at)                            AS arrived_at
+    FROM ats_candidate c
+    LEFT JOIN ats_interview_submission isub ON isub.candidate_id = c.id
+    LEFT JOIN process_master pm            ON pm.id = c.applied_for_process
+    LEFT JOIN branch_master bm             ON bm.id = c.applied_for_branch
+    LEFT JOIN (
+      SELECT aca.candidate_id,
+             MAX(aca.percentage)           AS assessment_percentage,
+             MAX(ata.net_wpm)              AS typing_net_wpm,
+             MAX(ata.accuracy_percentage)  AS typing_accuracy
+      FROM ats_candidate_assessment aca
+      LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
+      GROUP BY aca.candidate_id
+    ) scores ON scores.candidate_id = c.id
+    INNER JOIN employees emp_ops           ON emp_ops.id = ?
+    LEFT JOIN  branch_master bm_ops        ON bm_ops.id = emp_ops.branch_id
+    WHERE c.current_stage IN ('Operations Interview', "Round 2- Op's")
+      AND (
+        COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,''))
+          = COALESCE(NULLIF(bm_ops.branch_name,''), NULLIF(bm_ops.branch_code,''))
+        OR emp_ops.branch_id IS NULL
+      )
+      AND (? IS NULL OR DATE(COALESCE(isub.arrived_at, c.created_at)) = ?)
+    ORDER BY COALESCE(isub.arrived_at, c.created_at) ASC`,
+    params
+  );
+
+  return rows as OpsRoundEntry[];
+}
