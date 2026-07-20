@@ -30,10 +30,12 @@ function PostTable({
   posts,
   onApprove,
   onDelete,
+  approving,
 }: {
   posts: CompanyPost[];
   onApprove?: (id: string) => void;
   onDelete: (id: string, reason: string) => void;
+  approving?: boolean;
 }) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
@@ -87,6 +89,7 @@ function PostTable({
                       size="sm"
                       variant="ghost"
                       className="h-6 px-2 text-xs text-green-700"
+                      disabled={approving}
                       onClick={() => onApprove(post.id)}
                     >
                       Approve
@@ -107,7 +110,7 @@ function PostTable({
         </tbody>
       </table>
 
-      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteReason(""); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-sm">Delete post</DialogTitle>
@@ -119,7 +122,7 @@ function PostTable({
             className="min-h-[60px] text-sm"
           />
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+            <Button variant="outline" size="sm" onClick={() => { setDeleteTarget(null); setDeleteReason(""); }}>
               Cancel
             </Button>
             <Button
@@ -305,6 +308,7 @@ export default function NativeCompanyPostManage() {
           {!manageQuery.isLoading && !manageQuery.isError ? (
             <PostTable
               posts={filteredPosts}
+              approving={approveMutation.isPending}
               onApprove={(id) => approveMutation.mutate({ postId: id })}
               onDelete={(id, reason) => {
                 deleteMutation.mutate(
