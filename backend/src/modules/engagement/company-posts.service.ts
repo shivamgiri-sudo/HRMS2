@@ -106,6 +106,10 @@ function canonicalRole(role: unknown): string {
   return String(role ?? "").trim().replace(/[\s-]+/g, "_").toLowerCase();
 }
 
+function accessDenied(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 403 });
+}
+
 function inputEmployeeId(input: { employeeId?: string; employee_id?: string }): string {
   return input.employeeId ?? input.employee_id ?? "";
 }
@@ -137,19 +141,19 @@ async function hasActiveCreatorAccess(userId: string): Promise<boolean> {
 
 export async function assertCanCreateCompanyPost(userId: string): Promise<void> {
   if (!(await hasActiveCreatorAccess(userId))) {
-    throw new Error("Company post creator access is required");
+    throw accessDenied("Company post creator access is required");
   }
 }
 
 export async function assertCanModerateCompanyPosts(userId: string): Promise<void> {
   if (!(await userHasRole(userId, MODERATION_ROLES))) {
-    throw new Error("Access denied: company post moderation requires an authorized role");
+    throw accessDenied("Access denied: company post moderation requires an authorized role");
   }
 }
 
 async function assertCanManageCreators(userId: string): Promise<void> {
   if (!(await userHasRole(userId, new Set([canonicalRole(Role.SUPER_ADMIN)])))) {
-    throw new Error("Only a super administrator can manage company post creators");
+    throw accessDenied("Only a super administrator can manage company post creators");
   }
 }
 

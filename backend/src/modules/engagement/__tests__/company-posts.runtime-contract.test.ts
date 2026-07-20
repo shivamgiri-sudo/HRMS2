@@ -24,4 +24,8 @@ describe("company feed production SQL contracts", () => {
     expect(source).toContain("cp.approved_by COLLATE utf8mb4_unicode_ci = ea.user_id");
     expect(source).toContain("cpa.employee_id COLLATE utf8mb4_unicode_ci = e.id");
   });
+
+  it("reports creator and moderation denials as authorization failures", () => {
+    expect(source).toContain("statusCode: 403");
+  });
 });
