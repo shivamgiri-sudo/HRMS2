@@ -32,7 +32,7 @@ export const peopleRouteElements = (
       <Route path="/employees" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><Employees /></Gate></ProtectedRoute>} />
       <Route path="/employees/:id/360" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployee360 /></Gate></ProtectedRoute>} />
       <Route path="/employees/:id" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeEmployeeStatCard /></Gate></ProtectedRoute>} />
-      <Route path="/employee-stat-card" element={<Navigate to="/employees" replace />} />
+      <Route path="/employee-stat-card" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>} />
       <Route path="/employee-stat-card/:id" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>} />
 
       {/* Org chart */}

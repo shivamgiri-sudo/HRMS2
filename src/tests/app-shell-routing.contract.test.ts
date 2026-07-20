@@ -43,7 +43,7 @@ describe("application shell routing contracts", () => {
 
   it("keeps canonical operational workspaces discoverable from the sidebar", () => {
     const requiredDestinations = [
-      ["Employee Stat Cards", "/employees"],
+      ["Employee Stat Cards", "/employee-stat-card"],
       ["Attendance Disputes", "/attendance/disputes"],
       ["Waiting Queue", "/ats/waiting-queue"],
       ["Enhanced Registration", "/ats/registration-enhanced"],
@@ -108,6 +108,15 @@ describe("application shell routing contracts", () => {
     expect(vendorSource).not.toContain('<SelectItem value="">');
   });
 
+  it("opens the dedicated employee stat card instead of redirecting to the directory", () => {
+    expect(routeSource).toContain(
+      'path="/employee-stat-card" element={<ProtectedRoute><NativeEmployeeStatCard /></ProtectedRoute>}',
+    );
+    expect(routeSource).not.toContain(
+      'path="/employee-stat-card" element={<Navigate to="/employees" replace />}',
+    );
+  });
+
   it("keeps only intentional public, redirect, detail, and legacy routes outside navigation", () => {
     const intentionallyNonSidebarRoutes = new Set([
       "/",
@@ -131,7 +140,6 @@ describe("application shell routing contracts", () => {
       "/customization/new",
       "/display/waiting-room",
       "/employee-lifecycle-v2",
-      "/employee-stat-card",
       "/engagement/command-center",
       "/exit/resignation-command-center",
       "/features",
