@@ -14,6 +14,7 @@ import { ensureAssessmentSchema } from "./assessment.schema.js";
 import { calculateTypingScore } from "./typing-scoring.js";
 import { questionBankService } from "./question-bank.service.js";
 import { emailService } from "../communication/email.service.js";
+import { assessmentInvitationEmail } from "../ats/email.templates.js";
 
 type ActorType = "candidate" | "system" | "recruiter" | "hr" | "admin";
 type Meta = {
@@ -837,6 +838,7 @@ export async function assignAssessmentManually(input: {
   candidateId: string;
   templateId: string;
   actorId: string;
+  sendEmail?: boolean;
   meta?: Meta;
 }) {
   await ensureReady();
@@ -850,7 +852,51 @@ export async function assignAssessmentManually(input: {
     input.actorId,
     { ...input.meta, actorType: input.meta?.actorType ?? "recruiter", actorId: input.actorId },
   );
-  return publicAssignmentResult(candidate, attempt, template, token);
+  const result = publicAssignmentResult(candidate, attempt, template, token);
+
+  // Send assessment invitation email to the candidate (non-blocking)
+  if ((input.sendEmail !== false) && candidate.email && emailService.isConfigured()) {
+    // Resolve recruiter name and mobile from employees table
+    const recruiterRows = await rows<RowDataPacket>(
+      db,
+      `SELECT full_name, mobile FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [input.actorId],
+    );
+    const recruiterName = (recruiterRows[0]?.full_name as string | null) ?? "Your Recruiter";
+    const recruiterMobile = (recruiterRows[0]?.mobile as string | null) ?? "—";
+
+    const frontendBase = (process.env.FRONTEND_URL ?? "").replace(/\/+$/, "");
+    const assessmentLink = frontendBase
+      ? `${frontendBase}/api/ats-ext/assessment#token=${encodeURIComponent(token)}`
+      : result.launchUrl;
+
+    const expiresAt = attempt.expires_at
+      ? new Intl.DateTimeFormat("en-IN", {
+          day: "2-digit", month: "short", year: "numeric",
+          hour: "numeric", minute: "2-digit", hour12: true,
+        }).format(new Date(attempt.expires_at))
+      : "12 hours from now";
+
+    emailService
+      .send({
+        to: candidate.email,
+        subject: "Complete Your Pre-Employment Assessment — MAS Callnet",
+        html: assessmentInvitationEmail({
+          candidateName: candidate.full_name ?? "Candidate",
+          tokenNumber: candidate.token_number ?? "—",
+          assessmentLink,
+          recruiterName,
+          recruiterMobile,
+          expiresAt,
+        }),
+        text: `Dear ${candidate.full_name ?? "Candidate"}, your assessment link: ${assessmentLink} (valid until ${expiresAt}). Contact your recruiter ${recruiterName} at ${recruiterMobile} for help.`,
+      })
+      .catch((err: unknown) => {
+        console.error("[assessment] Failed to send invitation email:", err instanceof Error ? err.message : err);
+      });
+  }
+
+  return result;
 }
 
 export function getRemainingSeconds(attempt: Pick<AttemptRow, "status" | "expires_at">) {

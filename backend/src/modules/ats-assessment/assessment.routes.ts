@@ -66,7 +66,10 @@ const attemptsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).max(100_000).optional(),
 });
-const manualAssignSchema = z.object({ templateId: uuidSchema }).strict();
+const manualAssignSchema = z.object({
+  templateId: uuidSchema,
+  sendEmail: z.boolean().optional(),
+}).strict();
 const reviewSchema = z.object({
   scores: z.array(z.object({
     questionId: z.string().trim().min(1).max(120),
@@ -338,6 +341,7 @@ assessmentProtectedRouter.post("/assessment-admin/candidates/:candidateId/assign
       candidateId,
       templateId: input.templateId,
       actorId: userId,
+      sendEmail: input.sendEmail,
       meta: requestMeta(req, "recruiter"),
     });
     return res.status(201).json({ success: true, data });

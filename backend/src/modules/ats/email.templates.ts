@@ -905,3 +905,84 @@ export function rejectedEmail(data: RejectionEmailData): string {
 </html>
   `;
 }
+
+// ── Assessment Invitation ──────────────────────────────────────────────────────
+
+export interface AssessmentInvitationEmailData {
+  candidateName: string;
+  tokenNumber: string;
+  assessmentLink: string;
+  recruiterName: string;
+  recruiterMobile: string;
+  expiresAt: string;
+}
+
+export function assessmentInvitationEmail(data: AssessmentInvitationEmailData): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Complete Your Assessment — MAS Callnet</title>
+  <style>${BASE_STYLES}</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="logo">MAS CALLNET</h1>
+      <p class="tagline">Connecting Talent to Opportunity</p>
+    </div>
+
+    <div class="content">
+      <h2 class="title">Complete Your Pre-Employment Assessment</h2>
+
+      <p class="text">Dear <strong>${data.candidateName}</strong>,</p>
+
+      <p class="text">
+        Your recruiter has shared a pre-employment assessment link with you. Please complete it before your interview to proceed to the next round.
+      </p>
+
+      <div style="text-align:center;margin:28px 0;">
+        <a href="${data.assessmentLink}" class="button" target="_blank">Start Assessment →</a>
+      </div>
+
+      <p class="text" style="font-size:13px;color:#6b7280;word-break:break-all;">
+        If the button above doesn't work, copy and paste this link into your browser:<br>
+        <strong>${data.assessmentLink}</strong>
+      </p>
+
+      <div class="info-card">
+        <div class="info-label">Token Number</div>
+        <div class="info-value">${data.tokenNumber}</div>
+        <div class="info-label" style="margin-top:12px;">Link valid until</div>
+        <div class="info-value">${data.expiresAt}</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 style="font-size:16px;font-weight:700;color:#111827;margin:20px 0 10px 0;">Your Assigned Recruiter</h3>
+
+      <div class="info-card">
+        <div class="info-label">Recruiter</div>
+        <div class="info-value">${data.recruiterName}</div>
+        <div class="info-label" style="margin-top:12px;">Contact</div>
+        <div class="info-value">${data.recruiterMobile}</div>
+      </div>
+
+      <div class="warning-box">
+        <p class="warning-text">
+          <strong>Important:</strong> This link is personal — do not share it with anyone. Complete the assessment in one sitting using a stable internet connection.
+        </p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p class="footer-text">Best regards,<br><strong>Team MAS Callnet</strong></p>
+      <p class="footer-text">&copy; 2026 Mas Callnet India Pvt. Ltd. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
