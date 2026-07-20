@@ -2,18 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
-  ArrowRight,
   Clock3,
-  FileText,
   ImageIcon,
   Loader2,
   Megaphone,
   PenSquare,
   RefreshCcw,
-  ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -23,27 +20,8 @@ import {
   type CompanyPost,
 } from "@/hooks/useCompanyFeed";
 import { apiUrl } from "@/lib/apiBase";
-import { useUserRole } from "@/hooks/useUserRole";
 
 const MODERATOR_ROLES = new Set(["hr_head", "admin", "super_admin"]);
-
-const HERO_PANEL_COPY = [
-  {
-    label: "Channel",
-    value: "Approved bulletins",
-    detail: "Only published company updates land here.",
-  },
-  {
-    label: "Pace",
-    value: "Built for quick scan",
-    detail: "Editorial cards, clear status, mobile-first reading.",
-  },
-  {
-    label: "Compliance",
-    value: "Moderated before publish",
-    detail: "Creator access and review stay backend-controlled.",
-  },
-] as const;
 
 function formatPostTimestamp(value: string | null): string {
   if (!value) return "Moments ago";
@@ -128,7 +106,7 @@ function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?
         </header>
 
         <div className="space-y-4">
-          <p className="whitespace-pre-wrap text-[15px] leading-7 text-slate-700">
+          <p className="whitespace-pre-wrap text-[15px] leading-7 text-slate-700 line-clamp-3">
             {post.content_text?.trim() || "Update published without written copy."}
           </p>
 
@@ -253,7 +231,6 @@ export default function NativeCompanyFeed() {
 
   const feedQuery = useCompanyFeed({ limit: PAGE_LIMIT, page: feedPage });
   const myPostsQuery = useMyCompanyPosts({ limit: 6 });
-  const roleQuery = useUserRole();
 
   const currentPagePosts = feedQuery.data?.posts ?? [];
   const feedTotal = feedQuery.data?.total ?? 0;
@@ -274,99 +251,31 @@ export default function NativeCompanyFeed() {
   const feedPosts = displayedPosts;
 
   const myPosts = myPostsQuery.data?.posts ?? [];
-  const roleKeys = roleQuery.data?.roleKeys ?? [];
-  const isLikelyModerator = roleKeys.some((role) => MODERATOR_ROLES.has(role));
   const waitingForReview = myPosts.filter(
     (post) => post.status === "pending_approval" || post.status === "borderline_flagged",
-  ).length;
-  const returnedPosts = myPosts.filter(
-    (post) => post.status === "rejected" || post.status === "auto_rejected",
   ).length;
 
   return (
     <DashboardLayout>
-      <main className="space-y-8 p-4 sm:p-6 lg:p-8">
-        <section
-          className="relative overflow-hidden rounded-[2rem] border border-white/40 px-5 py-6 text-white shadow-[var(--shadow-brand-lg)] sm:px-7 sm:py-8 lg:px-9"
-          style={{
-            background:
-              "linear-gradient(140deg, var(--sidebar-canvas) 0%, var(--brand-700) 35%, var(--brand-500) 72%, rgba(232,35,26,0.86) 120%)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18)_0%,_rgba(255,255,255,0)_34%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.14)_0%,_rgba(255,255,255,0)_30%)]" />
-          <div className="absolute -right-16 top-10 h-52 w-52 rounded-full border border-white/10 bg-white/10 blur-3xl" />
-          <div className="absolute -bottom-20 left-10 h-56 w-56 rounded-full bg-[rgba(255,255,255,0.12)] blur-3xl" />
-
-          <div className="relative space-y-8">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-3xl space-y-4">
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/90 backdrop-blur">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Broadcast Deck
-                </div>
-                <div className="space-y-3">
-                  <h1 className="font-['Fira_Sans'] text-3xl font-bold leading-tight tracking-[-0.04em] sm:text-4xl lg:text-[3.35rem]">
-                    Company Feed keeps the whole floor on the same page.
-                  </h1>
-                  <p className="max-w-2xl text-sm leading-7 text-blue-50/92 sm:text-[15px]">
-                    Scan approved announcements, track your own submissions, and stay ready for the
-                    next creator and moderation surfaces without leaving the employee workspace.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 lg:w-[23rem] lg:grid-cols-1">
-                <Button
-                  asChild
-                  className="h-auto justify-between rounded-[1.15rem] bg-white px-4 py-3 text-left text-[color:var(--brand-700)] hover:bg-blue-50"
-                >
-                  <a href="#company-feed-lane">
-                    <span>
-                      <span className="block text-sm font-semibold">Read today&apos;s bulletins</span>
-                      <span className="mt-1 block text-xs text-slate-500">
-                        Jump straight to the published update lane.
-                      </span>
-                    </span>
-                    <ArrowRight className="h-4 w-4 shrink-0" />
-                  </a>
-                </Button>
-
-                <Button
-                  asChild
-                  variant="outline"
-                  className="h-auto justify-between rounded-[1.15rem] border-white/30 bg-white/10 px-4 py-3 text-left text-white hover:bg-white/15"
-                >
-                  <Link to="/engagement">
-                    <span>
-                      <span className="block text-sm font-semibold">Open engagement hub</span>
-                      <span className="mt-1 block text-xs text-blue-100/80">
-                        Leaderboard, kudos, badges, and surveys stay one click away.
-                      </span>
-                    </span>
-                    <ArrowRight className="h-4 w-4 shrink-0" />
-                  </Link>
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-3">
-              {HERO_PANEL_COPY.map((panel) => (
-                <div
-                  key={panel.label}
-                  className="rounded-[1.4rem] border border-white/15 bg-white/10 p-4 backdrop-blur-sm"
-                >
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-100/80">
-                    {panel.label}
-                  </p>
-                  <p className="mt-2 font-['Fira_Sans'] text-xl font-semibold tracking-[-0.03em]">
-                    {panel.value}
-                  </p>
-                  <p className="mt-2 text-sm text-blue-50/85">{panel.detail}</p>
-                </div>
-              ))}
-            </div>
+      <main className="space-y-4 p-4 sm:p-6 lg:p-8">
+        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
+          <div className="flex items-center gap-3">
+            <h1 className="text-sm font-semibold">Company Feed</h1>
+            {feedQuery.data && (
+              <>
+                <Badge variant="outline" className="text-xs">Live: {feedQuery.data.total ?? 0}</Badge>
+                {myPosts.filter(p => p.status === "pending_approval").length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    Pending: {myPosts.filter(p => p.status === "pending_approval").length}
+                  </Badge>
+                )}
+              </>
+            )}
           </div>
-        </section>
+          <Link to="/company-feed/create">
+            <Button size="sm">+ New Post</Button>
+          </Link>
+        </div>
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_24rem]">
           <section id="company-feed-lane" className="space-y-5">
@@ -467,52 +376,18 @@ export default function NativeCompanyFeed() {
 
           <aside className="space-y-5">
             <Card className="overflow-hidden rounded-[1.75rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-              <div
-                className="h-24"
-                style={{
-                  background:
-                    "linear-gradient(135deg, rgba(6,43,82,0.98) 0%, rgba(27,106,181,0.94) 62%, rgba(232,35,26,0.66) 100%)",
-                }}
-              />
-              <CardContent className="relative space-y-5 p-5">
-                <div className="-mt-12 flex h-14 w-14 items-center justify-center rounded-[1.2rem] border border-white/80 bg-white text-[color:var(--brand-600)] shadow-[var(--shadow-lg)]">
-                  <FileText className="h-6 w-6" />
+              <div className="border-b px-3 py-2">
+                <span className="text-xs font-semibold">My submissions</span>
+                <div className="flex gap-1.5 mt-1">
+                  <Badge variant="outline" className="text-xs">
+                    Awaiting: {myPosts?.filter(p => p.status === "pending_approval").length ?? 0}
+                  </Badge>
+                  <Badge variant="outline" className="text-xs">
+                    Returned: {myPosts?.filter(p => p.status === "rejected" || p.status === "auto_rejected").length ?? 0}
+                  </Badge>
                 </div>
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
-                    My submissions
-                  </p>
-                  <h3
-                    id="my-submissions"
-                    className="mt-2 font-['Fira_Sans'] text-xl font-semibold tracking-[-0.03em] text-slate-950"
-                  >
-                    Your publishing lane
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    Submission history gives employees a clear read on what is waiting, published,
-                    or returned for policy reasons.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-[1rem] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Awaiting
-                    </p>
-                    <p className="mt-2 text-2xl font-bold tracking-[-0.03em] text-slate-950">
-                      {myPostsQuery.isLoading ? "..." : waitingForReview}
-                    </p>
-                  </div>
-                  <div className="rounded-[1rem] border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Returned
-                    </p>
-                    <p className="mt-2 text-2xl font-bold tracking-[-0.03em] text-slate-950">
-                      {myPostsQuery.isLoading ? "..." : returnedPosts}
-                    </p>
-                  </div>
-                </div>
-
+              </div>
+              <CardContent className="space-y-5 p-5">
                 {myPostsQuery.isError && (
                   <ErrorState
                     title="Your submission history is unavailable"
@@ -574,84 +449,6 @@ export default function NativeCompanyFeed() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-[1.75rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-              <CardContent className="space-y-4 p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-[1rem] bg-[color:var(--brand-50)] text-[color:var(--brand-600)]">
-                    <ShieldCheck className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
-                      Workflow shortcuts
-                    </p>
-                    <h3 className="mt-1 font-['Fira_Sans'] text-lg font-semibold tracking-[-0.03em] text-slate-950">
-                      What opens from here
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">Creator studio</p>
-                        <p className="mt-1 text-sm leading-6 text-slate-500">
-                          Submit posts for review. Creator access is granted by Super Admin — the
-                          backend will gate submission if access has not been assigned.
-                        </p>
-                      </div>
-                      <Button
-                        asChild
-                        variant="outline"
-                        className="shrink-0 rounded-xl"
-                      >
-                        <Link to="/engagement/company-feed/create">Open</Link>
-                      </Button>
-                    </div>
-                  </div>
-
-                  {isLikelyModerator && (
-                    <div id="moderation-brief" className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">Approval queue</p>
-                          <p className="mt-1 text-sm leading-6 text-slate-500">
-                            Review pending and flagged submissions. Moderation rights are enforced
-                            server-side for your role.
-                          </p>
-                        </div>
-                        <Button
-                          asChild
-                          variant="outline"
-                          className="shrink-0 rounded-xl"
-                        >
-                          <Link to="/engagement/company-feed/approvals">Review</Link>
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-[1.75rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-              <CardContent className="space-y-4 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
-                  Publishing rules
-                </p>
-                <div className="space-y-3 text-sm leading-6 text-slate-600">
-                  <p>
-                    Approved posts appear for all employees. Clear violations are blocked before
-                    publishing, and borderline content is routed for moderator review.
-                  </p>
-                  <p>
-                    Deletion and moderation rights stay with backend-enforced approver roles. This
-                    page only surfaces safe, employee-facing signals.
-                  </p>
-                </div>
               </CardContent>
             </Card>
           </aside>
