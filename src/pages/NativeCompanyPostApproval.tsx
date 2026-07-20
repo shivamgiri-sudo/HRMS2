@@ -103,6 +103,14 @@ export default function NativeCompanyPostApproval() {
     setReviewNotes("");
   }, [selectedPostId]);
 
+  // Escape key dismiss for expanded image overlay
+  useEffect(() => {
+    if (!expandedImage) return;
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExpandedImage(null); };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [expandedImage]);
+
   function advanceToNext() {
     const currentIdx = filteredPosts.findIndex((p) => p.id === selectedPost?.id);
     const next = filteredPosts[currentIdx + 1] ?? filteredPosts[0];
@@ -340,11 +348,17 @@ export default function NativeCompanyPostApproval() {
                                 <Fragment key={media.file_id}>
                                   <img
                                     src={imgUrl}
-                                    alt={`Post image ${media.sort_order}`}
+                                    alt=""
+                                    role="button"
+                                    tabIndex={0}
                                     onClick={() =>
                                       setExpandedImage(expandedImage === imgUrl ? null : imgUrl)
                                     }
-                                    className="cursor-zoom-in rounded object-cover w-full"
+                                    onKeyDown={(e) =>
+                                      (e.key === "Enter" || e.key === " ") &&
+                                      setExpandedImage(expandedImage === imgUrl ? null : imgUrl)
+                                    }
+                                    className="cursor-zoom-in rounded object-cover w-full h-44"
                                   />
                                   {expandedImage === imgUrl && (
                                     <div
