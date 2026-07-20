@@ -15,10 +15,14 @@ try {
 const SLA_THRESHOLD_MINUTES = 30; // Send alert after 30 minutes
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // Don't re-alert same candidate for 1 hour
+const STARTUP_DELAY_MS = 30 * 1000;
+const CANDIDATE_SCAN_LIMIT = 100;
+const MAX_ALERTS_PER_RUN = 10;
 
 // ── In-Memory Alert Tracking ─────────────────────────────────────────────────
 
 const alertedCandidates = new Map<string, number>(); // candidateId → lastAlertTimestamp
+let isProcessing = false;
 
 /**
  * Check if we should alert for this candidate (respects cooldown)
@@ -71,7 +75,9 @@ async function findSLABreachCandidates(): Promise<any[]> {
        WHERE c.status = 'Waiting'
          AND c.recruiter_assigned_name IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, CONCAT(c.created_date, ' ', c.created_time), NOW()) >= ?
-       ORDER BY pending_minutes DESC`,
+         AND CONCAT(c.created_date, ' ', c.created_time) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+       ORDER BY pending_minutes ASC
+       LIMIT ${CANDIDATE_SCAN_LIMIT}`,
       [SLA_THRESHOLD_MINUTES]
     );
 
@@ -86,57 +92,69 @@ async function findSLABreachCandidates(): Promise<any[]> {
  * Process SLA breach alerts
  */
 async function processSLABreaches(): Promise<void> {
-  console.log("[SLABreachWorker] Checking for SLA breaches...");
-
-  const candidates = await findSLABreachCandidates();
-
-  if (candidates.length === 0) {
-    console.log("[SLABreachWorker] No SLA breaches found");
+  if (isProcessing) {
+    console.log("[SLABreachWorker] Previous check is still running; skipping overlap");
     return;
   }
 
-  console.log(`[SLABreachWorker] Found ${candidates.length} candidates beyond SLA`);
+  isProcessing = true;
+  try {
+    console.log("[SLABreachWorker] Checking for SLA breaches...");
 
-  for (const candidate of candidates) {
-    if (!shouldAlert(candidate.candidate_id)) {
-      console.log(`[SLABreachWorker] Skipping ${candidate.candidate_name} (cooldown)`);
-      continue;
+    const candidates = await findSLABreachCandidates();
+
+    if (candidates.length === 0) {
+      console.log("[SLABreachWorker] No SLA breaches found");
+      return;
     }
 
-    console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
+    console.log(`[SLABreachWorker] Found ${candidates.length} recent candidates beyond SLA`);
+    let alertsSent = 0;
 
-    await notifySLABreach({
-      candidateId: candidate.candidate_id,
-      candidateName: candidate.candidate_name,
-      qToken: candidate.q_token || "N/A",
-      recruiterName: candidate.recruiter_name,
-      branch: candidate.branch || "N/A",
-      roleApplied: candidate.role_applied || "N/A",
-      slaMinutes: candidate.pending_minutes,
-    });
+    for (const candidate of candidates) {
+      if (alertsSent >= MAX_ALERTS_PER_RUN) break;
+      if (!shouldAlert(candidate.candidate_id)) continue;
 
-    markAlerted(candidate.candidate_id);
+      console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
+
+      await notifySLABreach({
+        candidateId: candidate.candidate_id,
+        candidateName: candidate.candidate_name,
+        qToken: candidate.q_token || "N/A",
+        recruiterName: candidate.recruiter_name,
+        branch: candidate.branch || "N/A",
+        roleApplied: candidate.role_applied || "N/A",
+        slaMinutes: candidate.pending_minutes,
+      });
+
+      markAlerted(candidate.candidate_id);
+      alertsSent += 1;
+    }
+
+    cleanupAlertCache();
+  } finally {
+    isProcessing = false;
   }
-
-  // Cleanup old alert cache
-  cleanupAlertCache();
 }
 
 /**
  * Start worker (main loop)
  */
-async function startWorker(): Promise<void> {
+function startWorker(): Promise<void> {
   console.log("[SLABreachWorker] Starting...");
   console.log(`[SLABreachWorker] SLA threshold: ${SLA_THRESHOLD_MINUTES} minutes`);
   console.log(`[SLABreachWorker] Check interval: ${CHECK_INTERVAL_MS / 1000} seconds`);
 
-  // Run immediately on start
-  await processSLABreaches();
+  // Let the API finish warming up before any external notification work begins.
+  setTimeout(() => {
+    void processSLABreaches();
+  }, STARTUP_DELAY_MS);
 
-  // Then run periodically
-  setInterval(async () => {
-    await processSLABreaches();
+  setInterval(() => {
+    void processSLABreaches();
   }, CHECK_INTERVAL_MS);
+
+  return Promise.resolve();
 }
 
 // ── Start Worker ─────────────────────────────────────────────────────────────

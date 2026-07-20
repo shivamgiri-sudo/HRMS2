@@ -621,7 +621,8 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
        LEFT JOIN designation_master des ON des.id = e.designation_id
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN branch_master br ON br.id = e.branch_id
-       LEFT JOIN location_master loc ON loc.id = e.location_id
+       LEFT JOIN location_master loc
+         ON loc.id COLLATE utf8mb4_unicode_ci = e.location_id
        LEFT JOIN salary_run_disbursal srd
          ON srd.run_id = spl.run_id
         AND srd.employee_id = spl.employee_id

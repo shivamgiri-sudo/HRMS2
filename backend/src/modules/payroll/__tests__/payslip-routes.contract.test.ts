@@ -33,4 +33,13 @@ describe("payslip display routes", () => {
     expect(routeSource.match(/if \(employeeId === "me"\)/g)).toHaveLength(2);
     expect(routeSource).toContain('employeeId = callerEmp.id');
   });
+
+  it("normalizes the live location-master collation in self-service payslip joins", () => {
+    expect(routeSource).toContain(
+      "loc.id COLLATE utf8mb4_unicode_ci = e.location_id",
+    );
+    expect(routeSource).not.toContain(
+      "LEFT JOIN location_master loc ON loc.id = e.location_id",
+    );
+  });
 });
