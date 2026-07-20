@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader2, Search, ShieldCheck, Sparkles, UserPlus, UserX } from "lucide-react";
+import { AlertCircle, Loader2, Search, Sparkles, UserPlus, UserX } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   AlertDialog,
@@ -150,32 +150,11 @@ export default function NativeCompanyFeedCreatorAccess() {
 
   return (
     <DashboardLayout>
-      <main className="space-y-8 p-4 sm:p-6 lg:p-8">
-        <section
-          className="relative overflow-hidden rounded-[2rem] border border-white/30 px-5 py-6 text-white shadow-[var(--shadow-brand-lg)] sm:px-7 sm:py-8 lg:px-9"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--sidebar-canvas) 0%, var(--brand-700) 35%, var(--brand-500) 74%, rgba(232,35,26,0.84) 115%)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18)_0%,_rgba(255,255,255,0)_34%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.14)_0%,_rgba(255,255,255,0)_30%)]" />
-          <div className="relative max-w-3xl space-y-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/90 backdrop-blur">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Super Admin Creator Rights
-            </div>
-            <div className="space-y-3">
-              <h1 className="font-['Fira_Sans'] text-3xl font-bold leading-tight tracking-[-0.04em] sm:text-4xl lg:text-[3.2rem]">
-                Decide exactly who can publish into the company feed workflow.
-              </h1>
-              <p className="max-w-2xl text-sm leading-7 text-blue-50/92 sm:text-[15px]">
-                Creator rights stay tightly controlled here. Grant access only to trusted employees,
-                and revoke it instantly when responsibility changes.
-              </p>
-            </div>
-          </div>
-        </section>
-
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
+          <h1 className="text-sm font-semibold">Feed Creators</h1>
+        </div>
+        <main className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="grid gap-6 xl:grid-cols-[24rem_minmax(0,1fr)]">
           {/* Grant panel */}
           <Card className="rounded-[1.8rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
@@ -417,7 +396,8 @@ export default function NativeCompanyFeedCreatorAccess() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </main>
+        </main>
+      </div>
     </DashboardLayout>
   );
 }
