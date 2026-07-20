@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   BarChart2,
   CalendarDays,
   ChevronDown,
@@ -431,7 +433,7 @@ function KpiLeaderboardSection() {
       .get<KpiLeaderboard | KpiEntry[]>(`/api/kpi/leaderboard?period=${period}`)
       .then((res) => {
         const list = Array.isArray(res) ? res : (res as KpiLeaderboard).data ?? [];
-        setEntries(list.slice(0, 10));
+        setEntries(list.slice(0, 5));
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Unable to load leaderboard");
@@ -440,9 +442,9 @@ function KpiLeaderboardSection() {
   }, [period]);
 
   return (
-    <div className="rounded-3xl border bg-white p-6 shadow-sm space-y-5">
+    <div className="rounded-3xl border bg-white p-6 shadow-sm space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <SectionHeader label="Performance" title="KPI Leaderboard" />
+        <SectionHeader label="Performance" title="Top Performers" />
         <div className="flex rounded-2xl border bg-slate-50 p-1 gap-1">
           {PERIODS.map((p) => (
             <button
@@ -463,50 +465,35 @@ function KpiLeaderboardSection() {
       {loading ? (
         <LoadingRow />
       ) : entries.length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-500">No leaderboard data available.</p>
+        <p className="py-6 text-center text-sm text-slate-500">No leaderboard data available.</p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border">
-          <table className="w-full min-w-[500px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-              <tr>
-                <th className="p-4 font-semibold">Rank</th>
-                <th className="p-4 font-semibold">Employee</th>
-                <th className="p-4 font-semibold">KPI Score</th>
-                <th className="p-4 font-semibold">Trend</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e, i) => (
-                <tr key={e.employee_id ?? i} className="border-t hover:bg-slate-50/80 transition-colors">
-                  <td className="p-4">
-                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-black
-                      ${i === 0 ? "bg-amber-400 text-amber-900" : i === 1 ? "bg-slate-300 text-slate-800" : i === 2 ? "bg-orange-300 text-orange-900" : "bg-slate-100 text-slate-600"}`}>
-                      {e.rank ?? i + 1}
-                    </span>
-                  </td>
-                  <td className="p-4 font-semibold text-slate-950">{e.employee_name}</td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="h-2 w-24 rounded-full bg-slate-100">
-                        <div
-                          className="h-2 rounded-full bg-blue-600"
-                          style={{ width: `${Math.min(e.score, 100)}%` }}
-                        />
-                      </div>
-                      <span className="font-black text-slate-950">{e.score.toFixed(1)}</span>
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    {e.trend === "up" && <TrendingUp className="h-4 w-4 text-emerald-600" />}
-                    {e.trend === "down" && <TrendingDown className="h-4 w-4 text-rose-600" />}
-                    {(!e.trend || e.trend === "flat") && <span className="text-xs text-slate-400">—</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2">
+          {entries.map((e, i) => (
+            <div key={e.employee_id ?? i} className="flex items-center gap-3 rounded-xl border bg-slate-50/60 px-4 py-2.5">
+              <span className={`inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-black
+                ${i === 0 ? "bg-amber-400 text-amber-900" : i === 1 ? "bg-slate-300 text-slate-800" : i === 2 ? "bg-orange-300 text-orange-900" : "bg-slate-100 text-slate-600"}`}>
+                {e.rank ?? i + 1}
+              </span>
+              <span className="flex-1 text-sm font-semibold text-slate-900 truncate">{e.employee_name}</span>
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 w-16 rounded-full bg-slate-200">
+                  <div className="h-1.5 rounded-full bg-blue-600" style={{ width: `${Math.min(e.score, 100)}%` }} />
+                </div>
+                <span className="text-sm font-black text-slate-900 w-10 text-right">{e.score.toFixed(1)}</span>
+                {e.trend === "up" && <TrendingUp className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />}
+                {e.trend === "down" && <TrendingDown className="h-3.5 w-3.5 text-rose-600 flex-shrink-0" />}
+              </div>
+            </div>
+          ))}
         </div>
       )}
+
+      <Link
+        to="/operations-kpi"
+        className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:underline pt-1"
+      >
+        View full KPI leaderboard with process filters &amp; TNI <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
     </div>
   );
 }
@@ -859,6 +846,13 @@ function InboundOpsSection() {
       ) : (
         <p className="py-8 text-center text-sm text-slate-500">No inbound operations data available. Check dialer connection.</p>
       )}
+
+      <Link
+        to="/call-master/inbound"
+        className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:underline pt-1"
+      >
+        Full inbound analytics — hourly trends &amp; per-project drill-down <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
     </div>
   );
 }

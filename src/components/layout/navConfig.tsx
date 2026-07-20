@@ -226,11 +226,10 @@ export const navGroups: NavGroup[] = [
       {
         label: "Quality",      href: "/quality/dashboard", icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "Quality management",
         children: [
-          { label: "Quality Dashboard",  href: "/quality/dashboard",     icon: ic(BarChart3),  pageCode: "QUALITY_DASHBOARD",   description: "Quality dashboard" },
-          { label: "My Quality",         href: "/quality/my-dashboard",  icon: ic(ShieldCheck),description: "My quality score" },
-          { label: "Team Quality",       href: "/quality/team",          icon: ic(Users),      description: "Team quality" },
-          { label: "QA Audit",           href: "/quality/audit",         icon: ic(FileCheck),  description: "QA audit" },
-          { label: "Executive Quality",  href: "/quality/executive",     icon: ic(BarChart3),  description: "Executive view" },
+          { label: "Quality Dashboard",  href: "/quality/dashboard",     icon: ic(BarChart3),  pageCode: "QUALITY_DASHBOARD",   description: "Quality dashboard",  roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst","branch_head","team_leader"] },
+          { label: "My Quality",         href: "/quality/my-dashboard",  icon: ic(ShieldCheck),description: "My quality score",   roles: ["employee","agent","team_leader","manager","process_manager"] },
+          { label: "Team Quality",       href: "/quality/team",          icon: ic(Users),      description: "Team quality",       roles: ["super_admin","admin","manager","process_manager","branch_head","team_leader"] },
+          { label: "Executive Quality",  href: "/quality/executive",     icon: ic(BarChart3),  description: "Executive view",     roles: ["super_admin","admin","ceo","coo"] },
         ],
       },
       {

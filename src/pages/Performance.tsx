@@ -3,7 +3,8 @@ import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
-import { Target, FileText, Loader2, User, BarChart3, Users, TrendingUp, Activity } from "lucide-react";
+import { Target, FileText, Loader2, User, BarChart3, Users, TrendingUp, Activity, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { GoalsManager } from "@/components/performance/GoalsManager";
@@ -14,7 +15,6 @@ import { TeamReviewsManager } from "@/components/performance/TeamReviewsManager"
 import { TeamAnalytics } from "@/components/performance/TeamAnalytics";
 import { AprSection } from "@/components/performance/AprSection";
 import { TeamKpiView } from "@/components/performance/TeamKpiView";
-import { MyLiveKpiView } from "@/components/performance/MyLiveKpiView";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 export interface TeamMember {
@@ -170,7 +170,25 @@ const Performance = () => {
           </TabsList>
 
           <TabsContent value="live-performance">
-            <MyLiveKpiView />
+            <Card className="bg-white border border-slate-200 shadow-sm">
+              <CardContent className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50">
+                  <Activity className="h-7 w-7 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">My Live KPI Scorecard</h3>
+                  <p className="mt-1 max-w-sm text-sm text-slate-500">
+                    View your full KPI breakdown by period — Today, WTD, MTD, and Last Month — with category cards, sparklines, and day-wise detail.
+                  </p>
+                </div>
+                <Link
+                  to="/my-kpi"
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+                >
+                  Open KPI Dashboard <ArrowRight className="h-4 w-4" />
+                </Link>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="kpis">
