@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { ClientQualityDrillModal } from "@/components/quality/ClientQualityDrillModal";
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
@@ -27,6 +26,11 @@ const firstOfMonth = () => {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
 };
+
+function safeNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +45,6 @@ interface Summary {
 interface TrendPoint { date: string; total_calls: number; avg_score: number; above_80: number; below_50: number; }
 interface AgentRow { agent_name: string; agent_code?: string; total_calls: number; avg_score: number; calls_above_80: number; calls_below_50: number; band: string; }
 interface ClientRow { client_id: string; client_name?: string; total_calls: number; avg_score: number; agent_count: number; }
-interface ClientKpi { client_id: string; client_name?: string; audit_count: number; cq_score: number; without_fatal_cq: number; excellent_pct: number; good_pct: number; below_avg_pct: number; }
 interface AprRow { process: string; process_code?: string; agents: number; avg_calls: number; avg_aht: number; avg_shrinkage_pct: number; avg_bio_mins: number; avg_lunch_mins: number; avg_qa_mins: number; avg_training_mins: number; }
 interface SalesSummary { total_calls: number; sales_done: number; competitor_mentions: number; objection_calls: number; }
 interface Competitor { CompetitorName: string; mentions: number; }
@@ -356,7 +359,6 @@ export default function NativeQualityDashboard() {
   const [refresh, setRefresh] = useState(0);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [selectedAgent, setSelectedAgent] = useState<AgentRisk | null>(null);
-  const [drillClient, setDrillClient] = useState<{ id: string; name?: string } | null>(null);
   const [qualityFlags, setQualityFlags] = useState<InterventionFlag[]>([]);
 
   // Suppress unused warning — roleKeys used to satisfy linter
@@ -375,7 +377,6 @@ export default function NativeQualityDashboard() {
   // Core queries — always fetched
   const summaryQ  = useQuery({ queryKey: ["qd-summary",  ...key], queryFn: () => hrmsApi.get<{ summary: Summary }>(`/api/quality-dashboard/summary?${qs}`).then(r => r.summary) });
   const clientsQ  = useQuery({ queryKey: ["qd-clients",  ...key], queryFn: () => hrmsApi.get<{ clients: ClientRow[] }>(`/api/quality-dashboard/clients?from=${from}&to=${to}`).then(r => r.clients) });
-  const clientKpisQ = useQuery({ queryKey: ["qd-clientkpis", ...key], queryFn: () => hrmsApi.get<{ success: boolean; data: ClientKpi[] }>(`/api/quality-dashboard/client-drill/kpis?from=${from}&to=${to}`).then(r => Array.isArray(r) ? r : (r as any)?.data ?? []), enabled: activeTab === "overview" });
 
   // Tab-lazy queries
   const trendQ    = useQuery({ queryKey: ["qd-trend",    ...key], queryFn: () => hrmsApi.get<{ trend: TrendPoint[] }>(`/api/quality-dashboard/trend?from=${from}&to=${to}&granularity=${granularity}`).then(r => r.trend), enabled: activeTab === "overview" || activeTab === "quality" });
@@ -526,42 +527,29 @@ export default function NativeQualityDashboard() {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 font-black text-slate-900">Client Performance</h2>
-          <p className="mb-4 text-xs text-slate-500">Click any client for detailed drill-down</p>
-          {clientKpisQ.isLoading ? <Spinner size="sm" /> : clientKpisQ.isError ? <ErrBanner msg="Failed to load client KPIs" /> : (
+          <p className="mb-4 text-xs text-slate-500">Live audited calls, average score, and agent coverage</p>
+          {clientsQ.isLoading ? <Spinner size="sm" /> : clientsQ.isError ? <ErrBanner msg="Failed to load client performance" /> : (
             <div className="grid gap-3 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-1">
-              {(clientKpisQ.data ?? []).slice(0, 6).map(c => (
-                <div key={c.client_id} onClick={() => setDrillClient({ id: c.client_id, name: c.client_name })} className="group cursor-pointer rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm transition-all hover:shadow-md hover:border-blue-300">
+              {(clientsQ.data ?? []).slice(0, 6).map(c => (
+                <div key={c.client_id} className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
                   <div className="mb-3 flex items-start justify-between">
                     <div>
                       <h3 className="font-bold text-slate-900">{c.client_name ?? c.client_id}</h3>
-                      <p className="text-xs text-slate-400">{c.audit_count} audited calls</p>
+                      <p className="text-xs text-slate-400">{safeNumber(c.total_calls).toLocaleString()} audited calls</p>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-1 group-hover:text-blue-600" />
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     <div className="rounded-lg border border-blue-100 bg-blue-50 px-2 py-1.5 text-center">
-                      <p className="text-xs font-semibold text-blue-600">CQ Score</p>
-                      <p className="text-sm font-black text-blue-900">{c.cq_score}%</p>
+                      <p className="text-xs font-semibold text-blue-600">Avg Score</p>
+                      <p className="text-sm font-black text-blue-900">{safeNumber(c.avg_score).toFixed(1)}%</p>
                     </div>
                     <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1.5 text-center">
-                      <p className="text-xs font-semibold text-emerald-600">W/O Fatal</p>
-                      <p className="text-sm font-black text-emerald-900">{c.without_fatal_cq}%</p>
+                      <p className="text-xs font-semibold text-emerald-600">Audits</p>
+                      <p className="text-sm font-black text-emerald-900">{safeNumber(c.total_calls).toLocaleString()}</p>
                     </div>
                     <div className="rounded-lg border border-purple-100 bg-purple-50 px-2 py-1.5 text-center">
-                      <p className="text-xs font-semibold text-purple-600">Excellent</p>
-                      <p className="text-sm font-black text-purple-900">{c.excellent_pct}%</p>
-                    </div>
-                    <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 text-center">
-                      <p className="text-xs font-semibold text-amber-600">Good</p>
-                      <p className="text-sm font-black text-amber-900">{c.good_pct}%</p>
-                    </div>
-                    <div className="rounded-lg border border-rose-100 bg-rose-50 px-2 py-1.5 text-center">
-                      <p className="text-xs font-semibold text-rose-600">Below Avg</p>
-                      <p className="text-sm font-black text-rose-900">{c.below_avg_pct}%</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5 text-center">
-                      <p className="text-xs font-semibold text-slate-600">Audits</p>
-                      <p className="text-sm font-black text-slate-900">{c.audit_count}</p>
+                      <p className="text-xs font-semibold text-purple-600">Agents</p>
+                      <p className="text-sm font-black text-purple-900">{safeNumber(c.agent_count).toLocaleString()}</p>
                     </div>
                   </div>
                 </div>
@@ -664,8 +652,8 @@ export default function NativeQualityDashboard() {
           <h2 className="mb-1 font-black text-slate-900">Pass / Fail Split</h2>
           <p className="mb-4 text-xs text-slate-500">Audited calls above vs below 60% threshold</p>
           {summaryQ.isLoading ? <Spinner size="sm" /> : s ? (() => {
-            const passed = n(s.calls_above_80) + n((s as any).calls_60_80);
-            const failed = n(s.calls_below_50) + n((s as any).calls_50_60);
+            const passed = safeNumber(s.calls_above_80) + safeNumber((s as any).calls_60_80);
+            const failed = safeNumber(s.calls_below_50) + safeNumber((s as any).calls_50_60);
             const total  = passed + failed || 1;
             const passPct = Math.round(passed / total * 100);
             const failPct = 100 - passPct;
@@ -691,7 +679,7 @@ export default function NativeQualityDashboard() {
                     <span className="text-sm text-slate-600">Fail</span>
                     <span className="ml-auto font-black text-red-600">{failPct}%</span>
                   </div>
-                  <p className="text-xs text-slate-400">{n(s.audited_calls).toLocaleString()} audits</p>
+                  <p className="text-xs text-slate-400">{safeNumber(s.audited_calls).toLocaleString()} audits</p>
                 </div>
               </div>
             );
@@ -705,7 +693,7 @@ export default function NativeQualityDashboard() {
           {agentsQ.isLoading ? <Spinner size="sm" /> : (
             <div className="space-y-2">
               {(agentsQ.data ?? [])
-                .filter((a) => n(a.avg_score) < 70)
+                .filter((a) => safeNumber(a.avg_score) < 70)
                 .slice(0, 6)
                 .map((a) => (
                   <div key={a.agent_name} className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
@@ -714,12 +702,12 @@ export default function NativeQualityDashboard() {
                       <p className="text-xs text-slate-500">{a.agent_code || a.band || "—"}</p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-sm font-black text-red-700">{n(a.avg_score).toFixed(1)}%</span>
+                      <span className="text-sm font-black text-red-700">{safeNumber(a.avg_score).toFixed(1)}%</span>
                       <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 uppercase">Coaching</span>
                     </div>
                   </div>
                 ))}
-              {(agentsQ.data ?? []).filter((a) => n(a.avg_score) < 70).length === 0 && (
+              {(agentsQ.data ?? []).filter((a) => safeNumber(a.avg_score) < 70).length === 0 && (
                 <p className="py-6 text-center text-sm text-emerald-600 font-semibold">All agents above 70% — no coaching priority</p>
               )}
             </div>
@@ -1063,8 +1051,6 @@ export default function NativeQualityDashboard() {
 
   // ─── Tab: Inbound Quality ─────────────────────────────────────────────────────
 
-  const n = (v: unknown) => Number(v) || 0;
-
   const InboundQualityTab = (
     <div className="space-y-5">
       {/* KPI strip */}
@@ -1073,10 +1059,10 @@ export default function NativeQualityDashboard() {
         if (!k) return null;
         return (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <KpiCard label="Total Audited"    value={n(k.total_audited)}                icon={<BarChart2 className="h-5 w-5" />} tone="blue"    animate />
-            <KpiCard label="Avg CQ Score"     value={`${n(k.avg_cq_score).toFixed(1)}%`}icon={<Target className="h-5 w-5" />}   tone="slate" />
-            <KpiCard label="Fatal Calls"      value={n(k.fatal_count)}                  icon={<AlertTriangle className="h-5 w-5" />} tone="red" animate />
-            <KpiCard label="Fatal Rate"       value={`${n(k.fatal_pct).toFixed(1)}%`}   icon={<Shield className="h-5 w-5" />}   tone={n(k.fatal_pct) > 5 ? "orange" : "emerald"} />
+            <KpiCard label="Total Audited"    value={safeNumber(k.total_audited)}                icon={<BarChart2 className="h-5 w-5" />} tone="blue"    animate />
+            <KpiCard label="Avg CQ Score"     value={`${safeNumber(k.avg_cq_score).toFixed(1)}%`}icon={<Target className="h-5 w-5" />}   tone="slate" />
+            <KpiCard label="Fatal Calls"      value={safeNumber(k.fatal_count)}                  icon={<AlertTriangle className="h-5 w-5" />} tone="red" animate />
+            <KpiCard label="Fatal Rate"       value={`${safeNumber(k.fatal_pct).toFixed(1)}%`}   icon={<Shield className="h-5 w-5" />}   tone={safeNumber(k.fatal_pct) > 5 ? "orange" : "emerald"} />
           </div>
         );
       })()}
@@ -1114,7 +1100,7 @@ export default function NativeQualityDashboard() {
                     <tr key={i} className="border-b last:border-0 hover:bg-slate-50">
                       <td className="py-2 font-medium">{a.agent}</td>
                       <td className="py-2 text-right text-slate-600">{a.calls}</td>
-                      <td className="py-2 text-right font-bold text-emerald-600">{n(a.score).toFixed(1)}%</td>
+                      <td className="py-2 text-right font-bold text-emerald-600">{safeNumber(a.score).toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1133,12 +1119,12 @@ export default function NativeQualityDashboard() {
             if (!f) return <p className="text-sm text-slate-400">No data</p>;
             return (
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">Total Fatal</span><span className="font-bold text-red-600">{n(f.total_fatal)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Fatal Rate</span><span className="font-bold">{n(f.fatal_pct).toFixed(1)}%</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Total Fatal</span><span className="font-bold text-red-600">{safeNumber(f.total_fatal)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Fatal Rate</span><span className="font-bold">{safeNumber(f.fatal_pct).toFixed(1)}%</span></div>
                 {(f.top_contributors ?? []).slice(0, 5).map((c: any, i: number) => (
                   <div key={i} className="flex justify-between border-t pt-1">
                     <span className="truncate text-slate-600">{c.agent ?? c.scenario}</span>
-                    <span className="ml-2 font-semibold text-red-600">{n(c.count)}</span>
+                    <span className="ml-2 font-semibold text-red-600">{safeNumber(c.count)}</span>
                   </div>
                 ))}
               </div>
@@ -1172,9 +1158,9 @@ export default function NativeQualityDashboard() {
             if (!r) return <p className="text-sm text-slate-400">No data</p>;
             return (
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">Repeat Calls</span><span className="font-bold">{n(r.repeat_count)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Repeat Rate</span><span className="font-bold text-amber-600">{n(r.repeat_pct).toFixed(1)}%</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Avg Repeats/Customer</span><span className="font-bold">{n(r.avg_repeats).toFixed(1)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Repeat Calls</span><span className="font-bold">{safeNumber(r.repeat_count)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Repeat Rate</span><span className="font-bold text-amber-600">{safeNumber(r.repeat_pct).toFixed(1)}%</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Avg Repeats/Customer</span><span className="font-bold">{safeNumber(r.avg_repeats).toFixed(1)}</span></div>
               </div>
             );
           })()}
@@ -1257,8 +1243,6 @@ export default function NativeQualityDashboard() {
       {/* Agent Detail Modal */}
       {selectedAgent && <AgentDetailModal agent={selectedAgent} onClose={() => setSelectedAgent(null)} />}
 
-      {/* Client Quality Drill Modal */}
-      {drillClient && <ClientQualityDrillModal clientId={drillClient.id} clientName={drillClient.name} from={from} to={to} onClose={() => setDrillClient(null)} />}
     </DashboardLayout>
   );
 }

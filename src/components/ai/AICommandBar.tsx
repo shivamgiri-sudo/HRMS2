@@ -4,27 +4,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { AmbientStrip } from "./AmbientStrip";
 import { CommandPalette } from "./CommandPalette";
 
-// Routes where the ambient strip is shown
-const AMBIENT_ROUTES = [
-  "/dashboard",
-  "/my-dashboard",
-  "/ceo/dashboard",
-  "/operations/dashboard",
-  "/operations-dashboard",
-  "/quality/dashboard",
-  "/quality-dashboard",
-  "/wfm/dashboard",
-  "/wfm-attendance",
-  "/hr/dashboard",
-  "/manager/dashboard",
-  "/recruiter-dashboard",
-  "/payroll-hr/dashboard",
-  "/call-master",
-  "/attendance",
-  "/reports",
-  "/work-inbox",
-];
-
 // Routes where neither strip nor palette should appear
 const HIDDEN_ROUTES = [
   "/auth",
@@ -73,7 +52,6 @@ export function AICommandBar() {
 
   const pathname = location.pathname;
   const isHidden = !user || HIDDEN_ROUTES.some((r) => pathname.startsWith(r));
-  const showStrip = !isHidden && AMBIENT_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"));
   const contextType = getContextType(pathname);
 
   // Global ⌘K / Ctrl+K handler — capture phase overrides old handler in CompactDashboardLayout
@@ -94,12 +72,10 @@ export function AICommandBar() {
 
   return (
     <>
-      {showStrip && (
-        <AmbientStrip
-          contextType={contextType}
-          onOpen={() => setPaletteOpen(true)}
-        />
-      )}
+      <AmbientStrip
+        contextType={contextType}
+        onOpen={() => setPaletteOpen(true)}
+      />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

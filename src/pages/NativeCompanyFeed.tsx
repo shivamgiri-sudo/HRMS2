@@ -224,6 +224,10 @@ function ErrorState({
 
 const PAGE_LIMIT = 12;
 
+function isCreatorAccessError(message?: string): boolean {
+  return /creator access|no active company post creator access|forbidden|http 403/i.test(message ?? "");
+}
+
 export default function NativeCompanyFeed() {
   const [feedPage, setFeedPage] = useState(1);
   const accumulatedRef = useRef<CompanyPost[]>([]);
@@ -231,6 +235,8 @@ export default function NativeCompanyFeed() {
 
   const feedQuery = useCompanyFeed({ limit: PAGE_LIMIT, page: feedPage });
   const myPostsQuery = useMyCompanyPosts({ limit: 6 });
+  const creatorAccessDenied =
+    myPostsQuery.isError && isCreatorAccessError(myPostsQuery.error?.message);
 
   const currentPagePosts = feedQuery.data?.posts ?? [];
   const feedTotal = feedQuery.data?.total ?? 0;
@@ -274,7 +280,7 @@ export default function NativeCompanyFeed() {
               </>
             )}
           </div>
-          <Link to="/company-feed/create">
+          <Link to="/engagement/company-feed/create">
             <Button size="sm">+ New Post</Button>
           </Link>
         </div>
@@ -390,13 +396,21 @@ export default function NativeCompanyFeed() {
                 </div>
               </div>
               <CardContent className="space-y-5 p-5">
-                {myPostsQuery.isError && (
+                {myPostsQuery.isError && !creatorAccessDenied && (
                   <ErrorState
                     title="Your submission history is unavailable"
                     description="Retry to reload your creator-side status cards."
                     onRetry={() => {
                       void myPostsQuery.refetch();
                     }}
+                  />
+                )}
+
+                {creatorAccessDenied && (
+                  <EmptyState
+                    icon={<PenSquare className="h-6 w-6" />}
+                    title="Creator access is not assigned"
+                    description="You can read published updates. Super Admin grants posting access separately."
                   />
                 )}
 

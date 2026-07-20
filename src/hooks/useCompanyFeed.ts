@@ -200,7 +200,7 @@ export const companyFeedQueryKeys = {
 
 async function fetchPagedPosts(path: string, params?: CompanyFeedQueryParams): Promise<CompanyFeedPageResult> {
   const res = await hrmsApi.get<CompanyFeedPageApiResponse>(withQuery(path, params));
-  const body = res.data;
+  const body = res;
   if (!body?.success) throw new Error(body?.error ?? "Request failed");
   return {
     posts: body.posts ?? [],
@@ -212,7 +212,7 @@ async function fetchPagedPosts(path: string, params?: CompanyFeedQueryParams): P
 
 async function fetchSinglePost(path: string): Promise<CompanyPost> {
   const res = await hrmsApi.get<CompanyFeedApiResponse<CompanyPost>>(path);
-  const body = res.data;
+  const body = res;
   if (!body?.success) throw new Error(body?.error ?? "Request failed");
   return body.data;
 }
@@ -262,7 +262,7 @@ export function useCompanyPostCreators() {
       const res = await hrmsApi.get<CompanyFeedApiResponse<CompanyPostCreatorAccessRow[]>>(
         "/api/engagement/company-post-creators",
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return body.data ?? [];
     },
@@ -280,7 +280,7 @@ export function useCreateCompanyPost() {
         "/api/engagement/company-posts",
         payload,
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return body.data;
     },
@@ -299,7 +299,7 @@ export function useApproveCompanyPost() {
         `/api/engagement/company-posts/${postId}/approve`,
         payload,
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return body.data;
     },
@@ -319,7 +319,7 @@ export function useRejectCompanyPost() {
         `/api/engagement/company-posts/${postId}/reject`,
         payload,
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return body.data;
     },
@@ -338,7 +338,7 @@ export function useDeleteCompanyPost() {
         `/api/engagement/company-posts/${postId}`,
         { data: { reason } },
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return null;
     },
@@ -357,7 +357,7 @@ export function useGrantCompanyPostCreator() {
         `/api/engagement/company-post-creators/${employeeId}/grant`,
         payload,
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return body.data;
     },
@@ -375,7 +375,7 @@ export function useRevokeCompanyPostCreator() {
         `/api/engagement/company-post-creators/${employeeId}/revoke`,
         {},
       );
-      const body = res.data;
+      const body = res;
       if (!body?.success) throw new Error(body?.error ?? "Request failed");
       return body.data;
     },

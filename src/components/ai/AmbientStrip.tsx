@@ -27,9 +27,16 @@ export function AmbientStrip({
     <div
       role="complementary"
       aria-label="AI Copilot insights"
-      className="fixed bottom-0 left-0 right-0 z-40 flex h-9 items-center gap-3 bg-slate-900/95 px-4 backdrop-blur-sm select-none"
+      className="fixed bottom-[58px] left-0 right-0 z-50 flex h-10 items-center gap-3 border-t border-slate-700/80 bg-slate-950/95 px-4 shadow-[0_-8px_24px_rgba(15,23,42,0.16)] backdrop-blur-sm select-none lg:bottom-0 lg:left-[var(--sidebar-width)]"
     >
-      <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-violet-400" />
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex flex-shrink-0 items-center gap-2 rounded-lg px-1.5 py-1 text-xs font-bold text-white transition-colors hover:bg-white/10"
+      >
+        <Sparkles className="h-3.5 w-3.5 text-sky-300" />
+        <span>PeopleOS Copilot</span>
+      </button>
 
       {loading && chips.length === 0 ? (
         <span className="text-xs text-slate-500">Loading insights…</span>
