@@ -1451,11 +1451,11 @@ function timeAgoShort(iso: string | null): string {
 function CompanyFeedWidget() {
   const feedQuery = useQuery({
     queryKey: ["company-feed-dashboard"],
-    queryFn: () => hrmsApi.get<{ success: boolean; data: FeedPost[] }>("/api/engagement/company-posts/feed"),
+    queryFn: () => hrmsApi.get<{ success: boolean; posts: FeedPost[] }>("/api/engagement/company-posts/feed"),
     staleTime: 120_000,
   });
 
-  const posts: FeedPost[] = (feedQuery.data?.data ?? []).slice(0, 3);
+  const posts: FeedPost[] = (feedQuery.data?.posts ?? []).slice(0, 3);
 
   return (
     <SectionCard

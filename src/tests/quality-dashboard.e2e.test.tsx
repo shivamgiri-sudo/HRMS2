@@ -404,7 +404,6 @@ describe('Quality Dashboard E2E Tests (Task D2)', () => {
 
     it('should display feedback text', () => {
       expect(mockCallDetailData.feedback).toBe('Good call overall. Work on active listening.');
-      expect(mockCallDetailData.feedback).toHaveLength(49);
     });
 
     it('should show peer comparison', () => {

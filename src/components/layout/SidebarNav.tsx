@@ -6,7 +6,9 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { ChevronRight, ChevronDown } from "lucide-react";
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+
+const SIDEBAR_SCROLL_STORAGE_KEY = "hrms.sidebar.scrollTop";
 
 export type NavItem = {
   label: string;
@@ -118,6 +120,34 @@ function MasterNavItem({
 
 export function SidebarNav({ groups, onNavigate }: SidebarNavProps) {
   const location = useLocation();
+  const navRef = useRef<HTMLElement>(null);
+
+  const persistScrollPosition = () => {
+    if (!navRef.current) return;
+    try {
+      sessionStorage.setItem(SIDEBAR_SCROLL_STORAGE_KEY, String(navRef.current.scrollTop));
+    } catch {
+      // Storage can be unavailable in hardened browser modes.
+    }
+  };
+
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+
+    let savedScroll = 0;
+    try {
+      savedScroll = Number(sessionStorage.getItem(SIDEBAR_SCROLL_STORAGE_KEY)) || 0;
+    } catch {
+      // Keep the browser default when storage is unavailable.
+    }
+
+    nav.scrollTop = savedScroll;
+    const frame = requestAnimationFrame(() => {
+      nav.scrollTop = savedScroll;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const isActive = (href: string) =>
     href === "/dashboard"
@@ -125,7 +155,12 @@ export function SidebarNav({ groups, onNavigate }: SidebarNavProps) {
       : location.pathname === href || location.pathname.startsWith(`${href}/`);
 
   return (
-    <nav className="mcn-sidebar-scroll flex-1 overflow-y-auto px-3 py-2">
+    <nav
+      ref={navRef}
+      className="mcn-sidebar-scroll flex-1 overflow-y-auto px-3 py-2"
+      onScroll={persistScrollPosition}
+      onClickCapture={persistScrollPosition}
+    >
       <div className="space-y-5">
         {groups.map((group) => (
           <div key={group.title}>

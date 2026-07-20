@@ -165,6 +165,7 @@ describe("application shell routing contracts", () => {
       "/portal/login",
       "/pricing",
       "/privacy-policy",
+      "/quality/audit",
       "/reports/enterprise",
       "/reset-password",
       "/reviews-management",

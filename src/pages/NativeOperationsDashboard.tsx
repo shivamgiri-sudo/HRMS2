@@ -112,6 +112,64 @@ const currentMonth = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function safeNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeCoverageData(value: unknown): CoverageData {
+  const outer = asRecord(value);
+  const source = asRecord(outer.data ?? outer);
+  return {
+    required_hc: safeNumber(source.required_hc ?? source.required_headcount),
+    available_hc: safeNumber(source.available_hc ?? source.available_headcount),
+    coverage_pct: safeNumber(source.coverage_pct),
+    process_name: typeof source.process_name === "string" ? source.process_name : undefined,
+  };
+}
+
+function normalizeKpiEntries(value: unknown): KpiEntry[] {
+  const outer = asRecord(value);
+  const rows = Array.isArray(value) ? value : Array.isArray(outer.data) ? outer.data : [];
+  return rows.map((item, index) => {
+    const row = asRecord(item);
+    return {
+      rank: safeNumber(row.rank) || index + 1,
+      employee_id: String(row.employee_id ?? row.employee_code ?? index),
+      employee_name: String(row.employee_name ?? row.full_name ?? row.employee_code ?? "Employee"),
+      score: safeNumber(row.score ?? row.weighted_score_pct),
+      trend: row.trend === "up" || row.trend === "down" || row.trend === "flat"
+        ? row.trend
+        : undefined,
+    };
+  });
+}
+
+function normalizeAttritionSummary(value: unknown): AttritionSummary {
+  const source = asRecord(value);
+  return {
+    total_exits: safeNumber(source.total_exits),
+    voluntary: safeNumber(source.voluntary),
+    involuntary: safeNumber(source.involuntary),
+    rate_pct: safeNumber(source.rate_pct ?? source.attrition_rate),
+    by_reason: Array.isArray(source.by_reason)
+      ? source.by_reason.map((item) => {
+          const row = asRecord(item);
+          return {
+            reason: String(row.reason ?? "Unspecified"),
+            count: safeNumber(row.count),
+          };
+        })
+      : [],
+  };
+}
+
 function adherenceColor(pct: number): string {
   if (pct >= 90) return "bg-emerald-500";
   if (pct >= 70) return "bg-amber-400";
@@ -331,7 +389,7 @@ function ProcessCoverageSection() {
     setError("");
     hrmsApi
       .get<CoverageData>(`/api/wfm-ext/coverage?date=${coverageDate}&process_id=${selectedProcessId}`)
-      .then(setCoverage)
+      .then((res) => setCoverage(normalizeCoverageData(res)))
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Unable to load coverage");
       })
@@ -416,24 +474,20 @@ function ProcessCoverageSection() {
 // Section 3 — KPI Performance Leaderboard
 // ---------------------------------------------------------------------------
 
-type KpiPeriod = "monthly" | "quarterly" | "yearly";
-
 function KpiLeaderboardSection() {
-  const [period, setPeriod] = useState<KpiPeriod>("monthly");
+  const [period, setPeriod] = useState(currentMonth());
   const [entries, setEntries] = useState<KpiEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const PERIODS: KpiPeriod[] = ["monthly", "quarterly", "yearly"];
-
   useEffect(() => {
     setLoading(true);
     setError("");
+    const query = new URLSearchParams({ period, limit: "5" }).toString();
     hrmsApi
-      .get<KpiLeaderboard | KpiEntry[]>(`/api/kpi/leaderboard?period=${period}`)
+      .get<KpiLeaderboard | KpiEntry[]>(`/api/kpi/leaderboard?${query}`)
       .then((res) => {
-        const list = Array.isArray(res) ? res : (res as KpiLeaderboard).data ?? [];
-        setEntries(list.slice(0, 5));
+        setEntries(normalizeKpiEntries(res).slice(0, 5));
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Unable to load leaderboard");
@@ -445,19 +499,15 @@ function KpiLeaderboardSection() {
     <div className="rounded-3xl border bg-white p-6 shadow-sm space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <SectionHeader label="Performance" title="Top Performers" />
-        <div className="flex rounded-2xl border bg-slate-50 p-1 gap-1">
-          {PERIODS.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`cursor-pointer rounded-xl px-4 py-1.5 text-xs font-bold capitalize transition-colors ${
-                period === p ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
+        <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
+          Score month
+          <input
+            type="month"
+            value={period}
+            onChange={(event) => setPeriod(event.target.value)}
+            className="h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-400"
+          />
+        </label>
       </div>
 
       {error && <ErrorBanner message={error} />}
@@ -513,7 +563,7 @@ function AttritionSection() {
     setError("");
     hrmsApi
       .get<AttritionSummary>(`/api/wfm-ext/attrition/summary?month=${month}`)
-      .then(setData)
+      .then((res) => setData(normalizeAttritionSummary(res)))
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Unable to load attrition data");
       })
