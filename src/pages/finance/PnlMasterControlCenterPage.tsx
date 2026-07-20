@@ -534,7 +534,10 @@ export default function PnlMasterControlCenterPage() {
     <DashboardLayout>
       <div className="flex h-full flex-col">
         {/* 48px slim header */}
-        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white">
+        <div
+          aria-label="Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification"
+          className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white"
+        >
           <h1 className="text-sm font-semibold">P&amp;L Control Centre</h1>
           <div className="flex items-center gap-3">
             {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
@@ -863,7 +866,7 @@ export default function PnlMasterControlCenterPage() {
                   <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden" style={{ minHeight: 480 }}>
                     <SplitPane
                       formOpen={formOpen}
-                      tableLabel="Revenue component ledger"
+                      tableLabel="Revenue addition or deduction ledger"
                       onAdd={openAdd}
                       onClose={closeForm}
                       selectedRow={selectedRow}
@@ -1001,7 +1004,7 @@ export default function PnlMasterControlCenterPage() {
               <TabsContent value="classification" className="flex-1 overflow-hidden m-0">
                 <SplitPane
                   formOpen={formOpen}
-                  tableLabel="Classification register"
+                  tableLabel="P&L classification rule register"
                   onAdd={openAdd}
                   onClose={closeForm}
                   selectedRow={selectedRow}
