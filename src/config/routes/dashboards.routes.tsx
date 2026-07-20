@@ -6,13 +6,17 @@ import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
 
-const Index                 = lazy(() => import("@/pages/Index"));
-const CeoDashboard          = lazy(() => import("@/pages/dashboards/CeoDashboard"));
-const PayrollHrDashboard    = lazy(() => import("@/pages/dashboards/PayrollHrDashboard"));
-const WfmDashboard          = lazy(() => import("@/pages/dashboards/WfmDashboard"));
-const HrDashboard           = lazy(() => import("@/pages/dashboards/HrDashboard"));
-const EmployeeSelfDashboard = lazy(() => import("@/pages/dashboards/EmployeeSelfDashboard"));
-const ManagerDashboard      = lazy(() => import("@/pages/dashboards/ManagerDashboard"));
+const Index                    = lazy(() => import("@/pages/Index"));
+const CeoDashboard             = lazy(() => import("@/pages/dashboards/CeoDashboard"));
+const PayrollHrDashboard       = lazy(() => import("@/pages/dashboards/PayrollHrDashboard"));
+const WfmDashboard             = lazy(() => import("@/pages/dashboards/WfmDashboard"));
+const HrDashboard              = lazy(() => import("@/pages/dashboards/HrDashboard"));
+const EmployeeSelfDashboard    = lazy(() => import("@/pages/dashboards/EmployeeSelfDashboard"));
+const ManagerDashboard         = lazy(() => import("@/pages/dashboards/ManagerDashboard"));
+const QualityDashboardRole     = lazy(() => import("@/pages/dashboards/QualityDashboardRole"));
+const OperationsDashboardRole  = lazy(() => import("@/pages/dashboards/OperationsDashboardRole"));
+const RecruiterDashboard       = lazy(() => import("@/pages/dashboards/RecruiterDashboard"));
+const WfmAttendanceDashboard   = lazy(() => import("@/pages/dashboards/WfmAttendanceDashboard"));
 
 export const dashboardRouteElements = (
   <>
@@ -26,5 +30,11 @@ export const dashboardRouteElements = (
       <Route path="/hr/dashboard"       element={<ProtectedRoute><Gate pageCode="HR_DASHBOARD"><HrDashboard /></Gate></ProtectedRoute>} />
       <Route path="/manager/dashboard"  element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><ManagerDashboard /></Gate></ProtectedRoute>} />
       <Route path="/my-dashboard"       element={<ProtectedRoute><Gate pageCode="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></Gate></ProtectedRoute>} />
+
+      {/* New role-specific dashboards (from reference layouts) */}
+      <Route path="/quality-dashboard"      element={<ProtectedRoute roles={["qa","quality_analyst","super_admin","admin","ceo","manager","process_manager","branch_head","operations_manager"]}><QualityDashboardRole /></ProtectedRoute>} />
+      <Route path="/operations-dashboard"   element={<ProtectedRoute roles={["operations_manager","admin","super_admin","ceo","manager","process_manager","branch_head"]}><OperationsDashboardRole /></ProtectedRoute>} />
+      <Route path="/recruiter-dashboard"    element={<ProtectedRoute roles={["recruiter","hr","admin","super_admin","manager"]}><RecruiterDashboard /></ProtectedRoute>} />
+      <Route path="/wfm-attendance"         element={<ProtectedRoute roles={["wfm","admin","super_admin","hr","manager","operations_manager"]}><WfmAttendanceDashboard /></ProtectedRoute>} />
   </>
 );

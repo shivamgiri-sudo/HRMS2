@@ -61,11 +61,15 @@ import { useUserRole } from "@/hooks/useUserRole";
 export type RoleDashboardVariant =
   | "employee"
   | "wfm"
+  | "wfm_attendance"
   | "hr"
   | "ceo"
   | "payroll"
   | "manager"
-  | "super_admin";
+  | "super_admin"
+  | "quality"
+  | "operations"
+  | "recruiter";
 
 type Tone = "blue" | "green" | "amber" | "red" | "violet" | "slate";
 
@@ -177,6 +181,38 @@ const CONFIG: Record<RoleDashboardVariant, DashboardConfig> = {
     badge: "System Administrator",
     aiContext: "super_admin",
     role: "super_admin",
+  },
+  quality: {
+    code: "QUALITY_DASHBOARD",
+    title: "Quality Dashboard",
+    subtitle: "Audit scores, defect categories, agent risk and coaching queue",
+    badge: "QA View",
+    aiContext: "quality_operations",
+    role: "qa",
+  },
+  operations: {
+    code: "OPERATIONS_DASHBOARD",
+    title: "Operations Dashboard",
+    subtitle: "Live call volume, SLA adherence, AHT and floor headcount",
+    badge: "Ops View",
+    aiContext: "operations",
+    role: "operations_manager",
+  },
+  recruiter: {
+    code: "RECRUITER_DASHBOARD",
+    title: "Recruitment Dashboard",
+    subtitle: "ATS pipeline, walk-ins, offers and joining funnel",
+    badge: "Recruiter View",
+    aiContext: "ats_recruiter",
+    role: "recruiter",
+  },
+  wfm_attendance: {
+    code: "WFM_DASHBOARD",
+    title: "WFM / Attendance Dashboard",
+    subtitle: "Attendance compliance, shift coverage and biometric exceptions",
+    badge: "WFM View",
+    aiContext: "wfm_roster",
+    role: "wfm",
   },
 };
 
@@ -414,6 +450,30 @@ function QuickActions({ variant }: { variant: RoleDashboardVariant }) {
       { label: "Bulk Import", href: "/bulk-upload", icon: Database },
       { label: "Audit Logs", href: "/audit-log", icon: FileText },
     ],
+    quality: [
+      { label: "Quality Dashboard", href: "/quality/dashboard", icon: ShieldCheck },
+      { label: "Scorecards", href: "/quality/dashboard", icon: FileCheck2 },
+      { label: "My Quality", href: "/quality/my-dashboard", icon: Award },
+      { label: "QA Reports", href: "/reports", icon: BarChart3 },
+    ],
+    operations: [
+      { label: "Operations Dashboard", href: "/operations/dashboard", icon: Activity },
+      { label: "KPI Leaderboard", href: "/operations-kpi", icon: Target },
+      { label: "Quality Queue", href: "/quality/dashboard", icon: ShieldCheck },
+      { label: "WFM Roster", href: "/wfm/auto-roster", icon: Network },
+    ],
+    recruiter: [
+      { label: "Candidate Pipeline", href: "/ats/candidates", icon: Users },
+      { label: "Walk-in Registry", href: "/ats/walkin-queue", icon: UserPlus },
+      { label: "ATS Dashboard", href: "/ats/command-center", icon: BarChart3 },
+      { label: "Work Inbox", href: "/work-inbox", icon: Inbox },
+    ],
+    wfm_attendance: [
+      { label: "Mark Attendance", href: "/attendance", icon: UserCheck },
+      { label: "Manual Punch", href: "/attendance-regularization", icon: Fingerprint },
+      { label: "Mismatch Queue", href: "/wfm/mismatch-queue", icon: Clock3 },
+      { label: "My Roster", href: "/my-roster", icon: CalendarCheck2 },
+    ],
   };
 
   return (
@@ -486,7 +546,7 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   const atsQuery = useQuery({
     queryKey: ["role-dashboard-v3-ats", variant, branchId, processId],
     queryFn: () => hrmsApi.get<any>(`/api/ats/stats${params}`),
-    enabled: ["hr", "ceo", "super_admin"].includes(variant),
+    enabled: ["hr", "ceo", "super_admin", "recruiter"].includes(variant),
     staleTime: 60_000,
   });
 
@@ -514,8 +574,37 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   const biometricQuery = useQuery({
     queryKey: ["role-dashboard-v3-biometric", branchId, processId],
     queryFn: () => hrmsApi.get<any>(`/api/wfm/biometric-summary/adherence-summary${params}`),
-    enabled: variant === "wfm",
+    enabled: variant === "wfm" || variant === "wfm_attendance",
     staleTime: 30_000,
+  });
+
+  const qualitySummaryQuery = useQuery({
+    queryKey: ["role-dashboard-v3-quality", branchId, processId],
+    queryFn: () => hrmsApi.get<any>(`/api/quality-dashboard/summary?${params.replace("?","")}`).catch(() => null),
+    enabled: variant === "quality",
+    staleTime: 60_000,
+  });
+
+  const qualityAgentsQuery = useQuery({
+    queryKey: ["role-dashboard-v3-quality-agents", branchId, processId],
+    queryFn: () => hrmsApi.get<any>(`/api/quality-dashboard/agents?${params.replace("?","")}`).catch(() => null),
+    enabled: variant === "quality",
+    staleTime: 60_000,
+  });
+
+  const opsPulseQuery = useQuery({
+    queryKey: ["role-dashboard-v3-ops-pulse"],
+    queryFn: () => hrmsApi.get<any>("/api/bi/daily-operations-pulse").catch(() => null),
+    enabled: variant === "operations",
+    staleTime: 30_000,
+    refetchInterval: variant === "operations" ? 60_000 : false,
+  });
+
+  const ceoQualityQuery = useQuery({
+    queryKey: ["role-dashboard-v3-ceo-quality", branchId, processId],
+    queryFn: () => hrmsApi.get<any>("/api/executive/quality-summary?daysBack=30").catch(() => null),
+    enabled: variant === "ceo",
+    staleTime: 120_000,
   });
 
   const summary = summaryQuery.data?.data ?? null;
@@ -562,6 +651,43 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   const revenue = asNumber(pnl?.kpis?.organisationRevenue);
   const shrinkage = asNumber(workforce?.summary?.shrinkage_pct);
   const systemMetrics = system?.metrics ?? {};
+
+  // Quality variant derived values
+  const qualityData = qualitySummaryQuery.data?.data ?? qualitySummaryQuery.data ?? {};
+  const qualityAgents: any[] = qualityAgentsQuery.data?.data ?? qualityAgentsQuery.data ?? [];
+  const qAvgScore = asNumber(qualityData.avg_quality_score ?? qualityData.avg_score ?? qualityData.average_score);
+  const qTotalAudits = asNumber(qualityData.audited_calls ?? qualityData.total_audits ?? qualityData.audits_done);
+  const qFailRate = asNumber(qualityData.fail_rate ?? qualityData.failure_rate);
+  const qPendingQueue = asNumber(qualityData.pending_audits ?? qualityData.queue_size ?? qualityData.pending_count);
+
+  // Operations variant derived values
+  const opsPulse = opsPulseQuery.data?.data ?? opsPulseQuery.data ?? {};
+  const opsCallsHandled = asNumber(opsPulse.total_calls ?? opsPulse.total_volume ?? opsPulse.calls_handled);
+  const opsSlaAdherence = asNumber(opsPulse.login_adherence_pct ?? opsPulse.sla_pct ?? opsPulse.sla_adherence);
+  const opsAht = asNumber(opsPulse.avg_aht_seconds ?? opsPulse.avg_handle_time ?? opsPulse.aht);
+  const opsAgentsLoggedIn = asNumber(opsPulse.agents_logged_in ?? opsPulse.agents_scheduled);
+  const opsFlags: any[] = opsPulse.intervention_flags ?? [];
+  const opsVolumeTrend: any[] = opsPulse.volume_trend ?? [];
+
+  // Recruiter variant derived values
+  const atsWalkins = asNumber(ats.walkin_today ?? ats.today_walkins ?? (ats.by_stage as any)?.["walk_in"] ?? (ats.by_stage as any)?.["Walk In"]);
+  const atsOffersExtended = asNumber(ats.selected_candidates ?? ats.offers_extended);
+  const atsJoined = asNumber(ats.joined ?? ats.converted ?? (ats.by_stage as any)?.["converted"] ?? (ats.by_stage as any)?.["onboarded"]);
+  const atsOpenPositions: any[] = ats.open_positions ?? ats.open_requisitions ?? [];
+  const atsRecentCandidates: any[] = ats.recent_candidates ?? ats.pipeline ?? [];
+
+  // WFM Attendance variant derived values
+  const biometricOnLeave = asNumber(biometric.on_leave);
+  const biometricWfh = asNumber(biometric.working_remotely);
+  const biometricNotMarked = asNumber(biometric.not_marked ?? biometric.not_marked_count);
+  const biometricRegSummary = biometric.regularization_summary ?? {};
+  const biometricShiftSummary: any[] = biometric.shift_summary ?? [];
+  const biometricVariance0_1 = asNumber(biometric.variance_0_1);
+  const biometricVariance1_4 = asNumber(biometric.variance_1_4);
+  const biometricVariance4Plus = asNumber(biometric.variance_4_plus);
+
+  // CEO quality data
+  const ceoQualityData = ceoQualityQuery.data?.data ?? ceoQualityQuery.data ?? {};
 
   const cards = useMemo<CardMetric[]>(() => {
     switch (variant) {
@@ -621,8 +747,38 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
           { label: "Integrations", value: systemMetrics.activeIntegrations, helper: `${systemMetrics.configuredIntegrations ?? 0} configured`, icon: Database, tone: "green" },
           { label: "System Health", value: systemMetrics.systemHealth ?? "—", helper: "Application and module status", icon: Activity, tone: systemMetrics.systemHealth === "healthy" ? "green" : "amber" },
         ];
+      case "quality":
+        return [
+          { label: "Avg Audit Score", value: qAvgScore === null ? null : `${qAvgScore.toFixed(1)}%`, helper: "Quality score average", icon: ShieldCheck, tone: qAvgScore !== null && qAvgScore >= 85 ? "green" : qAvgScore !== null && qAvgScore >= 70 ? "amber" : "red" },
+          { label: "Audits Completed", value: qTotalAudits, helper: "Total calls audited", icon: FileCheck2, tone: "blue" },
+          { label: "Fail Rate", value: qFailRate === null ? null : `${qFailRate.toFixed(1)}%`, helper: "Below quality threshold", icon: AlertTriangle, tone: qFailRate !== null && qFailRate <= 10 ? "green" : qFailRate !== null && qFailRate <= 20 ? "amber" : "red" },
+          { label: "Pending Queue", value: qPendingQueue, helper: "Audits awaiting review", icon: Clock3, tone: qPendingQueue !== null && qPendingQueue > 20 ? "red" : qPendingQueue !== null && qPendingQueue > 0 ? "amber" : "green" },
+        ];
+      case "operations":
+        return [
+          { label: "Calls Handled", value: opsCallsHandled, helper: "Total calls today", icon: Headphones, tone: "blue" },
+          { label: "SLA Adherence", value: opsSlaAdherence === null ? null : `${opsSlaAdherence.toFixed(1)}%`, helper: "Login adherence %", icon: Target, tone: opsSlaAdherence !== null && opsSlaAdherence >= 90 ? "green" : "amber" },
+          { label: "Avg Handle Time", value: opsAht === null ? null : `${opsAht}s`, helper: opsAht !== null && opsAht <= 300 ? "On target (≤300s)" : "Above target", icon: Clock3, tone: opsAht !== null && opsAht <= 300 ? "green" : "amber" },
+          { label: "Active Agents", value: opsAgentsLoggedIn, helper: "Currently logged in", icon: Users, tone: "violet" },
+        ];
+      case "recruiter":
+        return [
+          { label: "Total Applications", value: asNumber(ats.total_candidates ?? ats.total_applications), helper: "All candidates this period", icon: Users, tone: "blue" },
+          { label: "Walk-ins Today", value: atsWalkins, helper: "Candidates arrived today", icon: UserPlus, tone: "violet" },
+          { label: "Offers Extended", value: atsOffersExtended, helper: "Selected / shortlisted", icon: UserCheck, tone: "green" },
+          { label: "Joined", value: atsJoined, helper: "Converted to employees", icon: Award, tone: "green" },
+        ];
+      case "wfm_attendance":
+        return [
+          { label: "Total Employees", value: active, helper: "Active headcount", icon: Users, tone: "blue" },
+          { label: "Present Today", value: present, helper: attendanceRate === null ? "Live attendance" : `${attendanceRate}% attendance`, icon: UserCheck, tone: "green" },
+          { label: "Late Arrivals", value: late, helper: "Attendance exceptions today", icon: Clock3, tone: late && late > 0 ? "amber" : "green" },
+          { label: "Absent Today", value: absent, helper: "Unplanned absences", icon: UserMinus, tone: absent && absent > 0 ? "red" : "green" },
+          { label: "On Leave", value: biometricOnLeave, helper: "Approved leave today", icon: CalendarCheck2, tone: "violet" },
+          { label: "Working Remotely", value: biometricWfh, helper: "WFH / remote today", icon: Network, tone: "slate" },
+        ];
     }
-  }, [variant, employeePresent, employeeAbsent, employeeLate, employeeAttendancePct, required, available, attendanceRate, missedPunch, metrics, selectedCandidates, onbSubmitted, onbPending, onbStuck, bgvPending, dpdpPending, shrinkage, revenue, active, payrollReady, payrollBlocked, payrollCost, present, absent, late, workItems, systemMetrics]);
+  }, [variant, employeePresent, employeeAbsent, employeeLate, employeeAttendancePct, required, available, attendanceRate, missedPunch, metrics, selectedCandidates, onbSubmitted, onbPending, onbStuck, bgvPending, dpdpPending, shrinkage, revenue, active, payrollReady, payrollBlocked, payrollCost, present, absent, late, workItems, systemMetrics, qAvgScore, qTotalAudits, qFailRate, qPendingQueue, opsCallsHandled, opsSlaAdherence, opsAht, opsAgentsLoggedIn, ats, atsWalkins, atsOffersExtended, atsJoined, biometricOnLeave, biometricWfh]);
 
   const alerts = useMemo<AlertItem[]>(() => {
     if (variant === "employee") {
@@ -662,6 +818,32 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
         { label: "Missing Punch", value: missedPunch, detail: "Attendance correction required", tone: missedPunch && missedPunch > 0 ? "amber" : "blue", href: "/attendance-regularization" },
       ];
     }
+    if (variant === "quality") {
+      return [
+        { label: "Fail Rate", value: qFailRate === null ? null : `${qFailRate.toFixed(1)}%`, detail: qFailRate !== null && qFailRate > 20 ? "High fail rate — immediate review needed" : "Quality fail rate", tone: qFailRate !== null && qFailRate > 20 ? "red" : "blue", href: "/quality/dashboard" },
+        { label: "Pending Queue", value: qPendingQueue, detail: "Audits awaiting review", tone: qPendingQueue !== null && qPendingQueue > 20 ? "amber" : "blue", href: "/quality/dashboard" },
+      ];
+    }
+    if (variant === "operations") {
+      return [
+        { label: "SLA Adherence", value: opsSlaAdherence === null ? null : `${opsSlaAdherence.toFixed(1)}%`, detail: opsSlaAdherence !== null && opsSlaAdherence < 90 ? "Below 90% target" : "Login adherence", tone: opsSlaAdherence !== null && opsSlaAdherence < 90 ? "red" : "blue", href: "/operations/dashboard" },
+        { label: "Intervention Flags", value: opsFlags.length || null, detail: "Operations flags requiring action", tone: opsFlags.length > 0 ? "amber" : "blue", href: "/operations/dashboard" },
+      ];
+    }
+    if (variant === "recruiter") {
+      return [
+        { label: "Walk-ins Today", value: atsWalkins, detail: "Candidates arrived for interview", tone: "blue", href: "/ats/candidates" },
+        { label: "Open Actions", value: workItems.pending_count, detail: "Pending recruiter follow-ups", tone: workItems.overdue_count ? "red" : "blue", href: "/work-inbox" },
+      ];
+    }
+    if (variant === "wfm_attendance") {
+      const gap = required !== null && available !== null ? required - available : null;
+      return [
+        { label: "Missing Punches", value: missedPunch, detail: "Requires attendance correction", tone: missedPunch && missedPunch > 0 ? "red" : "blue", href: "/wfm/mismatch-queue" },
+        { label: "Headcount Gap", value: gap, detail: "Required vs available HC", tone: gap && gap > 0 ? "red" : "blue", href: "/wfm/auto-roster" },
+        { label: "Late Arrivals", value: late, detail: "Attendance exceptions today", tone: late && late > 0 ? "amber" : "blue", href: "/attendance" },
+      ];
+    }
     return [
       { label: "TAT Breached", value: tatBreached, detail: "Items waiting beyond SLA", tone: "red", href: "/work-inbox" },
       { label: "BGV Pending", value: bgvPending, detail: "Verification approvals pending", tone: "red", href: "/ats/bgv-verification" },
@@ -676,6 +858,15 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
         { name: "Present", value: employeePresent ?? 0 },
         { name: "Absent", value: employeeAbsent ?? 0 },
         { name: "Late", value: employeeLate ?? 0 },
+      ]
+    : variant === "wfm_attendance"
+    ? [
+        { name: "Present", value: present ?? 0 },
+        { name: "Late", value: late ?? 0 },
+        { name: "Absent", value: absent ?? 0 },
+        { name: "On Leave", value: biometricOnLeave ?? 0 },
+        { name: "WFH", value: biometricWfh ?? 0 },
+        { name: "Not Marked", value: biometricNotMarked ?? 0 },
       ]
     : [
         { name: "Present", value: present ?? 0 },
@@ -695,13 +886,21 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   }, [workforce, active, present, employeePresent]);
 
   const leaveBalances = employee?.balances ?? [];
-  const loading = roleLoading || (variant === "employee" ? employeeQuery.isLoading : summaryQuery.isLoading);
-  const refreshing = summaryQuery.isFetching || employeeQuery.isFetching || systemQuery.isFetching;
+  const loading = roleLoading || (
+    variant === "employee" ? employeeQuery.isLoading
+    : variant === "quality" ? qualitySummaryQuery.isLoading
+    : variant === "operations" ? opsPulseQuery.isLoading
+    : summaryQuery.isLoading
+  );
+  const refreshing = summaryQuery.isFetching || employeeQuery.isFetching || systemQuery.isFetching
+    || qualitySummaryQuery.isFetching || opsPulseQuery.isFetching;
   const generatedAt = summary?.generatedAt;
   const dashboardError = summaryQuery.error ?? employeeQuery.error;
 
   const refreshAll = () => {
     if (variant === "employee") void employeeQuery.refetch();
+    else if (variant === "quality") { void qualitySummaryQuery.refetch(); void qualityAgentsQuery.refetch(); }
+    else if (variant === "operations") void opsPulseQuery.refetch();
     else void summaryQuery.refetch();
     if (variant === "super_admin") void systemQuery.refetch();
     if (["ceo", "super_admin"].includes(variant)) void workforceQuery.refetch();
@@ -751,8 +950,40 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
           </section>
 
           <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-            <SectionCard title={variant === "employee" ? "My Attendance This Month" : variant === "wfm" ? "Live Attendance Status" : variant === "payroll" ? "Payroll Readiness" : variant === "hr" ? "HR Operations Snapshot" : variant === "manager" ? "Team Attendance" : variant === "super_admin" ? "Organisation Attendance" : "Workforce Overview"}>
-              {variant === "payroll" ? (
+            <SectionCard title={variant === "employee" ? "My Attendance This Month" : variant === "wfm" || variant === "wfm_attendance" ? "Live Attendance Status" : variant === "payroll" ? "Payroll Readiness" : variant === "hr" ? "HR Operations Snapshot" : variant === "manager" ? "Team Attendance" : variant === "super_admin" ? "Organisation Attendance" : variant === "quality" ? "Quality Score Trend" : variant === "operations" ? "Volume Trend" : variant === "recruiter" ? "Hiring Funnel" : "Workforce Overview"}>
+              {variant === "quality" ? (
+                <div className="h-48">
+                  {qualitySummaryQuery.isLoading ? (
+                    <div className="flex h-full items-center justify-center"><Skeleton className="h-32 w-full" /></div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={[]} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                        <Tooltip />
+                        <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={3} dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                  <p className="mt-2 text-xs text-center text-slate-400">Score trend from audit data</p>
+                </div>
+              ) : variant === "operations" ? (
+                <div className="h-48">
+                  {opsVolumeTrend.length > 1 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={opsVolumeTrend.map((p: any) => ({ label: p.period ?? p.hour ?? p.label, value: Number(p.volume ?? p.calls ?? p.value ?? 0) }))}>
+                        <Tooltip />
+                        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center text-slate-400">
+                      <PieChartIcon className="h-8 w-8" />
+                      <p className="mt-2 text-sm">Volume trend will appear as data accumulates.</p>
+                    </div>
+                  )}
+                </div>
+              ) : variant === "recruiter" ? (
+                <RecruiterFunnelPanel ats={ats} />
+              ) : variant === "payroll" ? (
                 <div className="grid gap-5 md:grid-cols-[220px_1fr]">
                   <DistributionDonut data={[
                     { name: "Ready", value: payrollReady ?? 0 },
@@ -786,7 +1017,8 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
               )}
             </SectionCard>
 
-            <SectionCard title={variant === "employee" ? "My Training & Onboarding" : variant === "wfm" ? "Biometric Compliance" : variant === "payroll" ? "Payment Summary" : variant === "super_admin" ? "System Health" : variant === "hr" ? "Hiring Pipeline" : variant === "manager" ? "Team Leave Summary" : "Operational Indicators"}>
+
+            <SectionCard title={variant === "employee" ? "My Training & Onboarding" : variant === "wfm" || variant === "wfm_attendance" ? "Biometric Compliance" : variant === "payroll" ? "Payment Summary" : variant === "super_admin" ? "System Health" : variant === "hr" ? "Hiring Pipeline" : variant === "manager" ? "Team Leave Summary" : variant === "quality" ? "Agents Needing Coaching" : variant === "operations" ? "Intervention Flags" : variant === "recruiter" ? "Open Positions" : "Operational Indicators"}>
               {variant === "employee" ? (
                 <ProgressList items={[
                   { label: "Course completion", value: asNumber(employee?.lms?.completion_pct), max: 100, tone: "violet" },
@@ -842,6 +1074,59 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
                     </div>
                   ))}
                 </div>
+              ) : variant === "wfm_attendance" ? (
+                <ProgressList items={[
+                  { label: "Regularization Pending", value: asNumber(biometricRegSummary.pending), max: (asNumber(biometricRegSummary.pending) ?? 0) + (asNumber(biometricRegSummary.approved) ?? 0) + 1, tone: "amber" },
+                  { label: "Approved", value: asNumber(biometricRegSummary.approved), max: asNumber(active) ?? 100, tone: "green" },
+                  { label: "Rejected", value: asNumber(biometricRegSummary.rejected), max: asNumber(active) ?? 100, tone: "red" },
+                  { label: "Biometric Compliance %", value: asNumber(biometric.biometric_compliance_pct), max: 100, tone: "violet" },
+                ]} />
+              ) : variant === "quality" ? (
+                <div className="space-y-2">
+                  {qualityAgents
+                    .filter((a: any) => Number(a.avg_score ?? a.quality ?? 0) < 70)
+                    .slice(0, 5)
+                    .map((a: any) => (
+                      <div key={a.agent_name ?? a.agent_code} className="flex items-center justify-between rounded-xl border border-red-100 bg-red-50 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-800 truncate">{a.agent_name ?? a.agent_code ?? "—"}</p>
+                          <p className="text-[11px] text-slate-500">{a.band ?? a.process ?? "—"}</p>
+                        </div>
+                        <span className="text-sm font-black text-red-700 flex-shrink-0 ml-2">{Number(a.avg_score ?? a.quality ?? 0).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                  {qualityAgents.filter((a: any) => Number(a.avg_score ?? a.quality ?? 0) < 70).length === 0 && (
+                    <p className="py-6 text-center text-sm text-emerald-600 font-semibold">All agents above 70%</p>
+                  )}
+                </div>
+              ) : variant === "operations" ? (
+                <div className="space-y-2">
+                  {opsFlags.length > 0 ? opsFlags.slice(0, 6).map((f: any, i: number) => (
+                    <div key={i} className={cn("flex items-start gap-2 rounded-xl border px-3 py-2", f.severity === "critical" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50")}>
+                      <AlertTriangle className={cn("h-4 w-4 mt-0.5 flex-shrink-0", f.severity === "critical" ? "text-red-500" : "text-amber-500")} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-800 truncate">{f.title ?? f.flag_type ?? "Flag"}</p>
+                        <p className="text-[11px] text-slate-500">{f.process ?? f.area ?? "Operations"}</p>
+                      </div>
+                    </div>
+                  )) : (
+                    <p className="py-6 text-center text-sm text-emerald-600 font-semibold">No active intervention flags</p>
+                  )}
+                </div>
+              ) : variant === "recruiter" ? (
+                <div className="space-y-2">
+                  {atsOpenPositions.length > 0 ? atsOpenPositions.slice(0, 5).map((p: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-800 truncate">{p.role ?? p.designation ?? p.title ?? "Open Position"}</p>
+                        <p className="text-[11px] text-slate-500">{p.branch ?? p.department ?? p.process ?? "—"}</p>
+                      </div>
+                      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold flex-shrink-0 ml-2", (p.urgency === "Urgent" || p.priority === "high") ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700")}>{p.openings ?? p.count ?? 1}</span>
+                    </div>
+                  )) : (
+                    <p className="py-6 text-center text-sm text-slate-400">No open positions data</p>
+                  )}
+                </div>
               ) : variant === "manager" ? (
                 <ManagerTeamLeavePanel />
               ) : (
@@ -868,7 +1153,7 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
             <AIInsightPanel
               contextType={config.aiContext}
               role={config.role}
-              title={variant === "employee" ? "Attendance & Leave AI Brief" : variant === "hr" ? "HR Operations AI Briefing" : variant === "ceo" ? "Executive AI Briefing" : variant === "wfm" ? "Workforce AI Analysis" : variant === "payroll" ? "Payroll Readiness AI Brief" : variant === "manager" ? "Team Management AI Brief" : "System & Business AI Brief"}
+              title={variant === "employee" ? "Attendance & Leave AI Brief" : variant === "hr" ? "HR Operations AI Briefing" : variant === "ceo" ? "Executive AI Briefing" : variant === "wfm" || variant === "wfm_attendance" ? "Workforce AI Analysis" : variant === "payroll" ? "Payroll Readiness AI Brief" : variant === "manager" ? "Team Management AI Brief" : variant === "quality" ? "Quality AI Brief" : variant === "operations" ? "Operations AI Brief" : variant === "recruiter" ? "Recruitment AI Brief" : "System & Business AI Brief"}
               enabled={!loading}
               data={{
                 variant,
@@ -920,27 +1205,175 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
           {variant === "employee" && <CompanyFeedWidget />}
 
           {variant === "ceo" && (
-            <section className="grid gap-5 lg:grid-cols-3">
-              <SectionCard title="Executive Financial Snapshot" className="lg:col-span-2">
+            <>
+              <section className="grid gap-5 lg:grid-cols-3">
+                <SectionCard title="Executive Financial Snapshot" className="lg:col-span-2">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      { label: "Revenue MTD", value: formatCurrency(revenue), icon: WalletCards, tone: "green" as Tone },
+                      { label: "Payroll / Direct Cost", value: formatCurrency(payrollCost), icon: ReceiptIndianRupee, tone: "blue" as Tone },
+                      { label: "Payroll Readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, icon: CreditCard, tone: "violet" as Tone },
+                      { label: "Active HC", value: active, icon: Users, tone: "slate" as Tone },
+                    ].map((item) => <MetricCard key={item.label} metric={item} loading={loading} />)}
+                  </div>
+                </SectionCard>
+                <SectionCard title="Good / Bad Signals">
+                  <CeoSignals
+                    attendanceRate={attendanceRate}
+                    payrollReadiness={payrollReadiness}
+                    bgvPending={bgvPending}
+                    payrollBlocked={payrollBlocked}
+                    tatBreached={tatBreached}
+                    nameMismatch={nameMismatch}
+                  />
+                </SectionCard>
+              </section>
+
+              {/* CEO: Quality Overview */}
+              {ceoQualityData && Object.keys(ceoQualityData).length > 0 && (
+                <section className="grid gap-5 lg:grid-cols-3">
+                  <SectionCard title="Quality Overview — Last 30 Days" className="lg:col-span-2">
+                    <div className="grid gap-3 sm:grid-cols-3 mb-4">
+                      {[
+                        { label: "Org Quality Score", value: ceoQualityData.avg_quality !== undefined ? `${Number(ceoQualityData.avg_quality ?? 0).toFixed(1)}%` : "—", tone: "blue" as Tone },
+                        { label: "Quality Target", value: ceoQualityData.target !== undefined ? `${Number(ceoQualityData.target ?? 80).toFixed(0)}%` : "80%", tone: "green" as Tone },
+                        { label: "Risk Agents", value: ceoQualityData.risk_agents ?? ceoQualityData.agents_below_threshold ?? "—", tone: "red" as Tone },
+                      ].map(({ label, value, tone }) => (
+                        <div key={label} className={cn("rounded-xl border p-4", toneStyles[tone].soft, toneStyles[tone].border)}>
+                          <p className="text-xs font-bold text-slate-500">{label}</p>
+                          <p className={cn("mt-2 text-xl font-black", toneStyles[tone].value)}>{String(value)}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {Array.isArray(ceoQualityData.scorecard ?? ceoQualityData.processes) && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead><tr className="border-b text-xs text-slate-400">{["Process", "Avg Score", "Status"].map(h => <th key={h} className="pb-2 text-left font-semibold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {(ceoQualityData.scorecard ?? ceoQualityData.processes ?? []).slice(0, 5).map((r: any, i: number) => (
+                              <tr key={i} className="border-b last:border-0">
+                                <td className="py-2 font-medium text-slate-800">{r.process_name ?? r.process ?? "—"}</td>
+                                <td className="py-2 font-black text-slate-700">{Number(r.avg_score ?? r.quality ?? 0).toFixed(1)}%</td>
+                                <td className="py-2"><span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", Number(r.avg_score ?? 0) >= 80 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>{Number(r.avg_score ?? 0) >= 80 ? "On Track" : "At Risk"}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </SectionCard>
+                  <SectionCard title="Certified Learners">
+                    <div className="space-y-3">
+                      {[
+                        { label: "Certified Learners", value: formatValue(workforce?.training?.certified_learners) },
+                        { label: "In Training", value: formatValue(workforce?.training?.analysts_in_training ?? workforce?.training?.lms_in_progress) },
+                        { label: "LMS Trainees", value: formatValue(workforce?.training?.lms_total_trainees) },
+                        { label: "Onboarding Active", value: formatValue(workforce?.training?.onboarding_in_progress) },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex items-center justify-between border-b border-slate-100 pb-2.5 last:border-0 last:pb-0">
+                          <span className="text-sm text-slate-500">{label}</span>
+                          <span className="text-sm font-black text-slate-900">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </SectionCard>
+                </section>
+              )}
+            </>
+          )}
+
+          {/* Super Admin: Recent Joiners + Branch Snapshot + Approval Queue */}
+          {variant === "super_admin" && workforce && Object.keys(workforce).length > 0 && (
+            <>
+              <section className="grid gap-5 lg:grid-cols-2">
+                <SectionCard title="Recent Joiners" action={<Link to="/employees" className="inline-flex items-center gap-1 text-xs font-bold text-blue-600">View all <ArrowRight className="h-3 w-3" /></Link>}>
+                  {(Array.isArray(workforce.recent_joiners) && workforce.recent_joiners.length > 0) ? (
+                    <div className="space-y-2">
+                      {workforce.recent_joiners.slice(0, 6).map((j: any, i: number) => (
+                        <div key={i} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-800 truncate">{j.employee_name ?? j.full_name ?? "New Employee"}</p>
+                            <p className="text-[11px] text-slate-400">{j.designation_id ?? j.designation ?? "—"} · Joined {j.joining_date?.slice(0, 10) ?? "—"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="py-6 text-center text-sm text-slate-400">No recent joiners in the last 30 days</p>
+                  )}
+                </SectionCard>
+
+                <SectionCard title="Branch / Process Snapshot" action={<Link to="/reports" className="inline-flex items-center gap-1 text-xs font-bold text-blue-600">Reports <ArrowRight className="h-3 w-3" /></Link>}>
+                  {(Array.isArray(workforce.branches) && workforce.branches.length > 0) ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead><tr className="border-b text-xs text-slate-400">{["Branch", "Emp.", "Present %", "Status"].map(h => <th key={h} className="pb-2 text-left font-semibold">{h}</th>)}</tr></thead>
+                        <tbody>
+                          {workforce.branches.slice(0, 8).map((b: any, i: number) => (
+                            <tr key={i} className="border-b last:border-0">
+                              <td className="py-2 font-medium text-slate-800 truncate max-w-[120px]">{b.branch_name ?? "—"}</td>
+                              <td className="py-2 text-slate-600">{b.employee_count ?? "—"}</td>
+                              <td className="py-2 font-black text-slate-700">{b.present_pct !== undefined ? `${Number(b.present_pct).toFixed(0)}%` : "—"}</td>
+                              <td className="py-2"><span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", Number(b.present_pct ?? 0) >= 80 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>{Number(b.present_pct ?? 0) >= 80 ? "Healthy" : "Warning"}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="py-6 text-center text-sm text-slate-400">Branch data not available</p>
+                  )}
+                </SectionCard>
+              </section>
+
+              <SectionCard title="Approval Queue">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {[
-                    { label: "Revenue MTD", value: formatCurrency(revenue), icon: WalletCards, tone: "green" as Tone },
-                    { label: "Payroll / Direct Cost", value: formatCurrency(payrollCost), icon: ReceiptIndianRupee, tone: "blue" as Tone },
-                    { label: "Payroll Readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, icon: CreditCard, tone: "violet" as Tone },
-                    { label: "Active HC", value: active, icon: Users, tone: "slate" as Tone },
-                  ].map((item) => <MetricCard key={item.label} metric={item} loading={loading} />)}
+                    { label: "Leave Requests", value: workforce.pending_leave_requests, href: "/leaves", tone: "amber" as Tone },
+                    { label: "Timesheet Approvals", value: workItems.pending_count, href: "/work-inbox", tone: "blue" as Tone },
+                    { label: "Expense Claims", value: workforce.pending_expense_claims, href: "/expenses/approvals", tone: "violet" as Tone },
+                    { label: "Job Requisitions", value: asNumber(ats.pending_requisitions ?? ats.open_positions), href: "/ats/command-center", tone: "green" as Tone },
+                  ].map(({ label, value, href, tone }) => (
+                    <Link key={label} to={href} className={cn("rounded-xl border p-4 hover:opacity-90 transition", toneStyles[tone].soft, toneStyles[tone].border)}>
+                      <p className="text-xs font-bold text-slate-500">{label}</p>
+                      <p className={cn("mt-2 text-2xl font-black", toneStyles[tone].value)}>{formatValue(value as number | null)}</p>
+                    </Link>
+                  ))}
                 </div>
               </SectionCard>
-              <SectionCard title="Good / Bad Signals">
-                <CeoSignals
-                  attendanceRate={attendanceRate}
-                  payrollReadiness={payrollReadiness}
-                  bgvPending={bgvPending}
-                  payrollBlocked={payrollBlocked}
-                  tatBreached={tatBreached}
-                  nameMismatch={nameMismatch}
-                />
-              </SectionCard>
+            </>
+          )}
+
+          {/* WFM Attendance Variant: Variance Buckets */}
+          {variant === "wfm_attendance" && (
+            <section className="grid gap-4 sm:grid-cols-3">
+              {[
+                { label: "0–1 hr Late (Minor)", value: biometricVariance0_1, tone: "green" as Tone, detail: "Late by 30–60 mins" },
+                { label: "1–4 hr Variance (Moderate)", value: biometricVariance1_4, tone: "amber" as Tone, detail: "Late 1–4 hours" },
+                { label: "4+ hr Variance (Critical)", value: biometricVariance4Plus, tone: "red" as Tone, detail: "Late more than 4 hours" },
+              ].map(({ label, value, tone, detail }) => (
+                <div key={label} className={cn("rounded-xl border p-4", toneStyles[tone].soft, toneStyles[tone].border)}>
+                  <p className="text-xs font-bold text-slate-500">{label}</p>
+                  <p className={cn("mt-2 text-3xl font-black", toneStyles[tone].value)}>{formatValue(value)}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">{detail}</p>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {/* WFM Variance Buckets (standard wfm variant) */}
+          {variant === "wfm" && (biometricVariance0_1 !== null || biometricVariance1_4 !== null || biometricVariance4Plus !== null) && (
+            <section className="grid gap-4 sm:grid-cols-3">
+              {[
+                { label: "0–1 hr Late (Minor)", value: biometricVariance0_1, tone: "green" as Tone },
+                { label: "1–4 hr Variance (Moderate)", value: biometricVariance1_4, tone: "amber" as Tone },
+                { label: "4+ hr Variance (Critical)", value: biometricVariance4Plus, tone: "red" as Tone },
+              ].map(({ label, value, tone }) => (
+                <div key={label} className={cn("rounded-xl border p-4", toneStyles[tone].soft, toneStyles[tone].border)}>
+                  <p className="text-xs font-bold text-slate-500">{label}</p>
+                  <p className={cn("mt-2 text-3xl font-black", toneStyles[tone].value)}>{formatValue(value)}</p>
+                </div>
+              ))}
             </section>
           )}
         </div>
@@ -1113,6 +1546,44 @@ interface LeaveRequest {
   from_date?: string;
   start_date?: string;
   status?: string;
+}
+
+// ── RecruiterFunnelPanel ───────────────────────────────────────────────────────
+
+function RecruiterFunnelPanel({ ats }: { ats: any }) {
+  const byStage = ats.by_stage ?? {};
+  const applied = Number(ats.total_candidates ?? ats.total_applications ?? 0);
+  const screened = Number(byStage.screened ?? byStage["HR Screening"] ?? byStage["hr_screening"] ?? 0);
+  const interviewed = Number(byStage.interviewed ?? byStage["Interview"] ?? byStage["interview"] ?? 0);
+  const offered = Number(ats.selected_candidates ?? byStage.selected ?? byStage["Selected"] ?? 0);
+  const joined = Number(ats.joined ?? byStage.joined ?? byStage["Joined"] ?? byStage["converted"] ?? 0);
+
+  const stages = [
+    { label: "Applied", value: applied, color: "#3b82f6" },
+    { label: "Screened", value: screened, color: "#8b5cf6" },
+    { label: "Interviewed", value: interviewed, color: "#06b6d4" },
+    { label: "Offered", value: offered, color: "#f59e0b" },
+    { label: "Joined", value: joined, color: "#22c55e" },
+  ];
+
+  const max = Math.max(...stages.map(s => s.value), 1);
+
+  return (
+    <div className="space-y-2.5">
+      {stages.map(s => (
+        <div key={s.label} className="flex items-center gap-3">
+          <span className="w-20 text-xs font-semibold text-slate-600 flex-shrink-0">{s.label}</span>
+          <div className="flex-1 h-6 rounded-lg bg-slate-100 overflow-hidden">
+            <div className="h-full rounded-lg flex items-center pl-2 transition-all duration-700"
+              style={{ width: `${Math.max((s.value / max) * 100, s.value > 0 ? 8 : 0)}%`, backgroundColor: s.color }}>
+              {s.value > 0 && <span className="text-[11px] font-black text-white">{s.value}</span>}
+            </div>
+          </div>
+          {s.value === 0 && <span className="text-xs text-slate-300 font-black w-6">0</span>}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function ManagerTeamLeavePanel() {
