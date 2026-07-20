@@ -739,77 +739,69 @@ export function BudgetLinkedGrnForm() {
     ?? workspace?.documents?.[0];
 
   return (
-    <div className="mx-auto max-w-[1680px] space-y-6">
-      {/* ── Sticky summary bar ── */}
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b bg-white px-0 py-2 text-xs">
-        <div className="flex items-center gap-4">
+    <div className="flex h-full flex-col">
+      {/* ── Sticky action bar ── */}
+      <div className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-white px-4 py-2 text-xs shrink-0">
+        <div className="flex items-center gap-4 flex-wrap">
+          {created && (
+            <span className="font-mono font-bold text-[#073f78] text-sm">{created.grnNumber}</span>
+          )}
           <span className="text-slate-500">
-            Invoice total:{" "}
+            Invoice:{" "}
             <b className="text-slate-900">
-              {form.invoiceTotal
-                ? `₹${Number(form.invoiceTotal).toLocaleString("en-IN")}`
-                : "—"}
+              {form.invoiceTotal ? `₹${Number(form.invoiceTotal).toLocaleString("en-IN")}` : "—"}
             </b>
           </span>
           <span className="text-slate-500">
             Allocated:{" "}
             <b className="text-slate-900">
-              {totals.gross
-                ? `₹${Number(totals.gross).toLocaleString("en-IN")}`
-                : "—"}
+              {totals.gross ? `₹${Number(totals.gross).toLocaleString("en-IN")}` : "—"}
             </b>
           </span>
-          <span
-            className={`font-medium ${
-              Math.abs(allocationDifference) < 1 ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            Diff: {allocationDifference >= 0 ? "+" : ""}
-            {Number(allocationDifference).toLocaleString("en-IN")}
+          <span className={`font-semibold ${Math.abs(allocationDifference) <= 0.01 ? "text-emerald-600" : "text-rose-600"}`}>
+            Diff: {allocationDifference >= 0 ? "+" : ""}{Number(allocationDifference).toLocaleString("en-IN")}
+          </span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${readiness >= 80 ? "bg-emerald-100 text-emerald-700" : readiness >= 50 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+            {readiness}% ready
           </span>
         </div>
         <div className="flex gap-2">
+          {created && (
+            <Button type="button" size="sm" variant="ghost" onClick={resetForm}>
+              <RotateCcw className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
             disabled={persistMutation.isPending || Boolean(created?.submitted)}
             onClick={() => persistMutation.mutate(false)}
           >
+            {persistMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
             Save draft
           </Button>
           <Button
             size="sm"
-            disabled={
-              persistMutation.isPending || Boolean(created?.submitted) || !canSubmit
-            }
-            onClick={() => {
-              setActiveStep("review");
-              persistMutation.mutate(true);
-            }}
+            disabled={persistMutation.isPending || Boolean(created?.submitted) || !canSubmit}
+            onClick={() => { setActiveStep("review"); persistMutation.mutate(true); }}
           >
+            {persistMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1.5 h-3.5 w-3.5" />}
             Submit GRN
           </Button>
         </div>
       </div>
 
-      {created && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-emerald-950">{created.grnNumber}</p>
-            <p className="text-xs text-emerald-700">
-              {created.submitted
-                ? "Submitted to the Branch Head with allocation-aware budget controls."
-                : "Draft saved. Continue document review, allocation or validation on the same GRN."}
-            </p>
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={resetForm}>
-            <RotateCcw className="mr-2 h-4 w-4" /> Start another
-          </Button>
+      {created?.submitted && (
+        <div className="flex items-center gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs shrink-0">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+          <p className="text-emerald-800 font-medium">Submitted to Branch Head with allocation-aware budget controls.</p>
         </div>
       )}
 
-      <div className="mx-auto max-w-3xl px-4 pb-6">
+      {/* ── Main 2-column layout ── */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
+        {/* Left — form sections (scrollable) */}
+        <div className="flex-1 overflow-y-auto px-4 pb-8 pt-4 space-y-5 min-w-0">
         {/* ── Proof section ── */}
         <section id="proof" className="pt-4">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -1035,70 +1027,103 @@ export function BudgetLinkedGrnForm() {
               ) : !budgetLines.length ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">No active approved budget line is available for {period}. Complete Branch Head, Finance Head and Accounts Head approval first.</div>
               ) : (
-                <div className="space-y-4">
-                  {calculatedAllocations.map(({ allocation, line, calculation }, index) => (
-                    <div key={allocation.key} className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-sm font-bold text-emerald-700">{index + 1}</div>
-                          <div><p className="text-xs font-bold text-slate-900">Allocation row {index + 1}</p><p className="text-[10px] text-slate-500">Every row is checked independently against approved quantity, rate and gross balance.</p></div>
-                        </div>
-                        <div className="flex gap-1">
-                          <button type="button" title="Duplicate row" onClick={() => addAllocation(allocation)} className="rounded-lg p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-700"><Copy className="h-4 w-4" /></button>
-                          <button type="button" title="Remove row" disabled={allocations.length === 1} onClick={() => removeAllocation(allocation.key)} className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-30"><Trash2 className="h-4 w-4" /></button>
-                        </div>
-                      </div>
-                      <div className="mt-4 grid gap-4 lg:grid-cols-12">
-                        <div className="space-y-2 lg:col-span-6">
-                          <RequiredLabel>Approved budget line</RequiredLabel>
-                          <select className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm" value={allocation.budgetLineId} onChange={(event) => { const selectedLine = budgetLines.find((item) => item.id === event.target.value); updateAllocation(allocation.key, { budgetLineId: event.target.value, quantity: Math.min(1, Number(selectedLine?.available_quantity ?? 1)), unitRate: Number(selectedLine?.unit_rate ?? 0) }); }}>
-                            <option value="">Select approved budget line</option>
-                            {budgetLines.map((item) => <option key={item.id} value={item.id}>{item.budget_number} · {item.head} / {item.sub_head || "General"} · {item.item_name} · {item.cost_centre_name ?? "Branch common"} · {money(Number(item.available_gross_amount))}</option>)}
-                          </select>
-                        </div>
-                        <div className="space-y-2 lg:col-span-2">
-                          <RequiredLabel>Quantity</RequiredLabel>
-                          <Input type="number" min="0.0001" step="0.0001" max={line ? Number(line.available_quantity) : undefined} value={allocation.quantity} onChange={(event) => updateAllocation(allocation.key, { quantity: Number(event.target.value) })} />
-                        </div>
-                        <div className="space-y-2 lg:col-span-2">
-                          <RequiredLabel>Unit rate</RequiredLabel>
-                          <Input type="number" min="0" step="0.0001" max={line ? Number(line.unit_rate) : undefined} value={allocation.unitRate} onChange={(event) => updateAllocation(allocation.key, { unitRate: Number(event.target.value) })} />
-                        </div>
-                        <div className="space-y-2 lg:col-span-2">
-                          <Label>Gross split</Label>
-                          <Input value={money(Number(calculation?.gross ?? 0))} readOnly />
-                        </div>
-                        <div className="space-y-2 lg:col-span-12">
-                          <Label>Allocation remarks</Label>
-                          <Input value={allocation.remarks} onChange={(event) => updateAllocation(allocation.key, { remarks: event.target.value })} placeholder="Optional cost-centre-specific context" />
-                        </div>
-                      </div>
-                      {line && (
-                        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
-                          {[
-                            ["Cost centre", line.cost_centre_name ?? "Branch common"],
-                            ["Process", line.process_name ?? "Shared / all"],
-                            ["Head", `${line.head} / ${line.sub_head ?? "General"}`],
-                            ["Available qty", `${decimal(Number(line.available_quantity))} ${line.unit}`],
-                            ["Available gross", money(Number(line.available_gross_amount))],
-                            ["Tax", `${line.tax_treatment.replaceAll("_", " ")} · ${line.gst_rate}%`],
-                          ].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><p className="text-[9px] uppercase tracking-wide text-slate-400">{label}</p><p className="mt-1 truncate text-[11px] font-semibold text-slate-700">{value}</p></div>)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                /* ── Compact tabular allocation ── */
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b bg-slate-50">
+                        <th className="w-7 px-2 py-2 text-center font-medium text-slate-500">#</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-500">Budget line</th>
+                        <th className="w-28 px-2 py-2 text-center font-medium text-slate-500">Cost centre</th>
+                        <th className="w-24 px-2 py-2 text-center font-medium text-slate-500">Qty</th>
+                        <th className="w-28 px-2 py-2 text-center font-medium text-slate-500">Unit rate</th>
+                        <th className="w-28 px-2 py-2 text-right font-medium text-slate-500">Gross</th>
+                        <th className="w-28 px-2 py-2 text-right font-medium text-slate-500">P&L cost</th>
+                        <th className="px-2 py-2 text-left font-medium text-slate-500">Remarks</th>
+                        <th className="w-16 px-2 py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {calculatedAllocations.map(({ allocation, line, calculation }, index) => (
+                        <tr key={allocation.key} className="group hover:bg-slate-50/60">
+                          <td className="px-2 py-1.5 text-center">
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">{index + 1}</span>
+                          </td>
+                          <td className="px-3 py-1.5 min-w-[280px]">
+                            <select
+                              className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs"
+                              value={allocation.budgetLineId}
+                              onChange={(event) => {
+                                const selectedLine = budgetLines.find((item) => item.id === event.target.value);
+                                updateAllocation(allocation.key, { budgetLineId: event.target.value, quantity: Math.min(1, Number(selectedLine?.available_quantity ?? 1)), unitRate: Number(selectedLine?.unit_rate ?? 0) });
+                              }}
+                            >
+                              <option value="">Select budget line</option>
+                              {budgetLines.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.budget_number} · {item.head}/{item.sub_head || "General"} · {item.item_name} · {money(Number(item.available_gross_amount))}
+                                </option>
+                              ))}
+                            </select>
+                            {line && (
+                              <p className="mt-0.5 text-[10px] text-slate-400 truncate">
+                                {line.cost_centre_name ?? "Branch"} · {line.process_name ?? "Shared"} · avail {decimal(Number(line.available_quantity))} {line.unit} · {line.tax_treatment.replaceAll("_", " ")} {line.gst_rate}%
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-center text-[10px] text-slate-500">{line?.cost_centre_name ?? "—"}</td>
+                          <td className="px-2 py-1.5">
+                            <Input
+                              type="number" min="0.0001" step="0.0001"
+                              max={line ? Number(line.available_quantity) : undefined}
+                              value={allocation.quantity}
+                              onChange={(e) => updateAllocation(allocation.key, { quantity: Number(e.target.value) })}
+                              className="h-8 w-24 text-center text-xs"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <Input
+                              type="number" min="0" step="0.0001"
+                              max={line ? Number(line.unit_rate) : undefined}
+                              value={allocation.unitRate}
+                              onChange={(e) => updateAllocation(allocation.key, { unitRate: Number(e.target.value) })}
+                              className="h-8 w-28 text-right text-xs"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-semibold">{money(Number(calculation?.gross ?? 0))}</td>
+                          <td className="px-2 py-1.5 text-right text-amber-700">{money(Number(calculation?.pnlCost ?? 0))}</td>
+                          <td className="px-2 py-1.5">
+                            <Input
+                              value={allocation.remarks}
+                              onChange={(e) => updateAllocation(allocation.key, { remarks: e.target.value })}
+                              placeholder="Optional context"
+                              className="h-8 text-xs"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <div className="flex gap-0.5">
+                              <button type="button" title="Duplicate" onClick={() => addAllocation(allocation)} className="rounded p-1 text-slate-400 hover:bg-blue-50 hover:text-blue-600"><Copy className="h-3.5 w-3.5" /></button>
+                              <button type="button" title="Remove" disabled={allocations.length === 1} onClick={() => removeAllocation(allocation.key)} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className={`border-t-2 ${Math.abs(allocationDifference) <= 0.01 && Number(form.invoiceTotal) > 0 ? "border-emerald-300 bg-emerald-50/60" : "border-rose-300 bg-rose-50/60"}`}>
+                        <td colSpan={5} className="px-3 py-2 text-xs font-bold text-slate-700">Totals</td>
+                        <td className="px-2 py-2 text-right text-xs font-bold text-slate-900">{money(totals.gross)}</td>
+                        <td className="px-2 py-2 text-right text-xs font-bold text-amber-700">{money(totals.pnl)}</td>
+                        <td colSpan={2} className="px-2 py-2 text-right text-xs">
+                          <span className={`font-bold ${Math.abs(allocationDifference) <= 0.01 ? "text-emerald-700" : "text-rose-700"}`}>
+                            Diff: {allocationDifference >= 0 ? "+" : ""}{money(allocationDifference)}
+                          </span>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
                 </div>
               )}
-
-              <div className={`rounded-2xl border p-4 ${Math.abs(allocationDifference) <= 0.01 && Number(form.invoiceTotal) > 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                  <MetricCard label="Base allocated" value={money(totals.base)} />
-                  <MetricCard label="Tax allocated" value={money(totals.tax)} />
-                  <MetricCard label="Gross allocated" value={money(totals.gross)} tone="blue" />
-                  <MetricCard label="P&L cost" value={money(totals.pnl)} tone="amber" />
-                  <MetricCard label="Difference" value={money(allocationDifference)} tone={Math.abs(allocationDifference) <= 0.01 ? "emerald" : "rose"} />
-                </div>
-              </div>
             </CardContent>
           </Card>
         </section>
@@ -1174,6 +1199,102 @@ export function BudgetLinkedGrnForm() {
             </CardContent>
           </Card>
         </section>
+        </div>
+
+        {/* Right — sticky sidebar summary */}
+        <div className="w-72 shrink-0 border-l bg-slate-50 overflow-y-auto px-4 py-4 space-y-4 hidden xl:flex xl:flex-col">
+          {/* Step checklist */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-3">Completion checklist</p>
+            <div className="space-y-2">
+              {([
+                ["proof", "Proof attached", localValidation.proofPresent],
+                ["invoice", "Invoice fields", localValidation.mandatoryInvoiceFields],
+                ["budget", "Allocation balanced", localValidation.allocationReady],
+                ["validation", "Validations clear", workspace ? serverBlocking.length === 0 && Boolean(workspace.validations?.length) : false],
+              ] as [string, string, boolean][]).map(([, label, ok]) => (
+                <div key={label} className="flex items-center gap-2 text-xs">
+                  <span className={`h-5 w-5 rounded-full flex items-center justify-center shrink-0 ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>
+                    {ok ? <Check className="h-3 w-3" /> : <span className="text-[9px]">○</span>}
+                  </span>
+                  <span className={ok ? "text-slate-700 font-medium" : "text-slate-400"}>{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Cost summary */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Cost summary</p>
+            {[
+              ["Base amount", money(totals.base)],
+              ["Tax", money(totals.tax)],
+              ["Gross allocated", money(totals.gross)],
+              ["P&L cost", money(totals.pnl)],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">{label}</span>
+                <span className="font-semibold text-slate-900">{value}</span>
+              </div>
+            ))}
+            <div className={`flex items-center justify-between text-xs font-bold border-t pt-2 ${Math.abs(allocationDifference) <= 0.01 ? "text-emerald-700" : "text-rose-700"}`}>
+              <span>Difference</span>
+              <span>{money(allocationDifference)}</span>
+            </div>
+          </div>
+
+          {/* Invoice metadata */}
+          {(form.invoiceNumber || form.billDate) && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Invoice</p>
+              {form.invoiceNumber && (
+                <div className="text-xs"><span className="text-slate-400">Number </span><span className="font-semibold">{form.invoiceNumber}</span></div>
+              )}
+              {form.billDate && (
+                <div className="text-xs"><span className="text-slate-400">Date </span><span className="font-semibold">{form.billDate}</span></div>
+              )}
+              {selectedVendor && (
+                <div className="text-xs"><span className="text-slate-400">Vendor </span><span className="font-semibold">{selectedVendor.vendor_name ?? selectedVendor.name}</span></div>
+              )}
+              {form.paymentTermsDays != null && (
+                <div className="text-xs"><span className="text-slate-400">Due </span><span className="font-semibold">{addDays(form.billDate, form.paymentTermsDays)}</span></div>
+              )}
+            </div>
+          )}
+
+          {/* Approval path */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-3">Approval path</p>
+            <div className="space-y-2">
+              {[
+                "Branch Admin → submits",
+                "Branch Head → reserves budget",
+                "Finance Head → P&L attribution",
+                form.grnType === "vendor" ? "Accounts Head → payment" : "Imprest closure",
+              ].map((step, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs text-slate-600">
+                  <span className="h-4 w-4 rounded-full bg-slate-800 text-white text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Server validations summary */}
+          {workspace?.validations?.length ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2">Server controls</p>
+              <div className="space-y-1.5">
+                {workspace.validations.slice(0, 6).map((v) => (
+                  <div key={v.id} className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] border ${v.validation_status === "passed" || v.validation_status === "overridden" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : Number(v.is_blocking) ? "border-rose-200 bg-rose-50 text-rose-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                    {v.validation_status === "passed" ? <CheckCircle2 className="h-3 w-3 shrink-0" /> : <AlertCircle className="h-3 w-3 shrink-0" />}
+                    <span className="truncate">{v.validation_code.replaceAll("_", " ")}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

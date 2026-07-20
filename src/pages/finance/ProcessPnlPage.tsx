@@ -137,10 +137,10 @@ export default function ProcessPnlPage() {
             type="month"
             value={period}
             onChange={(e) => updateFilters({ period: e.target.value })}
-            className="h-7 w-36 text-xs"
+            className="h-8 w-36 text-xs"
           />
           <select
-            className="flex h-7 rounded-md border border-input bg-background px-2 py-0 text-xs"
+            className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
             value={branchId}
             onChange={(e) => updateFilters({ branchId: e.target.value || undefined })}
           >
@@ -150,7 +150,7 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <select
-            className="flex h-7 rounded-md border border-input bg-background px-2 py-0 text-xs"
+            className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
             value={clientId}
             onChange={(e) => updateFilters({ clientId: e.target.value || undefined })}
           >
@@ -160,31 +160,40 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <Input
-            className="h-7 w-44 text-xs"
+            className="h-8 w-48 text-xs"
             placeholder="Search process..."
             value={draftSearch}
             onChange={(e) => setDraftSearch(e.target.value)}
           />
           <Button
             size="sm"
-            className="h-7 text-xs"
             onClick={() => updateFilters({ search: draftSearch || undefined })}
           >
             Apply
           </Button>
         </div>
 
-        {/* 3-tab layout */}
+        {/* Always-visible KPI strip */}
+        <div className="border-b px-4 py-2 shrink-0 overflow-x-auto">
+          {bpoQuery.isLoading ? (
+            <div className="flex gap-2">
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-36 rounded-xl shrink-0" />)}
+            </div>
+          ) : (
+            <PnlExecutiveKpiStrip items={kpiItems} compact />
+          )}
+        </div>
+
+        {/* 2-tab layout (KPI Strip promoted to always-visible; tabs = Matrix + Charts) */}
         <Tabs defaultValue="matrix" className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit shrink-0">
             <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
-            <TabsTrigger value="charts">Charts</TabsTrigger>
-            <TabsTrigger value="kpis">KPI Strip</TabsTrigger>
+            <TabsTrigger value="charts">Charts &amp; Quality</TabsTrigger>
           </TabsList>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
             {bpoQuery.isLoading ? (
-              <Skeleton className="h-[620px] rounded-3xl" />
+              <Skeleton className="h-96 rounded-3xl" />
             ) : (
               <BpoPnlMatrixTable rows={rows} period={period} />
             )}
@@ -215,18 +224,6 @@ export default function ProcessPnlPage() {
                 <Skeleton className="h-96 rounded-3xl" />
               )}
             </div>
-          </TabsContent>
-
-          <TabsContent value="kpis" className="flex-1 overflow-auto px-4 py-3 m-0">
-            {bpoQuery.isLoading ? (
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                {Array.from({ length: 12 }).map((_, index) => (
-                  <Skeleton key={index} className="h-28 rounded-3xl" />
-                ))}
-              </div>
-            ) : (
-              <PnlExecutiveKpiStrip items={kpiItems} />
-            )}
           </TabsContent>
         </Tabs>
       </div>

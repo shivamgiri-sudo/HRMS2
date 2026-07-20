@@ -70,7 +70,7 @@ export function BpoPnlMatrixTable({ rows, period }: { rows: BpoPnlRow[]; period:
         </div>
       </div>
 
-      <div className="max-h-[720px] overflow-auto">
+      <div className="overflow-auto">
         <table className="min-w-[5200px] w-full border-separate border-spacing-0 text-xs">
           <thead className="sticky top-0 z-30 text-slate-600 shadow-sm">
             <tr className="text-[10px] font-bold uppercase tracking-[0.18em] text-white">

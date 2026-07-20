@@ -112,43 +112,44 @@ export default function NativeVendorManagement() {
     <DashboardLayout>
       <div className="flex h-full flex-col">
         {/* ── Page header ── */}
-        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
-          <h1 className="text-sm font-semibold">Vendor Management</h1>
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0 gap-3">
+          <h1 className="text-sm font-semibold shrink-0">Vendor Management</h1>
+          <div className="flex items-center gap-2 flex-wrap">
             {vendorsData && (
               <>
-                <span className="text-xs text-slate-500">
-                  Active: <b className="text-slate-900">{vendorsData.filter((v: Vendor) => v.is_active).length}</b>
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                  {vendorsData.filter((v: Vendor) => v.is_active).length} active
                 </span>
-                <span className="text-xs text-slate-500">
-                  Total: <b className="text-slate-900">{vendorsData.length}</b>
+                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                  {vendorsData.length} total
                 </span>
               </>
             )}
             {contractsData && (
-              <span className="text-xs text-slate-500">
-                Contracts: <b className="text-slate-900">{contractsData.length}</b>
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                {contractsData.length} contracts
               </span>
             )}
-            <Button
-              size="sm"
-              onClick={() => { setSheetVendor(null); setSheetMode('create'); setSheetOpen(true); }}
-            >
-              + Add Vendor
-            </Button>
           </div>
+          <Button
+            size="sm"
+            className="ml-auto shrink-0"
+            onClick={() => { setSheetVendor(null); setSheetMode('create'); setSheetOpen(true); }}
+          >
+            + Add Vendor
+          </Button>
         </div>
 
         {/* ── Tabs ── */}
         <Tabs value={tab} onValueChange={v => setTab(v as 'vendors' | 'contracts')} className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex items-center gap-2 border-b px-4 py-2 shrink-0">
-            <TabsList className="h-7">
-              <TabsTrigger value="vendors" className="text-xs h-6">Vendors</TabsTrigger>
-              <TabsTrigger value="contracts" className="text-xs h-6">Contracts</TabsTrigger>
+          <div className="flex items-center gap-2 border-b px-4 py-2 shrink-0 flex-wrap">
+            <TabsList>
+              <TabsTrigger value="vendors">Vendors</TabsTrigger>
+              <TabsTrigger value="contracts">Contracts</TabsTrigger>
             </TabsList>
             <Input
-              className="h-7 w-44 text-xs"
-              placeholder="Search..."
+              className="h-8 w-52"
+              placeholder="Search name or code…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -156,7 +157,7 @@ export default function NativeVendorManagement() {
               value={filterType || "_all"}
               onValueChange={(value) => setFilterType(value === "_all" ? "" : value)}
             >
-              <SelectTrigger className="h-7 w-36 text-xs">
+              <SelectTrigger className="h-8 w-40">
                 <SelectValue placeholder="All types" />
               </SelectTrigger>
               <SelectContent>
@@ -167,63 +168,79 @@ export default function NativeVendorManagement() {
               </SelectContent>
             </Select>
             <Button size="sm" variant="ghost" onClick={() => { void refV(); void refC(); }}>
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
 
           {/* ── Vendors tab ── */}
-          <TabsContent value="vendors" className="flex-1 overflow-auto px-4 py-2 m-0">
+          <TabsContent value="vendors" className="flex-1 overflow-auto m-0">
             {loadingV ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : filteredVendors.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <FileText className="h-12 w-12 mb-3 text-slate-200" />
+                <p className="font-semibold text-slate-700">No vendors found</p>
               </div>
             ) : (
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="border-b">
-                    <th className="h-8 text-left font-medium text-slate-500 w-24">Code</th>
-                    <th className="h-8 text-left font-medium text-slate-500">Name</th>
-                    <th className="h-8 text-left font-medium text-slate-500 hidden sm:table-cell w-28">Type</th>
-                    <th className="h-8 text-left font-medium text-slate-500 hidden md:table-cell">GST</th>
-                    <th className="h-8 text-left font-medium text-slate-500 w-16">Status</th>
-                    <th className="h-8 text-left font-medium text-slate-500 w-16">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredVendors.map((v: Vendor) => (
-                    <tr
-                      key={v.id}
-                      className="h-9 cursor-pointer border-b hover:bg-slate-50"
-                      onClick={() => { setSheetVendor(v); setSheetMode('detail'); setSheetOpen(true); }}
-                    >
-                      <td className="py-1 font-mono text-slate-500">{v.vendor_code}</td>
-                      <td className="py-1 font-medium truncate max-w-[140px]">{v.vendor_name}</td>
-                      <td className="py-1 hidden sm:table-cell">{VENDOR_TYPE_LABELS[v.vendor_type] ?? v.vendor_type}</td>
-                      <td className="py-1 hidden md:table-cell text-slate-500">{v.gst_number ?? '-'}</td>
-                      <td className="py-1">
-                        <Badge variant={v.is_active ? 'default' : 'secondary'} className="text-xs">
-                          {v.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="py-1" onClick={e => e.stopPropagation()}>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 px-2 text-xs"
-                          onClick={() => { setSheetVendor(v); setSheetMode('edit'); setSheetOpen(true); }}
-                        >
-                          Edit
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredVendors.length === 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white z-10 border-b">
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400">No vendors found</td>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-28">Code</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vendor name</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-36">Type</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden md:table-cell">Contact</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden lg:table-cell w-36">GST</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden lg:table-cell w-24">Payment</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-20">Status</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-20">Actions</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filteredVendors.map((v: Vendor) => (
+                      <tr
+                        key={v.id}
+                        className="h-11 cursor-pointer border-b hover:bg-slate-50 transition-colors"
+                        onClick={() => { setSheetVendor(v); setSheetMode('detail'); setSheetOpen(true); }}
+                      >
+                        <td className="px-4 py-2 font-mono text-xs text-slate-500">{v.vendor_code}</td>
+                        <td className="px-4 py-2">
+                          <p className="font-semibold text-slate-900">{v.vendor_name}</p>
+                          {v.contact_name && <p className="text-xs text-slate-400 hidden md:block">{v.contact_name}</p>}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                            {VENDOR_TYPE_LABELS[v.vendor_type] ?? v.vendor_type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 hidden md:table-cell">
+                          <p className="text-xs text-slate-600">{v.contact_email ?? '—'}</p>
+                          {v.contact_phone && <p className="text-xs text-slate-400">{v.contact_phone}</p>}
+                        </td>
+                        <td className="px-4 py-2 hidden lg:table-cell text-xs font-mono text-slate-500">{v.gst_number ?? '—'}</td>
+                        <td className="px-4 py-2 hidden lg:table-cell text-xs text-slate-500">{v.payment_terms ?? '—'}</td>
+                        <td className="px-4 py-2">
+                          <Badge variant={v.is_active ? 'default' : 'secondary'}>
+                            {v.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => { setSheetVendor(v); setSheetMode('edit'); setSheetOpen(true); }}
+                          >
+                            Edit
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </TabsContent>
 

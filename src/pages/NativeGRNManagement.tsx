@@ -16,7 +16,7 @@ export default function NativeGRNManagement() {
             <TabsTrigger value="create" className="text-xs h-6">Create GRN</TabsTrigger>
             <TabsTrigger value="queue" className="text-xs h-6">Approval Queue</TabsTrigger>
           </TabsList>
-          <TabsContent value="create" className="flex-1 overflow-auto p-4">
+          <TabsContent value="create" className="flex-1 overflow-auto m-0 p-0">
             <BudgetLinkedGrnForm />
           </TabsContent>
           <TabsContent value="queue" className="flex-1 overflow-hidden m-0">
