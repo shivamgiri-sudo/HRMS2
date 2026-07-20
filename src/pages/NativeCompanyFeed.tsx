@@ -255,6 +255,8 @@ export default function NativeCompanyFeed() {
     (post) => post.status === "pending_approval" || post.status === "borderline_flagged",
   ).length;
 
+  const pendingApprovalPosts = myPosts.filter(p => p.status === "pending_approval");
+
   return (
     <DashboardLayout>
       <main className="space-y-4 p-4 sm:p-6 lg:p-8">
@@ -264,9 +266,9 @@ export default function NativeCompanyFeed() {
             {feedQuery.data && (
               <>
                 <Badge variant="outline" className="text-xs">Live: {feedQuery.data.total ?? 0}</Badge>
-                {myPosts.filter(p => p.status === "pending_approval").length > 0 && (
+                {pendingApprovalPosts.length > 0 && (
                   <Badge variant="secondary" className="text-xs">
-                    Pending: {myPosts.filter(p => p.status === "pending_approval").length}
+                    Pending: {pendingApprovalPosts.length}
                   </Badge>
                 )}
               </>
@@ -380,7 +382,7 @@ export default function NativeCompanyFeed() {
                 <span className="text-xs font-semibold">My submissions</span>
                 <div className="flex gap-1.5 mt-1">
                   <Badge variant="outline" className="text-xs">
-                    Awaiting: {myPosts?.filter(p => p.status === "pending_approval").length ?? 0}
+                    Awaiting: {waitingForReview}
                   </Badge>
                   <Badge variant="outline" className="text-xs">
                     Returned: {myPosts?.filter(p => p.status === "rejected" || p.status === "auto_rejected").length ?? 0}
