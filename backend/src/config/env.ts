@@ -156,6 +156,9 @@ const envSchema = z.object({
   // Falls back to DB_USER/DB_PASSWORD if not set
   SOURCE_DB_USER:     z.string().default(""),
   SOURCE_DB_PASSWORD: z.string().default(""),
+
+  // AI provider — Gemini
+  GEMINI_API_KEY: z.string().default(""),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -9,6 +9,7 @@ import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 import { geminiProvider } from './providers/gemini.provider.js';
 import { ollamaProvider } from './providers/ollama.provider.js';
 import { aiProviderConfigService } from './ai-provider-config.service.js';
+import { env } from '../../config/env.js';
 
 class AiProviderRegistry {
   private providers: Map<string, AiProvider> = new Map();
@@ -36,12 +37,17 @@ class AiProviderRegistry {
   }
 
   /**
-   * Get active default provider (from DB config)
+   * Get active default provider (from DB config, or Gemini if GEMINI_API_KEY is set)
    */
   async getDefault(): Promise<AiProvider> {
     const config = await aiProviderConfigService.getDefaultProvider(false);
 
     if (!config) {
+      // If no DB config but GEMINI_API_KEY is set in environment, use Gemini directly
+      if (env.GEMINI_API_KEY) {
+        console.info('[AI Registry] Using Gemini from GEMINI_API_KEY env var');
+        return this.get('gemini') ?? ruleBasedProvider;
+      }
       console.warn('[AI Registry] No default provider configured, using rule-based fallback');
       return ruleBasedProvider;
     }
