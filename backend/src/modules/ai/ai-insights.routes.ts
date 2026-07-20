@@ -185,6 +185,15 @@ aiInsightsRouter.get('/providers/usage', requireRole('super_admin'), h(async (re
 }));
 
 /**
+ * POST /api/ai/insights - Compatibility endpoint for dashboard insight panels.
+ * Interactive Copilot requests continue to use /ask; panels degrade to an
+ * empty insight list when no server-generated recommendations are available.
+ */
+aiInsightsRouter.post('/insights', h(async (_req, res) => {
+  return res.json(apiSuccess({ insights: [] }));
+}));
+
+/**
  * POST /api/ai/ask - Ask AI assistant
  */
 aiInsightsRouter.post('/ask', h(async (req, res) => {

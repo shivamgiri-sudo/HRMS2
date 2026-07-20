@@ -48,9 +48,8 @@ export async function notifyRecruiterNewAssignment(input: {
       `SELECT DISTINCT e.email
        FROM employees e
        JOIN auth_user au ON au.id = e.user_id
-       JOIN user_role ur ON ur.user_id = au.id
-       JOIN role r ON r.id = ur.role_id
-       WHERE r.role_key IN ('hr', 'admin', 'super_admin')
+       JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
+       WHERE ur.role_key IN ('hr', 'admin', 'super_admin')
        AND e.active_status = 1
        AND e.email IS NOT NULL
        LIMIT 3`
@@ -273,9 +272,8 @@ export async function notifySLABreach(input: {
       `SELECT DISTINCT e.email
        FROM employees e
        JOIN auth_user au ON au.id = e.user_id
-       JOIN user_role ur ON ur.user_id = au.id
-       JOIN role r ON r.id = ur.role_id
-       WHERE r.role_key IN ('hr', 'admin', 'super_admin')
+       JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
+       WHERE ur.role_key IN ('hr', 'admin', 'super_admin')
        AND e.active_status = 1
        AND e.email IS NOT NULL
        LIMIT 3`
