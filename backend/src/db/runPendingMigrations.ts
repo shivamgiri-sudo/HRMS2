@@ -349,6 +349,16 @@ const MIGRATION_MANIFEST: string[] = [
   "503_pt_slab_dedup.sql",
   "504_auth_account_lockout.sql",
   "508_ats_onboarding_bridge_code_columns.sql",
+  // ── DPDP Privacy Hardening migrations (feature/dpdp-privacy-hardening) ──────
+  "126_ats_candidate_pii_hash_columns.sql",     // PII hash columns on ats_candidate (was missing from manifest)
+  "999_grant_employee_resignation_dpdp.sql",    // Employee role page access to DPDP_WITHDRAWAL (was missing)
+  "511_wfm_session_call_id.sql",
+  "512_quality_dashboard_page_access.sql",
+  "513_dpdp_withdrawal_consolidation.sql",      // Canonical withdrawal fields, task table, evidence table
+  "514_privacy_data_inventory.sql",             // Privacy data asset/purpose/field-policy/system registry
+  "515_employee_pii_encryption_columns.sql",    // Additive encrypted PAN/Aadhaar columns on employees
+  "516_privacy_retention_worker_tables.sql",    // Retention run/candidate/approval/certificate tables
+  "518_dpdp_feature_flags.sql",                 // DPDP feature flag config keys (all default OFF/dry-run)
   ];
 
 export type MigrationHealth = {

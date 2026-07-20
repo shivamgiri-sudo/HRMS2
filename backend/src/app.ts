@@ -387,6 +387,10 @@ app.use("/api/salary-increment", salaryIncrementRouter);
 app.use("/api/goals", goalsRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/compliance", complianceRouter);
+// NOTE: dpdpWithdrawalRouter is mounted ONLY here. privacyRouter handles all other
+// /api/privacy routes. Having both routers on the same prefix is correct — Express
+// falls through to privacyRouter for paths not matched by dpdpWithdrawalRouter.
+// The previous duplicate mount of dpdpWithdrawalRouter has been removed.
 app.use("/api/privacy", dpdpWithdrawalRouter);
 app.use("/api/privacy", privacyRouter);
 app.use("/api/performance-feedback", performanceFeedbackRouter);

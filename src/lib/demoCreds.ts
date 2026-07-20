@@ -36,6 +36,17 @@ const ALL_PAGES = [
 
 export const DEMO_CREDENTIALS: DemoCred[] = [
   {
+    email:        "superadmin@mascallnet.com",
+    password:     "local-demo-superadmin",
+    role:         "super_admin",
+    label:        "Super Admin",
+    userId:       "demo-super-admin-id",
+    fullName:     "Super Admin",
+    employeeId:   "demo-emp-superadmin",
+    employeeCode: "EMP-SA-001",
+    pages:        ALL_PAGES,
+  },
+  {
     email:        "admin@mascallnet.com",
     password:     "local-demo-admin",
     role:         "admin",

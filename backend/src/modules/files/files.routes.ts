@@ -22,6 +22,10 @@ import {
   consumeDownloadToken,
   logDocumentAccess,
 } from "../document-vault/documentVault.service.js";
+import { authorizeDocumentAccess } from "./documentVaultAuth.js";
+
+const DPDP_DOCUMENT_AUTH_ENABLED =
+  process.env.DPDP_DOCUMENT_AUTH_ENABLED === "true";
 
 // Use process.cwd() — resolves to backend/ in both dev and production (avoids dist/ path issue)
 export const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
@@ -257,6 +261,24 @@ router.post(
     if (!item || item.category !== (category as string).replace(/[^a-zA-Z0-9_-]/g, "")) {
       return res.status(404).json({ error: "File not found in vault" });
     }
+
+    // DPDP authorization — must be allowed to view/download before a token can be issued
+    if (DPDP_DOCUMENT_AUTH_ENABLED) {
+      const ctx = await getUserRoleContext(req.authUser!.id).catch(() => null);
+      const actorRole = ctx?.primaryRole ?? "";
+      const authResult = await authorizeDocumentAccess({
+        actorUserId: req.authUser!.id,
+        actorRole,
+        storedFilename: storedFilename as string,
+        action: "token_generate",
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
+      if (!authResult.allowed) {
+        return res.status(403).json({ error: "Access denied", code: authResult.reasonCode });
+      }
+    }
+
     const result = await issueDownloadToken({
       vaultItemId: item.id,
       issuedTo: req.authUser!.id,
@@ -280,6 +302,7 @@ router.get(
     const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
 
     let actorUserId: string | undefined;
+    let actorRole: string | undefined;
     let tokenId: string | undefined;
 
     // Check for short-lived download token first
@@ -311,10 +334,31 @@ router.get(
         return res.status(401).json({ error: "Invalid session" });
       }
       actorUserId = user.id;
+      const ctx = await getUserRoleContext(user.id).catch(() => null);
+      actorRole = ctx?.primaryRole ?? undefined;
     }
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "File not found" });
+    }
+
+    // DPDP document vault authorization — enforced when flag is enabled
+    // Token-based access bypasses role check: token was issued after authorization.
+    if (DPDP_DOCUMENT_AUTH_ENABLED && !tokenId && actorUserId && actorRole) {
+      const authResult = await authorizeDocumentAccess({
+        actorUserId,
+        actorRole,
+        storedFilename: safeFile,
+        action: req.query.download === "1" ? "download" : "view",
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
+      if (!authResult.allowed) {
+        return res.status(403).json({
+          error: "Access denied",
+          code: authResult.reasonCode,
+        });
+      }
     }
 
     // Look up vault item for audit logging (non-fatal if not in inventory)

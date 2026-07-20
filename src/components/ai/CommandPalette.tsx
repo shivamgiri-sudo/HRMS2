@@ -260,7 +260,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             {mode === "employee" && empResults.length > 0 && (
               <Command.Group heading="Employees">
                 {empResults.map((emp) => {
-                  const name = emp.full_name ?? `${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim() || emp.employee_code;
+                  const name = emp.full_name ?? (`${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim() || emp.employee_code);
                   return (
                     <Command.Item
                       key={emp.id}

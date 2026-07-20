@@ -62,7 +62,10 @@ export async function registerUpload(input: RegisterUploadInput): Promise<string
 /** Look up a vault item by its stored UUID filename. */
 export async function findByStoredFilename(storedFilename: string): Promise<VaultItem | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM document_vault_inventory WHERE stored_filename = ? AND is_soft_deleted = 0`,
+    `SELECT id, uploaded_by_user, category, stored_filename, original_filename,
+            mime_type, file_size_bytes, sha256_hash, access_level,
+            owner_employee_id, owner_candidate_id, is_soft_deleted, created_at
+     FROM document_vault_inventory WHERE stored_filename = ? AND is_soft_deleted = 0`,
     [storedFilename]
   );
   return rows.length > 0 ? (rows[0] as VaultItem) : null;

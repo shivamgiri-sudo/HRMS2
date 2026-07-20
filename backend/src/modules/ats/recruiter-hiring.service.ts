@@ -1209,12 +1209,19 @@ async function resolveCandidateByActivity(activity: NormalizedHiringActivity): P
   const email = activity.candidate_email;
   const empCode = activity.joined_candidate_emp_code;
 
+  const SAFE_COLS = `id, candidate_code, employee_code, full_name, mobile, email,
+    designation, department, branch_id, process_id, applied_for_branch, applied_for_process,
+    role_applied, branch_text, status, stage, recruiter_id, current_employer,
+    current_ctc, expected_ctc, notice_period, experience_years, education,
+    aadhar_number_masked, pan_number_masked, bank_account_no_masked,
+    aadhar_number_hash, pan_number_hash, bank_account_no_hash,
+    is_minor, guardian_consent_obtained, created_at, updated_at`;
   const queries: Array<[string, unknown[]]> = [
-    ["SELECT * FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1", [mobile]],
-    ["SELECT * FROM ats_candidate WHERE full_name = ? AND mobile = ? ORDER BY created_at DESC LIMIT 1", [name, mobile]],
-    ["SELECT * FROM ats_candidate WHERE email = ? ORDER BY created_at DESC LIMIT 1", [email]],
-    ["SELECT * FROM ats_candidate WHERE employee_code = ? ORDER BY created_at DESC LIMIT 1", [empCode]],
-    ["SELECT * FROM ats_candidate WHERE candidate_code = ? ORDER BY created_at DESC LIMIT 1", [empCode]],
+    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE mobile = ? ORDER BY created_at DESC LIMIT 1`, [mobile]],
+    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE full_name = ? AND mobile = ? ORDER BY created_at DESC LIMIT 1`, [name, mobile]],
+    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE email = ? ORDER BY created_at DESC LIMIT 1`, [email]],
+    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE employee_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]],
+    [`SELECT ${SAFE_COLS} FROM ats_candidate WHERE candidate_code = ? ORDER BY created_at DESC LIMIT 1`, [empCode]],
   ];
 
   for (const [sql, params] of queries) {

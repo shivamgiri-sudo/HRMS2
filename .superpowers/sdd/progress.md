@@ -259,3 +259,79 @@ Feed Task 5: Complete (commit 9137f842..5f8b8aa9, review clean after fix)
 Feed Task 6: Complete — Final build verification
   - npm run build: ✓ built in 13.86s, 0 errors
   - All 5 Company Feed pages: heroes removed, compact 48px headers, tabular data
+
+---
+
+# AI Command Bar
+
+Plan: docs/superpowers/plans/2026-07-20-ai-command-bar.md
+Started: 2026-07-20
+Branch base commit: 90aa341a
+
+## Tasks
+
+Task 1: Complete (commit 90aa341a..df0f4aed, review clean)
+  - src/hooks/useAmbientInsights.ts created (72 lines)
+  - Module-level cache, 5-min refresh, AmbientChip type exported
+  - tsc: 0 errors
+  - Minor: stale chips on contextType change (within spec), doFetch not memoized (YAGNI)
+Task 2: Complete (commit df0f4aed..e14630bd, review clean)
+  - src/components/ai/AmbientStrip.tsx created
+  - 36px dark fixed bottom bar, severity chips, Ask anything ⌘K button
+  - tsc: 0 errors. Minor: index keys (non-blocking)
+Task 3: Complete (commit e14630bd..6770d459, review clean after fix)
+  - src/components/ai/CommandPalette.tsx created (292 lines)
+  - AI/nav/employee modes, cmdk v1, debounce, Enter-only AI ask, backdrop+Esc close
+  - Fix: stale debounce (clearTimeout before guard + cleanup return)
+  - Fix: loading flags reset on close
+  - tsc: 0 errors
+Task 4: Complete (commit 6770d459..5ba3ab35, review clean)
+  - src/components/ai/AmbientInsightBar.tsx created (53 lines)
+  - Inline chip row, null when no chips, severity-colored, action_url navigation
+  - tsc: 0 errors
+Task 5: Complete (commit 5ba3ab35..8064589c, review clean)
+  - src/components/ai/AICommandBar.tsx created (109 lines)
+  - Capture-phase ⌘K handler, AMBIENT_ROUTES, HIDDEN_ROUTES, ROUTE_CONTEXT map
+  - tsc: 0 errors
+Task 6: Complete (commit 8064589c..c893b56d, review clean)
+  - App.tsx: FloatingChatWidget → AICommandBar
+  - CompactDashboardLayout.tsx: old ⌘K useEffect removed, pb-9 added to <main>
+  - TopBar.tsx: cmd-key-hint span removed, pr-16 → pr-4
+  - index.ts: FloatingChatWidget export replaced with 4 new exports
+  - FloatingChatWidget.tsx: deleted via git rm
+  - Contract test updated (correct fix to keep test passing)
+  - tsc: 0 errors, grep FloatingChatWidget: 0 matches
+Task 7: Complete (pushed 2a0dd8d7 to origin/main)
+  - Final tsc: 0 errors (frontend + backend)
+  - FloatingChatWidget: 0 references remaining
+  - Security fixes applied: URL injection, open-redirect, aria-live, whitespace trim, stale chips
+  - Minor finding (severity maps duplication) deferred — not blocking
+  - Focus trap not addressed — accessibility improvement, not blocking for ship
+  - Auto-deploy triggered via GitHub Actions
+
+---
+
+# AI Copilot Real Data + Gemini
+
+Plan: docs/superpowers/plans/2026-07-20-ai-copilot-real-data.md
+Started: 2026-07-20
+Branch base commit: d226e9a1
+
+## Tasks
+
+Task 1: Complete (commit d226e9a1..4047726e, review clean)
+  - backend/src/modules/ai/ai-intent.service.ts created (199 lines)
+  - 5 intents, 3 DB fetchers, detectAndEnrich()
+  - Safe field aliases for salary, parameterized queries, no any
+  - tsc: 0 errors
+Task 2: Complete (commit 4047726e..ae7ee3f8, review clean)
+  - ai-insights.routes.ts: detectAndEnrich wired between rawContext and sanitizeContext
+  - ai-safety.service.ts: 6 intent branches, 3 formatters, PeopleOS system prompt prefix
+  - Minor: db as unknown as Pool cast (acceptable; detectAndEnrich could accept narrower type)
+  - tsc: 0 errors
+Task 3: Complete (commit ae7ee3f8..e24d00b8, review clean)
+  - env.ts: GEMINI_API_KEY added as optional string field
+  - ai-provider.registry.ts: getDefault() returns Gemini when env var set + no DB config
+  - gemini.provider.ts already reads process.env.GEMINI_API_KEY — no change needed
+  - ai-insights.routes.ts: config?.modelName already null-safe — no change needed
+  - tsc: 0 errors in modified files (4 pre-existing privacy-engine errors unrelated)

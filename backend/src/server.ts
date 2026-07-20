@@ -22,6 +22,8 @@ import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
+import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
+import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 
 const WORKERS_EXTERNAL = process.env.WORKERS_PROCESS === "external";
 
@@ -42,8 +44,10 @@ function startServer() {
       startAnnualLeaveWorker();
       startPayrollWindowClosureScheduler();
       initBusinessActionSyncJobs();
+      startBreachSlaCron();
+      startRetentionCron();
       console.log(
-        "[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync started"
+        "[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync, breach-sla, privacy-retention started"
       );
 
       if (!WORKERS_EXTERNAL) {

@@ -91,7 +91,11 @@ export const employeeController = {
     const vals = [...Object.values(updates), empId];
     await db.execute(`UPDATE employees SET ${sets}, updated_at = NOW() WHERE id = ?`, vals);
     const [updated] = await db.execute(
-      'SELECT * FROM employees WHERE id = ? LIMIT 1', [empId]
+      `SELECT id, employee_code, full_name, first_name, last_name, designation, department,
+              branch_id, process_id, employment_type, employment_status, date_of_joining,
+              date_of_birth, gender, blood_group, nationality, official_email,
+              nominee_name, nominee_relation, reporting_manager_id, updated_at
+       FROM employees WHERE id = ? LIMIT 1`, [empId]
     ) as any[];
     return res.json({ success: true, data: updated[0] });
   },

@@ -2280,7 +2280,9 @@ export async function issueIdentityOtp(token: string, meta: Meta = {}) {
 
   const candidate = await rows<CandidateRow>(
     db,
-    `SELECT * FROM ats_candidate WHERE id = ? LIMIT 1`,
+    `SELECT id, mobile, email, full_name, candidate_code,
+            aadhar_number_masked, pan_number_masked, bank_account_no_masked
+     FROM ats_candidate WHERE id = ? LIMIT 1`,
     [attempt.candidate_id],
   );
   const mobile = candidate[0]?.mobile ?? null;

@@ -16,6 +16,9 @@ import { aiAuditService } from './ai-audit.service.js';
 import { checkAndIncrement } from './ai-rate-limiter.js';
 import { validateQuestion, validateContextType, validateEntityId } from './ai-input-guard.js';
 import type { AiGenerateRequest } from './ai-provider.types.js';
+import { detectAndEnrich } from './ai-intent.service.js';
+import type { Pool } from 'mysql2/promise';
+import { db } from '../../db/mysql.js';
 
 export const aiInsightsRouter = Router();
 
@@ -242,6 +245,17 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     timestamp: new Date().toISOString(),
   };
 
+  // Intent enrichment — fetch real HRMS data for employee self-service questions
+  try {
+    const { intent, data } = await detectAndEnrich(safeQuestion, userId, db as unknown as Pool);
+    if (intent !== 'unknown') {
+      rawContext.intent = intent;
+      Object.assign(rawContext, data);
+    }
+  } catch {
+    // non-blocking — continue without enrichment
+  }
+
   // Sanitize context
   const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
 
@@ -333,6 +347,23 @@ aiInsightsRouter.post('/explain', h(async (req, res) => {
 
   const userId = req.authUser!.id;
   const roleKeys = (req as any).userRoles || ['employee'];
+
+  // DPDP entity ownership check — employee role may only explain their own records
+  const isPrivilegedRole = roleKeys.some((r: string) =>
+    ['admin', 'super_admin', 'hr', 'hr_admin', 'manager', 'branch_head',
+     'process_manager', 'payroll', 'payroll_hr', 'dpo', 'ceo'].includes(r)
+  );
+  if (!isPrivilegedRole && entity_type === 'employee') {
+    const { db: dbConn } = await import('../../db/mysql.js');
+    const [empRows] = await dbConn.execute<import('mysql2').RowDataPacket[]>(
+      'SELECT id FROM employees WHERE user_id = ? LIMIT 1',
+      [userId]
+    );
+    const ownEmployeeId: string | null = empRows[0]?.id ?? null;
+    if (ownEmployeeId !== entity_id) {
+      return res.status(403).json(apiError('FORBIDDEN', 'You may only request AI explanations for your own record.', 403));
+    }
+  }
 
   const provider = await aiProviderRegistry.getDefault();
   const config = await aiProviderConfigService.getByKey(provider.key, true);
