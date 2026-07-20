@@ -27,7 +27,7 @@ describe("application shell routing contracts", () => {
   it("mounts the canonical route elements and authenticated Copilot widget", () => {
     expect(appSource).toContain('import { appRouteElements } from "./config/routes"');
     expect(appSource).toContain("{appRouteElements}");
-    expect(appSource).toContain("<FloatingChatWidget />");
+    expect(appSource).toContain("<AICommandBar />");
   });
 
   it("keeps every configured sidebar destination backed by a route", () => {

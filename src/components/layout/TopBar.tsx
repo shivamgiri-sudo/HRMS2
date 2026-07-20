@@ -140,16 +140,9 @@ export function TopBar({
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search..."
-            className="h-9 rounded-xl border-slate-200 bg-slate-50 pl-9 pr-16 text-sm focus:bg-white"
+            className="h-9 rounded-xl border-slate-200 bg-slate-50 pl-9 pr-4 text-sm focus:bg-white"
             aria-label="Search modules"
           />
-          <span
-            className="cmd-key-hint pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
-            aria-hidden
-          >
-            ⌘K
-          </span>
-
           {searchQuery.trim() && searchResults && searchResults.length > 0 && (
             <div className="absolute left-0 right-0 top-11 z-50 overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-white p-2 shadow-[var(--shadow-xl)]">
               <div className="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[var(--tracking-wider)] text-[var(--text-muted)]">

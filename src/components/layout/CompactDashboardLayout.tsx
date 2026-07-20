@@ -136,21 +136,6 @@ export function DashboardLayout({ children, subheader }: Props) {
     }
   };
 
-  /* ⌘K shortcut */
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        const input = document.querySelector<HTMLInputElement>(
-          'input[aria-label="Search modules"]'
-        );
-        input?.focus();
-      }
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, []);
-
   /* Close sidebar on route change */
   useEffect(() => {
     setSidebarOpen(false);
@@ -340,7 +325,7 @@ export function DashboardLayout({ children, subheader }: Props) {
         ) : null}
 
         {/* Page content */}
-        <main className="flex-1 px-4 py-5 sm:px-5 lg:px-6 lg:py-6">
+        <main className="flex-1 px-4 py-5 pb-9 sm:px-5 lg:px-6 lg:py-6">
           {children}
         </main>
       </div>

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { FloatingChatWidget } from "@/components/ai/FloatingChatWidget";
+import { AICommandBar } from "@/components/ai/AICommandBar";
 import CookieConsent from "@/components/layout/CookieConsent";
 import { OfflineFallback } from "@/components/layout/OfflineFallback";
 import ScrollToTop from "@/components/layout/ScrollToTop";
@@ -50,7 +50,7 @@ const App = () => (
           </ErrorBoundary>
           <CookieConsent />
           <OfflineFallback />
-          <FloatingChatWidget />
+          <AICommandBar />
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
