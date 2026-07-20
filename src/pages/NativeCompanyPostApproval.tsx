@@ -1,16 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
-  ArrowRight,
   CheckCircle2,
   Eye,
   FileWarning,
   Loader2,
   RefreshCcw,
-  ShieldCheck,
   Sparkles,
-  X,
   XCircle,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -24,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -80,7 +77,7 @@ export default function NativeCompanyPostApproval() {
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   const posts = queueQuery.data?.posts ?? [];
   const filteredPosts = useMemo(() => {
@@ -159,51 +156,22 @@ export default function NativeCompanyPostApproval() {
 
   return (
     <DashboardLayout>
-      <main className="space-y-8 p-4 sm:p-6 lg:p-8">
-        <section
-          className="relative overflow-hidden rounded-[2rem] border border-white/30 px-5 py-6 text-white shadow-[var(--shadow-brand-lg)] sm:px-7 sm:py-8 lg:px-9"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--sidebar-canvas) 0%, var(--brand-700) 35%, var(--brand-500) 74%, rgba(232,35,26,0.84) 115%)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18)_0%,_rgba(255,255,255,0)_34%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.14)_0%,_rgba(255,255,255,0)_30%)]" />
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl space-y-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/90 backdrop-blur">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Approval Queue
-              </div>
-              <div className="space-y-3">
-                <h1 className="font-['Fira_Sans'] text-3xl font-bold leading-tight tracking-[-0.04em] sm:text-4xl lg:text-[3.2rem]">
-                  Review the posts waiting to go company-wide.
-                </h1>
-                <p className="max-w-2xl text-sm leading-7 text-blue-50/92 sm:text-[15px]">
-                  Moderation-eligible posts land here first. Approve to publish, or reject with a
-                  clear reason so the creator gets a useful next step.
-                </p>
-              </div>
-            </div>
-            <Button
-              asChild
-              className="h-auto justify-between rounded-[1.15rem] bg-white px-4 py-3 text-left text-[color:var(--brand-700)] hover:bg-blue-50"
-            >
-              <Link to="/engagement/company-feed/manage">
-                <span>
-                  <span className="block text-sm font-semibold">Open management deck</span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    See published and reviewed posts too.
-                  </span>
-                </span>
-                <ArrowRight className="h-4 w-4 shrink-0" />
-              </Link>
-            </Button>
-          </div>
-        </section>
+      <div className="flex h-full flex-col overflow-hidden">
+        {/* Slim header */}
+        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
+          <h1 className="text-sm font-semibold">Post Approval Queue</h1>
+          {filteredPosts.length > 0 && (
+            <Badge variant="outline" className="text-xs">
+              Pending: {filteredPosts.length}
+            </Badge>
+          )}
+        </div>
 
-        <div className="grid gap-6 xl:grid-cols-[23rem_minmax(0,1fr)]">
-          <Card className="rounded-[1.8rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-            <CardContent className="space-y-4 p-5">
+        {/* Split pane */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left list panel */}
+          <div className="w-72 shrink-0 border-r flex flex-col overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
@@ -305,213 +273,205 @@ export default function NativeCompanyPostApproval() {
                   })}
                 </div>
               ) : null}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
-          <Card className="rounded-[1.8rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-            <CardContent className="space-y-6 p-5 sm:p-6">
-              {!selectedPost ? (
-                <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center">
-                  <Eye className="mx-auto h-6 w-6 text-[color:var(--brand-600)]" />
-                  <h2 className="mt-4 font-['Fira_Sans'] text-2xl font-semibold text-slate-950">
-                    Select a post to review
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-500">
-                    The moderation detail panel opens here once you pick a queue item.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(selectedPost.status)}`}
-                      >
-                        {getStatusMeta(selectedPost.status).label}
-                      </span>
-                      <div>
-                        <h2 className="font-['Fira_Sans'] text-2xl font-semibold tracking-[-0.03em] text-slate-950">
-                          Moderation review
-                        </h2>
-                        <p className="mt-2 text-sm text-slate-500">
-                          Creator:{" "}
-                          <span className="font-semibold text-slate-700">
-                            {selectedPost.author_name ?? selectedPost.author_code ?? "Unknown"}
-                          </span>
+          {/* Right detail panel */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            <Card className="rounded-[1.8rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
+              <CardContent className="space-y-6 p-5 sm:p-6">
+                {!selectedPost ? (
+                  <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center">
+                    <Eye className="mx-auto h-6 w-6 text-[color:var(--brand-600)]" />
+                    <h2 className="mt-4 font-['Fira_Sans'] text-2xl font-semibold text-slate-950">
+                      Select a post to review
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      The moderation detail panel opens here once you pick a queue item.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-3">
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(selectedPost.status)}`}
+                        >
+                          {getStatusMeta(selectedPost.status).label}
+                        </span>
+                        <div>
+                          <h2 className="font-['Fira_Sans'] text-2xl font-semibold tracking-[-0.03em] text-slate-950">
+                            Moderation review
+                          </h2>
+                          <p className="mt-2 text-sm text-slate-500">
+                            Creator:{" "}
+                            <span className="font-semibold text-slate-700">
+                              {selectedPost.author_name ?? selectedPost.author_code ?? "Unknown"}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="rounded-[1.2rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        <p className="font-semibold text-slate-900">Submitted</p>
+                        <p className="mt-1">
+                          {formatDateTime(selectedPost.submitted_at ?? selectedPost.created_at)}
                         </p>
                       </div>
                     </div>
-                    <div className="rounded-[1.2rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      <p className="font-semibold text-slate-900">Submitted</p>
-                      <p className="mt-1">
-                        {formatDateTime(selectedPost.submitted_at ?? selectedPost.created_at)}
+
+                    <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50/70 p-5">
+                      <p className="whitespace-pre-wrap text-[15px] leading-7 text-slate-700">
+                        {selectedPost.content_text?.trim() ||
+                          "This post was submitted with image media and no text copy."}
                       </p>
+                      {selectedPost.media.length > 0 ? (
+                        <div className="mt-4 space-y-3">
+                          <div className="rounded-[1.15rem] border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                            {selectedPost.media.length} image
+                            {selectedPost.media.length === 1 ? "" : "s"} submitted with this post.
+                            Click any image to view full size.
+                          </div>
+                          <div
+                            className={`grid gap-3 ${selectedPost.media.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
+                          >
+                            {selectedPost.media.slice(0, 4).map((media) => {
+                              const imgUrl = getCompanyFeedImageUrl(media.file_id);
+                              return (
+                                <Fragment key={media.file_id}>
+                                  <img
+                                    src={imgUrl}
+                                    alt={`Post image ${media.sort_order}`}
+                                    onClick={() =>
+                                      setExpandedImage(expandedImage === imgUrl ? null : imgUrl)
+                                    }
+                                    className="cursor-zoom-in rounded object-cover w-full"
+                                  />
+                                  {expandedImage === imgUrl && (
+                                    <div
+                                      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+                                      onClick={() => setExpandedImage(null)}
+                                    >
+                                      <img
+                                        src={imgUrl}
+                                        className="max-h-[90vh] max-w-[90vw] rounded"
+                                        alt=""
+                                      />
+                                    </div>
+                                  )}
+                                </Fragment>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                      {selectedPost.auto_reject_reason ? (
+                        <div className="mt-4 rounded-[1.15rem] border border-orange-200 bg-orange-50 p-4 text-sm text-orange-700">
+                          Auto moderation note: {selectedPost.auto_reject_reason}
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
 
-                  <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50/70 p-5">
-                    <p className="whitespace-pre-wrap text-[15px] leading-7 text-slate-700">
-                      {selectedPost.content_text?.trim() ||
-                        "This post was submitted with image media and no text copy."}
-                    </p>
-                    {selectedPost.media.length > 0 ? (
-                      <div className="mt-4 space-y-3">
-                        <div className="rounded-[1.15rem] border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                          {selectedPost.media.length} image
-                          {selectedPost.media.length === 1 ? "" : "s"} submitted with this post.
-                          Click any image to view full size.
-                        </div>
-                        <div
-                          className={`grid gap-3 ${selectedPost.media.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
-                        >
-                          {selectedPost.media.slice(0, 4).map((media) => (
-                            <button
-                              key={media.file_id}
-                              type="button"
-                              className="overflow-hidden rounded-[1.2rem] border border-slate-200 bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[color:var(--brand-500)]"
-                              onClick={() =>
-                                setLightboxUrl(getCompanyFeedImageUrl(media.file_id))
-                              }
-                              aria-label={`View image ${media.sort_order} full size`}
-                            >
-                              <img
-                                src={getCompanyFeedImageUrl(media.file_id)}
-                                alt={`Post image ${media.sort_order}`}
-                                className="h-full min-h-[180px] w-full cursor-zoom-in object-cover transition hover:opacity-90"
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {selectedPost.auto_reject_reason ? (
-                      <div className="mt-4 rounded-[1.15rem] border border-orange-200 bg-orange-50 p-4 text-sm text-orange-700">
-                        Auto moderation note: {selectedPost.auto_reject_reason}
-                      </div>
-                    ) : null}
-                  </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="review-notes">Review notes</Label>
+                      <Textarea
+                        id="review-notes"
+                        value={reviewNotes}
+                        onChange={(event) => setReviewNotes(event.target.value)}
+                        placeholder="Add internal moderation context for this decision."
+                        className="min-h-[120px] rounded-[1.3rem]"
+                      />
+                    </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="review-notes">Review notes</Label>
-                    <Textarea
-                      id="review-notes"
-                      value={reviewNotes}
-                      onChange={(event) => setReviewNotes(event.target.value)}
-                      placeholder="Add internal moderation context for this decision."
-                      className="min-h-[120px] rounded-[1.3rem]"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      type="button"
-                      disabled={busy}
-                      className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
-                      onClick={() => setApproveConfirmOpen(true)}
-                    >
-                      {approveMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="h-4 w-4" />
-                      )}
-                      Approve and publish
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={busy}
-                      className="rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
-                      onClick={() => setRejectOpen(true)}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Reject with reason
-                    </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Approve confirmation dialog */}
-        <AlertDialog open={approveConfirmOpen} onOpenChange={setApproveConfirmOpen}>
-          <AlertDialogContent className="rounded-[1.6rem]">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Publish to entire company?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This post will become visible to all employees on the company feed immediately.
-                This action cannot be undone from this page.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-emerald-600 hover:bg-emerald-700"
-                onClick={() => {
-                  setApproveConfirmOpen(false);
-                  void doApprove();
-                }}
-              >
-                Confirm and publish
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-
-        {/* Reject dialog */}
-        <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
-          <DialogContent className="max-w-md rounded-[1.6rem]">
-            <DialogHeader>
-              <DialogTitle>Reject company post</DialogTitle>
-            </DialogHeader>
-            <Textarea
-              value={rejectReason}
-              onChange={(event) => setRejectReason(event.target.value)}
-              placeholder="Tell the creator what needs to change."
-              className="min-h-[120px] rounded-[1.2rem]"
-            />
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setRejectOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                disabled={rejectMutation.isPending}
-                className="bg-rose-600 hover:bg-rose-700"
-                onClick={() => void doReject()}
-              >
-                {rejectMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FileWarning className="h-4 w-4" />
+                    <div className="flex flex-wrap gap-3">
+                      <Button
+                        type="button"
+                        disabled={busy}
+                        className="rounded-xl bg-emerald-600 hover:bg-emerald-700"
+                        onClick={() => setApproveConfirmOpen(true)}
+                      >
+                        {approveMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        Approve and publish
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy}
+                        className="rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                        onClick={() => setRejectOpen(true)}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Reject with reason
+                      </Button>
+                    </div>
+                  </>
                 )}
-                Confirm rejection
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
 
-        {/* Image lightbox */}
-        <Dialog open={!!lightboxUrl} onOpenChange={() => setLightboxUrl(null)}>
-          <DialogContent className="max-w-[90vw] rounded-[1.2rem] bg-slate-950 p-2">
-            <button
-              type="button"
-              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
-              onClick={() => setLightboxUrl(null)}
-              aria-label="Close image"
+      {/* Approve confirmation dialog */}
+      <AlertDialog open={approveConfirmOpen} onOpenChange={setApproveConfirmOpen}>
+        <AlertDialogContent className="rounded-[1.6rem]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Publish to entire company?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This post will become visible to all employees on the company feed immediately.
+              This action cannot be undone from this page.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => {
+                setApproveConfirmOpen(false);
+                void doApprove();
+              }}
             >
-              <X className="h-4 w-4" />
-            </button>
-            {lightboxUrl && (
-              <img
-                src={lightboxUrl}
-                alt="Full size post image"
-                className="max-h-[85vh] w-full object-contain"
-              />
-            )}
-          </DialogContent>
-        </Dialog>
-      </main>
+              Confirm and publish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reject dialog */}
+      <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
+        <DialogContent className="max-w-md rounded-[1.6rem]">
+          <DialogHeader>
+            <DialogTitle>Reject company post</DialogTitle>
+          </DialogHeader>
+          <Textarea
+            value={rejectReason}
+            onChange={(event) => setRejectReason(event.target.value)}
+            placeholder="Tell the creator what needs to change."
+            className="min-h-[120px] rounded-[1.2rem]"
+          />
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setRejectOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={rejectMutation.isPending}
+              className="bg-rose-600 hover:bg-rose-700"
+              onClick={() => void doReject()}
+            >
+              {rejectMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileWarning className="h-4 w-4" />
+              )}
+              Confirm rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
