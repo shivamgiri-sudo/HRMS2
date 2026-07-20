@@ -53,6 +53,7 @@ export function useAmbientInsights(contextType: string): {
   useEffect(() => {
     if (!contextType) return;
     const cancelled = { v: false };
+    setChips([]);
     void doFetch(contextType, cancelled);
     const interval = setInterval(() => void doFetch(contextType, cancelled), REFRESH_MS);
     return () => {

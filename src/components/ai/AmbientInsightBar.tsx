@@ -1,4 +1,5 @@
 import { AlertTriangle, Info, Sparkles } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useAmbientInsights, type AmbientChip } from "@/hooks/useAmbientInsights";
 
@@ -20,6 +21,7 @@ export function AmbientInsightBar({
   contextType: string;
   onOpenPalette: () => void;
 }) {
+  const navigate = useNavigate();
   const { chips, loading } = useAmbientInsights(contextType);
 
   if (!loading && chips.length === 0) return null;
@@ -37,7 +39,13 @@ export function AmbientInsightBar({
           <button
             key={i}
             type="button"
-            onClick={chip.action_url ? () => { window.location.href = chip.action_url!; } : onOpenPalette}
+            onClick={chip.action_url
+              ? () => {
+                  const url = chip.action_url!;
+                  if (url.startsWith("/")) { navigate(url); }
+                  else { onOpenPalette(); }
+                }
+              : onOpenPalette}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition hover:opacity-80",
               CHIP_CLASS[chip.severity]

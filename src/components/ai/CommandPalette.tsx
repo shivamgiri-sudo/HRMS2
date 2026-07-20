@@ -111,7 +111,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     setAiResult(null);
     try {
       const res = await hrmsApi.post<{ success: boolean; data: AIResponse }>("/api/ai/ask", {
-        question: query,
+        question: query.trim(),
         context_type: "generic",
       }).catch(() => null);
       setAiResult(res?.data ?? { answer: "Unable to get a response. Try the full chat →" });
@@ -185,7 +185,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
             {/* AI mode: result */}
             {mode === "ai" && aiResult && (
-              <div className="px-4 py-3 space-y-3">
+              <div className="px-4 py-3 space-y-3" aria-live="polite" aria-atomic="true">
                 <p className="text-sm text-slate-800 leading-relaxed">{aiResult.answer}</p>
                 {(aiResult.insights ?? []).length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
@@ -199,19 +199,27 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 )}
                 {(aiResult.actions ?? []).length > 0 && (
                   <div className="flex flex-wrap gap-2">
-                    {(aiResult.actions ?? []).slice(0, 2).map((action) => (
-                      <a key={action.key} href={action.url} onClick={onClose}
+                    {(aiResult.actions ?? []).filter((action) => {
+                      try {
+                        const u = new URL(action.url, window.location.origin);
+                        return u.origin === window.location.origin;
+                      } catch {
+                        return action.url.startsWith("/");
+                      }
+                    }).slice(0, 2).map((action) => (
+                      <button key={action.key} type="button"
+                        onClick={() => { navigate(action.url); onClose(); }}
                         className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100 transition">
                         {action.label} <ArrowRight className="h-3 w-3" />
-                      </a>
+                      </button>
                     ))}
                   </div>
                 )}
                 <div className="flex justify-end pt-1 border-t border-slate-100">
-                  <a href="/peopleos/copilot" onClick={onClose}
+                  <button type="button" onClick={() => { navigate("/peopleos/copilot"); onClose(); }}
                     className="text-xs text-violet-600 hover:underline flex items-center gap-1">
                     Open full conversation <ArrowRight className="h-3 w-3" />
-                  </a>
+                  </button>
                 </div>
               </div>
             )}
