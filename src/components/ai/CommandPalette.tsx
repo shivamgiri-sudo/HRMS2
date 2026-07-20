@@ -74,6 +74,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       setValue("");
       setAiResult(null);
       setEmpResults([]);
+      setAiLoading(false);
+      setEmpLoading(false);
     }
   }, [open]);
 
@@ -87,8 +89,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   // Employee search
   useEffect(() => {
-    if (mode !== "employee" || query.length < 2) { setEmpResults([]); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (mode !== "employee" || query.length < 2) { setEmpResults([]); return; }
     debounceRef.current = setTimeout(async () => {
       setEmpLoading(true);
       try {
@@ -98,6 +100,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         setEmpLoading(false);
       }
     }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, mode]);
 
