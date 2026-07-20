@@ -2,15 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
-  ArrowRight,
   ImagePlus,
   Loader2,
-  Megaphone,
   PenSquare,
   RefreshCcw,
   Send,
   ShieldCheck,
-  Sparkles,
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -323,66 +320,15 @@ export default function NativeCompanyPostCreate() {
 
   return (
     <DashboardLayout>
+      <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
+        <div className="flex items-center gap-2">
+          <Link to="/engagement/company-feed">
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">← Feed</Button>
+          </Link>
+          <h1 className="text-sm font-semibold">New Post</h1>
+        </div>
+      </div>
       <main className="space-y-8 p-4 sm:p-6 lg:p-8">
-        <section
-          className="relative overflow-hidden rounded-[2rem] border border-white/30 px-5 py-6 text-white shadow-[var(--shadow-brand-lg)] sm:px-7 sm:py-8 lg:px-9"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--sidebar-canvas) 0%, var(--brand-700) 32%, var(--brand-500) 70%, rgba(232,35,26,0.84) 115%)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18)_0%,_rgba(255,255,255,0)_34%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.14)_0%,_rgba(255,255,255,0)_30%)]" />
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-3xl space-y-4">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/90 backdrop-blur">
-                <Sparkles className="h-3.5 w-3.5" />
-                Creator Studio
-              </div>
-              <div className="space-y-3">
-                <h1 className="font-['Fira_Sans'] text-3xl font-bold leading-tight tracking-[-0.04em] sm:text-4xl lg:text-[3.25rem]">
-                  Shape the company message before it hits the feed.
-                </h1>
-                <p className="max-w-2xl text-sm leading-7 text-blue-50/92 sm:text-[15px]">
-                  Draft a clean internal update, attach up to four images, and send it into the
-                  moderated publishing lane. Backend approval rules remain the final authority.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:w-[24rem] lg:grid-cols-1">
-              <Button
-                asChild
-                className="h-auto justify-between rounded-[1.15rem] bg-white px-4 py-3 text-left text-[color:var(--brand-700)] hover:bg-blue-50"
-              >
-                <Link to="/engagement/company-feed">
-                  <span>
-                    <span className="block text-sm font-semibold">Open live company feed</span>
-                    <span className="mt-1 block text-xs text-slate-500">
-                      Check what employees are seeing right now.
-                    </span>
-                  </span>
-                  <ArrowRight className="h-4 w-4 shrink-0" />
-                </Link>
-              </Button>
-
-              <Button
-                asChild
-                variant="outline"
-                className="h-auto justify-between rounded-[1.15rem] border-white/30 bg-white/10 px-4 py-3 text-left text-white hover:bg-white/15"
-              >
-                <a href="#creator-composer">
-                  <span>
-                    <span className="block text-sm font-semibold">Jump to composer</span>
-                    <span className="mt-1 block text-xs text-blue-100/80">
-                      Start with copy, image tiles, and policy notes.
-                    </span>
-                  </span>
-                  <ArrowRight className="h-4 w-4 shrink-0" />
-                </a>
-              </Button>
-            </div>
-          </div>
-        </section>
 
         {myPostsQuery.isLoading && (
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
@@ -573,7 +519,7 @@ export default function NativeCompanyPostCreate() {
                               key={image.id}
                               className="overflow-hidden rounded-[1.4rem] border border-slate-200 bg-slate-50/90"
                             >
-                              <div className="relative aspect-[16/10] overflow-hidden bg-slate-200">
+                              <div className="relative aspect-video max-h-24 overflow-hidden bg-slate-200">
                                 <img
                                   src={image.previewUrl}
                                   alt={image.file.name}
@@ -666,33 +612,9 @@ export default function NativeCompanyPostCreate() {
             </section>
 
             <aside className="space-y-5">
-              <Card className="overflow-hidden rounded-[1.75rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-                <div
-                  className="h-24"
-                  style={{
-                    background:
-                      "linear-gradient(135deg, rgba(6,43,82,0.98) 0%, rgba(27,106,181,0.94) 62%, rgba(232,35,26,0.66) 100%)",
-                  }}
-                />
-                <CardContent className="relative space-y-4 p-5">
-                  <div className="-mt-12 flex h-14 w-14 items-center justify-center rounded-[1.2rem] border border-white/80 bg-white text-[color:var(--brand-600)] shadow-[var(--shadow-lg)]">
-                    <Megaphone className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
-                      Policy brief
-                    </p>
-                    <h3 className="mt-2 font-['Fira_Sans'] text-xl font-semibold tracking-[-0.03em] text-slate-950">
-                      Publish-worthy by first review
-                    </h3>
-                  </div>
-                  <div className="space-y-3 text-sm leading-6 text-slate-600">
-                    <p>Keep updates internal, factual, and employee-safe.</p>
-                    <p>Spam-like language or violating content can be blocked before approval.</p>
-                    <p>Deletion rights remain restricted to HR Head, Admin, and Super Admin.</p>
-                  </div>
-                </CardContent>
-              </Card>
+              <div className="border rounded-lg p-3 text-xs text-slate-500">
+                Posts are reviewed before publishing. Max 2000 chars. Images: JPG/PNG, max 4.
+              </div>
 
               <Card className="rounded-[1.75rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
                 <CardContent className="space-y-4 p-5">
@@ -701,9 +623,6 @@ export default function NativeCompanyPostCreate() {
                       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
                         My latest submissions
                       </p>
-                      <h3 className="mt-2 font-['Fira_Sans'] text-xl font-semibold tracking-[-0.03em] text-slate-950">
-                        Status rail
-                      </h3>
                     </div>
                     <Button asChild variant="ghost" className="rounded-xl px-0 text-[color:var(--brand-700)]">
                       <Link to="/engagement/company-feed">Open feed</Link>
@@ -717,7 +636,7 @@ export default function NativeCompanyPostCreate() {
                     />
                   ) : (
                     <div className="space-y-3">
-                      {myPosts.slice(0, 5).map((post) => {
+                      {myPosts.slice(0, 3).map((post) => {
                         const statusMeta = getStatusMeta(post.status);
                         return (
                           <div
@@ -743,9 +662,9 @@ export default function NativeCompanyPostCreate() {
                           </div>
                         );
                       })}
-                      {(myPostsQuery.data?.total ?? 0) > 5 && (
+                      {(myPostsQuery.data?.total ?? 0) > 3 && (
                         <p className="pt-1 text-center text-xs text-slate-500">
-                          Showing 5 of {myPostsQuery.data?.total} posts
+                          Showing 3 of {myPostsQuery.data?.total} posts
                         </p>
                       )}
                     </div>
