@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import type { RowDataPacket } from 'mysql2';
+import path from 'path';
+import { mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
+import multer from 'multer';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
@@ -20,6 +24,26 @@ const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const PROVISIONING_ROLES = ['admin', 'super_admin', 'it', 'wfm', 'hr', 'branch_admin'];
 
+// Multer for AD log evidence uploads — stored under uploads/provisioning-evidence/
+const EVIDENCE_UPLOAD_DIR = path.resolve(process.cwd(), 'uploads', 'provisioning-evidence');
+try { mkdirSync(EVIDENCE_UPLOAD_DIR, { recursive: true }); } catch { /* dir already exists */ }
+const ALLOWED_EVIDENCE_EXTS = new Set(['.txt', '.log', '.pdf', '.evtx']);
+const evidenceUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, EVIDENCE_UPLOAD_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_EVIDENCE_EXTS.has(ext)) return cb(null, true);
+    cb(new Error('Only .txt, .log, .pdf, or .evtx files are allowed for AD evidence'));
+  },
+});
+
 router.use(requireAuth);
 
 type AppointmentRow = RowDataPacket & {
@@ -37,22 +61,24 @@ function clean(value: unknown): string {
 }
 
 async function persistStructuredFields(taskId: string, body: Record<string, unknown>) {
-  const officialEmail  = clean(body.official_email)   || null;
-  const domainAccount  = clean(body.domain_account)   || null;
-  const assetTag       = clean(body.asset_tag)        || null;
-  const biometricDone  = body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
-  const idCardDone     = body.id_card_printed    != null ? (body.id_card_printed    ? 1 : 0) : null;
+  const officialEmail   = clean(body.official_email)    || null;
+  const domainAccount   = clean(body.domain_account)    || null;
+  const assetTag        = clean(body.asset_tag)         || null;
+  const evidenceFileUrl = clean(body.evidence_file_url) || null;
+  const biometricDone   = body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
+  const idCardDone      = body.id_card_printed    != null ? (body.id_card_printed    ? 1 : 0) : null;
 
   // Only UPDATE if at least one structured field was sent
-  if (!officialEmail && !domainAccount && !assetTag && biometricDone == null && idCardDone == null) return;
+  if (!officialEmail && !domainAccount && !assetTag && !evidenceFileUrl && biometricDone == null && idCardDone == null) return;
 
   const sets: string[] = [];
   const vals: unknown[] = [];
-  if (officialEmail  !== null) { sets.push('official_email = ?');     vals.push(officialEmail); }
-  if (domainAccount  !== null) { sets.push('domain_account = ?');     vals.push(domainAccount); }
-  if (assetTag       !== null) { sets.push('asset_tag = ?');          vals.push(assetTag); }
-  if (biometricDone  != null)  { sets.push('biometric_enrolled = ?'); vals.push(biometricDone); }
-  if (idCardDone     != null)  { sets.push('id_card_printed = ?');    vals.push(idCardDone); }
+  if (officialEmail   !== null) { sets.push('official_email = ?');      vals.push(officialEmail); }
+  if (domainAccount   !== null) { sets.push('domain_account = ?');      vals.push(domainAccount); }
+  if (assetTag        !== null) { sets.push('asset_tag = ?');           vals.push(assetTag); }
+  if (evidenceFileUrl !== null) { sets.push('evidence_file_url = ?');   vals.push(evidenceFileUrl); }
+  if (biometricDone   != null)  { sets.push('biometric_enrolled = ?'); vals.push(biometricDone); }
+  if (idCardDone      != null)  { sets.push('id_card_printed = ?');    vals.push(idCardDone); }
 
   if (sets.length) {
     vals.push(taskId);
@@ -395,6 +421,7 @@ router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(
        ipr.id AS task_id, ipr.task_code, ipr.status, ipr.locked,
        ipr.official_email, ipr.domain_account, ipr.asset_tag,
        ipr.biometric_enrolled, ipr.id_card_printed, ipr.evidence_note,
+       ipr.evidence_file_url,
        ipr.requested_at, ipr.actioned_at,
        e.id AS employee_id, e.employee_code, e.first_name, e.last_name,
        e.personal_email, e.mobile, e.designation, e.date_of_joining,
@@ -451,6 +478,53 @@ router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'h
   const okCount = results.filter(r => r.status === 'ok').length;
   return res.json({ success: true, processed: results.length, completed: okCount, results });
 }));
+
+// ── POST /api/it-provisioning/tasks/:id/upload-evidence ──────────────────────
+// Accepts multipart/form-data field "file" (.txt/.log/.pdf/.evtx, max 10 MB).
+// Saves the file, records it in document_vault_inventory, and persists the URL
+// on the provisioning task row. Does NOT mark the task as actioned.
+
+router.post(
+  '/tasks/:id/upload-evidence',
+  requireRole(...PROVISIONING_ROLES),
+  (req: any, res: any, next: any) => evidenceUpload.single('file')(req, res, (err: any) => {
+    if (err) return res.status(400).json({ success: false, message: err.message });
+    next();
+  }),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const taskId = req.params.id;
+    if (!(req as any).file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded. Send a multipart/form-data request with field "file".' });
+    }
+
+    const file = (req as any).file as { filename: string; originalname: string; size: number; mimetype: string };
+    const fileUrl = `/api/files/provisioning-evidence/${file.filename}`;
+
+    // Persist URL on the task row
+    await db.execute(
+      `UPDATE it_provisioning_request SET evidence_file_url = ?, updated_at = NOW() WHERE id = ?`,
+      [fileUrl, taskId],
+    );
+
+    // Register in document vault for audit trail (non-fatal)
+    try {
+      const { registerUpload } = await import('../document-vault/documentVault.service.js');
+      await registerUpload({
+        uploadedByUser: req.authUser!.id,
+        category: 'provisioning-evidence',
+        storedFilename: file.filename,
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: file.size,
+        accessLevel: 'internal',
+      });
+    } catch (err) {
+      console.error('[upload-evidence] document vault registration failed:', err);
+    }
+
+    return res.json({ success: true, url: fileUrl, filename: file.filename });
+  }),
+);
 
 // ── SLA Violations Dashboard ──────────────────────────────────────────────────
 router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr'), h(async (_req: AuthenticatedRequest, res: Response) => {

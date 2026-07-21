@@ -28,7 +28,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
   ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
-  AlertCircle, TrendingDown,
+  AlertCircle, TrendingDown, Paperclip, ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -55,6 +55,7 @@ interface ProvisioningRequest {
   asset_tag?: string | null;
   biometric_enrolled?: number;
   id_card_printed?: number;
+  evidence_file_url?: string | null;
 }
 
 interface CandidateReport {
@@ -68,6 +69,7 @@ interface CandidateReport {
   biometric_enrolled: number;
   id_card_printed: number;
   evidence_note: string | null;
+  evidence_file_url: string | null;
   requested_at: string;
   actioned_at: string | null;
   employee_id: string;
@@ -87,6 +89,7 @@ interface ITForm {
   domainAccount: string;
   assetTag: string;
   evidenceNote: string;
+  evidenceFile: File | null;
 }
 
 interface AdminForm {
@@ -226,6 +229,23 @@ function CandidateReportSheet({ taskId, open, onClose }: { taskId: string | null
               <ReportRow label="Biometric Enrolled" value={r.biometric_enrolled ? "Yes" : "No"} />
               <ReportRow label="ID Card Printed" value={r.id_card_printed ? "Yes" : "No"} />
               <ReportRow label="Evidence Note" value={r.evidence_note} />
+              <div className="flex items-start justify-between gap-3 text-sm">
+                <span className="text-slate-500 shrink-0 w-36">AD Log File</span>
+                {r.evidence_file_url ? (
+                  <a
+                    href={r.evidence_file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 text-right"
+                    aria-label="Download AD event log evidence file"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" aria-hidden="true" /> View File
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                  </a>
+                ) : (
+                  <span className="font-medium text-slate-800 text-right">—</span>
+                )}
+              </div>
               <ReportRow label="Requested At" value={r.requested_at ? formatISTDate(r.requested_at) : null} />
               <ReportRow label="Actioned At" value={r.actioned_at ? formatISTDate(r.actioned_at) : null} />
             </div>
@@ -416,6 +436,26 @@ function ITTaskForm({ form, setForm, disabled }: {
           disabled={disabled}
           className="mt-1"
         />
+      </div>
+      <div>
+        <Label htmlFor="it-evidence-file" className="flex items-center gap-1.5">
+          <Paperclip className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+          AD Event Log File <span className="text-slate-400 font-normal">(optional — .txt, .log, .pdf)</span>
+        </Label>
+        <input
+          id="it-evidence-file"
+          type="file"
+          accept=".txt,.log,.pdf,.evtx"
+          disabled={disabled}
+          onChange={e => setForm(f => ({ ...f, evidenceFile: e.target.files?.[0] ?? null }))}
+          className="mt-1 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
+        />
+        {form.evidenceFile && (
+          <p className="mt-1 text-xs text-emerald-700 flex items-center gap-1">
+            <CheckCircle className="h-3 w-3" aria-hidden="true" />
+            {form.evidenceFile.name} ({(form.evidenceFile.size / 1024).toFixed(1)} KB)
+          </p>
+        )}
       </div>
     </div>
   );
@@ -627,7 +667,7 @@ export default function NativeITProvisioningTracker() {
     open: false, request: null, mode: "action",
   });
   const [evidenceNote, setEvidenceNote] = useState("");
-  const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "" });
+  const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
   const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
   const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   const [reportTaskId, setReportTaskId] = useState<string | null>(null);
@@ -680,7 +720,20 @@ export default function NativeITProvisioningTracker() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["it-provisioning"] });
 
   const actionMutation = useMutation({
-    mutationFn: async ({ id, mode, body }: { id: string; mode: string; body: Record<string, unknown> }) => {
+    mutationFn: async ({ id, mode, body, file }: { id: string; mode: string; body: Record<string, unknown>; file?: File | null }) => {
+      // Step 1: if an AD log file was attached, upload it first and get the URL
+      if (file && mode === "action") {
+        const fd = new FormData();
+        fd.append("file", file);
+        const uploadRes = await hrmsApi.postForm<{ success: boolean; url: string }>(
+          `/api/it-provisioning/tasks/${id}/upload-evidence`,
+          fd,
+        );
+        if (uploadRes?.url) {
+          body = { ...body, evidence_file_url: uploadRes.url };
+        }
+      }
+
       const endpoint = mode === "confirm"
         ? `/api/it-provisioning/requests/${id}/confirm`
         : mode === "action"
@@ -701,7 +754,7 @@ export default function NativeITProvisioningTracker() {
 
   function resetForms() {
     setEvidenceNote("");
-    setItForm({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "" });
+    setItForm({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
     setAdminForm({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
     setWfmForm({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   }
@@ -772,7 +825,7 @@ export default function NativeITProvisioningTracker() {
       body = { evidence_note: evidenceNote.trim() };
     }
 
-    actionMutation.mutate({ id: request.id, mode, body });
+    actionMutation.mutate({ id: request.id, mode, body, file: isITTask ? itForm.evidenceFile : null });
   }
 
   function openReport(taskId: string) {
@@ -1041,6 +1094,18 @@ export default function NativeITProvisioningTracker() {
                         <TableCell className="text-xs text-muted-foreground">
                           {req.official_email ? <span className="text-emerald-700 font-medium">{req.official_email}</span> : "—"}
                           {req.domain_account && <><br />{req.domain_account}</>}
+                          {req.evidence_file_url && (
+                            <a
+                              href={req.evidence_file_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
+                              aria-label="View AD log evidence file"
+                            >
+                              <Paperclip className="h-3 w-3" aria-hidden="true" /> AD Log
+                              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                            </a>
+                          )}
                         </TableCell>
                       )}
                       {isAdminQueue && (
