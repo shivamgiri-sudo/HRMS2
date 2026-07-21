@@ -90,10 +90,9 @@ export const recruitmentRouteElements = (
       {/* LEGACY: /ats/branch-head-approval uses ats_branch_head_approval table; kept alive while pending records exist */}
       <Route path="/ats/branch-head-approval" element={<ProtectedRoute><Gate pageCode="ATS_BRANCH_HEAD_APPROVAL"><BranchHeadApproval /></Gate></ProtectedRoute>} />
 
-      {/* Payroll HR validation — CANONICAL: /ats/payroll-hr-validation */}
-      <Route path="/ats/payroll-hr-validation" element={<ProtectedRoute><Gate pageCode="ATS_PAYROLL_HR"><NativePayrollHRValidation /></Gate></ProtectedRoute>} />
-      {/* Duplicate alias eliminated — redirect to canonical */}
-      <Route path="/ats/payroll-hr" element={<Navigate to="/ats/payroll-hr-validation" replace />} />
+      {/* Payroll HR validation — DEPRECATED: salary assignment now handled in onboarding-requests Employment Offer form */}
+      <Route path="/ats/payroll-hr-validation" element={<Navigate to="/ats/onboarding-requests" replace />} />
+      <Route path="/ats/payroll-hr" element={<Navigate to="/ats/onboarding-requests" replace />} />
 
       {/* Joining control room */}
       <Route path="/ats/joining-control-room" element={

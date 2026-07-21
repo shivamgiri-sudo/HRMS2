@@ -192,6 +192,46 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   const [withdrawals] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
   const [bridge] = await db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]);
 
+  // Fetch employment offer (salary source of truth set in onboarding-requests)
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT o.*,
+            d.department_name, des.designation_name, cc.cost_centre_name,
+            CONCAT(m.first_name, ' ', m.last_name) AS manager_name
+       FROM ats_employment_offer o
+       LEFT JOIN department_master d ON d.id = o.department_id
+       LEFT JOIN designation_master des ON des.id = o.designation_id
+       LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
+       LEFT JOIN employees m ON m.id = o.reporting_manager_id
+      WHERE o.candidate_id = ?
+      ORDER BY o.created_at DESC
+      LIMIT 1`,
+    [candidateId],
+  );
+
+  // Fetch provisioning task statuses
+  const [provTasks] = await db.execute<RowDataPacket[]>(
+    `SELECT r.task_code, r.status, r.assigned_to, r.completed_at, r.sla_due,
+            CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
+       FROM it_provisioning_request r
+       LEFT JOIN employees e ON e.id = r.assigned_to
+      WHERE r.candidate_id = ? OR r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
+      ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
+    [candidateId, candidateId],
+  );
+
+  const taskLabels: Record<string, string> = {
+    WFM_PROCESS_ALIGNMENT: "WFM Process Alignment",
+    IT_EMAIL_DOMAIN_ASSET: "IT Email, Domain & Asset",
+    ADMIN_BIOMETRIC_ID_CARD: "Admin Biometric & ID Card",
+    APPOINTMENT_LETTER_ESIGN: "Appointment Letter E-Sign",
+  };
+  const taskRoles: Record<string, string> = {
+    WFM_PROCESS_ALIGNMENT: "wfm",
+    IT_EMAIL_DOMAIN_ASSET: "it",
+    ADMIN_BIOMETRIC_ID_CARD: "admin",
+    APPOINTMENT_LETTER_ESIGN: "hr",
+  };
+
   const blockers = readinessBlockers(summary);
   return {
     summary: {
@@ -201,6 +241,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
       next_action: nextAction(blockers),
     },
     onboarding: { profile: profile[0] ?? null, bank: bank[0] ?? null, qualifications, experience },
+    offer: offerRows[0] ?? null,
     payroll: payroll[0] ?? null,
     salaryProposal: salaryProposal[0] ?? null,
     salarySteps,
@@ -209,121 +250,109 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
     dpdp,
     withdrawals,
     employee: bridge[0] ?? null,
+    provisioningTasks: provTasks.map((t) => ({
+      task_code: t.task_code,
+      task_label: taskLabels[t.task_code] || t.task_code,
+      assigned_role: taskRoles[t.task_code] || "unknown",
+      status: t.status,
+      assigned_to_name: t.assigned_to_name,
+      completed_at: t.completed_at,
+      sla_due: t.sla_due,
+    })),
   };
 }
 
 export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string) {
-  const joiningDate = String(input.joining_date || "");
-  const salaryStartDate = String(input.salary_start_date || joiningDate);
-  if (!joiningDate) throw Object.assign(new Error("joining_date is required"), { statusCode: 400 });
-  if (new Date(salaryStartDate) < new Date(joiningDate)) {
-    throw Object.assign(new Error("salary_start_date cannot be before joining_date"), { statusCode: 400 });
-  }
-  if (salaryStartDate !== joiningDate && !String(input.salary_effective_date_reason || "").trim()) {
-    throw Object.assign(new Error("salary_effective_date_reason is required when salary effective date differs from DOJ"), { statusCode: 400 });
-  }
+  // JCR only updates effective dates and remarks — salary is set in onboarding-requests offer form
+  const salaryStartDate = String(input.salary_start_date || "");
+  const attendanceEffective = String(input.attendance_effective_from || salaryStartDate);
+  const statutoryEffective = String(input.statutory_effective_from || salaryStartDate);
+  const payrollMonth = String(input.payroll_month_effective || monthOf(salaryStartDate));
+  const reason = String(input.salary_effective_date_reason || "");
+  const joiningRemarks = String(input.joining_remarks || "");
 
-  const [branchRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(b.id, c.applied_for_branch) AS branch_id
-       FROM ats_candidate c
-       LEFT JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch OR b.branch_code = c.applied_for_branch
-      WHERE c.id = ?
-      LIMIT 1`,
+  // Get joining date from offer (source of truth)
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT date_of_joining, date_of_salary FROM ats_employment_offer WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
     [candidateId],
   );
-  const branchId = branchRows[0]?.branch_id ? String(branchRows[0].branch_id) : "";
-  if (!branchId) throw Object.assign(new Error("Candidate branch is required before Payroll HR validation"), { statusCode: 409 });
+  const offer = offerRows[0];
+  const joiningDate = offer?.date_of_joining ? toDateOnly(offer.date_of_joining) : null;
+  const originalSalaryDate = offer?.date_of_salary ? toDateOnly(offer.date_of_salary) : joiningDate;
 
-  const payrollId = String(input.id || randomUUID());
-  await db.execute(
-    `INSERT INTO ats_payroll_hr_validation
-       (id, candidate_id, branch_id, payroll_hr_id, validation_status, employment_type, company_id, designation_id,
-        department_id, process_id, cost_centre_id, reporting_manager_id, salary_slab_id, gross_salary,
-        salary_components, joining_date, salary_start_date, attendance_effective_from, statutory_effective_from,
-        payroll_month_effective, salary_effective_date_reason, profile, band_grade, employee_location, kpi,
-        billable_status, type_of_employee, shift_id, remarks, joining_remarks, validated_at)
-     VALUES (?, ?, ?, ?, 'validated', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-     ON DUPLICATE KEY UPDATE
-       branch_id = VALUES(branch_id),
-       payroll_hr_id = VALUES(payroll_hr_id),
-       validation_status = 'validated',
-       employment_type = VALUES(employment_type),
-       company_id = VALUES(company_id),
-       designation_id = VALUES(designation_id),
-       department_id = VALUES(department_id),
-       process_id = VALUES(process_id),
-       cost_centre_id = VALUES(cost_centre_id),
-       reporting_manager_id = VALUES(reporting_manager_id),
-       salary_slab_id = VALUES(salary_slab_id),
-       gross_salary = VALUES(gross_salary),
-       salary_components = VALUES(salary_components),
-       joining_date = VALUES(joining_date),
-       salary_start_date = VALUES(salary_start_date),
-       attendance_effective_from = VALUES(attendance_effective_from),
-       statutory_effective_from = VALUES(statutory_effective_from),
-       payroll_month_effective = VALUES(payroll_month_effective),
-       salary_effective_date_reason = VALUES(salary_effective_date_reason),
-       profile = VALUES(profile),
-       band_grade = VALUES(band_grade),
-       employee_location = VALUES(employee_location),
-       kpi = VALUES(kpi),
-       billable_status = VALUES(billable_status),
-       type_of_employee = VALUES(type_of_employee),
-       shift_id = VALUES(shift_id),
-       remarks = VALUES(remarks),
-       joining_remarks = VALUES(joining_remarks),
-       validated_at = NOW()`,
-    [
-      payrollId,
-      candidateId,
-      branchId,
-      actorId,
-      input.employment_type || "onroll",
-      input.company_id || null,
-      input.designation_id || null,
-      input.department_id || null,
-      input.process_id || null,
-      input.cost_centre_id || null,
-      input.reporting_manager_id || null,
-      input.salary_slab_id || null,
-      Number(input.gross_salary || 0),
-      input.salary_components ? JSON.stringify(input.salary_components) : JSON.stringify({}),
-      joiningDate,
-      salaryStartDate,
-      input.attendance_effective_from || salaryStartDate,
-      input.statutory_effective_from || salaryStartDate,
-      input.payroll_month_effective || monthOf(salaryStartDate),
-      input.salary_effective_date_reason || null,
-      input.profile || null,
-      input.band_grade || null,
-      input.employee_location || null,
-      input.kpi || null,
-      input.billable_status || null,
-      input.type_of_employee || null,
-      input.shift_id || null,
-      input.remarks || null,
-      input.joining_remarks || null,
-    ],
+  // Validate salary start date if changed from original
+  if (salaryStartDate && originalSalaryDate && salaryStartDate !== originalSalaryDate && !reason.trim()) {
+    throw Object.assign(new Error("salary_effective_date_reason is required when salary start date differs from offer"), { statusCode: 400 });
+  }
+
+  // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
+  const [existingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
   );
 
-  if (Number(input.proposed_gross_salary || 0) > 0 && Number(input.proposed_gross_salary) !== Number(input.gross_salary || 0)) {
-    const differenceAmount = Number(input.proposed_gross_salary) - Number(input.gross_salary || 0);
-    const differencePercent = Number(input.gross_salary || 0) ? (differenceAmount / Number(input.gross_salary)) * 100 : null;
+  if (!existingRows[0]) {
+    // Create minimal record seeded from offer data
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(b.id, c.applied_for_branch) AS branch_id
+         FROM ats_candidate c
+         LEFT JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch
+        WHERE c.id = ? LIMIT 1`,
+      [candidateId],
+    );
+    const branchId = branchRows[0]?.branch_id || null;
+
     await db.execute(
-      `INSERT INTO salary_exception_proposal
-         (id, candidate_id, salary_slab_id, proposed_gross_salary, difference_amount, difference_percent, proposal_reason, proposed_by, status, approval_stage)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 'pending', 'bm')
-       ON DUPLICATE KEY UPDATE
-         salary_slab_id = VALUES(salary_slab_id),
-         proposed_gross_salary = VALUES(proposed_gross_salary),
-         difference_amount = VALUES(difference_amount),
-         difference_percent = VALUES(difference_percent),
-         proposal_reason = VALUES(proposal_reason),
-         proposed_by = VALUES(proposed_by),
-         status = 'pending',
-         approval_stage = 'bm',
-         updated_at = NOW()`,
-      [candidateId, input.salary_slab_id || null, input.proposed_gross_salary, differenceAmount, differencePercent, input.proposal_reason || "Proposal salary differs from slab", actorId],
+      `INSERT INTO ats_payroll_hr_validation
+         (id, candidate_id, branch_id, payroll_hr_id, validation_status,
+          employment_type, department_id, designation_id, cost_centre_id, reporting_manager_id,
+          gross_salary, joining_date, salary_start_date,
+          attendance_effective_from, statutory_effective_from, payroll_month_effective,
+          salary_effective_date_reason, joining_remarks, validated_at)
+       SELECT UUID(), ?, ?, ?, 'validated',
+              o.emp_type, o.department_id, o.designation_id, o.cost_centre, o.reporting_manager_id,
+              o.gross, o.date_of_joining, COALESCE(?, o.date_of_salary, o.date_of_joining),
+              COALESCE(?, o.date_of_salary, o.date_of_joining),
+              COALESCE(?, o.date_of_salary, o.date_of_joining),
+              ?,
+              ?, ?, NOW()
+         FROM ats_employment_offer o
+        WHERE o.candidate_id = ?
+        ORDER BY o.created_at DESC
+        LIMIT 1`,
+      [
+        candidateId, branchId, actorId,
+        salaryStartDate || null,
+        attendanceEffective || null,
+        statutoryEffective || null,
+        payrollMonth || null,
+        reason || null, joiningRemarks || null,
+        candidateId,
+      ],
+    );
+  } else {
+    // Update only JCR-specific effective date fields
+    await db.execute(
+      `UPDATE ats_payroll_hr_validation
+          SET salary_start_date = COALESCE(?, salary_start_date),
+              attendance_effective_from = COALESCE(?, attendance_effective_from),
+              statutory_effective_from = COALESCE(?, statutory_effective_from),
+              payroll_month_effective = COALESCE(?, payroll_month_effective),
+              salary_effective_date_reason = COALESCE(?, salary_effective_date_reason),
+              joining_remarks = COALESCE(?, joining_remarks),
+              payroll_hr_id = ?,
+              validation_status = 'validated'
+        WHERE candidate_id = ?`,
+      [
+        salaryStartDate || null,
+        attendanceEffective || null,
+        statutoryEffective || null,
+        payrollMonth || null,
+        reason || null,
+        joiningRemarks || null,
+        actorId,
+        candidateId,
+      ],
     );
   }
 
