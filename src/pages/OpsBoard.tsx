@@ -168,6 +168,24 @@ function DecisionBadge({ entry }: { entry: OpsBoardEntry }) {
   return <span className="text-slate-700">—</span>;
 }
 
+function TypingCell({ wpm, accuracy }: { wpm: number | null; accuracy: number | null }) {
+  if (wpm == null && accuracy == null) return <span className="text-slate-700">—</span>;
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      {wpm != null && (
+        <span className="text-sm font-bold text-slate-200 tabular-nums">{Math.round(wpm)} WPM</span>
+      )}
+      {accuracy != null && (
+        <span className={`text-xs font-semibold tabular-nums ${
+          accuracy >= 90 ? "text-emerald-400" : accuracy >= 75 ? "text-amber-400" : "text-rose-400"
+        }`}>
+          {accuracy.toFixed(0)}% acc
+        </span>
+      )}
+    </div>
+  );
+}
+
 function CandidateRow({ entry }: { entry: OpsBoardEntry }) {
   const candidatePos = PIPELINE_POS[entry.current_stage] ?? 0;
   const isWaiting    = WAITING_STAGES.includes(entry.current_stage);
@@ -201,12 +219,7 @@ function CandidateRow({ entry }: { entry: OpsBoardEntry }) {
       </td>
       {/* Typing */}
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
-        {entry.typing_net_wpm != null
-          ? <span className="text-sm font-bold text-slate-200 tabular-nums">
-              {Math.round(entry.typing_net_wpm)} WPM
-            </span>
-          : <span className="text-slate-700">—</span>
-        }
+        <TypingCell wpm={entry.typing_net_wpm} accuracy={entry.typing_accuracy} />
       </td>
       {/* Wait */}
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
@@ -439,7 +452,7 @@ export default function OpsBoard() {
       </header>
 
       {/* ── Body ────────────────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-x-auto">
+      <main className="flex-1">
 
         {/* Loading */}
         {loading && (
@@ -466,39 +479,41 @@ export default function OpsBoard() {
           </div>
         )}
 
-        {/* Table */}
+        {/* Table — overflow-x-auto on the scroll container, NOT on main, so sticky thead works */}
         {!loading && !error && entries.length > 0 && (
-          <table className="w-full text-sm border-collapse">
-            <thead className="bg-slate-800 border-b border-slate-700">
-              <tr>
-                <Th>Candidate</Th>
-                <Th>Process</Th>
-                <Th>Recruiter</Th>
-                <Th center>MCQ</Th>
-                <Th center>Typing</Th>
-                <Th center>Wait</Th>
-                <Th>Stage</Th>
-                <Th center>HR</Th>
-                <Th center>Skill</Th>
-                <Th center>Ops</Th>
-                <Th>Ops Interviewer</Th>
-                <Th center>Decision</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleEntries.length === 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead className="bg-slate-800 border-b border-slate-700 sticky top-0 z-10">
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-slate-600 text-sm font-medium">
-                    No candidates in this category
-                  </td>
+                  <Th>Candidate</Th>
+                  <Th>Process</Th>
+                  <Th>Recruiter</Th>
+                  <Th center>MCQ</Th>
+                  <Th center>Typing</Th>
+                  <Th center>Wait</Th>
+                  <Th>Stage</Th>
+                  <Th center>HR</Th>
+                  <Th center>Skill</Th>
+                  <Th center>Ops</Th>
+                  <Th>Ops Interviewer</Th>
+                  <Th center>Decision</Th>
                 </tr>
-              ) : (
-                visibleEntries.map(e => (
-                  <CandidateRow key={e.candidate_code} entry={e} />
-                ))
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {visibleEntries.length === 0 ? (
+                  <tr>
+                    <td colSpan={12} className="py-12 text-center text-slate-600 text-sm font-medium">
+                      No candidates in this category
+                    </td>
+                  </tr>
+                ) : (
+                  visibleEntries.map(e => (
+                    <CandidateRow key={e.candidate_code} entry={e} />
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </main>
 
