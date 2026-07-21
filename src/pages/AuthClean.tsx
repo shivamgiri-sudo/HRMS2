@@ -31,7 +31,7 @@ export default function AuthClean() {
   const [showPassword, setShowPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
-  const [forgotChannel, setForgotChannel] = useState<ForgotPasswordChannel>('email');
+  const [forgotChannel, setForgotChannel] = useState<ForgotPasswordChannel>('sms');
   const [forgotStep, setForgotStep] = useState<ForgotPasswordStep>('send');
   const [loading, setLoading] = useState(false);
   const { signIn, forgotPassword, user, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
