@@ -60,6 +60,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
 import { useUserRole } from "@/hooks/useUserRole";
+import { normalizeQualityDashboardData } from "@/pages/dashboards/dashboard-data-contracts";
 
 export type RoleDashboardVariant =
   | "employee"
@@ -588,6 +589,13 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
     staleTime: 60_000,
   });
 
+  const qualityTrendQuery = useQuery({
+    queryKey: ["role-dashboard-v3-quality-trend", branchId, processId],
+    queryFn: () => hrmsApi.get<any>(`/api/quality-dashboard/trend?${params.replace("?","")}`).catch(() => null),
+    enabled: variant === "quality",
+    staleTime: 60_000,
+  });
+
   const qualityAgentsQuery = useQuery({
     queryKey: ["role-dashboard-v3-quality-agents", branchId, processId],
     queryFn: () => hrmsApi.get<any>(`/api/quality-dashboard/agents?${params.replace("?","")}`).catch(() => null),
@@ -656,23 +664,23 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
   const systemMetrics = system?.metrics ?? {};
 
   // Quality variant derived values
-  // Bug fix: /api/quality-dashboard/summary returns { success, summary: {...} } not { success, data: {...} }
-  const qualityRaw = qualitySummaryQuery.data ?? {};
-  const qualityData = (qualityRaw as any).summary ?? (qualityRaw as any).data ?? qualityRaw;
-  // Bug fix: /api/quality-dashboard/agents returns { success, agents: [...] } not { success, data: [...] }
   const qualityAgents: any[] = Array.isArray((qualityAgentsQuery.data as any)?.agents)
     ? (qualityAgentsQuery.data as any).agents
     : Array.isArray((qualityAgentsQuery.data as any)?.data)
     ? (qualityAgentsQuery.data as any).data
     : [];
-  const qAvgScore = asNumber(qualityData.avg_quality_score ?? qualityData.avg_score ?? qualityData.average_score);
-  const qTotalAudits = asNumber(qualityData.audited_calls ?? qualityData.total_audits ?? qualityData.audits_done);
-  // Bug fix: no generic fail_rate field — compute average from parameter fail rates
-  const qFailRate = asNumber(qualityData.fail_rate ?? qualityData.failure_rate ??
-    (qualityData.fail_rate_call_open !== undefined
-      ? ((Number(qualityData.fail_rate_call_open ?? 0) + Number(qualityData.fail_rate_professionalism ?? 0) + Number(qualityData.fail_rate_active_listening ?? 0)) / 3)
-      : null));
-  const qPendingQueue = asNumber(qualityData.pending_audits ?? qualityData.queue_size ?? qualityData.pending_count);
+  const qualityDashboard = normalizeQualityDashboardData(
+    qualitySummaryQuery.data,
+    qualityTrendQuery.data,
+    qualityAgentsQuery.data,
+  );
+  const qualityTrend = Array.isArray(qualityDashboard.score_trend)
+    ? qualityDashboard.score_trend
+    : [];
+  const qAvgScore = asNumber(qualityDashboard.avg_score);
+  const qTotalAudits = asNumber(qualityDashboard.total_audits);
+  const qFailRate = asNumber(qualityDashboard.fail_rate);
+  const qPendingQueue = asNumber(qualityDashboard.pending_audits);
 
   // Operations variant derived values
   const opsPulse = opsPulseQuery.data?.data ?? opsPulseQuery.data ?? {};
@@ -924,13 +932,17 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
     : summaryQuery.isLoading
   );
   const refreshing = summaryQuery.isFetching || employeeQuery.isFetching || systemQuery.isFetching
-    || qualitySummaryQuery.isFetching || opsPulseQuery.isFetching;
+    || qualitySummaryQuery.isFetching || qualityTrendQuery.isFetching || opsPulseQuery.isFetching;
   const generatedAt = summary?.generatedAt;
   const dashboardError = summaryQuery.error ?? employeeQuery.error;
 
   const refreshAll = () => {
     if (variant === "employee") void employeeQuery.refetch();
-    else if (variant === "quality") { void qualitySummaryQuery.refetch(); void qualityAgentsQuery.refetch(); }
+    else if (variant === "quality") {
+      void qualitySummaryQuery.refetch();
+      void qualityTrendQuery.refetch();
+      void qualityAgentsQuery.refetch();
+    }
     else if (variant === "operations") void opsPulseQuery.refetch();
     else void summaryQuery.refetch();
     if (variant === "super_admin") void systemQuery.refetch();
@@ -984,11 +996,16 @@ export default function RoleDashboardV3({ variant, subheader }: { variant: RoleD
             <SectionCard title={variant === "employee" ? "My Attendance This Month" : variant === "wfm" || variant === "wfm_attendance" ? "Live Attendance Status" : variant === "payroll" ? "Payroll Readiness" : variant === "hr" ? "HR Operations Snapshot" : variant === "manager" ? "Team Attendance" : variant === "super_admin" ? "Organisation Attendance" : variant === "quality" ? "Quality Score Trend" : variant === "operations" ? (opsChartIsShrinkage ? "Shrinkage Breakdown" : "Volume Trend") : variant === "recruiter" ? "Hiring Funnel" : "Workforce Overview"}>
               {variant === "quality" ? (
                 <div className="h-48">
-                  {qualitySummaryQuery.isLoading ? (
+                  {qualitySummaryQuery.isLoading || qualityTrendQuery.isLoading ? (
                     <div className="flex h-full items-center justify-center"><Skeleton className="h-32 w-full" /></div>
+                  ) : qualityTrend.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                      No quality trend data is available for the selected filters.
+                    </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={[]} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                      <LineChart data={qualityTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                        <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                         <Tooltip />
                         <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={3} dot={{ r: 3 }} />
                       </LineChart>

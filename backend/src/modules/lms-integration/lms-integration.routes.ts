@@ -1,16 +1,62 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { NextFunction, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { lmsDb } from "../../db/lms-mysql.js";
+import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
 export const lmsIntegrationRouter = Router();
 lmsIntegrationRouter.use(requireAuth);
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: any) => fn(req, res).catch(next);
+
+const LMS_PROGRESS_OVERSIGHT_ROLES = [
+  "super_admin",
+  "admin",
+  "hr",
+  "manager",
+  "process_manager",
+  "branch_head",
+  "team_leader",
+  "tl",
+  "assistant_manager",
+  "trainer",
+  "training_manager",
+  "ceo",
+  "coo",
+  "operations_manager",
+] as const;
+
+export function isOwnLmsEmployeeReference(
+  targetEmployeeId: string,
+  employee: { id: string; employee_code: string } | null,
+): boolean {
+  if (!employee) return false;
+  const target = targetEmployeeId.trim().toLowerCase();
+  return target.length > 0 && [employee.id, employee.employee_code]
+    .some((value) => value.trim().toLowerCase() === target);
+}
+
+async function requireLmsProgressAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const userId = req.authUser!.id;
+    if (await hasRole(userId, ...LMS_PROGRESS_OVERSIGHT_ROLES)) return next();
+
+    const employee = await getEmployeeForUser(userId);
+    if (isOwnLmsEmployeeReference(req.params.employeeId, employee)) return next();
+
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  } catch (error) {
+    return next(error);
+  }
+}
 
 // ─── Dashboard Summary ────────────────────────────────────────────────────────
 // GET /api/lms/dashboard-summary — org-wide LMS snapshot for CEO/Super Admin
@@ -128,6 +174,7 @@ lmsIntegrationRouter.get("/learner-progress/:employeeId",
               "team_leader", "tl", "assistant_manager", "trainer", "training_manager",
               "payroll", "payroll_head", "ceo", "coo", "employee", "agent", "trainee",
               "wfm", "qa", "quality_analyst", "operations_manager", "recruiter", "recruitment_hr"),
+  requireLmsProgressAccess,
   h(async (req, res) => {
   const { employeeId } = req.params;
 

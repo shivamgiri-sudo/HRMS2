@@ -1,5 +1,5 @@
-import RoleDashboardV3 from "./RoleDashboardV3";
+import ReferenceRoleDashboard from "./ReferenceRoleDashboard";
 
 export default function QualityDashboardRole() {
-  return <RoleDashboardV3 variant="quality" />;
+  return <ReferenceRoleDashboard variant="quality" />;
 }

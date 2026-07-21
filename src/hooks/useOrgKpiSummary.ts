@@ -44,7 +44,7 @@ export interface OrgKpiSummary {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const EXEC_ROLES = new Set(["super_admin", "admin", "ceo", "coo"]);
+const EXEC_ROLES = new Set(["super_admin", "admin", "ceo", "coo", "manager"]);
 const STALE = 5 * 60 * 1000;
 const GC = 10 * 60 * 1000;
 
@@ -56,7 +56,7 @@ const GC = 10 * 60 * 1000;
  *
  * @param period - Month string in YYYY-MM format. Defaults to the current month.
  */
-export function useOrgKpiSummary(period?: string) {
+export function useOrgKpiSummary(period?: string, enabled = true) {
   const { data: roleData } = useUserRole();
   const isAllowed =
     roleData?.roleKeys?.some((r: string) => EXEC_ROLES.has(r)) ?? false;
@@ -72,7 +72,7 @@ export function useOrgKpiSummary(period?: string) {
       );
       return (res as { success: boolean; data: OrgKpiSummary }).data;
     },
-    enabled: isAllowed,
+    enabled: enabled && isAllowed,
     staleTime: STALE,
     gcTime: GC,
     retry: 2,

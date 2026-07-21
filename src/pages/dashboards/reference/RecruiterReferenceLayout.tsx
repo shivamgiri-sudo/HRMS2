@@ -37,7 +37,7 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
   const byStage = (a.by_stage ?? {}) as Record<string, number>;
 
   const totalApplications = asNumber(a.total_candidates ?? a.total_applications ?? metricValue(m, "ats"));
-  const walkins = asNumber(byStage["walk_in"] ?? byStage["Walk In"] ?? byStage["walkin"] ?? a.total_walkins);
+  const walkins = asNumber(a.walkins_today ?? byStage["walk_in"] ?? byStage["Walk In"] ?? byStage["walkin"] ?? a.total_walkins);
   const offers = asNumber(
     ((byStage["selected"] ?? 0) + (byStage["Selected"] ?? 0) +
     (byStage["Shortlisted"] ?? 0) + (byStage["shortlisted"] ?? 0)) ||

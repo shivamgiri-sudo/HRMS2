@@ -8,6 +8,12 @@ import { useExecutiveQualitySummary } from "@/hooks/useExecutiveQuality";
 import { useOrgKpiSummary } from "@/hooks/useOrgKpiSummary";
 import { useUserRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
+import {
+  mergeRecruiterDashboardData,
+  normalizeExecutiveQualityData,
+  normalizeOrgKpiData,
+  normalizeQualityDashboardData,
+} from "./dashboard-data-contracts";
 import { canAccessRoleDashboard, type RoleDashboardVariant } from "./roleDashboardAccess";
 import {
   asArray,
@@ -51,6 +57,10 @@ const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
 function unwrap(value: unknown): unknown {
   const record = asRecord(value);
   return record.data ?? value;
+}
+
+function getIstDate(): string {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 type OptionalPayload = {
@@ -171,6 +181,19 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  const recruiterHiringQuery = useQuery({
+    queryKey: ["reference-dashboard-recruiter-hiring", getIstDate()],
+    queryFn: async () => {
+      const date = getIstDate();
+      return asRecord(unwrap(await hrmsApi.get<unknown>(
+        `/api/ats/recruiter/hiring-dashboard?fromDate=${date}&toDate=${date}`,
+      )));
+    },
+    enabled: accessGranted && variant === "recruiter",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
   const systemQuery = useQuery({
     queryKey: ["reference-dashboard-system"],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>("/api/management/system-dashboard"))),
@@ -248,14 +271,44 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
-  const qualityQuery = useExecutiveQualitySummary(30);
-  const orgKpiQuery = useOrgKpiSummary();
+  const executiveQualityQuery = useExecutiveQualitySummary(
+    30,
+    accessGranted && ["ceo", "super_admin"].includes(variant),
+  );
+  const orgKpiQuery = useOrgKpiSummary(
+    undefined,
+    accessGranted && ["ceo", "super_admin", "manager"].includes(variant),
+  );
+
+  const qualitySummaryQuery = useQuery({
+    queryKey: ["reference-dashboard-quality-summary"],
+    queryFn: () => hrmsApi.get<unknown>("/api/quality-dashboard/summary"),
+    enabled: accessGranted && variant === "quality",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const qualityTrendQuery = useQuery({
+    queryKey: ["reference-dashboard-quality-trend"],
+    queryFn: () => hrmsApi.get<unknown>("/api/quality-dashboard/trend?granularity=day"),
+    enabled: accessGranted && variant === "quality",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const qualityAgentsQuery = useQuery({
+    queryKey: ["reference-dashboard-quality-agents"],
+    queryFn: () => hrmsApi.get<unknown>("/api/quality-dashboard/agents?limit=100"),
+    enabled: accessGranted && variant === "quality",
+    staleTime: 60_000,
+    retry: 1,
+  });
 
   // QA-role quality data via /api/bi/quality-intervention (accessible to qa/quality_analyst roles)
   const qaQualityQuery = useQuery({
     queryKey: ["reference-dashboard-qa-quality", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/bi/quality-intervention${params}`))),
-    enabled: accessGranted && ["quality", "operations", "manager", "super_admin", "ceo"].includes(variant),
+    enabled: accessGranted && ["operations", "manager", "super_admin", "ceo"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -263,37 +316,49 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const summary = (summaryQuery.data ?? {}) as DashboardSummary;
   const metrics = summary.metrics ?? {};
   const employeeData = employeeQuery.data ?? EMPTY_EMPLOYEE;
-  const queryResults = [summaryQuery, employeeQuery, atsQuery, systemQuery, workforceQuery, pnlQuery, payrollQuery, biometricQuery, devicesQuery, pulseQuery, managerLeavesQuery, qaQualityQuery];
+  const activeQueryResults = accessGranted ? [
+    ...(variant !== "employee" ? [summaryQuery] : []),
+    ...(variant === "employee" ? [employeeQuery] : []),
+    ...(["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant) ? [atsQuery] : []),
+    ...(variant === "recruiter" ? [recruiterHiringQuery] : []),
+    ...(variant === "super_admin" ? [systemQuery] : []),
+    ...(["ceo", "manager", "super_admin", "operations", "quality"].includes(variant) ? [workforceQuery] : []),
+    ...(["ceo", "payroll", "super_admin"].includes(variant) ? [pnlQuery] : []),
+    ...(["payroll", "super_admin"].includes(variant) ? [payrollQuery] : []),
+    ...(["wfm", "wfm_attendance", "manager", "operations"].includes(variant) ? [biometricQuery] : []),
+    ...(["wfm", "wfm_attendance"].includes(variant) ? [devicesQuery] : []),
+    ...(["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant) ? [pulseQuery] : []),
+    ...(variant === "manager" ? [managerLeavesQuery] : []),
+    ...(["ceo", "super_admin"].includes(variant) ? [executiveQualityQuery] : []),
+    ...(["ceo", "super_admin", "manager"].includes(variant) ? [orgKpiQuery] : []),
+    ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
+    ...(["operations", "manager", "super_admin", "ceo"].includes(variant) ? [qaQualityQuery] : []),
+  ] : [];
 
   // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
-  const execQualityRecord = asRecord(unwrap(qualityQuery.data as unknown));
+  const executiveQuality = normalizeExecutiveQualityData(executiveQualityQuery.data);
+  const directQuality = normalizeQualityDashboardData(
+    qualitySummaryQuery.data,
+    qualityTrendQuery.data,
+    qualityAgentsQuery.data,
+  );
   const qaQualityRecord = qaQualityQuery.data ?? {};
-  const mergedQuality: JsonRecord = {
-    // Executive fields (available to ceo/admin)
-    avg_score: execQualityRecord.metrics != null
-      ? asNumber((execQualityRecord.metrics as JsonRecord).overall_quality_score)
-      : (qaQualityRecord.summary != null ? asNumber((qaQualityRecord.summary as JsonRecord).avg_quality_score) : null),
-    total_audits: asNumber((execQualityRecord.metrics as JsonRecord | undefined)?.overall_quality_score != null
-      ? undefined
-      : (qaQualityRecord.summary as JsonRecord | undefined)?.agents_below_threshold),
+  const interventionQuality: JsonRecord = {
+    avg_score: qaQualityRecord.summary != null
+      ? asNumber((qaQualityRecord.summary as JsonRecord).avg_quality_score)
+      : null,
+    total_audits: asNumber((qaQualityRecord.summary as JsonRecord | undefined)?.agents_below_threshold),
     fail_rate: null,
-    pending_audits: asNumber((execQualityRecord.risk_summary as JsonRecord | undefined)?.coaching_priority_count
-      ?? (qaQualityRecord.summary as JsonRecord | undefined)?.processes_declining),
-    // Score trend from executive summary
-    score_trend: execQualityRecord.process_performance ?? qaQualityRecord.process_rag ?? [],
+    pending_audits: asNumber((qaQualityRecord.summary as JsonRecord | undefined)?.processes_declining),
+    score_trend: qaQualityRecord.process_rag ?? [],
     // Defect categories — map process_rag or process_performance
     defects: (qaQualityRecord.process_rag as JsonRecord[] | undefined)?.map((r) => ({
       category: r.process,
       count: r.avg_score,
       severity: r.rag,
-    })) ?? (execQualityRecord.process_performance as JsonRecord[] | undefined)?.map((r) => ({
-      category: r.process,
-      count: r.agent_count,
-      severity: (r.status as string ?? "").toLowerCase() === "critical" ? "critical"
-        : (r.status as string ?? "").toLowerCase() === "at risk" ? "high" : "low",
     })) ?? [],
     // Bottom agents — from executive bottom_performers or QA critical_agents
-    bottom_agents: execQualityRecord.bottom_performers ?? (qaQualityRecord.critical_agents as JsonRecord[] | undefined)?.map((a) => ({
+    bottom_agents: (qaQualityRecord.critical_agents as JsonRecord[] | undefined)?.map((a) => ({
       agent_name: a.agent_name,
       score: a.quality_score,
       process: a.campaign,
@@ -302,13 +367,21 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     // Intervention flags from QA pulse
     intervention_flags: qaQualityRecord.intervention_flags ?? [],
   };
+  const mergedQuality = variant === "quality"
+    ? directQuality
+    : ["ceo", "super_admin"].includes(variant)
+      ? executiveQuality
+      : interventionQuality;
+  const ats = variant === "recruiter"
+    ? mergeRecruiterDashboardData(atsQuery.data, recruiterHiringQuery.data)
+    : atsQuery.data ?? {};
 
   const data: ReferenceDashboardData = {
     variant,
     summary,
     metrics,
     employee: employeeData,
-    ats: atsQuery.data ?? {},
+    ats,
     system: systemQuery.data ?? {},
     workforce: workforceQuery.data ?? {},
     pnl: pnlQuery.data ?? {},
@@ -318,16 +391,16 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     opsPulse: pulseQuery.data ?? {},
     managerLeaves: managerLeavesQuery.data ?? [],
     quality: mergedQuality,
-    orgKpi: asRecord(unwrap(orgKpiQuery.data as unknown)),
-    loading: roleLoading || (variant === "employee" ? employeeQuery.isLoading : summaryQuery.isLoading),
-    refreshing: queryResults.some((query) => query.isFetching),
+    orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
+    loading: roleLoading || activeQueryResults.some((query) => query.isLoading),
+    refreshing: activeQueryResults.some((query) => query.isFetching),
     generatedAt: summary.generatedAt,
   };
 
   const unavailableMetrics = unavailableMetricCodes(metrics);
   const employeeSourceErrors = employeeData.sourceErrors ?? [];
-  const networkErrorCount = queryResults.filter((query) => query.isError).length;
-  const refreshAll = () => { for (const query of queryResults) void query.refetch(); };
+  const networkErrorCount = activeQueryResults.filter((query) => query.isError).length;
+  const refreshAll = () => { for (const query of activeQueryResults) void query.refetch(); };
 
   const errorMessage = useMemo(() => {
     const parts: string[] = [];
