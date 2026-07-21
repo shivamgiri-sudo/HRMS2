@@ -796,12 +796,12 @@ export const authService = {
       .createHmac('sha256', OTP_HMAC_SECRET)
       .update(`${otp}:${userId}:${phoneOrEmail}`)
       .digest('hex');
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
     try {
+      // Use MySQL NOW() for expires_at so timezone matches the WHERE expires_at > NOW() check
       await db.execute(
-        'INSERT INTO auth_otp_reset (id, user_id, phone, otp_hash, expires_at, used, attempts) VALUES (UUID(), ?, ?, ?, ?, 0, 0)',
-        [userId, phoneOrEmail.trim(), otpHash, expiresAt]
+        'INSERT INTO auth_otp_reset (id, user_id, phone, otp_hash, expires_at, used, attempts) VALUES (UUID(), ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), 0, 0)',
+        [userId, phoneOrEmail.trim(), otpHash]
       );
     } catch {
       // Graceful: table not yet created — OTP can't be stored; return generic success
