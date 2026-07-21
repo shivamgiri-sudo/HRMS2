@@ -96,17 +96,20 @@ export class GeminiProvider implements AiProvider {
   async generateText(request: AiGenerateRequest): Promise<AiGenerateResponse> {
     const startTime = Date.now();
 
-    // Validate API key
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Prefer the decrypted key passed in the request (from DB config), fall back to env var
+    const apiKey = (request as any).apiKey || process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.warn('[Gemini] API key not configured, falling back to rule-based provider');
       const fallback = await ruleBasedProvider.generateText(request);
       return { ...fallback, fallbackUsed: true };
     }
 
+    // Reset cached SDK instance when key changes (e.g. after config update)
+    this.sdk = null;
+
     try {
       const sdk = await this.initSdk(apiKey);
-      const modelName = request.model || process.env.GEMINI_DEFAULT_MODEL || 'gemini-flash';
+      const modelName = request.model || process.env.GEMINI_DEFAULT_MODEL || 'gemini-1.5-flash';
       const model = sdk.getGenerativeModel({ model: modelName });
 
       // Build system instruction + user question

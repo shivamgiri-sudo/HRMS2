@@ -20,6 +20,7 @@ export interface AiGenerateRequest {
   roleKeys: string[];
   providerKey: string;
   model?: string;
+  apiKey?: string;
   systemInstruction?: string;
   userQuestion: string;
   sanitizedContext: Record<string, unknown>;
