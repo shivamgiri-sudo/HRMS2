@@ -322,12 +322,11 @@ router.post("/otp/send", h(async (req, res) => {
 
   const otp = String(Math.floor(100000 + Math.random() * 900000));
   const otpHash = createHash("sha256").update(otp + mobile).digest("hex");
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   const otpId = randomUUID();
 
   await db.execute(
-    `INSERT INTO candidate_onboarding_otp (id, candidate_id, mobile, otp_hash, expires_at) VALUES (?, ?, ?, ?, ?)`,
-    [otpId, tokenData.candidate_id, mobile, otpHash, expiresAt]
+    `INSERT INTO candidate_onboarding_otp (id, candidate_id, mobile, otp_hash, expires_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))`,
+    [otpId, tokenData.candidate_id, mobile, otpHash]
   );
 
   // Send via SMS (primary) or email (fallback)

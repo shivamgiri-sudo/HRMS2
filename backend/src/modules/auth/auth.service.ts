@@ -325,11 +325,10 @@ export const authService = {
 
       const rawRefresh = crypto.randomBytes(48).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(rawRefresh).digest('hex');
-      const expiresAt = new Date(Date.now() + REFRESH_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
 
       await db.execute<ResultSetHeader>(
-        'INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, ?)',
-        [user.id, tokenHash, mysqlDateTime(expiresAt)]
+        'INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
+        [user.id, tokenHash, REFRESH_EXPIRES_DAYS]
       );
 
       // Create device session record if request object available
@@ -342,7 +341,7 @@ export const authService = {
             `INSERT INTO user_device_sessions
                (user_id, refresh_token_hash, device_fingerprint, device_name,
                 ip_address, user_agent, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))`,
             [
               user.id,
               tokenHash,
@@ -350,7 +349,7 @@ export const authService = {
               deviceName,
               req.ip || null,
               req.headers['user-agent'] || null,
-              mysqlDateTime(expiresAt)
+              REFRESH_EXPIRES_DAYS
             ]
           );
         } catch (error) {
