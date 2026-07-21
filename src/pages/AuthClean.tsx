@@ -89,18 +89,17 @@ export default function AuthClean() {
       }
       setLoading(true);
       try {
-        const res = await hrmsApi.post('/api/auth/forgot-password-otp', { phone: resetPhone.trim() });
+        const res = await hrmsApi.post<{ success: boolean; message?: string; error?: string }>('/api/auth/forgot-password-otp', { phone: resetPhone.trim() });
         setLoading(false);
-        if (res.data.success) {
-          toast({ title: "OTP Sent", description: res.data.message });
+        if (res.success) {
+          toast({ title: "OTP Sent", description: res.message });
           setForgotStep('verify');
         } else {
-          toast({ title: "Error", description: res.data.message || res.data.error || "Failed to send OTP. Please try again." });
+          toast({ title: "Error", description: res.message || res.error || "Failed to send OTP. Please try again." });
         }
       } catch (error: any) {
         setLoading(false);
-        const msg = error.response?.data?.message || error.response?.data?.error || "Failed to send OTP. Please try again.";
-        toast({ title: "Error", description: msg });
+        toast({ title: "Error", description: error.message || "Failed to send OTP. Please try again." });
       }
     }
   };
@@ -117,13 +116,13 @@ export default function AuthClean() {
     }
     setLoading(true);
     try {
-      const res = await hrmsApi.post('/api/auth/verify-otp-reset', {
+      const res = await hrmsApi.post<{ success: boolean; message?: string; error?: string }>('/api/auth/verify-otp-reset', {
         phone: resetPhone.trim(),
         otp: otp.trim(),
         newPassword: newPassword
       });
       setLoading(false);
-      if (res.data.success) {
+      if (res.success) {
         toast({ title: "Success", description: "Password reset successful. Please login." });
         setShowForgot(false);
         setForgotStep('send');
@@ -131,11 +130,11 @@ export default function AuthClean() {
         setNewPassword('');
         setResetPhone('');
       } else {
-        toast({ title: "Error", description: res.data.error || "Invalid or expired OTP" });
+        toast({ title: "Error", description: res.error || res.message || "Invalid or expired OTP" });
       }
     } catch (error: any) {
       setLoading(false);
-      toast({ title: "Error", description: error.response?.data?.error || "Failed to reset password" });
+      toast({ title: "Error", description: error.message || "Failed to reset password" });
     }
   };
 
