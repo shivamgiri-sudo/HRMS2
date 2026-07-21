@@ -3,8 +3,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import type { HubEmployee } from "@/hooks/useAttendanceHub";
 
+// Same as SalaryTab.tsx — show "—" when null, zero, or unprocessed
 const INR = (v: number | null | undefined) =>
-  v != null ? `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : "—";
+  v != null && Number(v) > 0
+    ? `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
+    : "—";
+
+// Same MONTH_NAMES as SalaryTab.tsx
+const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function fmtSalaryMonth(runMonth: string | null | undefined): string {
+  if (!runMonth) return "";
+  const [y, m] = runMonth.split("-");
+  const name = MONTH_NAMES[Number(m)] ?? runMonth;
+  return `${name} ${y}`;
+}
 
 const STATUS_COLORS: Record<string, string> = {
   active:      "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -123,7 +136,7 @@ export function AttendanceHubTable({
             <div className="min-w-0">
               <p className="text-xs font-semibold text-slate-800">{INR(emp.last_salary_net)}</p>
               {emp.last_salary_month && (
-                <p className="text-[10px] text-slate-400">{emp.last_salary_month}</p>
+                <p className="text-[10px] text-slate-400">{fmtSalaryMonth(emp.last_salary_month)}</p>
               )}
             </div>
 

@@ -532,6 +532,46 @@ function LeaveTab({ employeeId, leaveBalances }: { employeeId: string; leaveBala
 }
 
 // ── Tab: Payslips ──────────────────────────────────────────────────────────────
+// Exact same interface as PayslipViewer.tsx — pulled from the working page
+
+interface PayslipRecord {
+  id: string;
+  run_id?: string;
+  run_month: string;
+  run_status?: string;
+  status?: string;
+  gross_salary: number | string;
+  total_deductions: number | string;
+  net_salary: number | string;
+}
+
+const PAYSLIP_MONTHS = [
+  { value: "1",  label: "January" },  { value: "2",  label: "February" },
+  { value: "3",  label: "March" },    { value: "4",  label: "April" },
+  { value: "5",  label: "May" },      { value: "6",  label: "June" },
+  { value: "7",  label: "July" },     { value: "8",  label: "August" },
+  { value: "9",  label: "September" },{ value: "10", label: "October" },
+  { value: "11", label: "November" }, { value: "12", label: "December" },
+];
+
+function fmtPayslipMonth(runMonth: string): string {
+  const [y, mNum] = (runMonth || "").split("-");
+  const label = PAYSLIP_MONTHS.find(m => m.value === String(Number(mNum)))?.label ?? runMonth;
+  return `${label} ${y}`;
+}
+
+function payslipStatusBadge(status: string) {
+  const s = (status || "").toLowerCase().trim();
+  if (s === "paid" || s === "credited" || s === "disbursed")
+    return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">Paid</span>;
+  if (s === "processed" || s === "approved" || s === "finalized")
+    return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">Processed</span>;
+  if (s === "calculated")
+    return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Calculated</span>;
+  if (s === "draft" || s === "pending" || s === "processing")
+    return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">Draft</span>;
+  return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 capitalize">{status}</span>;
+}
 
 function PayslipsTab({ employeeId, isSelf }: { employeeId: string; isSelf: boolean }) {
   const endpoint = isSelf
@@ -539,7 +579,7 @@ function PayslipsTab({ employeeId, isSelf }: { employeeId: string; isSelf: boole
     : `/api/payroll/payslip/list/${employeeId}`;
   const { data, isLoading } = useQuery({
     queryKey: ["emp-payslips", employeeId],
-    queryFn: () => hrmsApi.get<{ data: Array<{ run_id: string; run_label: string; period_label: string; pay_date: string; net_pay: number; gross_pay: number; total_deductions: number; status: string }> }>(endpoint),
+    queryFn: () => hrmsApi.get<{ data: PayslipRecord[] }>(endpoint),
   });
   const payslips = data?.data ?? [];
   if (isLoading) return <TabLoader />;
@@ -558,26 +598,31 @@ function PayslipsTab({ employeeId, isSelf }: { employeeId: string; isSelf: boole
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {payslips.map(p => (
-            <tr key={p.run_id} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-medium text-slate-900">{p.period_label ?? p.run_label}</td>
-              <td className="px-4 py-3 text-right text-slate-600">₹{Number(p.gross_pay ?? 0).toLocaleString()}</td>
-              <td className="px-4 py-3 text-right text-red-500">-₹{Number(p.total_deductions ?? 0).toLocaleString()}</td>
-              <td className="px-4 py-3 text-right font-extrabold text-emerald-700">₹{Number(p.net_pay ?? 0).toLocaleString()}</td>
-              <td className="px-4 py-3">
-                <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold capitalize",
-                  p.status === "paid" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600")}>
-                  {p.status}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                <Link to={`/payslip/${p.run_id}/${employeeId}`}
-                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
-                  <Download className="h-3.5 w-3.5" /> View
-                </Link>
-              </td>
-            </tr>
-          ))}
+          {payslips.map(p => {
+            const runId = p.run_id ?? p.id;
+            const displayStatus = p.status ?? p.run_status ?? "";
+            return (
+              <tr key={p.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3 font-medium text-slate-900">{fmtPayslipMonth(p.run_month)}</td>
+                <td className="px-4 py-3 text-right text-slate-600">
+                  ₹{Number(p.gross_salary ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                </td>
+                <td className="px-4 py-3 text-right text-red-500">
+                  -₹{Number(p.total_deductions ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                </td>
+                <td className="px-4 py-3 text-right font-extrabold text-emerald-700">
+                  ₹{Number(p.net_salary ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                </td>
+                <td className="px-4 py-3">{payslipStatusBadge(displayStatus)}</td>
+                <td className="px-4 py-3">
+                  <Link to={`/payslip/${runId}/${employeeId}`}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+                    <Eye className="h-3.5 w-3.5" /> View
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -752,7 +797,7 @@ export default function NativeEmployeeStatCard() {
             {canSearchEmployees && (
               <div ref={searchRef} className="relative w-72">
                 <div className="relative">
-                  <Input placeholder="Search employee name or code…" value={searchInput}
+                  <Input id="emp-stat-search" name="emp-stat-search" placeholder="Search employee name or code…" value={searchInput}
                     onChange={(e) => handleSearchInput(e.target.value)}
                     onFocus={() => searchResults.length > 0 && setShowResults(true)}
                     className="pr-10 bg-white/15 border-white/30 text-white placeholder:text-white/50 backdrop-blur-sm focus:bg-white/25 focus:border-white/60" />

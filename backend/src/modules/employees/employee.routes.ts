@@ -759,18 +759,8 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
             COALESCE(att.lwp_days, 0) AS lwp_days,
             COALESCE(att.late_marks, 0) AS late_marks,
             COALESCE(att.missing_punch_count, 0) AS missing_punch_count,
-            (SELECT spl.net_salary
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-              WHERE spl.employee_id = e.id
-              ORDER BY spr.run_month DESC, spr.created_at DESC
-              LIMIT 1) AS last_salary_net,
-            (SELECT spr.run_month
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-              WHERE spl.employee_id = e.id
-              ORDER BY spr.run_month DESC, spr.created_at DESC
-              LIMIT 1) AS last_salary_month
+            sal.net_salary  AS last_salary_net,
+            sal.run_month   AS last_salary_month
        FROM employees e
        LEFT JOIN branch_master bm       ON bm.id   = e.branch_id
        LEFT JOIN process_master pm      ON pm.id   = e.process_id
@@ -792,6 +782,18 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
           WHERE record_date BETWEEN ? AND ?
           GROUP BY employee_id
        ) att ON att.employee_id = e.id
+       LEFT JOIN (
+         SELECT spl.employee_id, spl.net_salary, spr.run_month
+           FROM salary_prep_line spl
+           JOIN salary_prep_run spr ON spr.id = spl.run_id
+           JOIN (
+             SELECT spl2.employee_id, MAX(spr2.run_month) AS max_month
+               FROM salary_prep_line spl2
+               JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id
+              GROUP BY spl2.employee_id
+           ) latest ON latest.employee_id = spl.employee_id
+                   AND spr.run_month = latest.max_month
+       ) sal ON sal.employee_id = e.id
        ${where}
        ORDER BY e.employee_code ASC
        LIMIT ${limit} OFFSET ${offset}`,
