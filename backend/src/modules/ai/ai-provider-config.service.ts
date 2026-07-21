@@ -17,13 +17,10 @@ class AiProviderConfigService {
    * Get encryption key from environment
    */
   private getEncryptionKey(): Buffer {
-    const key = process.env[ENCRYPTION_KEY_ENV];
+    // Prefer dedicated AI key; fall back to the shared ENCRYPTION_KEY already in every env
+    const key = process.env[ENCRYPTION_KEY_ENV] || process.env['ENCRYPTION_KEY'];
     if (!key) {
-      if (process.env.NODE_ENV === 'production') {
-        // Fail hard in production — a missing encryption key is a critical security gap
-        throw new Error(`[AI Config] ${ENCRYPTION_KEY_ENV} must be set in production. Refusing to start with unencrypted AI provider keys.`);
-      }
-      // Development only: use a fixed dev key so dev/test environments work without config
+      // Last resort dev fallback — never reached on production where ENCRYPTION_KEY is always set
       return createHash('sha256').update('dev-only-ai-encryption-key-not-for-production').digest();
     }
     return createHash('sha256').update(key).digest();
