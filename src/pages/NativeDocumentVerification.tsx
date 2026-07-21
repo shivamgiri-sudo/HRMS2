@@ -92,8 +92,8 @@ type Tab = "pending" | "expiring" | "access-log";
 
 export default function NativeDocumentVerification() {
   const [activeTab, setActiveTab] = useState<Tab>("pending");
-  const [docIdInput, setDocIdInput] = useState("");
-  const [selectedDocId, setSelectedDocId] = useState("");
+  const [accessLogDocId, setAccessLogDocId] = useState<string | null>(null);
+  const [accessLogDocName, setAccessLogDocName] = useState<string>("");
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -111,10 +111,16 @@ export default function NativeDocumentVerification() {
   });
 
   const accessLogQuery = useQuery({
-    queryKey: ["doc-access-log", selectedDocId],
-    queryFn: () => hrmsApi.get<{ data: AccessLogEntry[] }>(`/api/lifecycle/documents/${selectedDocId}/access-log`).then((r) => r.data ?? []),
-    enabled: !!selectedDocId && activeTab === "access-log",
+    queryKey: ["doc-access-log", accessLogDocId],
+    queryFn: () => hrmsApi.get<{ data: AccessLogEntry[] }>(`/api/lifecycle/documents/${accessLogDocId}/access-log`).then((r) => r.data ?? []),
+    enabled: !!accessLogDocId && activeTab === "access-log",
   });
+
+  const viewAccessLog = (doc: UnverifiedDoc | ExpiringDoc) => {
+    setAccessLogDocId(doc.id);
+    setAccessLogDocName((doc as UnverifiedDoc).document_name ?? (doc as ExpiringDoc).doc_name ?? "Document");
+    setActiveTab("access-log");
+  };
 
   const verifyMutation = useMutation({
     mutationFn: (docId: string) => hrmsApi.post(`/api/lifecycle/documents/${docId}/verify`, { verifiedBy: user?.id ?? "", remarks: "Verified" }),
@@ -158,7 +164,7 @@ export default function NativeDocumentVerification() {
               {unverifiedQuery.data && (
                 <Table className="smarthr-table"><TableHeader><TableRow><TableHead>Emp Code</TableHead><TableHead>Employee Name</TableHead><TableHead>Doc Type</TableHead><TableHead>Document Name</TableHead><TableHead>Uploaded</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
                   {unverifiedQuery.data.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-slate-400 py-8">No unverified documents.</TableCell></TableRow>}
-                  {unverifiedQuery.data.map((doc) => <TableRow key={doc.id} className="hover:bg-gray-50 transition-colors"><TableCell className="font-mono text-xs">{doc.employee_code ?? "—"}</TableCell><TableCell>{fullName(doc)}</TableCell><TableCell><Badge variant="outline" className="text-xs capitalize">{doc.document_type ?? "—"}</Badge></TableCell><TableCell className="text-sm">{doc.document_name ?? "—"}</TableCell><TableCell className="text-xs text-slate-500">{formatDate(doc.created_at)}</TableCell><TableCell className="text-right"><Button size="sm" disabled={verifyMutation.isPending} onClick={() => verifyMutation.mutate(doc.id)} className="bg-emerald-600 hover:bg-emerald-700 text-white"><FileCheck className="h-3.5 w-3.5 mr-1.5" />Verify</Button></TableCell></TableRow>)}
+                  {unverifiedQuery.data.map((doc) => <TableRow key={doc.id} className="hover:bg-gray-50 transition-colors"><TableCell className="font-mono text-xs">{doc.employee_code ?? "—"}</TableCell><TableCell>{fullName(doc)}</TableCell><TableCell><Badge variant="outline" className="text-xs capitalize">{doc.document_type ?? "—"}</Badge></TableCell><TableCell className="text-sm">{doc.document_name ?? "—"}</TableCell><TableCell className="text-xs text-slate-500">{formatDate(doc.created_at)}</TableCell><TableCell className="text-right"><div className="flex gap-2 justify-end"><Button size="sm" variant="ghost" onClick={() => viewAccessLog(doc)}><Eye className="h-3.5 w-3.5 mr-1" />Log</Button><Button size="sm" disabled={verifyMutation.isPending} onClick={() => verifyMutation.mutate(doc.id)} className="bg-emerald-600 hover:bg-emerald-700 text-white"><FileCheck className="h-3.5 w-3.5 mr-1.5" />Verify</Button></div></TableCell></TableRow>)}
                 </TableBody></Table>
               )}
             </CardContent>
@@ -171,18 +177,35 @@ export default function NativeDocumentVerification() {
             <CardContent>
               {expiringQuery.isLoading && <p className="text-sm text-slate-400 py-4 text-center">Loading…</p>}
               {expiringQuery.isError && <p className="text-sm text-red-500 py-4 text-center">Failed to load expiring documents.</p>}
-              {expiringQuery.data && <Table><TableHeader><TableRow><TableHead>Emp Code</TableHead><TableHead>Employee</TableHead><TableHead>Doc Type</TableHead><TableHead>Document</TableHead><TableHead>Expiry</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{expiringQuery.data.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-slate-400 py-8">No expiring documents.</TableCell></TableRow>}{expiringQuery.data.map((doc) => <TableRow key={doc.id}><TableCell className="font-mono text-xs">{doc.employee_code ?? "—"}</TableCell><TableCell>{fullName(doc)}</TableCell><TableCell>{doc.document_type ?? doc.doc_type ?? "—"}</TableCell><TableCell>{doc.document_name ?? doc.doc_name ?? "—"}</TableCell><TableCell>{formatDate(doc.expiry_date)}</TableCell><TableCell><DaysRemainingBadge expiryDate={doc.expiry_date} /></TableCell></TableRow>)}</TableBody></Table>}
+              {expiringQuery.data && <Table><TableHeader><TableRow><TableHead>Emp Code</TableHead><TableHead>Employee</TableHead><TableHead>Doc Type</TableHead><TableHead>Document</TableHead><TableHead>Expiry</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>{expiringQuery.data.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-slate-400 py-8">No expiring documents.</TableCell></TableRow>}{expiringQuery.data.map((doc) => <TableRow key={doc.id}><TableCell className="font-mono text-xs">{doc.employee_code ?? "—"}</TableCell><TableCell>{fullName(doc)}</TableCell><TableCell>{doc.document_type ?? doc.doc_type ?? "—"}</TableCell><TableCell>{doc.document_name ?? doc.doc_name ?? "—"}</TableCell><TableCell>{formatDate(doc.expiry_date)}</TableCell><TableCell><DaysRemainingBadge expiryDate={doc.expiry_date} /></TableCell><TableCell className="text-right"><Button size="sm" variant="ghost" onClick={() => viewAccessLog(doc)}><Eye className="h-3.5 w-3.5 mr-1" />Log</Button></TableCell></TableRow>)}</TableBody></Table>}
             </CardContent>
           </Card>
         )}
 
         {activeTab === "access-log" && (
           <Card>
-            <CardHeader><CardTitle className="text-base font-semibold">Document Access Log</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">Document Access Log</CardTitle>
+              {accessLogDocId && (
+                <p className="text-sm text-slate-500 mt-1">
+                  Viewing log for: <strong>{accessLogDocName}</strong>
+                  <Button variant="link" size="sm" onClick={() => { setAccessLogDocId(null); setAccessLogDocName(""); }} className="ml-2 text-xs">Clear</Button>
+                </p>
+              )}
+            </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex gap-2"><Input placeholder="Enter document ID" value={docIdInput} onChange={(e) => setDocIdInput(e.target.value)} /><Button onClick={() => setSelectedDocId(docIdInput.trim())}>Load Log</Button></div>
-              {accessLogQuery.isLoading && <p className="text-sm text-slate-400 py-4 text-center">Loading…</p>}
-              {accessLogQuery.data && <Table><TableHeader><TableRow><TableHead>Accessed By</TableHead><TableHead>Action</TableHead><TableHead>IP</TableHead><TableHead>Accessed At</TableHead></TableRow></TableHeader><TableBody>{accessLogQuery.data.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-slate-400 py-8">No access log entries.</TableCell></TableRow>}{accessLogQuery.data.map((log) => <TableRow key={log.id}><TableCell>{fullName(log)}</TableCell><TableCell>{log.action_type ?? log.access_type ?? "—"}</TableCell><TableCell>{log.ip_address ?? "—"}</TableCell><TableCell>{formatDate(log.accessed_at)}</TableCell></TableRow>)}</TableBody></Table>}
+              {!accessLogDocId ? (
+                <div className="text-center py-12 text-slate-500">
+                  <Eye className="mx-auto h-10 w-10 mb-3 opacity-50" />
+                  <p className="text-sm font-medium">No document selected</p>
+                  <p className="text-xs text-slate-400 mt-1">Select a document from the Pending or Expiring tabs to view its access log.</p>
+                </div>
+              ) : (
+                <>
+                  {accessLogQuery.isLoading && <p className="text-sm text-slate-400 py-4 text-center">Loading…</p>}
+                  {accessLogQuery.data && <Table><TableHeader><TableRow><TableHead>Accessed By</TableHead><TableHead>Action</TableHead><TableHead>IP</TableHead><TableHead>Accessed At</TableHead></TableRow></TableHeader><TableBody>{accessLogQuery.data.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-slate-400 py-8">No access log entries for this document.</TableCell></TableRow>}{accessLogQuery.data.map((log) => <TableRow key={log.id}><TableCell>{fullName(log)}</TableCell><TableCell>{log.action_type ?? log.access_type ?? "—"}</TableCell><TableCell>{log.ip_address ?? "—"}</TableCell><TableCell>{formatDate(log.accessed_at)}</TableCell></TableRow>)}</TableBody></Table>}
+                </>
+              )}
             </CardContent>
           </Card>
         )}

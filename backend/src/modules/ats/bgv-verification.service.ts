@@ -118,7 +118,85 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
       status === "verified" ? new Date() : null,
     ]
   );
+
+  // Recompute BGV score after check creation/update
+  if (status === "verified" || status === "waived") {
+    // Deferred to avoid circular dependency — call after function is defined
+    setImmediate(() => void computeAndSaveScoreInternal(candidateId).catch(() => {}));
+  }
+
   return checkId;
+
+  // Internal helper to avoid hoisting issues
+  async function computeAndSaveScoreInternal(candId: string) {
+    const [checks] = await db.execute<RowDataPacket[]>(
+      `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+      [candId]
+    );
+    let score = 0;
+    const weights: Record<string, number> = { aadhaar: 25, aadhaar_offline: 25, pan: 20, bank: 15, education: 10, employment: 10, experience: 10, address: 10, address_doc: 10, criminal: 10, court: 10 };
+    const seenTypes = new Set<string>();
+    for (const check of checks as RowDataPacket[]) {
+      const checkT = String(check.check_type);
+      const normalizedT = checkT.replace(/_offline$/, "").replace(/^address_doc$/, "address");
+      if (seenTypes.has(normalizedT)) continue;
+      if (check.status === "verified" || check.status === "waived") {
+        score += weights[checkT] ?? 0;
+        seenTypes.add(normalizedT);
+      }
+    }
+    await db.execute(
+      `INSERT INTO candidate_bgv_report (candidate_id, bgv_score, updated_at) VALUES (?, ?, NOW())
+       ON DUPLICATE KEY UPDATE bgv_score = VALUES(bgv_score), updated_at = NOW()`,
+      [candId, score]
+    );
+  }
+}
+
+// Score weights matching frontend (NativeBGVReport.tsx line 143)
+const SCORE_WEIGHTS: Record<string, number> = {
+  aadhaar: 25, aadhaar_offline: 25,
+  pan: 20,
+  bank: 15,
+  education: 10,
+  employment: 10, experience: 10,
+  address: 10, address_doc: 10,
+  criminal: 10, court: 10,
+};
+
+/**
+ * Compute and persist BGV score based on check statuses.
+ * Call this after any check status change.
+ */
+export async function computeAndSaveScore(candidateId: string): Promise<number> {
+  const [checks] = await db.execute<RowDataPacket[]>(
+    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+    [candidateId]
+  );
+
+  let score = 0;
+  const seenTypes = new Set<string>();
+  for (const check of checks as RowDataPacket[]) {
+    const checkType = String(check.check_type);
+    // Normalize to avoid double-counting (e.g., aadhaar and aadhaar_offline)
+    const normalizedType = checkType.replace(/_offline$/, '').replace(/^address_doc$/, 'address');
+    if (seenTypes.has(normalizedType)) continue;
+
+    if (check.status === "verified" || check.status === "waived") {
+      score += SCORE_WEIGHTS[checkType] ?? 0;
+      seenTypes.add(normalizedType);
+    }
+  }
+
+  // Update the report table (upsert)
+  await db.execute(
+    `INSERT INTO candidate_bgv_report (candidate_id, bgv_score, updated_at)
+     VALUES (?, ?, NOW())
+     ON DUPLICATE KEY UPDATE bgv_score = VALUES(bgv_score), updated_at = NOW()`,
+    [candidateId, score]
+  );
+
+  return score;
 }
 
 export async function saveBgvConsentByToken(token: string, input: { consentText?: string; purposes?: unknown }, meta?: { ip?: string; userAgent?: string }) {
@@ -493,6 +571,8 @@ async function autoCreateDigilockerVerifiedChecks(candidateId: string) {
 
     await logEvent(candidateId, "BGV_AUTO_VERIFIED", { checkType, source: "digilocker" }, null, { actorType: "system" });
   }
+  // Recompute score after auto-verifying checks
+  await computeAndSaveScore(candidateId);
 }
 
 export async function manualReview(candidateId: string, input: { checkId?: string; status: "verified" | "mismatch" | "failed" | "manual_review"; remarks: string }, actorUserId: string) {
@@ -503,6 +583,8 @@ export async function manualReview(candidateId: string, input: { checkId?: strin
     );
   }
   await logEvent(candidateId, "BGV_MANUAL_REVIEW", input, input.checkId ?? null, { actorType: "hr", actorId: actorUserId });
+  // Recompute score after status change
+  await computeAndSaveScore(candidateId);
   return getBgvStatusForCandidate(candidateId);
 }
 
@@ -517,6 +599,8 @@ export async function waiveCheck(candidateId: string, input: { checkId?: string;
     await db.execute(`UPDATE candidate_bgv_check SET status = 'waived', reviewed_by = ?, reviewed_at = NOW(), review_remarks = ?, updated_at = NOW() WHERE id = ? AND candidate_id = ?`, [actorUserId, input.reason, input.checkId, candidateId]);
   }
   await logEvent(candidateId, "BGV_EXCEPTION_APPROVED", input, input.checkId ?? null, { actorType: "hr", actorId: actorUserId });
+  // Recompute score after waiver
+  await computeAndSaveScore(candidateId);
   return getBgvStatusForCandidate(candidateId);
 }
 
@@ -759,6 +843,8 @@ export async function updateVendorResult(
       `UPDATE candidate_bgv_vendor_dispatch SET status = 'completed', updated_at = NOW() WHERE id = ?`,
       [dispatchId]
     );
+    // Recompute score after vendor result sync
+    await computeAndSaveScore(candidateId);
   }
 
   await logEvent(candidateId, "BGV_VENDOR_RESULT_RECEIVED", input, dispatch.check_id ?? null, { actorType: "hr", actorId: actorUserId });
@@ -852,4 +938,154 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
   );
 
   return { synced: setClauses.length };
+}
+
+// ── BGV API Cost Configuration ────────────────────────────────────────────────
+
+/**
+ * Get BGV API costs per check type from org_settings
+ */
+export async function getBgvApiCosts(): Promise<Record<string, number>> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT setting_key, setting_value FROM org_settings WHERE category = 'bgv_api_costs'`
+  );
+  const costs: Record<string, number> = {};
+  for (const row of rows as RowDataPacket[]) {
+    // bgv_api_cost_aadhaar -> aadhaar
+    const checkType = String(row.setting_key).replace("bgv_api_cost_", "");
+    costs[checkType] = parseFloat(String(row.setting_value)) || 0;
+  }
+  return costs;
+}
+
+// ── Name-match verification functions ─────────────────────────────────────────
+// Migrated from bgv.enhanced.service.ts to use canonical candidate_bgv_check table
+
+function normalizeName(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function nameMatches(expected: string, actual: string): boolean {
+  const left = normalizeName(expected);
+  const right = normalizeName(actual);
+  if (!left || !right) return false;
+  return left === right || left.split(" ").sort().join(" ") === right.split(" ").sort().join(" ");
+}
+
+export async function runNameMatchCheck(candidateId: string, actorUserId: string): Promise<{
+  success: boolean;
+  status: "verified" | "manual_review";
+  result: Record<string, unknown>;
+}> {
+  // Query candidate data and existing BGV check results from canonical table
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.full_name AS candidate_name,
+            p.employee_name AS profile_name,
+            p.full_name_aadhaar,
+            aadhaar_chk.matched_name AS aadhaar_name,
+            pan_chk.matched_name AS pan_name,
+            bank_chk.matched_name AS bank_verified_name,
+            education_chk.matched_name AS education_name,
+            b.account_holder_name,
+            q.institution_name
+       FROM ats_candidate c
+       LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_bank_detail b ON b.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_qualification q ON q.candidate_id = c.id
+       LEFT JOIN candidate_bgv_check aadhaar_chk
+         ON aadhaar_chk.candidate_id = c.id AND aadhaar_chk.check_type IN ('aadhaar', 'aadhaar_offline')
+       LEFT JOIN candidate_bgv_check pan_chk
+         ON pan_chk.candidate_id = c.id AND pan_chk.check_type = 'pan'
+       LEFT JOIN candidate_bgv_check bank_chk
+         ON bank_chk.candidate_id = c.id AND bank_chk.check_type = 'bank'
+       LEFT JOIN candidate_bgv_check education_chk
+         ON education_chk.candidate_id = c.id AND education_chk.check_type = 'education'
+      WHERE c.id = ?
+      LIMIT 1`,
+    [candidateId]
+  );
+  const row = rows[0];
+  if (!row) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+
+  const baseline = String(row.profile_name ?? row.candidate_name ?? "").trim();
+  const checks = [
+    { source: "aadhaar", value: row.aadhaar_name ?? row.full_name_aadhaar },
+    { source: "pan", value: row.pan_name },
+    { source: "bank", value: row.bank_verified_name ?? row.account_holder_name },
+    { source: "education", value: row.education_name },
+  ].map((item) => {
+    const value = String(item.value ?? "").trim();
+    return {
+      source: item.source,
+      available: Boolean(value),
+      matched: value ? nameMatches(baseline, value) : null,
+    };
+  });
+  const hasMismatch = checks.some((item) => item.matched === false);
+  const status = hasMismatch ? "manual_review" : "verified";
+  const result = {
+    baseline_name: baseline,
+    checks,
+    decision: status,
+  };
+
+  // Insert or update name_match check in canonical table
+  await createOrUpdateCheck(candidateId, "name_match", status, {
+    providerKey: "system",
+    resultSummary: hasMismatch ? "Name mismatch requires HR manual review" : "Name match verified",
+    resultJson: result,
+    matchScore: hasMismatch ? 0 : 100,
+    matchedName: baseline,
+  });
+
+  await logEvent(candidateId, "BGV_NAME_MATCH_CHECKED", result, null, { actorType: "hr", actorId: actorUserId });
+
+  return { success: true, status, result };
+}
+
+export async function overrideNameMatchReview(params: {
+  candidateId: string;
+  actorUserId: string;
+  reason: string;
+}): Promise<{ success: boolean }> {
+  if (!params.reason.trim()) {
+    throw Object.assign(new Error("Override reason is required"), { statusCode: 400 });
+  }
+
+  // Find the name_match check in canonical table
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, result_json
+       FROM candidate_bgv_check
+      WHERE candidate_id = ? AND check_type = 'name_match'
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [params.candidateId]
+  );
+  const check = rows[0];
+  if (!check) throw Object.assign(new Error("Name match review not found"), { statusCode: 404 });
+
+  // Update to verified status with HR override note
+  await db.execute(
+    `UPDATE candidate_bgv_check
+        SET status = 'verified',
+            review_remarks = CONCAT(COALESCE(review_remarks, ''), '\nHR override: ', ?),
+            reviewed_by = ?,
+            reviewed_at = NOW(),
+            verified_at = NOW(),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [params.reason.trim(), params.actorUserId, check.id]
+  );
+
+  await logEvent(params.candidateId, "BGV_NAME_MATCH_HR_OVERRIDE", {
+    check_id: check.id,
+    reason: params.reason.trim(),
+    override: true,
+  }, check.id, { actorType: "hr", actorId: params.actorUserId });
+
+  return { success: true };
 }

@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { FileCheck, Users, CheckCircle2, Clock, AlertTriangle, RefreshCw, Search } from "lucide-react";
+import { FileCheck, Users, CheckCircle2, Clock, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsModernShell, HrmsBentoTile } from "@/components/ui/hrms-modern";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,8 +13,13 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface EmployeeRow {
   employee_id: string;
@@ -61,11 +66,24 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function JoiningDocumentsTrackerPage() {
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const { getAccessToken } = useAuth();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 50;
+
+  // Bulk action state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [remindModalOpen, setRemindModalOpen] = useState(false);
+  const [assignHrModalOpen, setAssignHrModalOpen] = useState(false);
+  const [dueDateModalOpen, setDueDateModalOpen] = useState(false);
+  const [confirmVerifyOpen, setConfirmVerifyOpen] = useState(false);
+  const [customMessage, setCustomMessage] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [assignedHrUserId, setAssignedHrUserId] = useState("");
 
   const { data, isLoading, refetch, isFetching } = useQuery<TrackerResponse>({
     queryKey: ["joining-documents-tracker", search, statusFilter, overdueOnly, page],
@@ -96,6 +114,107 @@ export default function JoiningDocumentsTrackerPage() {
   const end = Math.min(page * limit, total);
   const hasNext = end < total;
   const hasPrev = page > 1;
+
+  // Reset selection when data changes
+  const rowIds = useMemo(() => new Set(rows.map(r => r.employee_id)), [rows]);
+
+  // Bulk action mutations
+  const bulkRemindMutation = useMutation({
+    mutationFn: (data: { employee_ids: string[]; custom_message?: string }) =>
+      hrmsApi.post("/api/ats/joining-documents-tracker/bulk-remind", data),
+    onSuccess: (res: any) => {
+      toast({ title: `Reminders sent to ${res.data?.sent_count ?? selectedIds.size} employees` });
+      setSelectedIds(new Set());
+      setRemindModalOpen(false);
+      setCustomMessage("");
+      refetch();
+    },
+    onError: (err: any) => toast({ title: "Failed to send reminders", description: err?.message, variant: "destructive" }),
+  });
+
+  const bulkGenerateMutation = useMutation({
+    mutationFn: (data: { employee_ids: string[] }) =>
+      hrmsApi.post("/api/ats/joining-documents-tracker/bulk-generate-checklist", data),
+    onSuccess: (res: any) => {
+      toast({ title: `Checklists generated for ${res.data?.generated_count ?? selectedIds.size} employees` });
+      setSelectedIds(new Set());
+      refetch();
+    },
+    onError: (err: any) => toast({ title: "Failed to generate checklists", description: err?.message, variant: "destructive" }),
+  });
+
+  const bulkAssignMutation = useMutation({
+    mutationFn: (data: { employee_ids: string[]; assigned_hr_user_id: string }) =>
+      hrmsApi.post("/api/ats/joining-documents-tracker/bulk-assign", data),
+    onSuccess: (res: any) => {
+      toast({ title: `HR assigned to ${res.data?.assigned_count ?? selectedIds.size} employees` });
+      setSelectedIds(new Set());
+      setAssignHrModalOpen(false);
+      setAssignedHrUserId("");
+      refetch();
+    },
+    onError: (err: any) => toast({ title: "Failed to assign HR", description: err?.message, variant: "destructive" }),
+  });
+
+  const bulkDueDateMutation = useMutation({
+    mutationFn: (data: { employee_ids: string[]; due_date: string }) =>
+      hrmsApi.post("/api/ats/joining-documents-tracker/bulk-set-due-date", data),
+    onSuccess: (res: any) => {
+      toast({ title: `Due date set for ${res.data?.updated_count ?? selectedIds.size} employees` });
+      setSelectedIds(new Set());
+      setDueDateModalOpen(false);
+      setDueDate("");
+      refetch();
+    },
+    onError: (err: any) => toast({ title: "Failed to set due date", description: err?.message, variant: "destructive" }),
+  });
+
+  const bulkVerifyMutation = useMutation({
+    mutationFn: (data: { employee_ids: string[] }) =>
+      hrmsApi.post("/api/ats/joining-documents-tracker/bulk-verify", data),
+    onSuccess: (res: any) => {
+      toast({ title: `Documents verified for ${res.data?.verified_count ?? selectedIds.size} employees` });
+      setSelectedIds(new Set());
+      setConfirmVerifyOpen(false);
+      refetch();
+    },
+    onError: (err: any) => toast({ title: "Failed to verify documents", description: err?.message, variant: "destructive" }),
+  });
+
+  const handleBulkDownload = async () => {
+    try {
+      const token = getAccessToken?.();
+      const response = await fetch("/api/ats/joining-documents-tracker/bulk-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ employee_ids: Array.from(selectedIds) }),
+      });
+      if (!response.ok) throw new Error("Download failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `joining-documents-${new Date().toISOString().split("T")[0]}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Download started" });
+      setSelectedIds(new Set());
+    } catch (err: any) {
+      toast({ title: "Download failed", description: err?.message, variant: "destructive" });
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === rows.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(rows.map(r => r.employee_id)));
+  };
 
   return (
     <DashboardLayout>
@@ -176,6 +295,36 @@ export default function JoiningDocumentsTrackerPage() {
                   Overdue only
                 </Label>
               </div>
+              {/* Bulk Actions Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" disabled={selectedIds.size === 0} className="gap-2 min-h-[44px]">
+                    <ListChecks className="h-4 w-4" />
+                    Bulk Actions ({selectedIds.size})
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => setRemindModalOpen(true)}>
+                    <Bell className="h-4 w-4 mr-2" /> Send Reminders
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => bulkGenerateMutation.mutate({ employee_ids: Array.from(selectedIds) })}>
+                    <FilePlus className="h-4 w-4 mr-2" /> Generate Checklists
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setAssignHrModalOpen(true)}>
+                    <UserPlus className="h-4 w-4 mr-2" /> Assign HR
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDueDateModalOpen(true)}>
+                    <Calendar className="h-4 w-4 mr-2" /> Set Due Date
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setConfirmVerifyOpen(true)} className="text-emerald-600">
+                    <CheckCircle2 className="h-4 w-4 mr-2" /> Verify All Documents
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleBulkDownload}>
+                    <Download className="h-4 w-4 mr-2" /> Download ZIP
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             {isLoading ? (
@@ -197,6 +346,13 @@ export default function JoiningDocumentsTrackerPage() {
                 <table className="w-full">
                   <thead className="border-b border-slate-200 bg-slate-50">
                     <tr className="text-left text-xs font-semibold uppercase tracking-wider text-slate-600">
+                      <th className="px-2 py-3 w-10">
+                        <Checkbox
+                          checked={selectedIds.size === rows.length && rows.length > 0}
+                          onCheckedChange={toggleSelectAll}
+                          aria-label="Select all"
+                        />
+                      </th>
                       <th className="px-4 py-3">Employee</th>
                       <th className="px-4 py-3">Branch</th>
                       <th className="px-4 py-3">Process</th>
@@ -213,8 +369,15 @@ export default function JoiningDocumentsTrackerPage() {
                       <tr
                         key={row.employee_id}
                         onClick={() => navigate(`/employees/${row.employee_id}/joining-documents`)}
-                        className="cursor-pointer transition-colors hover:bg-slate-50"
+                        className={`cursor-pointer transition-colors hover:bg-slate-50 ${selectedIds.has(row.employee_id) ? "bg-blue-50" : ""}`}
                       >
+                        <td className="px-2 py-3" onClick={e => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedIds.has(row.employee_id)}
+                            onCheckedChange={() => toggleSelect(row.employee_id)}
+                            aria-label={`Select ${row.full_name}`}
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <p className="font-semibold text-slate-900">{row.full_name}</p>
                           <p className="font-mono text-xs text-slate-500">{row.employee_code}</p>
@@ -308,6 +471,132 @@ export default function JoiningDocumentsTrackerPage() {
           </CardContent>
         </Card>
       </HrmsModernShell>
+
+      {/* Send Reminders Modal */}
+      <Dialog open={remindModalOpen} onOpenChange={setRemindModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Reminders</DialogTitle>
+            <DialogDescription>
+              Send reminder notifications to {selectedIds.size} selected employee(s) about pending joining documents.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="customMessage">Custom Message (optional)</Label>
+              <Textarea
+                id="customMessage"
+                placeholder="Enter a custom message to include in the reminder..."
+                value={customMessage}
+                onChange={e => setCustomMessage(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemindModalOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => bulkRemindMutation.mutate({ employee_ids: Array.from(selectedIds), custom_message: customMessage || undefined })}
+              disabled={bulkRemindMutation.isPending}
+            >
+              {bulkRemindMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Bell className="h-4 w-4 mr-2" />}
+              Send Reminders
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign HR Modal */}
+      <Dialog open={assignHrModalOpen} onOpenChange={setAssignHrModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign HR</DialogTitle>
+            <DialogDescription>
+              Assign an HR user to manage joining documents for {selectedIds.size} selected employee(s).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="hrUserId">HR User ID</Label>
+              <Input
+                id="hrUserId"
+                placeholder="Enter HR user ID..."
+                value={assignedHrUserId}
+                onChange={e => setAssignedHrUserId(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignHrModalOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => bulkAssignMutation.mutate({ employee_ids: Array.from(selectedIds), assigned_hr_user_id: assignedHrUserId })}
+              disabled={bulkAssignMutation.isPending || !assignedHrUserId}
+            >
+              {bulkAssignMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <UserPlus className="h-4 w-4 mr-2" />}
+              Assign HR
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set Due Date Modal */}
+      <Dialog open={dueDateModalOpen} onOpenChange={setDueDateModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set Due Date</DialogTitle>
+            <DialogDescription>
+              Set a due date for joining documents for {selectedIds.size} selected employee(s).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="dueDate">Due Date</Label>
+              <Input
+                id="dueDate"
+                type="date"
+                value={dueDate}
+                onChange={e => setDueDate(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDueDateModalOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => bulkDueDateMutation.mutate({ employee_ids: Array.from(selectedIds), due_date: dueDate })}
+              disabled={bulkDueDateMutation.isPending || !dueDate}
+            >
+              {bulkDueDateMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Calendar className="h-4 w-4 mr-2" />}
+              Set Due Date
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm Verify Modal */}
+      <Dialog open={confirmVerifyOpen} onOpenChange={setConfirmVerifyOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Verify All Documents</DialogTitle>
+            <DialogDescription>
+              This will mark all pending documents as verified for {selectedIds.size} selected employee(s).
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmVerifyOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => bulkVerifyMutation.mutate({ employee_ids: Array.from(selectedIds) })}
+              disabled={bulkVerifyMutation.isPending}
+              className="bg-emerald-600 hover:bg-emerald-700"
+            >
+              {bulkVerifyMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              Verify All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

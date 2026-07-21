@@ -28,8 +28,9 @@ import {
   dispatchToVendor,
   updateVendorResult,
   syncBgvChecksToReport,
+  runNameMatchCheck,
+  overrideNameMatchReview,
 } from "./bgv-verification.service.js";
-import { overrideNameMatchReview, runNameMatchCheck } from "./bgv.enhanced.service.js";
 import { getConfiguredBgvProviderAdapter, resetBgvProviderAdapterCache } from "./bgv-provider.adapter.js";
 import { getLuckpayProviderRuntimeStatus } from "./onboarding-full.service.js";
 import { db } from "../../db/mysql.js";
@@ -727,6 +728,12 @@ router.get("/api-stats", requireAuth, requireRole("admin", "hr"), h(async (_req:
       callsByEndpoint,
     },
   });
+}));
+
+router.get("/api-costs", requireAuth, requireRole("admin", "super_admin", "hr"), h(async (_req: Request, res: Response) => {
+  const { getBgvApiCosts } = await import("./bgv-verification.service.js");
+  const costs = await getBgvApiCosts();
+  return res.json({ success: true, data: costs });
 }));
 
 router.post("/test-connection", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {

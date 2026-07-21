@@ -28,8 +28,9 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
   ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
-  AlertCircle, TrendingDown, Paperclip, ExternalLink,
+  AlertCircle, TrendingDown, Paperclip, ExternalLink, FileSignature,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -840,6 +841,8 @@ export default function NativeITProvisioningTracker() {
   const isITTask    = currentTaskCode === "IT_EMAIL_DOMAIN_ASSET";
   const isAdminTask = currentTaskCode === "ADMIN_BIOMETRIC_ID_CARD";
   const isWfmTask   = currentTaskCode === "WFM_PROCESS_ALIGNMENT";
+  const isAppointmentLetterTask = currentTaskCode === "APPOINTMENT_LETTER_ESIGN";
+  const navigate = useNavigate();
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -1216,6 +1219,44 @@ export default function NativeITProvisioningTracker() {
                 <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} />
               ) : isWfmTask ? (
                 <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />
+              ) : isAppointmentLetterTask ? (
+                <div className="space-y-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                      <FileSignature className="h-5 w-5" />
+                      Appointment Letter e-Sign
+                    </h4>
+                    <p className="text-sm text-blue-700 mb-4">
+                      Generate and send the appointment letter for e-signature. The employee will receive an email/SMS with a signing link.
+                    </p>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        const employeeId = actionDialog.request?.employee_id;
+                        if (employeeId) {
+                          navigate(`/letters/appointment-esign?employeeId=${employeeId}`);
+                        }
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      <FileSignature className="h-4 w-4 mr-2" />
+                      Open e-Sign Page
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    After the letter is signed, return here and mark this task as complete.
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="evidence_note">Evidence note (optional)</Label>
+                    <Textarea
+                      id="evidence_note"
+                      placeholder="e.g., Letter sent on [date], signed on [date]..."
+                      value={evidenceNote}
+                      onChange={(e) => setEvidenceNote(e.target.value)}
+                      rows={2}
+                    />
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-2">
                   <Label htmlFor="evidence_note">Evidence note (optional)</Label>

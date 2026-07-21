@@ -52,6 +52,7 @@ export default function NativeBGVAPIMonitor() {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [logs, setLogs] = useState<APILog[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [apiCosts, setApiCosts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [search, setSearch] = useState('');
@@ -61,19 +62,43 @@ export default function NativeBGVAPIMonitor() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [statusRes, logsRes, statsRes] = await Promise.all([
+      const [statusRes, logsRes, statsRes, costsRes] = await Promise.all([
         hrmsApi.get<any>('/api/ats/bgv/provider-status'),
         hrmsApi.get<any>('/api/ats/bgv/api-logs'),
         hrmsApi.get<any>('/api/ats/bgv/api-stats'),
+        hrmsApi.get<any>('/api/ats/bgv/api-costs').catch(() => ({ data: {} })),
       ]);
       setProviderStatus(statusRes.data || null);
       setLogs(logsRes.data || []);
       setStats(statsRes.data || null);
+      setApiCosts(costsRes.data || {});
     } catch (e: any) {
       alert(e?.message || 'Failed to load API monitor data');
     } finally {
       setLoading(false);
     }
+  };
+
+  const normalizeEndpointToCheckType = (endpoint: string): string => {
+    return endpoint.toLowerCase()
+      .replace(/_check$/, '')
+      .replace(/^verify_/, '')
+      .replace(/_verify$/, '')
+      .replace(/_offline$/, '');
+  };
+
+  const getCostForEndpoint = (endpoint: string): number => {
+    const checkType = normalizeEndpointToCheckType(endpoint);
+    return apiCosts[checkType] ?? 2; // fallback to ₹2 if not configured
+  };
+
+  const calculateTotalCost = (): number => {
+    if (!stats?.callsByEndpoint) return 0;
+    let total = 0;
+    for (const [endpoint, count] of Object.entries(stats.callsByEndpoint)) {
+      total += count * getCostForEndpoint(endpoint);
+    }
+    return total;
   };
 
   useEffect(() => {
@@ -313,8 +338,8 @@ export default function NativeBGVAPIMonitor() {
                 </div>
                 <div className="bg-blue-50 p-4 rounded-md border border-blue-200">
                   <p className="text-xs text-blue-600 mb-1">Estimated Cost (Month)</p>
-                  <p className="text-2xl font-bold text-blue-900">₹{(stats.totalCallsMonth * 2).toFixed(2)}</p>
-                  <p className="text-xs text-blue-600 mt-1">~₹2 per API call</p>
+                  <p className="text-2xl font-bold text-blue-900">₹{calculateTotalCost().toFixed(2)}</p>
+                  <p className="text-xs text-blue-600 mt-1">Per-check pricing configured</p>
                 </div>
               </div>
 
@@ -322,29 +347,35 @@ export default function NativeBGVAPIMonitor() {
               <div>
                 <p className="text-sm font-semibold mb-3">API Calls by Check Type (This Month)</p>
                 <div className="space-y-2">
-                  {Object.entries(stats.callsByEndpoint).map(([endpoint, count]) => (
-                    <div key={endpoint} className="flex items-center justify-between text-sm">
-                      <span className="text-slate-700">{endpoint.replace(/_/g, ' ')}</span>
-                      <div className="flex items-center gap-3">
-                        <div className="bg-slate-200 h-2 w-32 rounded-full overflow-hidden">
-                          <div
-                            className="bg-blue-500 h-full"
-                            style={{ width: `${(count / Math.max(...Object.values(stats.callsByEndpoint))) * 100}%` }}
-                          />
+                  {Object.entries(stats.callsByEndpoint).map(([endpoint, count]) => {
+                    const cost = getCostForEndpoint(endpoint);
+                    const totalCost = count * cost;
+                    return (
+                      <div key={endpoint} className="flex items-center justify-between text-sm">
+                        <span className="text-slate-700">{endpoint.replace(/_/g, ' ')}</span>
+                        <div className="flex items-center gap-3">
+                          <div className="bg-slate-200 h-2 w-24 rounded-full overflow-hidden">
+                            <div
+                              className="bg-blue-500 h-full"
+                              style={{ width: `${(count / Math.max(...Object.values(stats.callsByEndpoint))) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-slate-600 w-12 text-right">{count}</span>
+                          <span className="text-xs text-slate-400 w-8">× ₹{cost}</span>
+                          <span className="font-semibold text-slate-900 w-16 text-right">₹{totalCost.toFixed(0)}</span>
                         </div>
-                        <span className="font-semibold text-slate-900 w-8 text-right">{count}</span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs">
                 <p className="font-semibold text-amber-800 mb-1">💡 Cost Optimization Tip</p>
                 <p className="text-amber-700">
-                  Each BGV check type (PAN, Bank, Aadhaar, Court, etc.) costs separately.
-                  Complete candidate profile requires 5-8 API calls (~₹10-16 per candidate).
-                  Bulk verification of {Math.floor(stats.totalCallsMonth / 6)} candidates this month.
+                  Each BGV check type has its own cost configured in Super Admin → Settings → BGV API Costs.
+                  Complete candidate profile requires 5-8 API calls (~₹{Math.round(calculateTotalCost() / Math.max(stats.totalCallsMonth / 6, 1))} per candidate avg).
+                  Bulk verification of ~{Math.floor(stats.totalCallsMonth / 6)} candidates this month.
                 </p>
               </div>
             </CardContent>

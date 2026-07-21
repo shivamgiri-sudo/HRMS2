@@ -47,6 +47,7 @@ import { employeeGovernanceRouter } from "./modules/employees/employee-governanc
 import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.compat.routes.js";
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { employeeJoiningDocumentsRouter, hrDocumentTemplatesRouter, payrollEpfComplianceRouter, publicEmployeeDocumentRouter } from "./modules/employees/employee.compliance.routes.js";
+import { employeeBgvRouter } from "./modules/employees/employee-bgv.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
@@ -175,7 +176,7 @@ import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
 import { interviewRouter } from "./modules/ats/interview.routes.js";
-import { bgvEnhancedRouter } from "./modules/ats/bgv.enhanced.routes.js";
+// bgvEnhancedRouter removed — duplicate UI, name-match functions migrated to bgv-verification.service.ts
 import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
@@ -312,6 +313,7 @@ app.use("/api/employees", listEndpointLimiter, employee360Router);
 app.use("/api/employees", listEndpointLimiter, employeeRouter);
 app.use("/api/employees", listEndpointLimiter, employeeJoiningDocumentsRouter);
 app.use("/api/employees", employeeReactivationRouter);
+app.use("/api/bgv/employee", employeeBgvRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
@@ -453,7 +455,7 @@ app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 app.use("/api/ats/command-centre", commandCentreRouter);
 app.use("/api/ats/interview", interviewRouter);
-app.use("/api/ats/bgv-enhanced", bgvEnhancedRouter);
+// bgv-enhanced route removed — duplicate UI, functions migrated to canonical bgv-verification service
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
 app.use("/api/ats/super-admin", superAdminRouter);
 

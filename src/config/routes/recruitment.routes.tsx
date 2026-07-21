@@ -28,7 +28,7 @@ const NativeHROnboardingRequests       = lazy(() => import("@/pages/NativeHROnbo
 const NativeBranchHeadApproval         = lazy(() => import("@/pages/NativeBranchHeadApproval"));
 const BranchHeadApproval               = lazy(() => import("@/pages/BranchHeadApproval"));
 const NativeBGVVerificationCenter      = lazy(() => import("@/pages/NativeBGVVerificationCenter"));
-const NativeBGVEnhanced                = lazy(() => import("@/pages/NativeBGVEnhanced"));
+// NativeBGVEnhanced removed — duplicate page using legacy schema; use NativeBGVVerificationCenter instead
 const NativeBGVReport                  = lazy(() => import("@/pages/NativeBGVReport"));
 const NativeBGVReportView              = lazy(() => import("@/pages/NativeBGVReportView"));
 const NativeBGVAPIMonitor              = lazy(() => import("@/pages/NativeBGVAPIMonitor"));
@@ -103,7 +103,8 @@ export const recruitmentRouteElements = (
 
       {/* BGV */}
       <Route path="/ats/bgv"          element={<ProtectedRoute><Gate pageCode="ATS_BGV"><NativeBGVVerificationCenter /></Gate></ProtectedRoute>} />
-      <Route path="/ats/bgv-enhanced" element={<ProtectedRoute roles={['admin','hr']}><DashboardLayout><NativeBGVEnhanced /></DashboardLayout></ProtectedRoute>} />
+      {/* /ats/bgv-enhanced removed — redirect to canonical BGV verification center */}
+      <Route path="/ats/bgv-enhanced" element={<Navigate to="/ats/bgv" replace />} />
       <Route path="/ats/bgv-report"   element={<ProtectedRoute><Gate pageCode="ATS_BGV_REPORT"><NativeBGVReport /></Gate></ProtectedRoute>} />
       <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr']}><NativeBGVReportView /></ProtectedRoute>} />
       <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
