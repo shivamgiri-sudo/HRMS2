@@ -30,6 +30,7 @@ import {
 interface OnboardingRequest {
   id: string;
   status: string;
+  created_at?: string;
   candidate_id: string;
   candidate_code: string;
   full_name: string;
@@ -269,6 +270,8 @@ export default function NativeHROnboardingRequests() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterBranch, setFilterBranch] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
 
   // ── Resend link state
   const [resendingId, setResendingId] = useState<string | null>(null);
@@ -498,8 +501,10 @@ export default function NativeHROnboardingRequests() {
     if (filterStatus === 'offered') list = list.filter((r) => !!r.offer_status);
     if (filterStatus === 'onboarded') list = list.filter((r) => r.status === 'onboarded');
     if (filterBranch) list = list.filter((r) => r.branch_name === filterBranch);
+    if (filterDateFrom) list = list.filter((r) => r.created_at && r.created_at >= filterDateFrom);
+    if (filterDateTo) list = list.filter((r) => r.created_at && r.created_at <= filterDateTo + 'T23:59:59');
     return list;
-  }, [rows, search, filterStatus, filterBranch]);
+  }, [rows, search, filterStatus, filterBranch, filterDateFrom, filterDateTo]);
 
   const branchOptions = useMemo(() => [...new Set(rows.map((r) => r.branch_name).filter(Boolean))].sort(), [rows]);
 
@@ -815,7 +820,7 @@ export default function NativeHROnboardingRequests() {
             </div>
 
             {mainTab === 'onboarding' && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
               <select className={`${SEL} w-auto min-w-[160px]`} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                 <option value="">All Statuses</option>
                 <option value="pending_offer">Pending Offer</option>
@@ -826,6 +831,33 @@ export default function NativeHROnboardingRequests() {
                 <option value="">All Branches</option>
                 {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-slate-500 shrink-0">From</span>
+                <input
+                  type="date"
+                  value={filterDateFrom}
+                  onChange={(e) => setFilterDateFrom(e.target.value)}
+                  className={`${SEL} w-auto`}
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-slate-500 shrink-0">To</span>
+                <input
+                  type="date"
+                  value={filterDateTo}
+                  onChange={(e) => setFilterDateTo(e.target.value)}
+                  className={`${SEL} w-auto`}
+                />
+              </div>
+              {(filterDateFrom || filterDateTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); }}
+                  className="text-xs text-slate-400 hover:text-slate-600 underline"
+                >
+                  Clear dates
+                </button>
+              )}
             </div>
             )}
 
@@ -1066,6 +1098,7 @@ export default function NativeHROnboardingRequests() {
                     <tr>
                       <th className="px-4 py-3 text-left">#</th>
                       <th className="px-4 py-3 text-left">Name / Code</th>
+                      <th className="px-4 py-3 text-left">Date</th>
                       <th className="px-4 py-3 text-left">Branch</th>
                       <th className="px-4 py-3 text-left">Process</th>
                       <th className="px-4 py-3 text-left">Status</th>
@@ -1087,6 +1120,9 @@ export default function NativeHROnboardingRequests() {
                         <td className="px-4 py-3">
                           <p className="font-semibold text-slate-900">{r.full_name}</p>
                           <p className="font-mono text-[11px] text-slate-400">{r.candidate_code}</p>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                          {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                         </td>
                         <td className="px-4 py-3 text-slate-600">{r.branch_name || '—'}</td>
                         <td className="px-4 py-3 text-slate-600">{r.process_name || r.applied_for_process || '—'}</td>
