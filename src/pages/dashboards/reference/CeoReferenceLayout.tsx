@@ -61,7 +61,10 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   const orgScore = asNumber(data.orgKpi.org_average_score ?? data.orgKpi.average_score ?? data.orgKpi.score);
   const bestProcess = read(data.orgKpi, "best_process") as Record<string, unknown> | undefined;
   const needsAttention = read(data.orgKpi, "needs_attention") as Record<string, unknown> | undefined;
-  const movement = arrayAt(data.workforce, "movement").slice(-10).map((row) => ({ label: String(row.period ?? row.label ?? ""), value: Number(row.headcount ?? row.value ?? 0) }));
+  const kpiTrend = arrayAt(data.orgKpi, "trend").slice(-10).map((row) => ({
+    label: String(row.label ?? row.period ?? ""),
+    value: Number(row.value ?? row.avg_score ?? row.score ?? 0),
+  }));
 
   return (
     <div className="reference-dashboard-page">
@@ -125,7 +128,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
 
         <ReferencePanel title="KPI Performance">
           <div className="grid grid-cols-3 gap-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-[9px] text-[#71809a]">Org Avg KPI Score</p><p className="mt-4 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(orgScore)}<span className="text-[10px] font-medium text-[#71809a]"> /100</span></p></div><div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4"><p className="text-[9px] text-[#71809a]">Best Process</p><p className="mt-4 text-[15px] font-bold text-[#16a34a]">{String(bestProcess?.name ?? bestProcess?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(bestProcess?.score)}</p></div><div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] p-4"><p className="text-[9px] text-[#71809a]">Needs Attention</p><p className="mt-4 text-[15px] font-bold text-[#f97316]">{String(needsAttention?.name ?? needsAttention?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(needsAttention?.score)}</p></div></div>
-          <div className="mt-4"><ReferenceLineChart data={movement} height={135} /></div>
+          <div className="mt-4"><ReferenceLineChart data={kpiTrend} height={135} /></div>
         </ReferencePanel>
       </div>
     </div>

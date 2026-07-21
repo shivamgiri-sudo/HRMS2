@@ -1,5 +1,5 @@
-import RoleDashboardV3 from "./RoleDashboardV3";
+import ReferenceRoleDashboard from "./ReferenceRoleDashboard";
 
 export default function WfmAttendanceDashboard() {
-  return <RoleDashboardV3 variant="wfm_attendance" />;
+  return <ReferenceRoleDashboard variant="wfm_attendance" />;
 }

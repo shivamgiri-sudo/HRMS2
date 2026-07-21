@@ -68,7 +68,7 @@ const GC = 10 * 60 * 1000;
  *
  * @param daysBack - Lookback window in days (7 | 30 | 90; default: 30)
  */
-export function useExecutiveQualitySummary(daysBack: 7 | 30 | 90 = 30) {
+export function useExecutiveQualitySummary(daysBack: 7 | 30 | 90 = 30, enabled = true) {
   const { data: roleData } = useUserRole();
   const isAllowed =
     roleData?.roleKeys?.some((r: string) => EXEC_ROLES.has(r)) ?? false;
@@ -81,7 +81,7 @@ export function useExecutiveQualitySummary(daysBack: 7 | 30 | 90 = 30) {
       );
       return (res as { success: boolean; data: ExecutiveSummaryResponse }).data;
     },
-    enabled: isAllowed,
+    enabled: enabled && isAllowed,
     staleTime: STALE,
     gcTime: GC,
     retry: 2,
