@@ -519,6 +519,8 @@ export interface OpsBoardEntry {
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
   arrived_at: string | null;
+  recruiter_assigned_name: string | null;
+  second_round_interviewer_name_snapshot: string | null;
 }
 
 export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBoardEntry[]> {
@@ -527,7 +529,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
   const branchCondition = branch
     ? `AND COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,'')) = ?`
     : '';
-  const params: unknown[] = [targetDate, targetDate];
+  const params: unknown[] = [targetDate];
   if (branch) params.push(branch);
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -541,6 +543,8 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.round2_result,
       c.final_decision,
       c.walkin_end_stage,
+      c.recruiter_assigned_name,
+      c.second_round_interviewer_name_snapshot,
       scores.assessment_percentage,
       scores.typing_net_wpm,
       scores.typing_accuracy,
@@ -559,7 +563,11 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       GROUP BY aca.candidate_id
     ) scores ON scores.candidate_id = c.id
     WHERE (
-      c.current_stage IN ('Operations Interview', "Round 2- Op's", 'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test')
+      c.current_stage IN (
+        'Operations Interview', "Round 2- Op's",
+        'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test',
+        'Applied', 'New', 'Screening', 'Written Test', 'Hold'
+      )
       OR (c.current_stage IN ('Rejected', 'Selected', 'Offered') AND c.final_decision IS NOT NULL)
     )
     AND DATE(COALESCE(isub.submitted_at, c.created_at)) = ?
