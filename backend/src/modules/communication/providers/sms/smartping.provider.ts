@@ -1,7 +1,6 @@
 import axios from 'axios';
 import type { CommunicationProvider, Attachment } from '../provider.interface.js';
 import type { ProviderResponse, DeliveryStatus } from '../../communication.types.js';
-import { SMARTPING_DLT_REGISTRY } from '../../smartping-dlt-registry.js';
 
 const BASE_URL = 'https://pgapi.sparc.smartping.io/fe/api/v1';
 
@@ -37,28 +36,24 @@ export class SmartPingProvider implements CommunicationProvider {
 
   /**
    * Send an SMS via SmartPing.
-   * `subject` is unused (SMS has no subject) but is required by the interface.
-   * Variable substitution uses the DLT registry — pass `data` JSON in the body
-   * for template-keyed dispatch, or raw text for direct sends.
+   * `subject` carries the DLT content ID (reusing the unused field).
    */
-  async send(recipient: string, _subject: string, body: string, _attachments?: Attachment[]): Promise<ProviderResponse> {
+  async send(recipient: string, subject: string, body: string, _attachments?: Attachment[]): Promise<ProviderResponse> {
     try {
       const mobile = this.normalizeMobile(recipient);
       if (!mobile) {
         return { success: false, error: `Invalid Indian mobile number: ${recipient}` };
       }
 
-      // Resolve DLT content ID from registry if body matches a known template key
-      const dltEntry = SMARTPING_DLT_REGISTRY[body] ?? null;
-      const finalBody = dltEntry ? body : body;
-      const dltContentId = dltEntry?.dltContentId ?? process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID ?? '';
+      // subject carries dltContentId when called via sms.helper; fall back to env
+      const dltContentId = subject || process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID || '';
 
       const params = new URLSearchParams({
         username: this.username,
         password: this.password,
         unicode: 'false',
         from: this.senderId,
-        text: finalBody,
+        text: body,
         to: `91${mobile}`,
         dltContentId,
         dltPrincipalEntityId: this.entityId,

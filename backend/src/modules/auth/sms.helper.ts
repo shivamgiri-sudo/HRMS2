@@ -1,12 +1,10 @@
-import { providerFactory } from '../communication/providers/provider.factory.js';
-import { providerConfigService } from '../communication/provider-config.service.js';
+import { SmartPingProvider } from '../communication/providers/sms/smartping.provider.js';
 import { buildSMS } from '../communication/smartping-dlt-registry.js';
+
+const provider = new SmartPingProvider();
 
 export async function sendOtpSms(phone: string, otpCode: string): Promise<boolean> {
   try {
-    const dbConfig = await providerConfigService.loadActiveConfig('sms');
-    const provider = await providerFactory.getProviderAsync('sms', dbConfig);
-
     if (!provider.validateRecipient(phone)) {
       console.error(`[OTP SMS] Invalid phone format: ${phone}`);
       return false;
@@ -17,17 +15,7 @@ export async function sendOtpSms(phone: string, otpCode: string): Promise<boolea
       validity_minutes: '10',
     });
 
-    // Patch content id into env for this send
-    const prev = process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID;
-    process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID = dltContentId;
-    let result;
-    try {
-      result = await provider.send(phone, 'OTP', body);
-    } finally {
-      if (prev !== undefined) process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID = prev;
-      else delete process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID;
-    }
-
+    const result = await provider.send(phone, dltContentId, body);
     console.log(`[OTP SMS] Sent to ${phone.slice(-4).padStart(10, '*')}: ${result.success ? 'SUCCESS' : result.error}`);
     return result.success;
   } catch (error) {
