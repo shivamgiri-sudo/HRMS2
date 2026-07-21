@@ -628,9 +628,16 @@ function resolveShiftWorkedMinutes(row: {
       if (diff > 0) return diff;
     }
   }
-  const biometricMinutes = Number(row.biometric_minutes ?? 0);
-  if (Number.isFinite(biometricMinutes) && biometricMinutes > 0) {
-    return biometricMinutes;
+  // Only use the stored biometric_minutes as a fallback when a real punch-out
+  // is present. NCOSEC's raw_minutes is DATEDIFF(first, last event) — the
+  // total elapsed span — not net worked time. Without a punch-out it would
+  // falsely push workedMinutes past 540 and trigger "Shift Completed" while
+  // the employee is still on the floor.
+  if (row.biometric_punch_out_time) {
+    const biometricMinutes = Number(row.biometric_minutes ?? 0);
+    if (Number.isFinite(biometricMinutes) && biometricMinutes > 0) {
+      return biometricMinutes;
+    }
   }
   return 0;
 }

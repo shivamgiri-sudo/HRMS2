@@ -69,16 +69,17 @@ export function assessAggregatePunches(input: {
   }
 
   if (totalPunches % 2 === 1) {
-    // Odd punch counts are still treated as a real in/out interval when the
-    // first and last punches span a valid work window. Keep the odd-count
-    // reason for review, but do not discard the punch-out.
+    // Odd punch count means the last event was an IN swipe — employee is still
+    // inside. Never treat this as a completed exit; doing so caused break-desk
+    // to show "Shift Completed" mid-shift when the last NCOSEC swipe happened
+    // to push the span past 9 h (e.g. cafeteria/door re-entry at end of day).
     return {
       effectivePunchIn: firstPunch,
-      effectivePunchOut: lastPunch,
+      effectivePunchOut: null,
       effectivePunchCount: totalPunches,
-      effectiveWorkingMinutes: workingMinutes,
+      effectiveWorkingMinutes: 0,
       elapsedSeconds,
-      state: "PUNCHED_OUT",
+      state: "PUNCHED_IN",
       reason: "odd_punch_count",
     };
   }
