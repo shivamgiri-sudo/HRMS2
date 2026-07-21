@@ -510,7 +510,11 @@ export interface OpsBoardEntry {
   candidate_name: string;
   current_stage: string;
   applied_role: string | null;
+  round1_result: string | null;
   skilltest_result: string | null;
+  round2_result: string | null;
+  final_decision: string | null;
+  walkin_end_stage: string | null;
   assessment_percentage: number | null;
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
@@ -519,18 +523,12 @@ export interface OpsBoardEntry {
 
 export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBoardEntry[]> {
   const targetDate = date || getIstDateString();
-  const conditions: string[] = [
-    `c.current_stage IN ('Operations Interview', "Round 2- Op's", 'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test')`,
-    `DATE(COALESCE(isub.submitted_at, c.created_at)) = ?`,
-  ];
-  const params: unknown[] = [targetDate];
 
-  if (branch) {
-    conditions.push(
-      `COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,'')) = ?`
-    );
-    params.push(branch);
-  }
+  const branchCondition = branch
+    ? `AND COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,'')) = ?`
+    : '';
+  const params: unknown[] = [targetDate, targetDate];
+  if (branch) params.push(branch);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -538,7 +536,11 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.full_name                                                                          AS candidate_name,
       c.current_stage,
       COALESCE(NULLIF(c.role_applied,''), NULLIF(pm.process_name,''), NULLIF(c.applied_for_process,'')) AS applied_role,
+      c.round1_result,
       c.skilltest_result,
+      c.round2_result,
+      c.final_decision,
+      c.walkin_end_stage,
       scores.assessment_percentage,
       scores.typing_net_wpm,
       scores.typing_accuracy,
@@ -556,7 +558,12 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       GROUP BY aca.candidate_id
     ) scores ON scores.candidate_id = c.id
-    WHERE ${conditions.join(' AND ')}
+    WHERE (
+      c.current_stage IN ('Operations Interview', "Round 2- Op's", 'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test')
+      OR (c.current_stage IN ('Rejected', 'Selected', 'Offered') AND c.final_decision IS NOT NULL)
+    )
+    AND DATE(COALESCE(isub.submitted_at, c.created_at)) = ?
+    ${branchCondition}
     ORDER BY COALESCE(isub.submitted_at, c.created_at) ASC`,
     params
   );
