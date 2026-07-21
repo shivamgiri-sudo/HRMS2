@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { sendSMS } from "../communication/sms.helper.js";
 
 export const profileApprovalService = {
   async submitBankDetailsForApproval(
@@ -53,6 +54,17 @@ export const profileApprovalService = {
       entity_id: id,
       change_summary: { fields: Object.keys(newValues), routed_to: 'payroll' },
     });
+
+    // SMS — bank detail update submitted (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [employeeId]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) sendSMS(phone, 'bank_update_submitted', { name: emp.name }).catch(() => {});
+    } catch { /* non-fatal */ }
 
     return { id, status: "pending", routed_to: "payroll" };
   },
@@ -152,5 +164,22 @@ export const profileApprovalService = {
         new_values: approval.new_values,
       },
     });
+
+    // SMS — bank update approved or rejected (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [approval.employee_id]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) {
+        const key = approved ? 'bank_update_approved' : 'bank_update_rejected';
+        const vars: Record<string, string> = approved
+          ? { name: String(emp.name) }
+          : { name: String(emp.name), reason: reviewerNote ?? 'Not specified' };
+        sendSMS(phone, key, vars).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
   },
 };

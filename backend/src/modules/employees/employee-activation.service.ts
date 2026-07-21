@@ -16,6 +16,7 @@
 import { RowDataPacket } from 'mysql2';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
+import { sendSMS } from '../communication/sms.helper.js';
 
 export interface ActivationResult {
   employeeId: string;
@@ -90,6 +91,17 @@ export async function activateEmployee(
       reason,
     ]
   );
+
+  // SMS — HRMS access created / employee activated (fire-and-forget)
+  try {
+    const [empRow] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+       FROM employees WHERE id = ? LIMIT 1`, [employeeId]
+    );
+    const e = (empRow[0] as any);
+    const phone = e?.mobile ?? e?.personal_phone ?? null;
+    if (phone) sendSMS(phone, 'hrms_access_created', { name: e.name }).catch(() => {});
+  } catch { /* non-fatal */ }
 
   return { activated: true, alreadyActive: false };
 }

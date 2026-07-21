@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import type { Request } from "express";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { sendSMS } from "../communication/sms.helper.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -294,6 +295,30 @@ export const rosterGovernanceService = {
     const setClause = ["status = ?", ...extra].join(", ");
     await db.execute(`UPDATE weekly_roster_cycle SET ${setClause} WHERE id = ?`, [newStatus, ...params, id]);
     await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_CYCLE_STATUS_CHANGED", module_key: "roster_gov", entity_type: "weekly_roster_cycle", entity_id: id, change_summary: { from: cycle.status, to: newStatus, process_id: cycle.process_id }, req });
+
+    // SMS blast to all employees on this roster when published (fire-and-forget)
+    if (newStatus === 'published') {
+      setImmediate(async () => {
+        try {
+          const [empRows] = await db.execute<RowDataPacket[]>(
+            `SELECT DISTINCT e.mobile, e.personal_phone,
+                    CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name
+             FROM roster_daily_assignment rda
+             JOIN employees e ON e.id = rda.employee_id
+             WHERE rda.cycle_id = ? AND (e.mobile IS NOT NULL OR e.personal_phone IS NOT NULL)`,
+            [id]
+          );
+          const weekLabel = `${cycle.week_start_date ?? id}`;
+          for (const emp of empRows as any[]) {
+            const phone = emp.mobile ?? emp.personal_phone;
+            if (phone) {
+              sendSMS(phone, 'roster_published', { name: emp.name, week: weekLabel }).catch(() => {});
+            }
+          }
+        } catch { /* non-fatal */ }
+      });
+    }
+
     return this.getCycle(id);
   },
 

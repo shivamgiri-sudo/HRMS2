@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queueAutoAwards } from "../engagement/badge.service.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
+import { sendSMS } from "../communication/sms.helper.js";
 import type {
   AttendanceRegularization,
   PaginatedResult,
@@ -341,6 +342,22 @@ export const wfmService = {
       // Non-fatal — notification failure should not block submission
     }
 
+    // SMS — regularization submitted (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) {
+        sendSMS(phone, 'attendance_regularization_submitted', {
+          name: emp.name,
+          date: input.sessionDate,
+        }).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
+
     return this.getRegularization(id);
   },
 
@@ -466,6 +483,24 @@ export const wfmService = {
         // Non-fatal
       }
     }
+
+    // SMS — regularization approved or rejected (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [reg.employee_id]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) {
+        const key = input.status === 'approved'
+          ? 'attendance_regularization_approved'
+          : 'attendance_regularization_rejected';
+        const vars: Record<string, string> = { name: emp.name, date: reg.session_date };
+        if (input.status !== 'approved') vars.reason = input.reviewerNote ?? 'Not specified';
+        sendSMS(phone, key, vars).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
 
     return this.getRegularization(id);
   },

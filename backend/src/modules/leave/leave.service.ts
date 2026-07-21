@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
+import { sendSMS } from "../communication/sms.helper.js";
 import type {
   LeaveBalanceLedger,
   LeaveHoliday,
@@ -109,6 +110,23 @@ export const leaveService = {
     } catch {
       // Non-fatal — notification failure should not block submission
     }
+
+    // SMS — leave request submitted (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) {
+        sendSMS(phone, 'leave_request_submitted', {
+          name: emp.name,
+          from_date: input.fromDate,
+          to_date: input.toDate,
+        }).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
 
     return this.getRequest(id);
   },
@@ -270,6 +288,24 @@ export const leaveService = {
     } finally {
       conn.release();
     }
+
+    // SMS — leave approved or rejected (fire-and-forget)
+    try {
+      const updated = await this.getRequest(id);
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [updated.employee_id]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone && (input.status === 'approved' || input.status === 'rejected')) {
+        const key = input.status === 'approved' ? 'leave_approved' : 'request_rejected' as const;
+        const vars = input.status === 'approved'
+          ? { name: emp.name, from_date: updated.from_date, to_date: updated.to_date }
+          : { name: emp.name, request_type: 'Leave', approver_name: 'Manager' };
+        sendSMS(phone, key, vars as any).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
 
     return this.getRequest(id);
   },

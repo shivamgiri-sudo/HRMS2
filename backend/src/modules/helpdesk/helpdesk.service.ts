@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateSlaDueAt } from "./helpdesk-sla.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { sendSMS } from "../communication/sms.helper.js";
 
 function ticketCode(): string {
   return `TKT-${Date.now().toString(36).toUpperCase()}`;
@@ -128,7 +129,26 @@ export const helpdeskService = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, ticketCode(), data.employee_id, data.category, data.subject, data.description, priority, slaDueAt]
     );
-    return this.getTicket(id);
+    const ticket = await this.getTicket(id);
+
+    // SMS — ticket created (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [data.employee_id]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) {
+        sendSMS(phone, 'ticket_created', {
+          name: emp.name,
+          ticket_id: (ticket as any).ticket_code ?? id,
+          status: 'Open',
+        }).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
+
+    return ticket;
   },
 
   async updateTicket(id: string, data: {
@@ -190,7 +210,28 @@ export const helpdeskService = {
         id,
       ]
     );
-    return this.getTicket(id);
+    const updated = await this.getTicket(id);
+
+    // SMS — ticket resolved (fire-and-forget)
+    if (isClosingStatus) {
+      try {
+        const empId = (updated as any).employee_id;
+        const [empRow] = await db.execute<RowDataPacket[]>(
+          `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+           FROM employees WHERE id = ? LIMIT 1`, [empId]
+        );
+        const emp = (empRow[0] as any);
+        const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+        if (phone) {
+          sendSMS(phone, 'ticket_resolved', {
+            name: emp.name,
+            ticket_id: (updated as any).ticket_code ?? id,
+          }).catch(() => {});
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    return updated;
   },
 
   async reopenTicket(id: string, actorUserId: string) {

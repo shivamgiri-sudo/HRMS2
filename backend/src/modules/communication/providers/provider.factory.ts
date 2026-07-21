@@ -7,6 +7,7 @@ import { MailgunProvider } from './email/mailgun.provider.js';
 import { TwilioSMSProvider } from './sms/twilio-sms.provider.js';
 import { LocalSMSProvider } from './sms/local-sms.provider.js';
 import { MSG91Provider } from './sms/msg91.provider.js';
+import { SmartPingProvider } from './sms/smartping.provider.js';
 import { TwilioWhatsAppProvider } from './whatsapp/twilio-whatsapp.provider.js';
 import { LocalWhatsAppProvider } from './whatsapp/local-whatsapp.provider.js';
 import { MetaWhatsAppProvider } from './whatsapp/meta.provider.js';
@@ -70,6 +71,13 @@ class ProviderFactory {
           (config.msg91_sender_id as string) ?? '',
           (config.msg91_template_id as string) ?? '',
         );
+      if (provider_type === 'smartping')
+        return new SmartPingProvider(
+          secrets.smartping_username,
+          secrets.smartping_password,
+          (config.smartping_sender_id as string) ?? undefined,
+          (config.smartping_entity_id as string) ?? undefined,
+        );
       if (provider_type === 'local-sms-tool') return new LocalSMSProvider();
       // default: twilio
       return new TwilioSMSProvider(
@@ -125,6 +133,8 @@ class ProviderFactory {
           process.env.MSG91_SENDER_ID ?? '',
           process.env.MSG91_TEMPLATE_ID ?? '',
         );
+      if (type === 'smartping')
+        return new SmartPingProvider();
       if (type === 'local-sms-tool') return new LocalSMSProvider();
       return new TwilioSMSProvider();
     }

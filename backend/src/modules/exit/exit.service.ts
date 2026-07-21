@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
+import { sendSMS } from "../communication/sms.helper.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
 
@@ -203,6 +204,17 @@ export const exitService = {
       logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
       return null;
     });
+
+    // SMS — separation initiated (fire-and-forget)
+    try {
+      const [empRow] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
+         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      );
+      const emp = (empRow[0] as any);
+      const phone = emp?.mobile ?? emp?.personal_phone ?? null;
+      if (phone) sendSMS(phone, 'separation_initiated', { name: emp.name }).catch(() => {});
+    } catch { /* non-fatal */ }
 
     return this.getExitRequest(id);
   },

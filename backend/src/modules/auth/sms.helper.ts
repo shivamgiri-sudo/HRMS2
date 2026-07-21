@@ -1,30 +1,34 @@
-/**
- * SMS Helper for Authentication OTP
- * Simple wrapper around the communication service for sending OTP SMS
- */
-
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { providerConfigService } from '../communication/provider-config.service.js';
+import { buildSMS } from '../communication/smartping-dlt-registry.js';
 
 export async function sendOtpSms(phone: string, otpCode: string): Promise<boolean> {
   try {
-    // Load SMS provider configuration
     const dbConfig = await providerConfigService.loadActiveConfig('sms');
     const provider = await providerFactory.getProviderAsync('sms', dbConfig);
 
-    // Validate phone number format
     if (!provider.validateRecipient(phone)) {
       console.error(`[OTP SMS] Invalid phone format: ${phone}`);
       return false;
     }
 
-    // Compose OTP message
-    const message = `Your HRMS password reset OTP is: ${otpCode}. Valid for 10 minutes. Do not share this code with anyone.`;
+    const { body, dltContentId } = buildSMS('hrms_login_otp', {
+      otp: otpCode,
+      validity_minutes: '10',
+    });
 
-    // Send SMS
-    const result = await provider.send(phone, 'OTP', message);
+    // Patch content id into env for this send
+    const prev = process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID;
+    process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID = dltContentId;
+    let result;
+    try {
+      result = await provider.send(phone, 'OTP', body);
+    } finally {
+      if (prev !== undefined) process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID = prev;
+      else delete process.env.SMARTPING_DEFAULT_DLT_CONTENT_ID;
+    }
 
-    console.log(`[OTP SMS] Sent to ${phone}: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+    console.log(`[OTP SMS] Sent to ${phone.slice(-4).padStart(10, '*')}: ${result.success ? 'SUCCESS' : result.error}`);
     return result.success;
   } catch (error) {
     console.error(`[OTP SMS] Failed to send to ${phone}:`, error);
