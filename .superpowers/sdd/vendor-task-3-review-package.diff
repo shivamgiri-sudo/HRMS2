@@ -1,0 +1,717 @@
+diff --git a/backend/src/modules/payroll/__tests__/payslip-routes.contract.test.ts b/backend/src/modules/payroll/__tests__/payslip-routes.contract.test.ts
+index 66cbefad..84dc310a 100644
+--- a/backend/src/modules/payroll/__tests__/payslip-routes.contract.test.ts
++++ b/backend/src/modules/payroll/__tests__/payslip-routes.contract.test.ts
+@@ -31,6 +31,15 @@ describe("payslip display routes", () => {
+ 
+   it("resolves the self alias before tax document reads and uploads", () => {
+     expect(routeSource.match(/if \(employeeId === "me"\)/g)).toHaveLength(2);
+     expect(routeSource).toContain('employeeId = callerEmp.id');
+   });
++
++  it("normalizes the live location-master collation in self-service payslip joins", () => {
++    expect(routeSource).toContain(
++      "loc.id COLLATE utf8mb4_unicode_ci = e.location_id",
++    );
++    expect(routeSource).not.toContain(
++      "LEFT JOIN location_master loc ON loc.id = e.location_id",
++    );
++  });
+ });
+diff --git a/backend/src/modules/payroll/payroll.routes.ts b/backend/src/modules/payroll/payroll.routes.ts
+index da1eea0e..125679aa 100644
+--- a/backend/src/modules/payroll/payroll.routes.ts
++++ b/backend/src/modules/payroll/payroll.routes.ts
+@@ -619,11 +619,12 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) =>
+        LEFT JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+        LEFT JOIN designation_master des ON des.id = e.designation_id
+        LEFT JOIN department_master dept ON dept.id = e.department_id
+        LEFT JOIN branch_master br ON br.id = e.branch_id
+-       LEFT JOIN location_master loc ON loc.id = e.location_id
++       LEFT JOIN location_master loc
++         ON loc.id COLLATE utf8mb4_unicode_ci = e.location_id
+        LEFT JOIN salary_run_disbursal srd
+          ON srd.run_id = spl.run_id
+         AND srd.employee_id = spl.employee_id
+       WHERE spl.employee_id = ?
+         AND spr.run_month LIKE ?
+diff --git a/backend/src/workers/__tests__/sla-breach-worker.contract.test.ts b/backend/src/workers/__tests__/sla-breach-worker.contract.test.ts
+new file mode 100644
+index 00000000..23cb6d1b
+--- /dev/null
++++ b/backend/src/workers/__tests__/sla-breach-worker.contract.test.ts
+@@ -0,0 +1,31 @@
++import { readFileSync } from "node:fs";
++import { resolve } from "node:path";
++import { describe, expect, it } from "vitest";
++
++describe("SLA breach worker runtime safety", () => {
++  const workerSource = readFileSync(
++    resolve(process.cwd(), "src/workers/sla-breach-worker.ts"),
++    "utf8",
++  );
++
++  it("only scans recent candidates and bounds each query and notification cycle", () => {
++    expect(workerSource).toContain(
++      "CONCAT(c.created_date, ' ', c.created_time) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
++    );
++    expect(workerSource).toContain("ORDER BY pending_minutes ASC");
++    expect(workerSource).toContain("LIMIT ${CANDIDATE_SCAN_LIMIT}");
++    expect(workerSource).toContain("if (alertsSent >= MAX_ALERTS_PER_RUN) break");
++  });
++
++  it("does not run the SLA scan synchronously during server startup", () => {
++    expect(workerSource).toContain("setTimeout(() =>");
++    expect(workerSource).toContain("STARTUP_DELAY_MS");
++    expect(workerSource).not.toContain("await processSLABreaches();");
++  });
++
++  it("prevents overlapping scans", () => {
++    expect(workerSource).toContain("if (isProcessing)");
++    expect(workerSource).toContain("isProcessing = true");
++    expect(workerSource).toContain("isProcessing = false");
++  });
++});
+diff --git a/backend/src/workers/sla-breach-worker.ts b/backend/src/workers/sla-breach-worker.ts
+index 534c9974..7be1cdce 100644
+--- a/backend/src/workers/sla-breach-worker.ts
++++ b/backend/src/workers/sla-breach-worker.ts
+@@ -13,14 +13,18 @@ try {
+ // ── Configuration ────────────────────────────────────────────────────────────
+ 
+ const SLA_THRESHOLD_MINUTES = 30; // Send alert after 30 minutes
+ const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+ const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // Don't re-alert same candidate for 1 hour
++const STARTUP_DELAY_MS = 30 * 1000;
++const CANDIDATE_SCAN_LIMIT = 100;
++const MAX_ALERTS_PER_RUN = 10;
+ 
+ // ── In-Memory Alert Tracking ─────────────────────────────────────────────────
+ 
+ const alertedCandidates = new Map<string, number>(); // candidateId → lastAlertTimestamp
++let isProcessing = false;
+ 
+ /**
+  * Check if we should alert for this candidate (respects cooldown)
+  */
+ function shouldAlert(candidateId: string): boolean {
+@@ -69,11 +73,13 @@ async function findSLABreachCandidates(): Promise<any[]> {
+        FROM ats_candidate c
+        LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND qt.status = 'active'
+        WHERE c.status = 'Waiting'
+          AND c.recruiter_assigned_name IS NOT NULL
+          AND TIMESTAMPDIFF(MINUTE, CONCAT(c.created_date, ' ', c.created_time), NOW()) >= ?
+-       ORDER BY pending_minutes DESC`,
++         AND CONCAT(c.created_date, ' ', c.created_time) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
++       ORDER BY pending_minutes ASC
++       LIMIT ${CANDIDATE_SCAN_LIMIT}`,
+       [SLA_THRESHOLD_MINUTES]
+     );
+ 
+     return rows || [];
+   } catch (error: any) {
+@@ -84,61 +90,73 @@ async function findSLABreachCandidates(): Promise<any[]> {
+ 
+ /**
+  * Process SLA breach alerts
+  */
+ async function processSLABreaches(): Promise<void> {
+-  console.log("[SLABreachWorker] Checking for SLA breaches...");
+-
+-  const candidates = await findSLABreachCandidates();
+-
+-  if (candidates.length === 0) {
+-    console.log("[SLABreachWorker] No SLA breaches found");
++  if (isProcessing) {
++    console.log("[SLABreachWorker] Previous check is still running; skipping overlap");
+     return;
+   }
+ 
+-  console.log(`[SLABreachWorker] Found ${candidates.length} candidates beyond SLA`);
++  isProcessing = true;
++  try {
++    console.log("[SLABreachWorker] Checking for SLA breaches...");
+ 
+-  for (const candidate of candidates) {
+-    if (!shouldAlert(candidate.candidate_id)) {
+-      console.log(`[SLABreachWorker] Skipping ${candidate.candidate_name} (cooldown)`);
+-      continue;
++    const candidates = await findSLABreachCandidates();
++
++    if (candidates.length === 0) {
++      console.log("[SLABreachWorker] No SLA breaches found");
++      return;
+     }
+ 
+-    console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
++    console.log(`[SLABreachWorker] Found ${candidates.length} recent candidates beyond SLA`);
++    let alertsSent = 0;
+ 
+-    await notifySLABreach({
+-      candidateId: candidate.candidate_id,
+-      candidateName: candidate.candidate_name,
+-      qToken: candidate.q_token || "N/A",
+-      recruiterName: candidate.recruiter_name,
+-      branch: candidate.branch || "N/A",
+-      roleApplied: candidate.role_applied || "N/A",
+-      slaMinutes: candidate.pending_minutes,
+-    });
++    for (const candidate of candidates) {
++      if (alertsSent >= MAX_ALERTS_PER_RUN) break;
++      if (!shouldAlert(candidate.candidate_id)) continue;
+ 
+-    markAlerted(candidate.candidate_id);
+-  }
++      console.log(`[SLABreachWorker] Alerting for ${candidate.candidate_name} (${candidate.pending_minutes} mins)`);
+ 
+-  // Cleanup old alert cache
+-  cleanupAlertCache();
++      await notifySLABreach({
++        candidateId: candidate.candidate_id,
++        candidateName: candidate.candidate_name,
++        qToken: candidate.q_token || "N/A",
++        recruiterName: candidate.recruiter_name,
++        branch: candidate.branch || "N/A",
++        roleApplied: candidate.role_applied || "N/A",
++        slaMinutes: candidate.pending_minutes,
++      });
++
++      markAlerted(candidate.candidate_id);
++      alertsSent += 1;
++    }
++
++    cleanupAlertCache();
++  } finally {
++    isProcessing = false;
++  }
+ }
+ 
+ /**
+  * Start worker (main loop)
+  */
+-async function startWorker(): Promise<void> {
++function startWorker(): Promise<void> {
+   console.log("[SLABreachWorker] Starting...");
+   console.log(`[SLABreachWorker] SLA threshold: ${SLA_THRESHOLD_MINUTES} minutes`);
+   console.log(`[SLABreachWorker] Check interval: ${CHECK_INTERVAL_MS / 1000} seconds`);
+ 
+-  // Run immediately on start
+-  await processSLABreaches();
++  // Let the API finish warming up before any external notification work begins.
++  setTimeout(() => {
++    void processSLABreaches();
++  }, STARTUP_DELAY_MS);
+ 
+-  // Then run periodically
+-  setInterval(async () => {
+-    await processSLABreaches();
++  setInterval(() => {
++    void processSLABreaches();
+   }, CHECK_INTERVAL_MS);
++
++  return Promise.resolve();
+ }
+ 
+ // ── Start Worker ─────────────────────────────────────────────────────────────
+ 
+ if (import.meta.url === `file://${process.argv[1]}`) {
+diff --git a/src/components/finance/vendor/VendorSheet.tsx b/src/components/finance/vendor/VendorSheet.tsx
+new file mode 100644
+index 00000000..a1994d04
+--- /dev/null
++++ b/src/components/finance/vendor/VendorSheet.tsx
+@@ -0,0 +1,137 @@
++import { useState, useEffect } from "react";
++import { useMutation, useQueryClient } from "@tanstack/react-query";
++import { Loader2 } from "lucide-react";
++import { Badge } from "@/components/ui/badge";
++import { Button } from "@/components/ui/button";
++import { Input } from "@/components/ui/input";
++import { Label } from "@/components/ui/label";
++import {
++  Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter,
++} from "@/components/ui/sheet";
++import { Textarea } from "@/components/ui/textarea";
++import { useToast } from "@/hooks/use-toast";
++import { hrmsApi } from "@/lib/hrmsApi";
++
++export interface Vendor {
++  id?: string;
++  vendor_code?: string;
++  vendor_name: string;
++  vendor_type?: string;
++  payment_terms?: string;
++  contact_name?: string;
++  contact_email?: string;
++  contact_phone?: string;
++  gst_number?: string;
++  pan_number?: string;
++  address?: string;
++  is_active?: number;
++}
++
++interface Props {
++  vendor: Vendor | null;
++  mode: "create" | "edit" | "detail";
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  onSaved: () => void;
++}
++
++export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved }: Props) {
++  const { toast } = useToast();
++  const queryClient = useQueryClient();
++
++  const [form, setForm] = useState<Vendor>({ vendor_name: "" });
++
++  useEffect(() => {
++    if (vendor) setForm(vendor);
++    else setForm({ vendor_name: "" });
++  }, [vendor, open]);
++
++  const set = (key: keyof Vendor) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
++    setForm(f => ({ ...f, [key]: e.target.value }));
++
++  const saveMutation = useMutation({
++    mutationFn: async () => {
++      if (mode === "create") {
++        return (await hrmsApi.post("/api/erp/vendors", form)).data;
++      }
++      return (await hrmsApi.put(`/api/erp/vendors/${vendor!.id}`, form)).data;
++    },
++    onSuccess: () => {
++      toast({ title: mode === "create" ? "Vendor created" : "Vendor updated" });
++      queryClient.invalidateQueries({ queryKey: ["vendors"] });
++      onSaved();
++      onOpenChange(false);
++    },
++    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
++  });
++
++  const isReadOnly = mode === "detail";
++
++  const fields: { key: keyof Vendor; label: string; span?: number }[] = [
++    { key: "vendor_name", label: "Vendor name *", span: 2 },
++    { key: "vendor_code", label: "Vendor code" },
++    { key: "vendor_type", label: "Type" },
++    { key: "payment_terms", label: "Payment terms" },
++    { key: "contact_name", label: "Contact name" },
++    { key: "contact_email", label: "Contact email" },
++    { key: "contact_phone", label: "Contact phone" },
++    { key: "gst_number", label: "GST number" },
++    { key: "pan_number", label: "PAN number" },
++  ];
++
++  return (
++    <Sheet open={open} onOpenChange={onOpenChange}>
++      <SheetContent side="right" className="flex w-[420px] flex-col gap-0 p-0">
++        <SheetHeader className="border-b px-4 py-3">
++          <SheetTitle className="text-sm font-semibold">
++            {mode === "create" ? "Add Vendor" : mode === "edit" ? "Edit Vendor" : "Vendor Details"}
++          </SheetTitle>
++          {vendor?.vendor_code && (
++            <Badge variant="outline" className="w-fit text-xs">{vendor.vendor_code}</Badge>
++          )}
++        </SheetHeader>
++
++        <div className="flex-1 overflow-y-auto px-4 py-3">
++          <div className="grid grid-cols-2 gap-3">
++            {fields.map(({ key, label, span }) => (
++              <div key={key} className={span === 2 ? "col-span-2" : ""}>
++                <Label className="text-xs">{label}</Label>
++                <Input
++                  className="mt-1 h-8 text-sm"
++                  value={(form[key] as string | undefined) ?? ""}
++                  onChange={set(key)}
++                  readOnly={isReadOnly}
++                  disabled={isReadOnly}
++                />
++              </div>
++            ))}
++            <div className="col-span-2">
++              <Label className="text-xs">Address</Label>
++              <Textarea
++                className="mt-1 min-h-[60px] text-sm"
++                value={form.address ?? ""}
++                onChange={set("address")}
++                readOnly={isReadOnly}
++                disabled={isReadOnly}
++              />
++            </div>
++          </div>
++        </div>
++
++        {!isReadOnly && (
++          <SheetFooter className="border-t px-4 py-3">
++            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
++            <Button
++              size="sm"
++              disabled={saveMutation.isPending || !form.vendor_name}
++              onClick={() => saveMutation.mutate()}
++            >
++              {saveMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
++              {mode === "create" ? "Create" : "Save"}
++            </Button>
++          </SheetFooter>
++        )}
++      </SheetContent>
++    </Sheet>
++  );
++}
+diff --git a/src/components/layout/navConfig.tsx b/src/components/layout/navConfig.tsx
+index 8296ea40..df61d65b 100644
+--- a/src/components/layout/navConfig.tsx
++++ b/src/components/layout/navConfig.tsx
+@@ -43,10 +43,11 @@ export const navGroups: NavGroup[] = [
+         label: "Attendance", href: "/attendance", icon: ic(Clock), description: "Attendance & roster",
+         children: [
+           { label: "Attendance",               href: "/attendance",                    icon: ic(Clock),         description: "Attendance" },
+           { label: "My Punch Logs",            href: "/attendance/biometric-logs",     icon: ic(Search),        description: "Read-only biometric punch history" },
+           { label: "Regularization",           href: "/attendance/regularizations",    icon: ic(Clock),         pageCode: "ATTENDANCE_REGULARIZATION", description: "Regularize" },
++          { label: "Attendance Disputes", href: "/attendance/disputes", icon: ic(ClipboardList), roles: ["admin","hr","wfm","manager","super_admin"], description: "Review attendance disputes" },
+           { label: "Attendance Lookup",        href: "/hr/attendance-lookup",          icon: ic(Search),        roles: ["super_admin","admin","hr","payroll_head","payroll_admin","wfm"], description: "View any employee's attendance" },
+           { label: "My Roster",                href: "/my-roster",                     icon: ic(Calendar),      description: "Roster" },
+           { label: "Week-off Preference",      href: "/week-off-preferences",          icon: ic(CalendarDays),  description: "Week-off" },
+           { label: "Roster Preference",        href: "/roster-preference",             icon: ic(Calendar),      pageCode: "WFM_ROSTER", description: "Roster preferences" },
+         ],
+@@ -61,10 +62,11 @@ export const navGroups: NavGroup[] = [
+         label: "Pay & Tax",  href: "/profile?tab=payslips", icon: ic(CreditCard), description: "Payslips & tax",
+         children: [
+           { label: "Payslips",         href: "/profile?tab=payslips",      icon: ic(CreditCard), description: "Payslips" },
+           { label: "Payslip Center",   href: "/payroll/payslips",          icon: ic(CreditCard), pageCode: "PAYROLL_PAYSLIPS", description: "Download payslips" },
+           { label: "Tax Declaration",  href: "/payroll/tax-declaration",   icon: ic(Landmark),   description: "Tax" },
++          { label: "Reimbursements", href: "/payroll/reimbursements", icon: ic(Receipt), description: "Employee reimbursements" },
+         ],
+       },
+       {
+         label: "Engage",     href: "/engagement", icon: ic(Sparkles), description: "Engagement & feedback",
+         children: [
+@@ -107,41 +109,49 @@ export const navGroups: NavGroup[] = [
+           { label: "Candidate Master",  href: "/ats/candidate-master",         icon: ic(Users),        pageCode: "ATS_CANDIDATE_MASTER",  description: "Candidate DB" },
+           { label: "Walk-in Queue",     href: "/ats/walkin-queue",             icon: ic(Users),        pageCode: "ATS_WALKIN_QUEUE",     description: "Queue" },
+           { label: "My Candidates",     href: "/ats/recruiter/my-candidates",  icon: ic(ClipboardList),pageCode: "ATS_RECRUITER_QUEUE",   description: "Candidates" },
+           { label: "Hiring Entry",      href: "/ats/recruiter/hiring-entry",   icon: ic(UserPlus),     pageCode: "ATS_RECRUITER_QUEUE",   description: "Tracker entry" },
+           { label: "Hiring Dashboard",  href: "/ats/recruiter/hiring-dashboard", icon: ic(BarChart3),   pageCode: "ATS_DASHBOARD",         description: "Recruiter KPIs" },
++          { label: "Waiting Queue", href: "/ats/waiting-queue", icon: ic(Users), pageCode: "ATS_WAITING_QUEUE", description: "Candidate waiting workflow" },
++          { label: "Enhanced Registration", href: "/ats/registration-enhanced", icon: ic(UserPlus), roles: ["admin","hr","super_admin","recruiter"], description: "Assisted candidate registration" },
++          { label: "Recruiter Portal", href: "/ats/recruiter-portal", icon: ic(Briefcase), pageCode: "ATS_RECRUITER_PORTAL", description: "Recruiter interview workspace" },
+           { label: "ATS Sourcing",      href: "/ats/sourcing-analysis",        icon: ic(BarChart3),    pageCode: "ATS_DASHBOARD",         roles: ["admin","hr"], description: "Sourcing analytics" },
++          { label: "Name Consistency", href: "/ats/name-consistency", icon: ic(FileCheck), pageCode: "NAME_CONSISTENCY_MATRIX", description: "Candidate identity consistency" },
++          { label: "ATS Reconciliation", href: "/ats/reconciliation", icon: ic(CheckCircle), roles: ["admin","hr","super_admin"], description: "Recruitment reconciliation" },
++          { label: "ATS Extensions", href: "/ats/extensions", icon: ic(Settings2), pageCode: "ATS_EXTENSIONS", description: "ATS extension tools" },
+           { label: "Form Config",       href: "/ats/form-config",              icon: ic(Settings2),                                               roles: ["admin","hr","super_admin"], description: "Interview form & branch aliases" },
+           // Jobs Portal removed per business requirement
+         ],
+       },
+       {
+         label: "Onboarding",   href: "/onboarding",  icon: ic(UserPlus), roles: ["admin","hr"], description: "Onboarding & BGV",
+         children: [
+           { label: "Onboarding Bridge",   href: "/ats/onboarding-bridge",    icon: ic(UserPlus),    pageCode: "ATS_ONBOARDING_BRIDGE", roles: ["admin","hr"], description: "Bridge" },
+           { label: "Onboarding Requests", href: "/ats/onboarding-requests",  icon: ic(ClipboardList),pageCode: "ATS_ONBOARDING_BRIDGE", roles: ["admin","hr"], description: "HR onboarding" },
++          { label: "Payroll HR Validation", href: "/ats/payroll-hr-validation", icon: ic(ShieldCheck), pageCode: "ATS_PAYROLL_HR", description: "Validate joining payroll data" },
+           { label: "Joining Control",      href: "/ats/joining-control-room", icon: ic(ClipboardList),pageCode: "ATS_JOINING_CONTROL_ROOM", roles: ["admin","hr","payroll_hr","super_admin"], description: "Payroll HR & JCLR" },
+           { label: "Offer Letters",       href: "/offer-letter",             icon: ic(FileText),    pageCode: "ATS_OFFER",         roles: ["admin","hr"], description: "Generate offers" },
+           { label: "Offer Approvals",     href: "/ats/offer-approvals",      icon: ic(FileCheck),   pageCode: "ATS_OFFER_APPROVALS", roles: ["admin","super_admin","hr","branch_head"], description: "Offer approvals" },
+           { label: "IT Provisioning",     href: "/provisioning/it",          icon: ic(Server),      pageCode: "PROVISIONING_IT",   roles: ["it","admin","super_admin"], description: "Domain, email & assets" },
+           { label: "Admin Provisioning",  href: "/provisioning/admin",       icon: ic(ShieldCheck), pageCode: "PROVISIONING_ADMIN", roles: ["admin","branch_admin","hr","super_admin"], description: "Biometric & ID card" },
+           { label: "WFM Alignment",       href: "/provisioning/wfm-alignment", icon: ic(Clock),     pageCode: "PROVISIONING_WFM_ALIGNMENT", roles: ["wfm","admin","super_admin"], description: "Roster & shift alignment" },
+           { label: "Appointment Letters", href: "/provisioning/appointment-letter", icon: ic(FileText), pageCode: "PROVISIONING_APPOINTMENT_LETTER", roles: ["hr","admin","super_admin"], description: "E-sign tracking" },
+           { label: "Joining Documents",   href: "/ats/joining-documents-tracker", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Joining doc formalities" },
+           { label: "Document Verification",href: "/document-verification",   icon: ic(FileCheck),   roles: ["admin","hr"],         description: "Documents" },
+           { label: "BGV Verification",    href: "/ats/bgv",                  icon: ic(FileCheck),   pageCode: "ATS_BGV",           roles: ["admin","hr","payroll_hr","payroll"], description: "BGV center" },
++          { label: "Enhanced BGV", href: "/ats/bgv-enhanced", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "Enhanced verification workflow" },
+           { label: "BGV Reports",         href: "/ats/bgv-report",           icon: ic(FileCheck),   roles: ["admin","hr","payroll_hr","payroll"],         description: "BGV" },
+           { label: "BGV API Monitor",     href: "/ats/bgv-api-monitor",      icon: ic(Activity),    roles: ["admin","hr","super_admin"],                  description: "BGV API monitoring" },
+           { label: "Employee BGV Status", href: "/employees/bgv-status",     icon: ic(ShieldCheck), roles: ["admin","hr","payroll_hr","payroll","super_admin"], description: "Employee BGV status" },
+           { label: "Bulk Upload",         href: "/bulk-upload",              icon: ic(Package),     roles: ["admin","hr","super_admin","wfm","payroll","payroll_hr"], description: "Bulk data import" },
+           { label: "Historical Import",   href: "/ats/bulk-import",          icon: ic(Upload),      roles: ["admin","super_admin"], description: "Import historical candidates" },
+         ],
+       },
+       {
+         label: "Lifecycle",    href: "/employee-lifecycle", icon: ic(Users), pageCode: "EMPLOYEE_LIFECYCLE", description: "Employee lifecycle",
+         children: [
+-          { label: "Employee Directory",        href: "/employees",             icon: ic(Users),     description: "Employee directory and stat cards" },
++          { label: "Employee Stat Cards", href: "/employees", icon: ic(Users), description: "Employee directory and stat cards" },
+           { label: "Career Timeline",         href: "/employee-journey",      icon: ic(TrendingUp), description: "Career progression timeline" },
+           { label: "Employee Lifecycle", href: "/employee-lifecycle",    icon: ic(Users),     pageCode: "EMPLOYEE_LIFECYCLE", roles: ["admin","hr"], description: "Lifecycle" },
+           { label: "Career Planning",    href: "/career-planning",       icon: ic(TrendingUp),pageCode: "CAREER_PLANNING",   description: "Career paths" },
+           { label: "Exit Command Center",  href: "/exit/command-center",     icon: ic(UserMinus), pageCode: "EXIT_COMMAND_CENTER",     description: "Exit ops" },
+           { label: "Exit Management",      href: "/exit-management",         icon: ic(UserMinus), roles: ["admin","hr"],               description: "Exit" },
+@@ -170,10 +180,11 @@ export const navGroups: NavGroup[] = [
+         children: [
+           { label: "Roster Planning",        href: "/wfm/roster",                icon: ic(Clock),         pageCode: "WFM_ROSTER",      description: "Roster" },
+           { label: "Auto Roster",            href: "/wfm/auto-roster",           icon: ic(Calendar),      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },
+           { label: "Roster Master Builder",  href: "/roster-master-builder",     icon: ic(Calendar),      pageCode: "ROSTER_MASTER",   description: "Build roster masters" },
+           { label: "Roster Capacity Config", href: "/roster-capacity-config",    icon: ic(Settings2),     pageCode: "ROSTER_MASTER",   description: "Capacity settings" },
++          { label: "WFM Manager Approvals", href: "/wfm-manager-approvals", icon: ic(ShieldCheck), pageCode: "WFM_ROSTER", description: "Manager roster approvals" },
+           { label: "Week-off Day Rules",     href: "/wfm/weekoff-day-rules",     icon: ic(CalendarDays),  roles: ["admin","hr","wfm","manager","super_admin"], description: "Day-level rules" },
+           { label: "WFM Planning Rules",     href: "/wfm/planning-rules",        icon: ic(Settings2),     roles: ["admin","hr","wfm","manager","super_admin"], description: "Shift planning rules" },
+           { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
+           { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
+           { label: "Week-off Fairness",      href: "/wfm/weekoff-fairness",      icon: ic(Target),        roles: ["admin","super_admin","wfm"], description: "Fairness scores & allocation" },
+@@ -183,10 +194,12 @@ export const navGroups: NavGroup[] = [
+         label: "Live Monitoring", href: "/wfm/live-tracker", icon: ic(Activity), pageCode: "WFM_LIVE_TRACKER", description: "Live tracking",
+         children: [
+           { label: "WFM Tracker",           href: "/wfm/live-tracker",          icon: ic(Clock),     pageCode: "WFM_LIVE_TRACKER", description: "Live" },
+           { label: "RTA Board",             href: "/rta-board",                 icon: ic(Activity),  pageCode: "RTA_BOARD",        description: "RTA" },
+           { label: "Attendance Exceptions", href: "/wfm/attendance-exceptions", icon: ic(Clock),     pageCode: "WFM_LIVE_TRACKER", description: "Exception engine" },
++          { label: "Attendance Mismatch", href: "/wfm/mismatch-queue", icon: ic(ClipboardList), roles: ["admin","hr","wfm","manager","super_admin"], description: "Resolve attendance mismatches" },
++          { label: "Attendance Billing", href: "/attendance/billing-config", icon: ic(Settings2), roles: ["admin","hr","wfm","super_admin"], description: "Attendance billing rules" },
+           { label: "COSEC Monitoring",      href: "/wfm/cosec-monitoring",      icon: ic(Activity),  pageCode: "WFM_LIVE_TRACKER", description: "Biometric sync" },
+           { label: "Break Desk",            href: "/break-desk",                icon: ic(ShieldCheck),                             description: "Guard desk portal" },
+           { label: "Break Reports",         href: "/break-reports",             icon: ic(Clock),     roles: ["super_admin","admin","hr","wfm","manager","process_manager"], description: "Daily break & attendance report" },
+           { label: "Break Desk Devices",    href: "/break-management/devices",  icon: ic(Settings2), roles: ["super_admin","admin","wfm"], description: "Kiosk tokens & devices" },
+         ],
+@@ -226,23 +239,27 @@ export const navGroups: NavGroup[] = [
+         children: [
+           { label: "Performance Hub",      href: "/performance-hub",            icon: ic(BarChart3),    description: "Role-scoped KPI hub" },
+           { label: "Performance",          href: "/performance",                icon: ic(Target),       description: "Performance" },
+           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
+           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
+-          { label: "Performance Hub",      href: "/performance-hub",            icon: ic(BarChart3),    description: "Role-scoped KPI hub" },
+-          // Goals, Reviews Management, PIP Management removed per business requirement
+           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
++          { label: "KPI Master", href: "/kpi-master", icon: ic(Settings2), pageCode: "KPI_MASTER", description: "KPI master configuration" },
++          { label: "My KPI", href: "/my-kpi", icon: ic(Target), pageCode: "MY_KPI", description: "Personal KPI dashboard" },
++          { label: "PIP Management", href: "/pip-management", icon: ic(ClipboardList), pageCode: "PIP_MANAGEMENT", description: "Performance improvement plans" },
++          { label: "TAT Matrix", href: "/governance/tat-matrix", icon: ic(Settings2), pageCode: "TAT_MATRIX", description: "Turnaround-time policy" },
++          { label: "TAT Dashboard", href: "/governance/tat-dashboard", icon: ic(BarChart3), pageCode: "TAT_DASHBOARD", description: "Turnaround-time monitoring" },
+           { label: "Operations KPI",       href: "/operations-kpi",             icon: ic(Target),       pageCode: "OPERATIONS_KPI",          description: "Ops KPI" },
+           { label: "Operations Dashboard", href: "/operations/dashboard",       icon: ic(Target),       pageCode: "OPERATIONS_DASHBOARD",    description: "Ops dashboard" },
+           { label: "Feedback Assignments", href: "/performance-feedback/assignments",  icon: ic(ClipboardList), description: "Feedback tasks" },
+           { label: "Team Reports",         href: "/performance-feedback/team-reports", icon: ic(BarChart3),     roles: ["admin","hr","manager"], description: "Team feedback" },
+         ],
+       },
+       {
+         label: "Payroll",      href: "/payroll", icon: ic(CreditCard), roles: ["admin","hr","finance","payroll"], description: "Payroll & statutory",
+         children: [
+           { label: "Payroll",               href: "/payroll",                      icon: ic(CreditCard), roles: ["admin","hr","finance","payroll"],                    description: "Payroll" },
++          { label: "Incentives", href: "/payroll/incentives", icon: ic(TrendingUp), pageCode: "PAYROLL_INCENTIVES", description: "Incentive management" },
+           { label: "Payroll Readiness",      href: "/payroll/branch-readiness",     icon: ic(Building2),  roles: ["super_admin","payroll_head","branch_head","payroll_branch","admin","hr","finance","payroll"], description: "Branch-wise payroll readiness" },
+           { label: "Payroll Calendar",      href: "/payroll/calendar",             icon: ic(CalendarDays), roles: ["super_admin","payroll_head","payroll_branch"], description: "Payroll planning calendar" },
+           { label: "HO Queues",             href: "/payroll/ho-queues",            icon: ic(ClipboardList), roles: ["admin","hr","finance","payroll","super_admin"],   description: "HO approval queues" },
+           { label: "Cheque Validation",     href: "/payroll/cheque-validation",    icon: ic(FileCheck),     roles: ["payroll","payroll_head","super_admin","finance"], description: "Cheque name validation" },
+           { label: "Full & Final",          href: "/payroll/full-final",           icon: ic(Zap),        roles: ["admin","hr","finance","payroll"],                    description: "F&F" },
+@@ -268,10 +285,13 @@ export const navGroups: NavGroup[] = [
+           { label: "PF Batches",            href: "/payroll/pf-batches",           icon: ic(FileCheck),  roles: ["admin","super_admin","payroll_hr","payroll"],           description: "PF creation batch management" },
+           { label: "Cost Summary",          href: "/payroll/cost-summary",         icon: ic(DollarSign), roles: ["super_admin","payroll_head","finance"],                 description: "Payroll cost analysis" },
+           { label: "Variance Report",       href: "/payroll/variance",             icon: ic(BarChart3),  roles: ["super_admin","payroll_head","finance","admin"],         description: "Month-over-month variance" },
+           { label: "Audit Trail",           href: "/payroll/audit-trail",          icon: ic(FileText),   roles: ["super_admin","payroll_head","finance","admin"],         description: "Payroll changes audit log" },
+           { label: "Disbursal Management",  href: "/payroll/disbursal",            icon: ic(Send),       pageCode: "PAYROLL_DISBURSAL", roles: ["super_admin","payroll_head","finance"], description: "Salary disbursal tracking" },
++          { label: "Bulk Outputs", href: "/payroll/bulk-outputs", icon: ic(Package), roles: ["super_admin","payroll_head","admin"], description: "Bulk payroll documents" },
++          { label: "Payroll Sign-off", href: "/payroll/sign-off", icon: ic(CheckCircle), roles: ["super_admin","payroll_head","finance","ceo","admin"], description: "Payroll approval and sign-off" },
++          { label: "Salary Increment", href: "/salary-increment", icon: ic(TrendingUp), pageCode: "SALARY_INCREMENT", description: "Salary revision workflow" },
+           { label: "Loan Management",       href: "/payroll/loans",                icon: ic(CreditCard), pageCode: "PAYROLL_LOANS", roles: ["super_admin","payroll_head","hr"], description: "Employee loan management" },
+           { label: "Salary Certificates",   href: "/payroll/salary-certificates",  icon: ic(FileText),   pageCode: "SALARY_CERTIFICATE", description: "Generate salary certificates" },
+         ],
+       },
+       {
+@@ -281,10 +301,12 @@ export const navGroups: NavGroup[] = [
+           { label: "P&L Configuration",       href: "/finance/process-pnl/configuration", icon: ic(Settings2),   roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Contracts, plans and rates" },
+           { label: "P&L Period Close",        href: "/finance/process-pnl/period-close",  icon: ic(CheckCircle), roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Signoff and lock" },
+           { label: "Branch Budget",           href: "/finance/branch-budget",            icon: ic(Wallet),       roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Monthly branch budgets and approval" },
+           { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Goods receipt notes" },
+           { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
++          { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
++          { label: "Procurement", href: "/procurement", icon: ic(ShoppingCart), pageCode: "PROCUREMENT", description: "Procurement requests" },
+           { label: "Expense Finance Queue",   href: "/expenses/finance",                 icon: ic(Receipt),      roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense reimbursement control" },
+           { label: "Expense Reports",         href: "/expenses/reports",                 icon: ic(BarChart3),    roles: ["admin","finance","super_admin","finance_head","accounts_head"], description: "Expense analytics" },
+         ],
+       },
+       {
+@@ -292,10 +314,11 @@ export const navGroups: NavGroup[] = [
+         children: [
+           { label: "Management Dashboard",     href: "/management/dashboard",          icon: ic(BarChart3),  pageCode: "MANAGEMENT_DASHBOARD",   description: "Management" },
+           { label: "Business Command Center",  href: "/business-command-center",       icon: ic(Briefcase),  roles: ["admin","ceo","coo","hr","manager","process_manager"],           description: "Business ops center" },
+           { label: "Business Actions",         href: "/business-actions",              icon: ic(ClipboardList), roles: ["admin","ceo","coo","hr","manager","process_manager","team_leader","tl"], description: "Action queue" },
+           { label: "People Experience",        href: "/people-experience/command-center", icon: ic(Users),   pageCode: "PEOPLE_EXPERIENCE",      description: "People ops" },
++          { label: "Control Tower", href: "/control-tower", icon: ic(Activity), roles: ["admin","super_admin","hr","manager"], description: "Cross-functional operations" },
+         ],
+       },
+     ],
+   },
+ 
+@@ -336,15 +359,18 @@ export const navGroups: NavGroup[] = [
+           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },
+           { label: "Module Access",    href: "/super-admin/module-access",  icon: ic(Lock),       pageCode: "MODULE_ACCESS", roles: ["super_admin"], description: "Module permissions" },
+           { label: "Policy Engine",    href: "/super-admin/policy-engine",  icon: ic(Settings2),  roles: ["super_admin"], description: "Master business policy configuration" },
+           { label: "Feed Creators",    href: "/super-admin/company-feed-creators", icon: ic(UsersRound), roles: ["super_admin"], description: "Grant company feed posting rights" },
+           { label: "AI Providers",     href: "/settings/ai-providers",           icon: ic(Settings2), roles: ["super_admin"], description: "Configure AI models" },
++          { label: "PeopleOS Copilot", href: "/peopleos/copilot", icon: ic(Sparkles), roles: ["super_admin","admin","hr","manager"], description: "AI-assisted HR workspace" },
+           { label: "Super Admin Dashboard", href: "/super-admin/dashboard", icon: ic(Shield),     pageCode: "SUPER_ADMIN_DASHBOARD", roles: ["super_admin"], description: "Super admin dashboard" },
+           { label: "Security Center",  href: "/security-center",            icon: ic(ShieldAlert),pageCode: "SECURITY_CENTER", roles: ["super_admin", "admin"], description: "Security monitoring" },
+           { label: "DPDP / Privacy",   href: "/compliance/dpdp",            icon: ic(ShieldCheck),roles: ["admin","hr"],       description: "DPDP" },
++          { label: "DPDP Withdrawal Admin", href: "/compliance/dpdp-withdrawal-admin", icon: ic(ShieldCheck), pageCode: "DPDP_WITHDRAWAL_ADMIN", description: "Review privacy withdrawal requests" },
+           { label: "Audit Log",        href: "/audit-log",                  icon: ic(FileText),   roles: ["admin","super_admin","payroll_head","hr","wfm"], description: "Audit trail" },
+           { label: "Document Templates", href: "/settings/document-templates", icon: ic(FileText), roles: ["admin","super_admin","hr"], description: "Joining document templates" },
++          { label: "Email Template Import", href: "/settings/email-templates/bulk-import", icon: ic(Upload), roles: ["admin","super_admin"], description: "Bulk import communication templates" },
+         ],
+       },
+       {
+         label: "Organisation",  href: "/org-masters", icon: ic(Building2), roles: ["admin","hr"], description: "Org masters",
+         children: [
+@@ -352,10 +378,11 @@ export const navGroups: NavGroup[] = [
+           { label: "Location & Policies", href: "/org-masters/locations-policies",icon: ic(Building2),pageCode: "ORG_MASTERS", roles: ["admin","hr"], description: "Locations" },
+           { label: "Process Config",      href: "/process-config",               icon: ic(Network),   roles: ["admin","hr","process_manager"], description: "Process" },
+           { label: "Leave Types",         href: "/leave-types",                  icon: ic(CalendarDays), roles: ["admin","hr"],             description: "Leave types" },
+           { label: "Attendance Rules",    href: "/attendance-rules-master",      icon: ic(Settings2), roles: ["admin","hr"],              description: "Attendance rules" },
+           { label: "Client Master",       href: "/client-master",                icon: ic(Users),     roles: ["admin","hr"],              description: "Clients" },
++          { label: "Org Chart Settings", href: "/org-chart/settings", icon: ic(Settings2), roles: ["admin","hr","super_admin"], description: "Organisation chart rules" },
+         ],
+       },
+       {
+         label: "Integrations",   href: "/integration-hub", icon: ic(Network), roles: ["admin"], description: "Integrations & system",
+         children: [
+@@ -373,16 +400,20 @@ export const navGroups: NavGroup[] = [
+       {
+         label: "System",         href: "/customization", icon: ic(Settings2), description: "System tools",
+         children: [
+           { label: "Customization",    href: "/customization",      icon: ic(Settings2), pageCode: "CUSTOMIZATION_MANAGER", description: "Customization rules" },
+           { label: "Visitor Mgmt",    href: "/visitor-management", icon: ic(UserPlus),                                     description: "Visitor access & security" },
++          { label: "Visitor Approvals", href: "/visitor-management/approvals", icon: ic(CheckCircle), roles: ["admin","super_admin","hr","branch_head"], description: "Visitor approval queue" },
++          { label: "Visitor Desk", href: "/visitor-management/desk", icon: ic(UserPlus), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Reception and check-in desk" },
++          { label: "Visitor Security", href: "/visitor-management/security", icon: ic(ShieldCheck), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Visitor security operations" },
+           { label: "Assets",           href: "/assets",             icon: ic(Package),                                      description: "Assets" },
+           { label: "Assets Manager",   href: "/assets-manager",     icon: ic(Package),   pageCode: "ASSETS_MANAGER",        description: "Asset management" },
+           { label: "Mobility",         href: "/mobility",           icon: ic(Users),     pageCode: "MOBILITY",              description: "Mobility" },
+           { label: "ERP",              href: "/erp",                icon: ic(Server),    pageCode: "ERP",                   description: "ERP" },
+           { label: "Portal Data Mgr",  href: "/portal-data-manager",icon: ic(Server),    pageCode: "PORTAL_DATA_MANAGER",   description: "Portal data" },
+           { label: "WFM Extensions",   href: "/wfm/extensions",     icon: ic(Settings2), pageCode: "WFM_EXTENSIONS",        description: "WFM extensions" },
++          { label: "Changelog", href: "/changelog", icon: ic(FileText), roles: ["admin","super_admin"], description: "Release history" },
+         ],
+       },
+     ],
+   },
+ ];
+diff --git a/src/tests/app-shell-routing.contract.test.ts b/src/tests/app-shell-routing.contract.test.ts
+index 33991972..aea87c7d 100644
+--- a/src/tests/app-shell-routing.contract.test.ts
++++ b/src/tests/app-shell-routing.contract.test.ts
+@@ -39,10 +39,126 @@ describe("application shell routing contracts", () => {
+     );
+ 
+     expect(navPaths.filter((path) => !routePaths.has(path))).toEqual([]);
+   });
+ 
++  it("keeps canonical operational workspaces discoverable from the sidebar", () => {
++    const requiredDestinations = [
++      ["Employee Stat Cards", "/employees"],
++      ["Attendance Disputes", "/attendance/disputes"],
++      ["Waiting Queue", "/ats/waiting-queue"],
++      ["Enhanced Registration", "/ats/registration-enhanced"],
++      ["Recruiter Portal", "/ats/recruiter-portal"],
++      ["Name Consistency", "/ats/name-consistency"],
++      ["ATS Reconciliation", "/ats/reconciliation"],
++      ["ATS Extensions", "/ats/extensions"],
++      ["Payroll HR Validation", "/ats/payroll-hr-validation"],
++      ["Enhanced BGV", "/ats/bgv-enhanced"],
++      ["Attendance Mismatch", "/wfm/mismatch-queue"],
++      ["Attendance Billing", "/attendance/billing-config"],
++      ["WFM Manager Approvals", "/wfm-manager-approvals"],
++      ["KPI Master", "/kpi-master"],
++      ["My KPI", "/my-kpi"],
++      ["PIP Management", "/pip-management"],
++      ["TAT Matrix", "/governance/tat-matrix"],
++      ["TAT Dashboard", "/governance/tat-dashboard"],
++      ["Incentives", "/payroll/incentives"],
++      ["Bulk Outputs", "/payroll/bulk-outputs"],
++      ["Payroll Sign-off", "/payroll/sign-off"],
++      ["Reimbursements", "/payroll/reimbursements"],
++      ["Salary Increment", "/salary-increment"],
++      ["Vendors", "/vendors"],
++      ["Procurement", "/procurement"],
++      ["PeopleOS Copilot", "/peopleos/copilot"],
++      ["Changelog", "/changelog"],
++      ["Visitor Approvals", "/visitor-management/approvals"],
++      ["Visitor Desk", "/visitor-management/desk"],
++      ["Visitor Security", "/visitor-management/security"],
++    ] as const;
++
++    for (const [label, path] of requiredDestinations) {
++      expect(navSource).toContain(`label: "${label}"`);
++      expect(navSource).toContain(`href: "${path}"`);
++    }
++  });
++
++  it("keeps only intentional public, redirect, detail, and legacy routes outside navigation", () => {
++    const intentionallyNonSidebarRoutes = new Set([
++      "/",
++      "/advanced-reports",
++      "/ats/branch-head-approval",
++      "/ats/candidate-registration",
++      "/ats/command-centre",
++      "/ats/dashboard",
++      "/ats/dashboard-v2",
++      "/ats/payroll-hr",
++      "/ats/recruiter/calling-dashboard",
++      "/ats/recruiter/calling-entry",
++      "/ats/recruiter/workspace",
++      "/attendance-regularization",
++      "/auth",
++      "/candidate-onboarding-full",
++      "/candidate-portal/dashboard",
++      "/candidate-portal/login",
++      "/candidate-registration",
++      "/change-password",
++      "/customization/new",
++      "/display/waiting-room",
++      "/employee-lifecycle-v2",
++      "/employee-stat-card",
++      "/engagement/command-center",
++      "/exit/resignation-command-center",
++      "/features",
++      "/goals",
++      "/how-it-works",
++      "/hr-onboarding-requests",
++      "/interview-registration",
++      "/it-provisioning",
++      "/jobs",
++      "/leave-approvals",
++      "/lms",
++      "/lms/management-dashboard",
++      "/lms/module-launch",
++      "/login",
++      "/management/ceo-command-center",
++      "/master-reports",
++      "/onboard",
++      "/onboard-full",
++      "/onboard-full-legacy",
++      "/onboarding-requests",
++      "/onboard-v1",
++      "/portal",
++      "/portal/login",
++      "/pricing",
++      "/privacy-policy",
++      "/reports/enterprise",
++      "/reset-password",
++      "/reviews-management",
++      "/security",
++      "/terms-of-service",
++      "/two-factor",
++      "/walkin-registration",
++      "/wfm/adherence-command-center",
++      "/wfm/agent-attendance-view",
++      "/wfm/break-desk-devices",
++      "/wfm-roster",
++    ]);
++    const navPaths = new Set(
++      [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
++    );
++    const staticRoutePaths = [
++      ...routeSource.matchAll(/<Route\s+path="([^"]+)"/g),
++    ]
++      .map((match) => match[1])
++      .filter((path) => !path.includes(":") && !path.includes("*"));
++    const unexpectedHiddenRoutes = staticRoutePaths
++      .filter((path) => !navPaths.has(path) && !intentionallyNonSidebarRoutes.has(path))
++      .sort();
++
++    expect(unexpectedHiddenRoutes).toEqual([]);
++  });
++
+   it("keeps sales performance out of shared role dashboards", () => {
+     const referenceDashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
+     const roleDashboard = read("src/pages/dashboards/RoleDashboardV3.tsx");
+ 
+     expect(referenceDashboard).not.toContain("RoleSalesPerformancePanel");

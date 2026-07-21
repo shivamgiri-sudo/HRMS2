@@ -56,6 +56,7 @@ import {
   type SaveMonthlyPlanPayload,
   type SaveRatePayload,
 } from "@/hooks/usePnlConfiguration";
+import { PnlBulkUploadDialog } from "@/components/finance/PnlBulkUploadDialog";
 
 type AnyRow = Record<string, any>;
 
@@ -296,6 +297,8 @@ export default function PnlMasterControlCenterPage() {
   const [branchFilter, setBranchFilter] = useState("");
   const [impactProcessId, setImpactProcessId] = useState("");
   const [impactRateChange, setImpactRateChange] = useState(5);
+
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
 
   // Split-pane shared state (one tab active at a time)
   const [formOpen, setFormOpen] = useState(false);
@@ -541,6 +544,9 @@ export default function PnlMasterControlCenterPage() {
           <h1 className="text-sm font-semibold">P&amp;L Control Centre</h1>
           <div className="flex items-center gap-3">
             {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
+            <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={() => setBulkUploadOpen(true)}>
+              <FileSpreadsheet className="h-3.5 w-3.5" />Bulk Upload
+            </Button>
             <Button asChild variant="ghost" size="sm" className="text-xs">
               <Link to={`/finance/process-pnl?period=${period}`}><BarChart3 className="mr-1.5 h-3.5 w-3.5" />P&amp;L Command Centre</Link>
             </Button>
@@ -1161,6 +1167,22 @@ export default function PnlMasterControlCenterPage() {
           </div>
         </div>
       </div>
+      <PnlBulkUploadDialog
+        open={bulkUploadOpen}
+        onOpenChange={setBulkUploadOpen}
+        onSuccess={() => {
+          legacy.referenceQuery.refetch();
+          legacy.contractsQuery.refetch();
+          legacy.ratesQuery.refetch();
+          legacy.monthlyPlansQuery.refetch();
+          bpo.revenueRulesQuery.refetch();
+          bpo.deliveryActualsQuery.refetch();
+          bpo.revenueComponentsQuery.refetch();
+          bpo.costComponentsQuery.refetch();
+          bpo.allocationPoliciesQuery.refetch();
+          bpo.classificationRulesQuery.refetch();
+        }}
+      />
     </DashboardLayout>
   );
 }

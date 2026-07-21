@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { CeoCommandCenter } from "@/components/finance/pnl/CeoCommandCenter";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
+  const [activeTab, setActiveTab] = useState<"overview" | "matrix" | "charts">("overview");
 
   const filters = {
     period,
@@ -184,12 +186,30 @@ export default function ProcessPnlPage() {
           )}
         </div>
 
-        {/* 2-tab layout (KPI Strip promoted to always-visible; tabs = Matrix + Charts) */}
-        <Tabs defaultValue="matrix" className="flex flex-1 flex-col overflow-hidden">
+        {/* Tab layout: CEO Overview (default) + Process Matrix + Charts & Quality */}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit shrink-0">
+            <TabsTrigger value="overview">CEO Overview</TabsTrigger>
             <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
             <TabsTrigger value="charts">Charts &amp; Quality</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
+            {bpoQuery.isLoading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-20 rounded-2xl" />
+                <Skeleton className="h-56 rounded-2xl" />
+                <Skeleton className="h-56 rounded-2xl" />
+                <Skeleton className="h-96 rounded-2xl" />
+              </div>
+            ) : summary ? (
+              <CeoCommandCenter
+                summary={summary}
+                period={period}
+                onViewAllProcesses={() => setActiveTab("matrix")}
+              />
+            ) : null}
+          </TabsContent>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
             {bpoQuery.isLoading ? (

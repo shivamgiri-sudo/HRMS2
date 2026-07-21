@@ -1,0 +1,1135 @@
+Merge base: c893b56da818011dc370e4905647dc4e55e970f8
+
+=== ALL COMMITS ===
+c893b56d feat(ai): wire AICommandBar — replace FloatingChatWidget, update layout padding, remove old ⌘K handler
+8064589c feat(ai): AICommandBar orchestrator — global ⌘K handler, ambient strip, palette
+5ba3ab35 feat(ai): AmbientInsightBar — inline page-level insight chip row for dashboards
+6770d459 fix(ai): CommandPalette — cancel stale debounce on mode change, reset loading on close
+2067251c feat(ai): CommandPalette — cmdk-powered AI + nav + employee search overlay
+e14630bd feat(ai): AmbientStrip — 36px dark bottom bar with contextual insight chips
+df0f4aed feat(ai): add useAmbientInsights hook with 5-min module-level cache
+
+=== STAT ===
+ src/App.tsx                                      |   4 +-
+ src/components/ai/AICommandBar.tsx               | 109 ++++++++
+ src/components/ai/AmbientInsightBar.tsx          |  53 ++++
+ src/components/ai/AmbientStrip.tsx               |  65 +++++
+ src/components/ai/CommandPalette.tsx             | 295 ++++++++++++++++++++++
+ src/components/ai/FloatingChatWidget.tsx         | 300 -----------------------
+ src/components/ai/index.ts                       |   5 +-
+ src/components/layout/CompactDashboardLayout.tsx |  17 +-
+ src/components/layout/TopBar.tsx                 |   9 +-
+ src/hooks/useAmbientInsights.ts                  |  72 ++++++
+ src/tests/app-shell-routing.contract.test.ts     |   2 +-
+ 11 files changed, 603 insertions(+), 328 deletions(-)
+
+=== DIFF ===
+diff --git a/src/App.tsx b/src/App.tsx
+index ae46a6f9..1081e2b8 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,16 +1,16 @@
+ import { Suspense } from "react";
+ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+ import { BrowserRouter, Route, Routes } from "react-router-dom";
+ 
+ import { ErrorBoundary } from "@/components/ErrorBoundary";
+-import { FloatingChatWidget } from "@/components/ai/FloatingChatWidget";
++import { AICommandBar } from "@/components/ai/AICommandBar";
+ import CookieConsent from "@/components/layout/CookieConsent";
+ import { OfflineFallback } from "@/components/layout/OfflineFallback";
+ import ScrollToTop from "@/components/layout/ScrollToTop";
+ import { Toaster as Sonner } from "@/components/ui/sonner";
+ import { Toaster } from "@/components/ui/toaster";
+ import { TooltipProvider } from "@/components/ui/tooltip";
+ import { AuthProvider } from "@/contexts/AuthContext";
+ 
+ import { appRouteElements } from "./config/routes";
+ import NotFound from "./pages/NotFound";
+@@ -43,18 +43,18 @@ const App = () => (
+           <ErrorBoundary>
+             <Suspense fallback={<PageLoader />}>
+               <Routes>
+                 {appRouteElements}
+                 <Route path="*" element={<NotFound />} />
+               </Routes>
+             </Suspense>
+           </ErrorBoundary>
+           <CookieConsent />
+           <OfflineFallback />
+-          <FloatingChatWidget />
++          <AICommandBar />
+         </AuthProvider>
+       </BrowserRouter>
+     </TooltipProvider>
+   </QueryClientProvider>
+ );
+ 
+ export default App;
+diff --git a/src/components/ai/AICommandBar.tsx b/src/components/ai/AICommandBar.tsx
+new file mode 100644
+index 00000000..6878c9a7
+--- /dev/null
++++ b/src/components/ai/AICommandBar.tsx
+@@ -0,0 +1,109 @@
++import { useState, useEffect } from "react";
++import { useLocation } from "react-router-dom";
++import { useAuth } from "@/contexts/AuthContext";
++import { AmbientStrip } from "./AmbientStrip";
++import { CommandPalette } from "./CommandPalette";
++
++// Routes where the ambient strip is shown
++const AMBIENT_ROUTES = [
++  "/dashboard",
++  "/my-dashboard",
++  "/ceo/dashboard",
++  "/operations/dashboard",
++  "/operations-dashboard",
++  "/quality/dashboard",
++  "/quality-dashboard",
++  "/wfm/dashboard",
++  "/wfm-attendance",
++  "/hr/dashboard",
++  "/manager/dashboard",
++  "/recruiter-dashboard",
++  "/payroll-hr/dashboard",
++  "/call-master",
++  "/attendance",
++  "/reports",
++  "/work-inbox",
++];
++
++// Routes where neither strip nor palette should appear
++const HIDDEN_ROUTES = [
++  "/auth",
++  "/login",
++  "/register",
++  "/peopleos/copilot",
++  "/candidate-form",
++  "/interview-registration",
++  "/onboard",
++  "/display/",
++  "/break-desk",
++  "/candidate-portal",
++  "/portal/",
++];
++
++const ROUTE_CONTEXT: Record<string, string> = {
++  "/dashboard":             "generic",
++  "/my-dashboard":          "employee_self",
++  "/ceo/dashboard":         "executive_dashboard",
++  "/operations/dashboard":  "operations",
++  "/operations-dashboard":  "operations",
++  "/quality/dashboard":     "quality_operations",
++  "/quality-dashboard":     "quality_operations",
++  "/wfm/dashboard":         "wfm_roster",
++  "/wfm-attendance":        "wfm_roster",
++  "/hr/dashboard":          "hr_operations",
++  "/manager/dashboard":     "manager_team",
++  "/recruiter-dashboard":   "ats_recruiter",
++  "/payroll-hr/dashboard":  "payroll_readiness",
++  "/call-master":           "operations",
++  "/attendance":            "wfm_roster",
++};
++
++function getContextType(pathname: string): string {
++  if (ROUTE_CONTEXT[pathname]) return ROUTE_CONTEXT[pathname];
++  for (const [route, ctx] of Object.entries(ROUTE_CONTEXT)) {
++    if (pathname.startsWith(route + "/")) return ctx;
++  }
++  return "generic";
++}
++
++export function AICommandBar() {
++  const { user } = useAuth();
++  const location = useLocation();
++  const [paletteOpen, setPaletteOpen] = useState(false);
++
++  const pathname = location.pathname;
++  const isHidden = !user || HIDDEN_ROUTES.some((r) => pathname.startsWith(r));
++  const showStrip = !isHidden && AMBIENT_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"));
++  const contextType = getContextType(pathname);
++
++  // Global ⌘K / Ctrl+K handler — capture phase overrides old handler in CompactDashboardLayout
++  useEffect(() => {
++    if (isHidden) return;
++    const handler = (e: KeyboardEvent) => {
++      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
++        e.preventDefault();
++        e.stopPropagation();
++        setPaletteOpen((prev) => !prev);
++      }
++    };
++    document.addEventListener("keydown", handler, true);
++    return () => document.removeEventListener("keydown", handler, true);
++  }, [isHidden]);
++
++  if (isHidden) return null;
++
++  return (
++    <>
++      {showStrip && (
++        <AmbientStrip
++          contextType={contextType}
++          onOpen={() => setPaletteOpen(true)}
++        />
++      )}
++      <CommandPalette
++        open={paletteOpen}
++        onClose={() => setPaletteOpen(false)}
++      />
++    </>
++  );
++}
+diff --git a/src/components/ai/AmbientInsightBar.tsx b/src/components/ai/AmbientInsightBar.tsx
+new file mode 100644
+index 00000000..79093d68
+--- /dev/null
++++ b/src/components/ai/AmbientInsightBar.tsx
+@@ -0,0 +1,53 @@
++import { AlertTriangle, Info, Sparkles } from "lucide-react";
++import { cn } from "@/lib/utils";
++import { useAmbientInsights, type AmbientChip } from "@/hooks/useAmbientInsights";
++
++const CHIP_CLASS: Record<AmbientChip["severity"], string> = {
++  critical: "border-red-200 bg-red-50 text-red-700",
++  warning:  "border-amber-200 bg-amber-50 text-amber-700",
++  info:     "border-slate-200 bg-slate-50 text-slate-600",
++};
++
++const ChipIcon = ({ severity }: { severity: AmbientChip["severity"] }) => {
++  if (severity === "critical" || severity === "warning") return <AlertTriangle className="h-3 w-3 flex-shrink-0" />;
++  return <Info className="h-3 w-3 flex-shrink-0" />;
++};
++
++export function AmbientInsightBar({
++  contextType,
++  onOpenPalette,
++}: {
++  contextType: string;
++  onOpenPalette: () => void;
++}) {
++  const { chips, loading } = useAmbientInsights(contextType);
++
++  if (!loading && chips.length === 0) return null;
++
++  return (
++    <div className="flex items-center gap-2 flex-wrap">
++      <span className="flex items-center gap-1 text-xs text-violet-600 font-semibold flex-shrink-0">
++        <Sparkles className="h-3 w-3" />
++        AI
++      </span>
++      {loading && chips.length === 0 ? (
++        <span className="text-xs text-slate-400">Loading insights…</span>
++      ) : (
++        chips.map((chip, i) => (
++          <button
++            key={i}
++            type="button"
++            onClick={chip.action_url ? () => { window.location.href = chip.action_url!; } : onOpenPalette}
++            className={cn(
++              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition hover:opacity-80",
++              CHIP_CLASS[chip.severity]
++            )}
++          >
++            <ChipIcon severity={chip.severity} />
++            {chip.label}
++          </button>
++        ))
++      )}
++    </div>
++  );
++}
+diff --git a/src/components/ai/AmbientStrip.tsx b/src/components/ai/AmbientStrip.tsx
+new file mode 100644
+index 00000000..4d816bf3
+--- /dev/null
++++ b/src/components/ai/AmbientStrip.tsx
+@@ -0,0 +1,65 @@
++import { Sparkles } from "lucide-react";
++import { cn } from "@/lib/utils";
++import { useAmbientInsights, type AmbientChip } from "@/hooks/useAmbientInsights";
++
++const SEVERITY_DOT: Record<AmbientChip["severity"], string> = {
++  critical: "bg-red-400 animate-pulse",
++  warning:  "bg-amber-400",
++  info:     "bg-slate-400",
++};
++
++const SEVERITY_TEXT: Record<AmbientChip["severity"], string> = {
++  critical: "text-red-300",
++  warning:  "text-amber-300",
++  info:     "text-slate-300",
++};
++
++export function AmbientStrip({
++  contextType,
++  onOpen,
++}: {
++  contextType: string;
++  onOpen: () => void;
++}) {
++  const { chips, loading } = useAmbientInsights(contextType);
++
++  return (
++    <div
++      role="complementary"
++      aria-label="AI Copilot insights"
++      className="fixed bottom-0 left-0 right-0 z-40 flex h-9 items-center gap-3 bg-slate-900/95 px-4 backdrop-blur-sm select-none"
++    >
++      <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-violet-400" />
++
++      {loading && chips.length === 0 ? (
++        <span className="text-xs text-slate-500">Loading insights…</span>
++      ) : chips.length > 0 ? (
++        <div className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden">
++          {chips.map((chip, i) => (
++            <button
++              key={i}
++              type="button"
++              onClick={onOpen}
++              className="flex items-center gap-1.5 text-xs hover:opacity-80 transition-opacity flex-shrink-0"
++            >
++              <span className={cn("h-1.5 w-1.5 rounded-full flex-shrink-0", SEVERITY_DOT[chip.severity])} />
++              <span className={cn(SEVERITY_TEXT[chip.severity])}>{chip.label}</span>
++            </button>
++          ))}
++          {chips.length > 0 && <span className="text-slate-600 text-xs flex-shrink-0">·</span>}
++        </div>
++      ) : null}
++
++      <button
++        type="button"
++        onClick={onOpen}
++        className="ml-auto flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors flex-shrink-0"
++      >
++        Ask anything
++        <kbd className="inline-flex h-5 items-center gap-0.5 rounded border border-slate-700 bg-slate-800 px-1.5 font-mono text-[10px] text-slate-400">
++          ⌘K
++        </kbd>
++      </button>
++    </div>
++  );
++}
+diff --git a/src/components/ai/CommandPalette.tsx b/src/components/ai/CommandPalette.tsx
+new file mode 100644
+index 00000000..d911204d
+--- /dev/null
++++ b/src/components/ai/CommandPalette.tsx
+@@ -0,0 +1,295 @@
++import { useState, useEffect, useRef } from "react";
++import { useNavigate } from "react-router-dom";
++import { Command } from "cmdk";
++import {
++  Sparkles, Navigation, Users, Loader2,
++  ArrowRight, AlertTriangle, CheckCircle2,
++} from "lucide-react";
++import { cn } from "@/lib/utils";
++import { hrmsApi } from "@/lib/hrmsApi";
++import { navGroups } from "@/components/layout/navConfig";
++
++type Mode = "ai" | "nav" | "employee";
++type AISeverity = "critical" | "high" | "medium" | "low";
++
++interface AIResponse {
++  answer: string;
++  insights?: Array<{ key: string; label: string; severity?: AISeverity; count?: number }>;
++  actions?: Array<{ key: string; label: string; url: string }>;
++}
++
++interface EmployeeResult {
++  id: string;
++  employee_code: string;
++  full_name?: string;
++  first_name?: string;
++  last_name?: string;
++  branch_name?: string;
++  designation_name?: string;
++}
++
++const SEVERITY_CLASS: Record<AISeverity, string> = {
++  critical: "border-red-300 bg-red-50 text-red-700",
++  high:     "border-amber-300 bg-amber-50 text-amber-700",
++  medium:   "border-blue-300 bg-blue-50 text-blue-700",
++  low:      "border-slate-300 bg-slate-50 text-slate-600",
++};
++
++function getMode(value: string): Mode {
++  if (value.startsWith("/")) return "nav";
++  if (value.startsWith("@")) return "employee";
++  return "ai";
++}
++
++// Flatten all nav items with their labels and hrefs
++function flatNavItems() {
++  return navGroups.flatMap((g) =>
++    g.items.flatMap((item) => {
++      const base = [{ label: item.label, href: item.href, group: g.title, description: item.description }];
++      const children = (item.children ?? []).map((c) => ({
++        label: c.label, href: c.href, group: item.label, description: c.description,
++      }));
++      return [...base, ...children];
++    })
++  );
++}
++
++const ALL_NAV = flatNavItems();
++
++export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
++  const navigate = useNavigate();
++  const [value, setValue] = useState("");
++  const [aiLoading, setAiLoading] = useState(false);
++  const [aiResult, setAiResult] = useState<AIResponse | null>(null);
++  const [empResults, setEmpResults] = useState<EmployeeResult[]>([]);
++  const [empLoading, setEmpLoading] = useState(false);
++  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++
++  const mode: Mode = getMode(value);
++  const query = value.startsWith("/") || value.startsWith("@") ? value.slice(1) : value;
++
++  // Reset state when closing
++  useEffect(() => {
++    if (!open) {
++      setValue("");
++      setAiResult(null);
++      setEmpResults([]);
++      setAiLoading(false);
++      setEmpLoading(false);
++    }
++  }, [open]);
++
++  // Nav filter
++  const navResults = mode === "nav"
++    ? ALL_NAV.filter((item) =>
++        item.label.toLowerCase().includes(query.toLowerCase()) ||
++        (item.description ?? "").toLowerCase().includes(query.toLowerCase())
++      ).slice(0, 8)
++    : [];
++
++  // Employee search
++  useEffect(() => {
++    if (debounceRef.current) clearTimeout(debounceRef.current);
++    if (mode !== "employee" || query.length < 2) { setEmpResults([]); return; }
++    debounceRef.current = setTimeout(async () => {
++      setEmpLoading(true);
++      try {
++        const res = await hrmsApi.get<{ data: EmployeeResult[] }>(`/api/employees?search=${encodeURIComponent(query)}&limit=8`).catch(() => null);
++        setEmpResults(res?.data ?? []);
++      } finally {
++        setEmpLoading(false);
++      }
++    }, 300);
++    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [query, mode]);
++
++  // AI ask
++  const askAI = async () => {
++    if (!query.trim() || aiLoading) return;
++    setAiLoading(true);
++    setAiResult(null);
++    try {
++      const res = await hrmsApi.post<{ success: boolean; data: AIResponse }>("/api/ai/ask", {
++        question: query,
++        context_type: "generic",
++      }).catch(() => null);
++      setAiResult(res?.data ?? { answer: "Unable to get a response. Try the full chat →" });
++    } finally {
++      setAiLoading(false);
++    }
++  };
++
++  const handleKeyDown = (e: React.KeyboardEvent) => {
++    if (e.key === "Escape") { onClose(); return; }
++    if (e.key === "Enter" && mode === "ai" && query.trim()) {
++      e.preventDefault();
++      void askAI();
++    }
++  };
++
++  if (!open) return null;
++
++  return (
++    <div
++      className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
++      role="dialog"
++      aria-modal="true"
++      aria-label="AI Command Palette"
++    >
++      {/* Backdrop */}
++      <div
++        className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
++        onClick={onClose}
++        aria-hidden
++      />
++
++      {/* Panel */}
++      <div className="relative z-10 w-full max-w-[640px] mx-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl animate-in slide-in-from-top-4 duration-150">
++        <Command shouldFilter={false} onKeyDown={handleKeyDown}>
++          {/* Header */}
++          <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
++            <Sparkles className="h-4 w-4 text-violet-500 flex-shrink-0" />
++            <Command.Input
++              value={value}
++              onValueChange={setValue}
++              placeholder="Ask anything… or type / to navigate, @ to find an employee"
++              className="flex-1 bg-transparent text-sm text-slate-900 placeholder:text-slate-400 outline-none"
++              autoFocus
++            />
++            {(aiLoading || empLoading) && <Loader2 className="h-4 w-4 animate-spin text-slate-400 flex-shrink-0" />}
++          </div>
++
++          <Command.List className="max-h-[400px] overflow-y-auto">
++
++            {/* AI mode: empty state suggestions */}
++            {mode === "ai" && !query && !aiResult && (
++              <Command.Group heading="Suggested for you">
++                {[
++                  "What are my top risks today?",
++                  "Which employees need attention?",
++                  "Show me pending actions",
++                  "Who hasn't clocked in yet?",
++                ].map((prompt) => (
++                  <Command.Item
++                    key={prompt}
++                    onSelect={() => { setValue(prompt); }}
++                    className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 aria-selected:bg-slate-50"
++                  >
++                    <Sparkles className="h-3.5 w-3.5 text-violet-400 flex-shrink-0" />
++                    {prompt}
++                  </Command.Item>
++                ))}
++              </Command.Group>
++            )}
++
++            {/* AI mode: result */}
++            {mode === "ai" && aiResult && (
++              <div className="px-4 py-3 space-y-3">
++                <p className="text-sm text-slate-800 leading-relaxed">{aiResult.answer}</p>
++                {(aiResult.insights ?? []).length > 0 && (
++                  <div className="flex flex-wrap gap-1.5">
++                    {(aiResult.insights ?? []).slice(0, 3).map((ins) => (
++                      <span key={ins.key} className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs", SEVERITY_CLASS[ins.severity ?? "low"])}>
++                        {(ins.severity === "critical" || ins.severity === "high") ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
++                        {ins.label}{ins.count !== undefined ? ` (${ins.count})` : ""}
++                      </span>
++                    ))}
++                  </div>
++                )}
++                {(aiResult.actions ?? []).length > 0 && (
++                  <div className="flex flex-wrap gap-2">
++                    {(aiResult.actions ?? []).slice(0, 2).map((action) => (
++                      <a key={action.key} href={action.url} onClick={onClose}
++                        className="inline-flex items-center gap-1 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100 transition">
++                        {action.label} <ArrowRight className="h-3 w-3" />
++                      </a>
++                    ))}
++                  </div>
++                )}
++                <div className="flex justify-end pt-1 border-t border-slate-100">
++                  <a href="/peopleos/copilot" onClick={onClose}
++                    className="text-xs text-violet-600 hover:underline flex items-center gap-1">
++                    Open full conversation <ArrowRight className="h-3 w-3" />
++                  </a>
++                </div>
++              </div>
++            )}
++
++            {/* AI mode: loading */}
++            {mode === "ai" && aiLoading && (
++              <div className="flex items-center gap-3 px-4 py-4 text-sm text-slate-400">
++                <Loader2 className="h-4 w-4 animate-spin" />
++                Thinking…
++              </div>
++            )}
++
++            {/* Nav mode */}
++            {mode === "nav" && navResults.length > 0 && (
++              <Command.Group heading="Navigate">
++                {navResults.map((item) => (
++                  <Command.Item
++                    key={item.href}
++                    onSelect={() => { navigate(item.href); onClose(); }}
++                    className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm hover:bg-slate-50 aria-selected:bg-slate-50"
++                  >
++                    <Navigation className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
++                    <div className="flex-1 min-w-0">
++                      <span className="font-medium text-slate-800">{item.label}</span>
++                      {item.group && <span className="ml-2 text-xs text-slate-400">{item.group}</span>}
++                    </div>
++                    <code className="text-[10px] text-slate-400 font-mono flex-shrink-0">{item.href}</code>
++                  </Command.Item>
++                ))}
++              </Command.Group>
++            )}
++
++            {mode === "nav" && query && navResults.length === 0 && (
++              <Command.Empty className="px-4 py-6 text-sm text-center text-slate-400">No pages matching "{query}"</Command.Empty>
++            )}
++
++            {/* Employee mode */}
++            {mode === "employee" && empResults.length > 0 && (
++              <Command.Group heading="Employees">
++                {empResults.map((emp) => {
++                  const name = emp.full_name ?? `${emp.first_name ?? ""} ${emp.last_name ?? ""}`.trim() || emp.employee_code;
++                  return (
++                    <Command.Item
++                      key={emp.id}
++                      onSelect={() => { navigate(`/employees/${emp.id}`); onClose(); }}
++                      className="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm hover:bg-slate-50 aria-selected:bg-slate-50"
++                    >
++                      <Users className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
++                      <div className="flex-1 min-w-0">
++                        <span className="font-medium text-slate-800">{name}</span>
++                        <span className="ml-2 text-xs text-slate-400">{emp.employee_code}</span>
++                      </div>
++                      {emp.branch_name && <span className="text-xs text-slate-400 flex-shrink-0">{emp.branch_name}</span>}
++                    </Command.Item>
++                  );
++                })}
++              </Command.Group>
++            )}
++
++            {mode === "employee" && query.length >= 2 && !empLoading && empResults.length === 0 && (
++              <Command.Empty className="px-4 py-6 text-sm text-center text-slate-400">No employees found for "{query}"</Command.Empty>
++            )}
++
++            {mode === "employee" && query.length < 2 && (
++              <div className="px-4 py-4 text-xs text-slate-400 text-center">Type at least 2 characters to search employees</div>
++            )}
++
++          </Command.List>
++
++          {/* Footer */}
++          <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">
++            <span><kbd className="font-mono">↵</kbd> {mode === "ai" ? "ask AI" : "select"}</span>
++            <span><kbd className="font-mono">/</kbd> navigate</span>
++            <span><kbd className="font-mono">@</kbd> find employee</span>
++            <span className="ml-auto"><kbd className="font-mono">Esc</kbd> close</span>
++          </div>
++        </Command>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/ai/FloatingChatWidget.tsx b/src/components/ai/FloatingChatWidget.tsx
+deleted file mode 100644
+index d78b4726..00000000
+--- a/src/components/ai/FloatingChatWidget.tsx
++++ /dev/null
+@@ -1,300 +0,0 @@
+-import { useState, useRef, useEffect } from "react";
+-import { useLocation } from "react-router-dom";
+-import { Loader2, MessageCircle, Send, Sparkles, X, AlertTriangle, CheckCircle2 } from "lucide-react";
+-import { Button } from "@/components/ui/button";
+-import { Input } from "@/components/ui/input";
+-import { ScrollArea } from "@/components/ui/scroll-area";
+-import { Badge } from "@/components/ui/badge";
+-import { useAuth } from "@/contexts/AuthContext";
+-import { hrmsApi } from "@/lib/hrmsApi";
+-import { cn } from "@/lib/utils";
+-
+-interface Message {
+-  id: string;
+-  role: "user" | "assistant";
+-  content: string;
+-  timestamp: Date;
+-  provider?: string;
+-  fallbackUsed?: boolean;
+-  insights?: Array<{
+-    key: string;
+-    label: string;
+-    count?: number;
+-    severity?: "low" | "medium" | "high" | "critical";
+-  }>;
+-  actions?: Array<{
+-    key: string;
+-    label: string;
+-    url: string;
+-    priority: "low" | "medium" | "high" | "critical";
+-  }>;
+-}
+-
+-const WELCOME_MESSAGE: Message = {
+-  id: "welcome",
+-  role: "assistant",
+-  content: "Hi! I'm your PeopleOS Copilot. Ask me anything about employees, attendance, payroll, recruitment, or any HR data. I can help you find information quickly.",
+-  timestamp: new Date(),
+-};
+-
+-const SUGGESTED_PROMPTS = [
+-  "What are my top risks today?",
+-  "Which employees need attention?",
+-  "Show me pending actions",
+-];
+-
+-export function FloatingChatWidget() {
+-  const { user } = useAuth();
+-  const location = useLocation();
+-  const [isOpen, setIsOpen] = useState(false);
+-  const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
+-  const [input, setInput] = useState("");
+-  const [loading, setLoading] = useState(false);
+-  const scrollRef = useRef<HTMLDivElement>(null);
+-  const inputRef = useRef<HTMLInputElement>(null);
+-
+-  // Hide on public pages or standalone copilot page
+-  const hiddenPaths = ["/login", "/register", "/forgot-password", "/peopleos/copilot", "/candidate-form"];
+-  const shouldHide = !user || hiddenPaths.some((p) => location.pathname.startsWith(p));
+-
+-  useEffect(() => {
+-    if (scrollRef.current) {
+-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+-    }
+-  }, [messages]);
+-
+-  useEffect(() => {
+-    if (isOpen && inputRef.current) {
+-      inputRef.current.focus();
+-    }
+-  }, [isOpen]);
+-
+-  if (shouldHide) return null;
+-
+-  const sendMessage = async (text?: string) => {
+-    const question = text ?? input.trim();
+-    if (!question || loading) return;
+-
+-    const userMessage: Message = {
+-      id: Date.now().toString(),
+-      role: "user",
+-      content: question,
+-      timestamp: new Date(),
+-    };
+-
+-    setMessages((prev) => [...prev, userMessage]);
+-    setInput("");
+-    setLoading(true);
+-
+-    try {
+-      const res = await hrmsApi.post<{ success: boolean; data: any; error?: string }>("/api/ai/ask", {
+-        question,
+-        context_type: "generic",
+-      });
+-
+-      if (res.success && res.data) {
+-        const data = res.data;
+-        const assistantMessage: Message = {
+-          id: (Date.now() + 1).toString(),
+-          role: "assistant",
+-          content: data.answer ?? "I couldn't generate a response. Please try again.",
+-          timestamp: new Date(),
+-          provider: data.provider,
+-          fallbackUsed: data.fallbackUsed,
+-          insights: data.insights,
+-          actions: data.actions,
+-        };
+-        setMessages((prev) => [...prev, assistantMessage]);
+-      } else {
+-        setMessages((prev) => [
+-          ...prev,
+-          {
+-            id: (Date.now() + 1).toString(),
+-            role: "assistant",
+-            content: res.error ?? "Something went wrong. Please try again.",
+-            timestamp: new Date(),
+-          },
+-        ]);
+-      }
+-    } catch (error) {
+-      setMessages((prev) => [
+-        ...prev,
+-        {
+-          id: (Date.now() + 1).toString(),
+-          role: "assistant",
+-          content: "Failed to connect to the AI service. Please check your connection and try again.",
+-          timestamp: new Date(),
+-        },
+-      ]);
+-    } finally {
+-      setLoading(false);
+-    }
+-  };
+-
+-  const handleKeyDown = (e: React.KeyboardEvent) => {
+-    if (e.key === "Enter" && !e.shiftKey) {
+-      e.preventDefault();
+-      sendMessage();
+-    }
+-  };
+-
+-  return (
+-    <>
+-      {/* Floating bubble button */}
+-      {!isOpen && (
+-        <button
+-          type="button"
+-          onClick={() => setIsOpen(true)}
+-          className="fixed z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--brand-600)] text-white shadow-lg transition-all hover:bg-[color:var(--brand-700)] hover:scale-105 bottom-20 right-4 md:bottom-6 md:right-6"
+-          aria-label="Open AI assistant"
+-        >
+-          <MessageCircle className="h-6 w-6" />
+-        </button>
+-      )}
+-
+-      {/* Chat panel */}
+-      {isOpen && (
+-        <div className="fixed z-50 flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl bottom-20 right-4 md:bottom-6 md:right-6 w-[calc(100vw-2rem)] max-w-[400px] h-[min(500px,70vh)]">
+-          {/* Header */}
+-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 bg-gradient-to-r from-[color:var(--brand-600)] to-[color:var(--brand-500)] rounded-t-2xl">
+-            <div className="flex items-center gap-2 text-white">
+-              <Sparkles className="h-5 w-5" />
+-              <span className="font-semibold">PeopleOS Copilot</span>
+-            </div>
+-            <button
+-              type="button"
+-              onClick={() => setIsOpen(false)}
+-              className="rounded-full p-1 text-white/80 hover:bg-white/10 hover:text-white transition"
+-              aria-label="Close chat"
+-            >
+-              <X className="h-5 w-5" />
+-            </button>
+-          </div>
+-
+-          {/* Messages */}
+-          <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+-            <div className="space-y-4">
+-              {messages.map((msg) => (
+-                <div
+-                  key={msg.id}
+-                  className={cn(
+-                    "flex flex-col gap-1",
+-                    msg.role === "user" ? "items-end" : "items-start"
+-                  )}
+-                >
+-                  <div
+-                    className={cn(
+-                      "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+-                      msg.role === "user"
+-                        ? "bg-[color:var(--brand-600)] text-white rounded-br-md"
+-                        : "bg-slate-100 text-slate-800 rounded-bl-md"
+-                    )}
+-                  >
+-                    {msg.content}
+-                  </div>
+-
+-                  {/* Insights */}
+-                  {msg.insights && msg.insights.length > 0 && (
+-                    <div className="mt-2 flex flex-wrap gap-1.5 max-w-[85%]">
+-                      {msg.insights.slice(0, 3).map((insight) => (
+-                        <Badge
+-                          key={insight.key}
+-                          variant="outline"
+-                          className={cn(
+-                            "text-xs",
+-                            insight.severity === "critical" && "border-red-300 bg-red-50 text-red-700",
+-                            insight.severity === "high" && "border-amber-300 bg-amber-50 text-amber-700",
+-                            insight.severity === "medium" && "border-blue-300 bg-blue-50 text-blue-700",
+-                            insight.severity === "low" && "border-slate-300 bg-slate-50 text-slate-600"
+-                          )}
+-                        >
+-                          {insight.severity === "critical" || insight.severity === "high" ? (
+-                            <AlertTriangle className="mr-1 h-3 w-3" />
+-                          ) : (
+-                            <CheckCircle2 className="mr-1 h-3 w-3" />
+-                          )}
+-                          {insight.label}
+-                          {insight.count !== undefined && ` (${insight.count})`}
+-                        </Badge>
+-                      ))}
+-                    </div>
+-                  )}
+-
+-                  {/* Actions */}
+-                  {msg.actions && msg.actions.length > 0 && (
+-                    <div className="mt-2 flex flex-wrap gap-1.5 max-w-[85%]">
+-                      {msg.actions.slice(0, 2).map((action) => (
+-                        <a
+-                          key={action.key}
+-                          href={action.url}
+-                          className="inline-flex items-center gap-1 rounded-lg bg-[color:var(--brand-50)] px-2.5 py-1 text-xs font-medium text-[color:var(--brand-700)] hover:bg-[color:var(--brand-100)] transition"
+-                        >
+-                          {action.label} →
+-                        </a>
+-                      ))}
+-                    </div>
+-                  )}
+-
+-                  {/* Fallback indicator */}
+-                  {msg.fallbackUsed && (
+-                    <span className="text-[10px] text-slate-400 mt-1">
+-                      Using local insights
+-                    </span>
+-                  )}
+-                </div>
+-              ))}
+-
+-              {/* Loading indicator */}
+-              {loading && (
+-                <div className="flex items-start">
+-                  <div className="rounded-2xl rounded-bl-md bg-slate-100 px-4 py-3">
+-                    <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+-                  </div>
+-                </div>
+-              )}
+-            </div>
+-          </ScrollArea>
+-
+-          {/* Suggested prompts (only show if no user messages yet) */}
+-          {messages.length === 1 && (
+-            <div className="border-t border-slate-100 px-3 py-2">
+-              <div className="flex flex-wrap gap-1.5">
+-                {SUGGESTED_PROMPTS.map((prompt) => (
+-                  <button
+-                    key={prompt}
+-                    type="button"
+-                    onClick={() => sendMessage(prompt)}
+-                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition"
+-                  >
+-                    {prompt}
+-                  </button>
+-                ))}
+-              </div>
+-            </div>
+-          )}
+-
+-          {/* Input */}
+-          <div className="border-t border-slate-100 p-3 flex gap-2">
+-            <Input
+-              ref={inputRef}
+-              value={input}
+-              onChange={(e) => setInput(e.target.value)}
+-              onKeyDown={handleKeyDown}
+-              placeholder="Ask anything..."
+-              className="rounded-xl border-slate-200 focus-visible:ring-[color:var(--brand-500)]"
+-              disabled={loading}
+-            />
+-            <Button
+-              type="button"
+-              onClick={() => sendMessage()}
+-              disabled={loading || !input.trim()}
+-              className="rounded-xl bg-[color:var(--brand-600)] hover:bg-[color:var(--brand-700)] px-3"
+-            >
+-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+-            </Button>
+-          </div>
+-        </div>
+-      )}
+-    </>
+-  );
+-}
+diff --git a/src/components/ai/index.ts b/src/components/ai/index.ts
+index 7abfb233..da62b492 100644
+--- a/src/components/ai/index.ts
++++ b/src/components/ai/index.ts
+@@ -1,2 +1,5 @@
+ export { AIInsightPanel } from "./AIInsightPanel";
+-export { FloatingChatWidget } from "./FloatingChatWidget";
++export { AICommandBar } from "./AICommandBar";
++export { AmbientStrip } from "./AmbientStrip";
++export { CommandPalette } from "./CommandPalette";
++export { AmbientInsightBar } from "./AmbientInsightBar";
+diff --git a/src/components/layout/CompactDashboardLayout.tsx b/src/components/layout/CompactDashboardLayout.tsx
+index e07316e3..75ba7c71 100644
+--- a/src/components/layout/CompactDashboardLayout.tsx
++++ b/src/components/layout/CompactDashboardLayout.tsx
+@@ -129,35 +129,20 @@ export function DashboardLayout({ children, subheader }: Props) {
+ 
+   const handleSearchSubmit = (e: FormEvent<HTMLFormElement>) => {
+     e.preventDefault();
+     if (searchResults[0]) {
+       navigate(searchResults[0].href);
+       setSearchQuery("");
+       setSidebarOpen(false);
+     }
+   };
+ 
+-  /* ⌘K shortcut */
+-  useEffect(() => {
+-    const handler = (e: KeyboardEvent) => {
+-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+-        e.preventDefault();
+-        const input = document.querySelector<HTMLInputElement>(
+-          'input[aria-label="Search modules"]'
+-        );
+-        input?.focus();
+-      }
+-    };
+-    document.addEventListener("keydown", handler);
+-    return () => document.removeEventListener("keydown", handler);
+-  }, []);
+-
+   /* Close sidebar on route change */
+   useEffect(() => {
+     setSidebarOpen(false);
+   }, [location.pathname]);
+ 
+   const isActive = (href: string) =>
+     href === "/dashboard"
+       ? location.pathname === "/dashboard"
+       : location.pathname === href || location.pathname.startsWith(`${href}/`);
+ 
+@@ -333,21 +318,21 @@ export function DashboardLayout({ children, subheader }: Props) {
+         <ReadOnlyBanner />
+ 
+         {/* Optional subheader slot — rendered below topbar, above page content, full-width */}
+         {subheader ? (
+           <div className="border-b border-slate-200 bg-white">
+             {subheader}
+           </div>
+         ) : null}
+ 
+         {/* Page content */}
+-        <main className="flex-1 px-4 py-5 sm:px-5 lg:px-6 lg:py-6">
++        <main className="flex-1 px-4 py-5 pb-9 sm:px-5 lg:px-6 lg:py-6">
+           {children}
+         </main>
+       </div>
+ 
+       {/* Mobile bottom navigation */}
+       <nav
+         className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around border-t bg-white px-2 pb-safe lg:hidden"
+         style={{ borderColor: "var(--border-hairline)", height: 58 }}
+         aria-label="Primary navigation"
+       >
+diff --git a/src/components/layout/TopBar.tsx b/src/components/layout/TopBar.tsx
+index 8680813f..ea132ad2 100644
+--- a/src/components/layout/TopBar.tsx
++++ b/src/components/layout/TopBar.tsx
+@@ -133,30 +133,23 @@ export function TopBar({
+         {/* Search */}
+         <form
+           onSubmit={onSearchSubmit}
+           className="relative ml-auto max-w-sm flex-1 lg:ml-4 lg:max-w-md"
+         >
+           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+           <Input
+             value={searchQuery}
+             onChange={(e) => onSearchChange(e.target.value)}
+             placeholder="Search..."
+-            className="h-9 rounded-xl border-slate-200 bg-slate-50 pl-9 pr-16 text-sm focus:bg-white"
++            className="h-9 rounded-xl border-slate-200 bg-slate-50 pl-9 pr-4 text-sm focus:bg-white"
+             aria-label="Search modules"
+           />
+-          <span
+-            className="cmd-key-hint pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
+-            aria-hidden
+-          >
+-            ⌘K
+-          </span>
+-
+           {searchQuery.trim() && searchResults && searchResults.length > 0 && (
+             <div className="absolute left-0 right-0 top-11 z-50 overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-white p-2 shadow-[var(--shadow-xl)]">
+               <div className="px-2 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[var(--tracking-wider)] text-[var(--text-muted)]">
+                 Navigate
+               </div>
+               {searchResults.slice(0, 7).map((item) => (
+                 <button
+                   key={item.href}
+                   type="button"
+                   onClick={() => onSearchResultClick(item.href)}
+diff --git a/src/hooks/useAmbientInsights.ts b/src/hooks/useAmbientInsights.ts
+new file mode 100644
+index 00000000..7b342f55
+--- /dev/null
++++ b/src/hooks/useAmbientInsights.ts
+@@ -0,0 +1,72 @@
++import { useState, useEffect, useRef } from "react";
++import { hrmsApi } from "@/lib/hrmsApi";
++
++export type AmbientChip = {
++  label: string;
++  severity: "critical" | "warning" | "info";
++  action_url?: string;
++};
++
++// Module-level cache: contextType -> { chips, expires_at }
++const ambientCache = new Map<string, { chips: AmbientChip[]; expires_at: number }>();
++const REFRESH_MS = 5 * 60 * 1000; // 5 minutes
++
++export function useAmbientInsights(contextType: string): {
++  chips: AmbientChip[];
++  loading: boolean;
++  refresh: () => void;
++} {
++  const [chips, setChips] = useState<AmbientChip[]>(() => {
++    const cached = ambientCache.get(contextType);
++    return cached && cached.expires_at > Date.now() ? cached.chips : [];
++  });
++  const [loading, setLoading] = useState(false);
++  const tickRef = useRef(0);
++
++  const doFetch = async (key: string, cancelled: { v: boolean }) => {
++    const cached = ambientCache.get(key);
++    if (cached && cached.expires_at > Date.now()) {
++      if (!cancelled.v) setChips(cached.chips);
++      return;
++    }
++    if (!cancelled.v) setLoading(true);
++    try {
++      const res = await hrmsApi.get<{ success: boolean; data: { answer?: string; insights?: { label: string; severity?: string; action_url?: string }[] } }>(
++        `/api/ai/role-insights?context_type=${encodeURIComponent(key)}`
++      );
++      if (cancelled.v) return;
++      const raw = res?.data?.insights ?? [];
++      const parsed: AmbientChip[] = raw.slice(0, 3).map((i) => ({
++        label: i.label,
++        severity: (["critical", "warning", "info"].includes(i.severity ?? "") ? i.severity : "info") as AmbientChip["severity"],
++        action_url: i.action_url,
++      }));
++      ambientCache.set(key, { chips: parsed, expires_at: Date.now() + REFRESH_MS });
++      setChips(parsed);
++    } catch {
++      // AI unavailable — keep existing chips, fail silently
++    } finally {
++      if (!cancelled.v) setLoading(false);
++    }
++  };
++
++  useEffect(() => {
++    if (!contextType) return;
++    const cancelled = { v: false };
++    void doFetch(contextType, cancelled);
++    const interval = setInterval(() => void doFetch(contextType, cancelled), REFRESH_MS);
++    return () => {
++      cancelled.v = true;
++      clearInterval(interval);
++    };
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [contextType, tickRef.current]);
++
++  function refresh() {
++    ambientCache.delete(contextType);
++    setChips([]);
++    tickRef.current += 1;
++  }
++
++  return { chips, loading, refresh };
++}
+diff --git a/src/tests/app-shell-routing.contract.test.ts b/src/tests/app-shell-routing.contract.test.ts
+index 10ff2398..5036fd91 100644
+--- a/src/tests/app-shell-routing.contract.test.ts
++++ b/src/tests/app-shell-routing.contract.test.ts
+@@ -20,21 +20,21 @@ describe("application shell routing contracts", () => {
+     "platform",
+     "portal",
+     "visitor",
+   ]
+     .map((group) => read(`src/config/routes/${group}.routes.tsx`))
+     .join("\n");
+ 
+   it("mounts the canonical route elements and authenticated Copilot widget", () => {
+     expect(appSource).toContain('import { appRouteElements } from "./config/routes"');
+     expect(appSource).toContain("{appRouteElements}");
+-    expect(appSource).toContain("<FloatingChatWidget />");
++    expect(appSource).toContain("<AICommandBar />");
+   });
+ 
+   it("keeps every configured sidebar destination backed by a route", () => {
+     const navPaths = [...navSource.matchAll(/href:\s*"([^"]+)"/g)]
+       .map((match) => match[1].split("?")[0])
+       .filter((path, index, all) => path.startsWith("/") && all.indexOf(path) === index);
+     const routePaths = new Set(
+       [...routeSource.matchAll(/<Route\s+path="([^"]+)"/g)].map((match) => match[1]),
+     );
+ 

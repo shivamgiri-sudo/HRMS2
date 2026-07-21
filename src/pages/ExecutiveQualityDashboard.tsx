@@ -24,15 +24,19 @@ import {
 } from "lucide-react";
 
 interface ExecutiveQualityData {
-  org_kpis: { overall_quality: number; target: number; gap: number; status: string };
-  trends: {
-    trend_7d: { direction: string; change_pct: number };
-    trend_30d: { direction: string; change_pct: number };
+  metrics: {
+    overall_quality_score: number;
+    target_quality_score: number;
+    gap_pct: number;
+    status: string;
+    trend_7day: { direction: string; change_pct: number };
+    trend_30day: { direction: string; change_pct: number };
   };
-  top_performers: Array<{ rank: number; agent_code: string; agent_name: string; quality_pct: number }>;
-  bottom_performers: Array<{ rank: number; agent_code: string; agent_name: string; quality_pct: number }>;
-  process_scorecard: Array<{ process: string; avg_quality: number; status: string }>;
-  benchmarks: { mean: number; median: number; std_dev: number };
+  top_performers: Array<{ rank: number; agent_code: string; agent_name: string; quality_score: number; calls_handled: number; process: string }>;
+  bottom_performers: Array<{ rank: number; agent_code: string; agent_name: string; quality_score: number; calls_handled: number; process: string }>;
+  process_performance: Array<{ process: string; avg_quality: number; agent_count: number; calls_handled: number; status: string }>;
+  risk_summary: { critical_agents_count: number; at_risk_agents_count: number; coaching_priority_count: number };
+  org_benchmarks: { avg_quality: number; median_quality: number; std_deviation: number };
 }
 
 function qualityColor(score: number): string {
@@ -157,8 +161,8 @@ export default function ExecutiveQualityDashboard() {
     );
   }
 
-  const { org_kpis, trends, top_performers, bottom_performers, process_scorecard, benchmarks } = data;
-  const gapPositive = org_kpis.gap >= 0;
+  const { metrics, top_performers, bottom_performers, process_performance, org_benchmarks } = data;
+  const gapPositive = metrics.gap_pct <= 0; // gap_pct = target - current; negative means above target
 
   return (
     <DashboardLayout>
@@ -205,7 +209,7 @@ export default function ExecutiveQualityDashboard() {
                   Overall Quality Score
                 </p>
                 <p className="text-5xl font-extrabold text-slate-900 leading-none mt-1">
-                  {org_kpis.overall_quality.toFixed(1)}
+                  {metrics.overall_quality_score.toFixed(1)}
                   <span className="text-2xl font-semibold text-slate-400 ml-1">%</span>
                 </p>
               </div>
@@ -213,20 +217,20 @@ export default function ExecutiveQualityDashboard() {
             <div className="flex flex-wrap gap-6 md:ml-10">
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wide">Target</p>
-                <p className="text-2xl font-bold text-slate-700">{org_kpis.target}%</p>
+                <p className="text-2xl font-bold text-slate-700">{metrics.target_quality_score}%</p>
               </div>
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wide">Gap</p>
                 <p className={`text-2xl font-bold ${gapPositive ? "text-green-600" : "text-red-600"}`}>
-                  {gapPositive ? "+" : ""}{org_kpis.gap.toFixed(1)}%
+                  {gapPositive ? "" : "+"}{(-metrics.gap_pct).toFixed(1)}%
                 </p>
               </div>
               <div className="flex items-center">
                 <Badge
-                  className={`text-sm px-3 py-1 border ${statusBadge(org_kpis.status)}`}
+                  className={`text-sm px-3 py-1 border ${statusBadge(metrics.status)}`}
                   variant="outline"
                 >
-                  {org_kpis.status}
+                  {metrics.status}
                 </Badge>
               </div>
             </div>
@@ -236,10 +240,10 @@ export default function ExecutiveQualityDashboard() {
         {/* Trend Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {[
-            { label: "7-Day Trend", trend: trends.trend_7d },
-            { label: "30-Day Trend", trend: trends.trend_30d },
+            { label: "7-Day Trend", trend: metrics.trend_7day },
+            { label: "30-Day Trend", trend: metrics.trend_30day },
           ].map(({ label, trend }) => {
-            const up = trend.direction === "up";
+            const up = trend.direction === "↗" || trend.change_pct > 0;
             return (
               <Card key={label} className="p-6 flex items-center gap-4">
                 <div
@@ -286,8 +290,8 @@ export default function ExecutiveQualityDashboard() {
                     <tr key={p.agent_code} className="border-b border-slate-50 hover:bg-slate-50">
                       <td className="py-2 pr-3 text-slate-400">{p.rank}</td>
                       <td className="py-2 pr-3 text-slate-700">{p.agent_name}</td>
-                      <td className={`py-2 text-right ${qualityColor(p.quality_pct)}`}>
-                        {p.quality_pct.toFixed(1)}%
+                      <td className={`py-2 text-right ${qualityColor(p.quality_score)}`}>
+                        {p.quality_score.toFixed(1)}%
                       </td>
                     </tr>
                   ))}
@@ -317,7 +321,7 @@ export default function ExecutiveQualityDashboard() {
                       <td className="py-2 pr-3 text-slate-400">{p.rank}</td>
                       <td className="py-2 pr-3 text-slate-700">{p.agent_name}</td>
                       <td className="py-2 text-right text-red-600 font-semibold">
-                        {p.quality_pct.toFixed(1)}%
+                        {p.quality_score.toFixed(1)}%
                       </td>
                     </tr>
                   ))}
@@ -343,11 +347,11 @@ export default function ExecutiveQualityDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {process_scorecard.map((row, idx) => (
+                {process_performance.map((row, idx) => (
                   <tr key={row.process ?? idx} className="border-b border-slate-50 hover:bg-slate-50">
                     <td className="py-2 pr-6 text-slate-700">{row.process || "—"}</td>
                     <td className={`py-2 pr-6 text-right ${qualityColor(row.avg_quality)}`}>
-                      {row.avg_quality.toFixed(1)}%
+                      {(row.avg_quality ?? 0).toFixed(1)}%
                     </td>
                     <td className="py-2 text-right">
                       <Badge
@@ -367,14 +371,14 @@ export default function ExecutiveQualityDashboard() {
         {/* Benchmarks */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
-            { label: "Mean", value: benchmarks.mean },
-            { label: "Median", value: benchmarks.median },
-            { label: "Std Dev", value: benchmarks.std_dev },
+            { label: "Mean", value: org_benchmarks.avg_quality },
+            { label: "Median", value: org_benchmarks.median_quality },
+            { label: "Std Dev", value: org_benchmarks.std_deviation },
           ].map(({ label, value }) => (
             <Card key={label} className="p-6 text-center">
               <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">{label}</p>
               <p className="text-3xl font-bold text-slate-800">
-                {value.toFixed(2)}
+                {(value ?? 0).toFixed(2)}
                 {label !== "Std Dev" && (
                   <span className="text-lg font-medium text-slate-400 ml-0.5">%</span>
                 )}

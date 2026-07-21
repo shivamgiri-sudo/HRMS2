@@ -1,0 +1,94 @@
+=== COMMITS ===
+e24d00b8 feat(ai): activate Gemini via GEMINI_API_KEY env var when no DB config exists
+=== STAT ===
+ backend/src/config/env.ts                      | 3 +++
+ backend/src/modules/ai/ai-provider.registry.ts | 8 +++++++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+=== DIFF ===
+diff --git a/backend/src/config/env.ts b/backend/src/config/env.ts
+index c7c99713..3a801e19 100644
+--- a/backend/src/config/env.ts
++++ b/backend/src/config/env.ts
+@@ -149,20 +149,23 @@ const envSchema = z.object({
+   BILL_DB_PASSWORD: z.string().default(""),
+   BILL_DB_NAME:     z.string().default("db_bill"),
+ 
+   // Shivamgiri quality/APR database (shared by quality-dashboard module)
+   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
+ 
+   // Cross-DB source credentials — used by sourceDb.ts for db_audit, db_external, dialer_db queries
+   // Falls back to DB_USER/DB_PASSWORD if not set
+   SOURCE_DB_USER:     z.string().default(""),
+   SOURCE_DB_PASSWORD: z.string().default(""),
++
++  // AI provider — Gemini
++  GEMINI_API_KEY: z.string().default(""),
+ });
+ 
+ const parsed = envSchema.safeParse(process.env);
+ 
+ if (!parsed.success) {
+   console.error("Invalid backend environment variables:");
+   console.error(parsed.error.flatten().fieldErrors);
+   process.exit(1);
+ }
+ 
+diff --git a/backend/src/modules/ai/ai-provider.registry.ts b/backend/src/modules/ai/ai-provider.registry.ts
+index f65d07d5..6ce6dcaa 100644
+--- a/backend/src/modules/ai/ai-provider.registry.ts
++++ b/backend/src/modules/ai/ai-provider.registry.ts
+@@ -2,20 +2,21 @@
+  * AI Provider Registry
+  * Central registry for all AI providers
+  * PeopleOS AI Enhancement Phase 1
+  */
+ 
+ import type { AiProvider } from './ai-provider.types.js';
+ import { ruleBasedProvider } from './providers/ruleBased.provider.js';
+ import { geminiProvider } from './providers/gemini.provider.js';
+ import { ollamaProvider } from './providers/ollama.provider.js';
+ import { aiProviderConfigService } from './ai-provider-config.service.js';
++import { env } from '../../config/env.js';
+ 
+ class AiProviderRegistry {
+   private providers: Map<string, AiProvider> = new Map();
+ 
+   constructor() {
+     // Register built-in providers
+     this.register(ruleBasedProvider);
+     this.register(geminiProvider);
+     this.register(ollamaProvider);
+   }
+@@ -29,26 +30,31 @@ class AiProviderRegistry {
+   }
+ 
+   /**
+    * Get provider by key
+    */
+   get(providerKey: string): AiProvider | null {
+     return this.providers.get(providerKey) || null;
+   }
+ 
+   /**
+-   * Get active default provider (from DB config)
++   * Get active default provider (from DB config, or Gemini if GEMINI_API_KEY is set)
+    */
+   async getDefault(): Promise<AiProvider> {
+     const config = await aiProviderConfigService.getDefaultProvider(false);
+ 
+     if (!config) {
++      // If no DB config but GEMINI_API_KEY is set in environment, use Gemini directly
++      if (env.GEMINI_API_KEY) {
++        console.info('[AI Registry] Using Gemini from GEMINI_API_KEY env var');
++        return this.get('gemini') ?? ruleBasedProvider;
++      }
+       console.warn('[AI Registry] No default provider configured, using rule-based fallback');
+       return ruleBasedProvider;
+     }
+ 
+     const provider = this.get(config.providerKey);
+ 
+     if (!provider) {
+       console.warn(`[AI Registry] Provider ${config.providerKey} not found in registry, using rule-based fallback`);
+       return ruleBasedProvider;
+     }

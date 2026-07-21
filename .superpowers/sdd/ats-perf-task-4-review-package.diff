@@ -1,0 +1,97 @@
+=== COMMITS ===
+2c0289ab perf(ats): replace O(N²) position_in_queue correlated subquery with JS ranking
+=== STAT ===
+ backend/src/modules/ats/queue.enhanced.service.ts | 35 ++++++++++++-----------
+ 1 file changed, 18 insertions(+), 17 deletions(-)
+=== DIFF ===
+diff --git a/backend/src/modules/ats/queue.enhanced.service.ts b/backend/src/modules/ats/queue.enhanced.service.ts
+index 3cee8d1f..0ec12d78 100644
+--- a/backend/src/modules/ats/queue.enhanced.service.ts
++++ b/backend/src/modules/ats/queue.enhanced.service.ts
+@@ -122,19 +122,13 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
+       qt.created_at,
+       COALESCE(qt.arrival_time, qt.created_at) AS arrival_time,
+       qt.called_at,
+       qt.interview_started_at,
+       qt.interview_completed_at,
+       qt.estimated_wait_time,
+-      (
+-        SELECT COUNT(*) + 1
+-        FROM ats_queue_token qt2
+-        WHERE ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
+-          AND DATE(${queueTimeExpr('qt2')}) = DATE(${queueTimeExpr('qt')})
+-          AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
+-      ) as position_in_queue,
++      0 as position_in_queue,
+       c.skilltest_typing,
+       c.skilltest_ai,
+       c.skilltest_result,
+       scores.assessment_percentage,
+       scores.typing_net_wpm
+     FROM ats_queue_token qt
+@@ -166,13 +160,20 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
+         ELSE 6
+       END,
+        ${queueTimeExpr('qt')} ASC`,
+     params
+   );
+ 
+-  return rows as QueueEntry[];
++  // Assign position_in_queue in JS — the query is already sorted by arrival_time ASC
++  // so array index + 1 gives the correct queue position. This is O(N) vs the O(N²)
++  // correlated subquery it replaces.
++  const ranked = (rows as QueueEntry[]).map((row, index) => ({
++    ...row,
++    position_in_queue: index + 1,
++  }));
++  return ranked;
+ }
+ 
+ /**
+  * Get queue metrics for dashboard
+  */
+ export async function getQueueMetrics(branch?: string, date?: string): Promise<QueueMetrics> {
+@@ -349,20 +350,13 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
+       e.employee_code as recruiter_employee_code,
+       qt.created_at,
+       qt.called_at,
+       qt.interview_started_at,
+       qt.interview_completed_at,
+       qt.estimated_wait_time,
+-      (
+-        SELECT COUNT(*) + 1
+-        FROM ats_queue_token qt2
+-        WHERE COALESCE(qt2.recruiter_id, qt2.assigned_recruiter_id) = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+-          AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
+-          AND ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
+-          AND DATE(${queueTimeExpr('qt2')}) = CURDATE()
+-      ) as position_in_queue
++      0 as position_in_queue
+     FROM ats_queue_token qt
+     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
+     LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+     LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
+     LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+     LEFT JOIN employees e ON e.id = rr.employee_id
+@@ -373,13 +367,20 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
+       )
+       AND DATE(${queueTimeExpr('qt')}) = CURDATE()
+     ORDER BY ${queueTimeExpr('qt')} ASC`,
+     [recruiterId]
+   );
+ 
+-  return rows as QueueEntry[];
++  // Assign position_in_queue in JS — the query is already sorted by arrival_time ASC
++  // so array index + 1 gives the correct queue position. This is O(N) vs the O(N²)
++  // correlated subquery it replaces.
++  const ranked = (rows as QueueEntry[]).map((row, index) => ({
++    ...row,
++    position_in_queue: index + 1,
++  }));
++  return ranked;
+ }
+ 
+ /**
+  * Call next candidate (update status to 'called')
+  */
+ export async function callNextCandidate(queueId: string): Promise<void> {

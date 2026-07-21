@@ -335,3 +335,32 @@ Task 3: Complete (commit ae7ee3f8..e24d00b8, review clean)
   - gemini.provider.ts already reads process.env.GEMINI_API_KEY — no change needed
   - ai-insights.routes.ts: config?.modelName already null-safe — no change needed
   - tsc: 0 errors in modified files (4 pre-existing privacy-engine errors unrelated)
+
+---
+
+# ATS Command Center Performance
+
+Plan: docs/superpowers/plans/2026-07-20-ats-command-center-perf.md
+Started: 2026-07-20
+Branch base commit: 0e84dedc
+
+## Tasks
+
+Task 1: Complete (commit 0e84dedc..a7fddf5b, review clean)
+  - backend/sql/519_ats_performance_indexes.sql created (7 covering indexes)
+  - runPendingMigrations.ts updated
+  - tsc: 0 errors
+Task 2: Complete (commit a7fddf5b..e246d1f7, review clean)
+  - candidateSelect: limit=5000 param, LIMIT ?, ORDER BY fix (no DATE() wrapper)
+  - webData: SQL date bounds pushed for FTD/WTD/MTD; ALL period uses 5000-row cap
+  - Known: ALL period truncation is acceptable (5000 newest rows, period counts remain accurate)
+  - tsc: 0 errors
+Task 3: Complete (commit e246d1f7..9e4ab18c, review clean)
+  - getDashboardMetrics: 7 sequential awaits → single Promise.all
+  - getTimelineData: 4 subqueries now have date-range WHERE
+  - tsc: 0 errors
+Task 4: Complete (commit 9e4ab18c..2c0289ab, review clean)
+  - getLiveQueue: O(N²) correlated subquery → 0 literal + JS ranking
+  - getRecruiterQueue: same fix applied
+  - getOpsRoundQueue: untouched (already literal)
+  - tsc: 0 errors

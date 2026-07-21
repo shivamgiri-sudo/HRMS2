@@ -1,0 +1,83 @@
+=== STAT ===
+ backend/sql/519_ats_performance_indexes.sql | 46 +++++++++++++++++++++++++++++
+ backend/src/db/runPendingMigrations.ts      |  1 +
+ 2 files changed, 47 insertions(+)
+=== DIFF ===
+diff --git a/backend/sql/519_ats_performance_indexes.sql b/backend/sql/519_ats_performance_indexes.sql
+new file mode 100644
+index 00000000..8a0d03f9
+--- /dev/null
++++ b/backend/sql/519_ats_performance_indexes.sql
+@@ -0,0 +1,46 @@
++-- 519: ATS Command Center performance indexes
++-- MySQL-safe idempotent pattern using INFORMATION_SCHEMA guards
++
++SET @db = DATABASE();
++
++-- ats_candidate: (active_status, created_date) — hot filter for webData()
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_cand_active_created');
++SET @s = IF(@n=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_cand_active_created (active_status, created_date)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
++
++-- ats_candidate: (active_status, current_stage) — for getDashboardMetrics COUNTs
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_cand_active_stage');
++SET @s = IF(@n=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_cand_active_stage (active_status, current_stage)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
++
++-- ats_candidate: (active_status, created_at) — fallback sort index
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_candidate' AND INDEX_NAME='idx_ats_cand_active_created_at');
++SET @s = IF(@n=0, 'ALTER TABLE ats_candidate ADD INDEX idx_ats_cand_active_created_at (active_status, created_at)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
++
++-- ats_candidate_assessment: (candidate_id) — speeds up scores subquery in queue endpoints
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_candidate_assessment' AND INDEX_NAME='idx_ats_asmt_candidate_id');
++SET @s = IF(@n=0, 'ALTER TABLE ats_candidate_assessment ADD INDEX idx_ats_asmt_candidate_id (candidate_id)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
++
++-- ats_typing_test_attempt: (assessment_id) — speeds up JOIN in scores subquery
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_typing_test_attempt' AND INDEX_NAME='idx_ats_typing_asmt_id');
++SET @s = IF(@n=0, 'ALTER TABLE ats_typing_test_attempt ADD INDEX idx_ats_typing_asmt_id (assessment_id)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
++
++-- ats_queue_token: (queue_status, arrival_time) — for position_in_queue subquery
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_ats_qt_status_arrival');
++SET @s = IF(@n=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_qt_status_arrival (queue_status, arrival_time)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
++
++-- ats_queue_token: (candidate_id, queue_status) — for candidate-scoped queue lookups
++SET @n = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
++          WHERE TABLE_SCHEMA=@db AND TABLE_NAME='ats_queue_token' AND INDEX_NAME='idx_ats_qt_candidate_status');
++SET @s = IF(@n=0, 'ALTER TABLE ats_queue_token ADD INDEX idx_ats_qt_candidate_status (candidate_id, queue_status)', 'SELECT 1');
++PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+diff --git a/backend/src/db/runPendingMigrations.ts b/backend/src/db/runPendingMigrations.ts
+index abba9dd4..21405aee 100644
+--- a/backend/src/db/runPendingMigrations.ts
++++ b/backend/src/db/runPendingMigrations.ts
+@@ -352,20 +352,21 @@ const MIGRATION_MANIFEST: string[] = [
+   // ── DPDP Privacy Hardening migrations (feature/dpdp-privacy-hardening) ──────
+   "126_ats_candidate_pii_hash_columns.sql",     // PII hash columns on ats_candidate (was missing from manifest)
+   "999_grant_employee_resignation_dpdp.sql",    // Employee role page access to DPDP_WITHDRAWAL (was missing)
+   "511_wfm_session_call_id.sql",
+   "512_quality_dashboard_page_access.sql",
+   "513_dpdp_withdrawal_consolidation.sql",      // Canonical withdrawal fields, task table, evidence table
+   "514_privacy_data_inventory.sql",             // Privacy data asset/purpose/field-policy/system registry
+   "515_employee_pii_encryption_columns.sql",    // Additive encrypted PAN/Aadhaar columns on employees
+   "516_privacy_retention_worker_tables.sql",    // Retention run/candidate/approval/certificate tables
+   "518_dpdp_feature_flags.sql",                 // DPDP feature flag config keys (all default OFF/dry-run)
++  "519_ats_performance_indexes.sql",            // ATS command center covering indexes
+   ];
+ 
+ export type MigrationHealth = {
+   status: "not_started" | "running" | "ok" | "failed";
+   applied: string[];
+   skipped: string[];
+   failed: Array<{ filename: string; error: string }>;
+   startedAt: string | null;
+   completedAt: string | null;
+ };

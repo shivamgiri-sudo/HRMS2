@@ -328,7 +328,7 @@ export default function NativeOperationsKPI() {
 
   const avgScore =
     leaderboard.length > 0
-      ? Math.round(leaderboard.reduce((s, e) => s + e.weighted_score_pct, 0) / leaderboard.length)
+      ? Math.round(leaderboard.reduce((s, e) => s + (e.weighted_score_pct ?? 0), 0) / leaderboard.length)
       : 0;
 
   const topPerformer = leaderboard[0] ?? null;
@@ -418,7 +418,7 @@ export default function NativeOperationsKPI() {
           <StatCard
             title="Top Performer"
             value={topPerformer ? topPerformer.full_name.split(" ")[0] : "—"}
-            sub={topPerformer ? `${topPerformer.weighted_score_pct}%` : undefined}
+            sub={topPerformer ? `${(topPerformer.weighted_score_pct ?? 0).toFixed(1)}%` : undefined}
             icon={<CheckCircle2 className="h-5 w-5" />}
             color="from-emerald-400 to-teal-500"
           />
@@ -557,8 +557,8 @@ export default function NativeOperationsKPI() {
                         <div className="text-xs font-mono text-slate-500">{entry.employee_code}</div>
                       </td>
                       <td className="p-4">
-                        <span className={scoreColor(entry.weighted_score_pct)}>
-                          {entry.weighted_score_pct.toFixed(1)}%
+                        <span className={scoreColor(entry.weighted_score_pct ?? 0)}>
+                          {(entry.weighted_score_pct ?? 0).toFixed(1)}%
                         </span>
                       </td>
                       <td className="p-4">
@@ -623,11 +623,11 @@ export default function NativeOperationsKPI() {
                         <span className="font-mono text-xs text-slate-400">{entry.employee_code}</span>
                       </div>
                       <div className="mt-1 flex items-center gap-2">
-                        <span className={`text-sm font-bold ${scoreColor(entry.weighted_score_pct)}`}>
-                          {entry.weighted_score_pct.toFixed(1)}%
+                        <span className={`text-sm font-bold ${scoreColor(entry.weighted_score_pct ?? 0)}`}>
+                          {(entry.weighted_score_pct ?? 0).toFixed(1)}%
                         </span>
                         <span className="text-xs text-slate-500">
-                          ({(TNI_THRESHOLD - entry.weighted_score_pct).toFixed(1)}% below threshold)
+                          ({(TNI_THRESHOLD - (entry.weighted_score_pct ?? 0)).toFixed(1)}% below threshold)
                         </span>
                       </div>
                     </div>
