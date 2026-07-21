@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CreditCard,
+  Download,
   FileText,
   IndianRupee,
   Loader2,
@@ -1285,6 +1286,51 @@ const Payroll = () => {
                   })}
                 </>
               )}
+
+              {/* Salary Sheet Downloads by Run */}
+              {runSummaries.length > 0 && (
+                <div className="rounded-lg border bg-card p-4">
+                  <h4 className="font-semibold text-sm mb-3">Salary Sheet Downloads</h4>
+                  <div className="overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Run Month</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                          <th className="px-3 py-2 text-right">Employees</th>
+                          <th className="px-3 py-2 text-left">Export</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runSummaries.slice(0, 24).map((run) => (
+                          <tr key={run.id} className="border-t">
+                            <td className="px-3 py-2 font-medium">{run.run_month}</td>
+                            <td className="px-3 py-2 capitalize">{run.status}</td>
+                            <td className="px-3 py-2 text-right">{run.total_employees}</td>
+                            <td className="px-3 py-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  const a = document.createElement("a");
+                                  a.href = `/api/payroll/runs/${run.id}/salary-sheet-export`;
+                                  a.download = `Salary Sheet ${run.run_month}.xlsx`;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  document.body.removeChild(a);
+                                }}
+                              >
+                                <Download className="h-3.5 w-3.5 mr-1" />
+                                XLSX
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="analytics" className="mt-0 space-y-4">
@@ -1842,16 +1888,35 @@ function FinanceApprovalQueue() {
                     <td className="px-3 py-2 text-right">₹{fmtCurrency(run.total_gross)}</td>
                     <td className="px-3 py-2 text-sm">{fmtDateTime(run.updated_at)}</td>
                     <td className="px-3 py-2">
-                      <Button
-                        size="sm"
-                        variant="default"
-                        onClick={() => {
-                          setApprovalModal({ runId: run.id, runMonth: run.run_month });
-                          setConfirmChecked(false);
-                        }}
-                      >
-                        Review & Approve
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={() => {
+                            setApprovalModal({ runId: run.id, runMonth: run.run_month });
+                            setConfirmChecked(false);
+                          }}
+                        >
+                          Review & Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          title="Download Salary Sheet XLSX"
+                          onClick={() => {
+                            const url = `/api/payroll/runs/${run.id}/salary-sheet-export`;
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `Salary Sheet ${run.run_month}.xlsx`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                          }}
+                        >
+                          <Download className="h-3.5 w-3.5 mr-1" />
+                          Salary Sheet
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -236,9 +236,9 @@ const bfSet2 = [
 
   q("BF-S2-012","backoffice","executive","attention_detail","Attention to Detail","single","basic",
     "Count how many times the letter 'e' appears in this sentence: 'The employee entered the details carefully before saving.'",
-    ["6","7","8","9"],
-    "8",
-    10,2,"th-E, Employ-E-E, -E-nt-E-r-E-d, d-E-tails, car-E-fully — count every lowercase 'e': The(1), employee(3), entered(2), the(1), before(1) = 8."),
+    ["9","10","11","12"],
+    "11",
+    10,2,"Count every 'e' (case-insensitive): The(1), employee(3), entered(2), the(1), details(1), carefully(1), before(2) = 11."),
 
   q("BF-S2-013","backoffice","executive","attention_detail","Attention to Detail","single","basic",
     "Below are two addresses. Are they the same?\n\nAddress A: 14B, Sector 22, Noida – 201301\nAddress B: 14B, Sector 22, Noida – 201301",

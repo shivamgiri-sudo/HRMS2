@@ -164,11 +164,19 @@ export async function selectRandomQuestionSet(
 
   const selectedQuestions: AssessmentQuestionDefinition[] = [];
   const selectedIds: string[] = [];
+  const usedQuestionCodes = new Set<string>();
+
   for (const [_section, sectionRows] of bySection) {
     const shuffled = shuffleArray(sectionRows);
-    const selected = shuffled.slice(0, questionsPerSection);
-    selectedIds.push(...selected.map((r) => r.id));
-    selectedQuestions.push(...selected.map(questionRowToDefinition));
+    // Filter out any questions we've already selected (prevent duplicates across sections)
+    const available = shuffled.filter((r) => !usedQuestionCodes.has(r.question_code));
+    const selected = available.slice(0, questionsPerSection);
+
+    for (const row of selected) {
+      usedQuestionCodes.add(row.question_code);
+      selectedIds.push(row.id);
+      selectedQuestions.push(questionRowToDefinition(row));
+    }
   }
 
   if (selectedIds.length > 0) {
