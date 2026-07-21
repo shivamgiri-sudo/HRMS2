@@ -95,11 +95,12 @@ export default function AuthClean() {
           toast({ title: "OTP Sent", description: res.data.message });
           setForgotStep('verify');
         } else {
-          toast({ title: "Error", description: res.data.message || "Failed to send OTP" });
+          toast({ title: "Error", description: res.data.message || res.data.error || "Failed to send OTP. Please try again." });
         }
       } catch (error: any) {
         setLoading(false);
-        toast({ title: "Error", description: error.response?.data?.error || "Failed to send OTP" });
+        const msg = error.response?.data?.message || error.response?.data?.error || "Failed to send OTP. Please try again.";
+        toast({ title: "Error", description: msg });
       }
     }
   };

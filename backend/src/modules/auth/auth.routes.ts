@@ -21,6 +21,14 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const otpRequestLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 5,                    // 5 OTP requests per IP per window
+  message: { success: false, message: "Too many OTP requests. Please try again after 10 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const twoFactorLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 5,
@@ -296,7 +304,7 @@ router.post("/forgot-password", authLimiter, h(async (req, res) => {
 }));
 
 // POST /api/auth/forgot-password-otp — public (rate limited) — SMS/WhatsApp OTP
-router.post("/forgot-password-otp", authLimiter, h(async (req, res) => {
+router.post("/forgot-password-otp", otpRequestLimiter, h(async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: "Phone number required" });
 

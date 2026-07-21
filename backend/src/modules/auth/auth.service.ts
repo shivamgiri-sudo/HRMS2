@@ -7,6 +7,7 @@ import { env } from '../../config/env.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import type { Request } from 'express';
 import https from 'https';
+import { sendSMS } from '../communication/sms.helper.js';
 
 async function writeSecurityEvent(payload: {
   event_type: string;
@@ -810,6 +811,20 @@ export const authService = {
     // Log OTP in dev (NEVER in production)
     if (process.env.NODE_ENV !== 'production') {
       console.log(`[AUTH OTP DEV] OTP for ${phoneOrEmail}: ${otp}`);
+    }
+
+    // Send OTP via SMS if phone number provided
+    const looksLikePhone = /^\+?[\d\s\-]{8,15}$/.test(phoneOrEmail.trim());
+    if (looksLikePhone) {
+      try {
+        await sendSMS(phoneOrEmail.trim(), 'password_reset_otp', {
+          otp,
+          validity_minutes: '10',
+        });
+      } catch (smsErr) {
+        // Non-fatal: OTP is stored in DB; user can retry
+        console.error('[AUTH OTP] SMS send failed:', smsErr);
+      }
     }
 
     return { success: true, message: 'If an account exists, an OTP has been sent.' };
