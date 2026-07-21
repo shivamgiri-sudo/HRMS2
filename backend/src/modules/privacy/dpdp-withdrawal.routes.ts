@@ -54,7 +54,7 @@ dpdpWithdrawalRouter.get(
 dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal",
   requireAuth,
-  requireRole("hr", "admin", "dpo"),
+  requireRole("hr", "admin", "dpo", "compliance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await svc.listAll({
       status: req.query.status as string | undefined,
@@ -83,7 +83,7 @@ dpdpWithdrawalRouter.get(
 dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/start-review",
   requireAuth,
-  requireRole("hr", "admin", "dpo"),
+  requireRole("hr", "admin", "dpo", "compliance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await svc.startReview(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Review started and processing hold applied" });
@@ -94,7 +94,7 @@ dpdpWithdrawalRouter.post(
 dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/approve",
   requireAuth,
-  requireRole("hr", "admin", "dpo"),
+  requireRole("hr", "admin", "dpo", "compliance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { remarks } = req.body as { remarks?: string };
     await svc.approve(req.params.id, req.authUser!.id, remarks);
@@ -106,7 +106,7 @@ dpdpWithdrawalRouter.post(
 dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/reject",
   requireAuth,
-  requireRole("hr", "admin", "dpo"),
+  requireRole("hr", "admin", "dpo", "compliance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { reason } = req.body as { reason?: string };
     if (!reason?.trim()) {
@@ -121,7 +121,7 @@ dpdpWithdrawalRouter.post(
 dpdpWithdrawalRouter.post(
   "/dpdp-withdrawal/:id/release-hold",
   requireAuth,
-  requireRole("hr", "admin"),
+  requireRole("hr", "admin", "compliance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await svc.releaseHold(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Processing hold released" });

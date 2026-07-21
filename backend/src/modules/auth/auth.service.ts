@@ -8,6 +8,35 @@ import { logSensitiveAction } from '../../shared/auditLog.js';
 import type { Request } from 'express';
 import https from 'https';
 
+async function writeSecurityEvent(payload: {
+  event_type: string;
+  severity?: string;
+  actor_user_id?: string | null;
+  actor_role?: string | null;
+  title: string;
+  description?: string | null;
+  ip_address?: string | null;
+}): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT INTO security_audit_event
+         (event_type, severity, module_key, actor_user_id, actor_role, title, description, ip_address)
+       VALUES (?, ?, 'AUTH', ?, ?, ?, ?, ?)`,
+      [
+        payload.event_type,
+        payload.severity ?? 'info',
+        payload.actor_user_id ?? null,
+        payload.actor_role ?? null,
+        payload.title,
+        payload.description ?? null,
+        payload.ip_address ?? null,
+      ]
+    );
+  } catch {
+    // Non-fatal: security event write must not break the auth flow
+  }
+}
+
 async function getUserPrimaryRole(userId: string): Promise<string | null> {
   try {
     const [rows] = await db.execute<RoleRow[]>(
@@ -404,6 +433,15 @@ export const authService = {
             },
             req,
           }).catch(() => {});
+          writeSecurityEvent({
+            event_type: 'LOGIN_SUCCESS',
+            severity: 'info',
+            actor_user_id: user.id,
+            actor_role: role,
+            title: `Login: ${user.email}`,
+            description: location ? `From ${location}` : null,
+            ip_address: loginIp,
+          });
         }).catch(() => {});
       }
 
@@ -465,6 +503,14 @@ export const authService = {
           },
           req
         }).catch(() => {}); // Non-blocking
+        writeSecurityEvent({
+          event_type: 'LOGIN_FAILED',
+          severity: 'warning',
+          actor_user_id: null,
+          title: `Failed login attempt: ${trimmed}`,
+          description: error instanceof Error ? error.message : String(error),
+          ip_address: req.ip ?? null,
+        });
       }
       throw error;
     }
@@ -675,6 +721,12 @@ export const authService = {
     const hash = await bcrypt.hash(newPassword, 10);
     await db.execute('UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?', [hash, rows[0].user_id]);
     await db.execute('UPDATE auth_password_reset SET used = 1 WHERE token_hash = ?', [tokenHash]);
+    writeSecurityEvent({
+      event_type: 'PASSWORD_RESET',
+      severity: 'info',
+      actor_user_id: rows[0].user_id,
+      title: 'Password reset via token',
+    });
   },
 
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -690,6 +742,12 @@ export const authService = {
       'UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?',
       [hash, userId]
     );
+    writeSecurityEvent({
+      event_type: 'PASSWORD_RESET',
+      severity: 'info',
+      actor_user_id: userId,
+      title: 'Password changed by user',
+    });
   },
 
   async forgotPasswordOtp(phoneOrEmail: string): Promise<{ success: boolean; message: string }> {

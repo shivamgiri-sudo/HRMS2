@@ -63,7 +63,7 @@ aiInsightsRouter.get('/providers/active', h(async (req, res) => {
 /**
  * POST /api/ai/providers - Create provider config
  */
-aiInsightsRouter.post('/providers', requireRole('super_admin'), h(async (req, res) => {
+aiInsightsRouter.post('/providers', requireRole('super_admin', 'admin'), h(async (req, res) => {
   const { providerKey, providerName, apiKey, modelName, baseUrl, timeout, dailyRequestLimit, monthlyRequestLimit, dailyTokenLimit, monthlyTokenLimit } = req.body;
 
   if (!providerKey || !providerName) {
@@ -90,7 +90,7 @@ aiInsightsRouter.post('/providers', requireRole('super_admin'), h(async (req, re
 /**
  * PUT /api/ai/providers/:id - Update provider config
  */
-aiInsightsRouter.put('/providers/:id', requireRole('super_admin'), h(async (req, res) => {
+aiInsightsRouter.put('/providers/:id', requireRole('super_admin', 'admin'), h(async (req, res) => {
   const { providerName, activeStatus, isDefault, apiKey, modelName, baseUrl, timeout, dailyRequestLimit, monthlyRequestLimit, dailyTokenLimit, monthlyTokenLimit } = req.body;
 
   const updated = await aiProviderConfigService.update(req.params.id, {
@@ -114,7 +114,7 @@ aiInsightsRouter.put('/providers/:id', requireRole('super_admin'), h(async (req,
 /**
  * POST /api/ai/providers/:id/test - Test provider connection
  */
-aiInsightsRouter.post('/providers/:id/test', requireRole('super_admin'), h(async (req, res) => {
+aiInsightsRouter.post('/providers/:id/test', requireRole('super_admin', 'admin'), h(async (req, res) => {
   const [rows] = await (await import('../../db/mysql.js')).db.execute<any[]>(
     'SELECT provider_key FROM ai_provider_config WHERE id = ? LIMIT 1',
     [req.params.id]
@@ -139,7 +139,7 @@ aiInsightsRouter.post('/providers/:id/test', requireRole('super_admin'), h(async
 /**
  * POST /api/ai/providers/:id/set-default - Set provider as default
  */
-aiInsightsRouter.post('/providers/:id/set-default', requireRole('super_admin'), h(async (req, res) => {
+aiInsightsRouter.post('/providers/:id/set-default', requireRole('super_admin', 'admin'), h(async (req, res) => {
   const [rows] = await (await import('../../db/mysql.js')).db.execute<any[]>(
     'SELECT provider_key FROM ai_provider_config WHERE id = ? LIMIT 1',
     [req.params.id]
@@ -157,7 +157,7 @@ aiInsightsRouter.post('/providers/:id/set-default', requireRole('super_admin'), 
 /**
  * POST /api/ai/providers/:id/disable - Disable provider
  */
-aiInsightsRouter.post('/providers/:id/disable', requireRole('super_admin'), h(async (req, res) => {
+aiInsightsRouter.post('/providers/:id/disable', requireRole('super_admin', 'admin'), h(async (req, res) => {
   await aiProviderConfigService.update(req.params.id, {
     activeStatus: 'inactive',
     isDefault: false,
@@ -170,7 +170,7 @@ aiInsightsRouter.post('/providers/:id/disable', requireRole('super_admin'), h(as
 /**
  * GET /api/ai/providers/usage - Usage logs
  */
-aiInsightsRouter.get('/providers/usage', requireRole('super_admin'), h(async (req, res) => {
+aiInsightsRouter.get('/providers/usage', requireRole('super_admin', 'admin'), h(async (req, res) => {
   const { providerKey, userId, requestSource, fromDate, toDate, limit, offset } = req.query;
 
   const filters: any = {};
