@@ -329,9 +329,8 @@ export default function NativeCompanyPostCreate() {
         </div>
       </div>
       <main className="space-y-8 p-4 sm:p-6 lg:p-8">
-
-        {myPostsQuery.isLoading && (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
+        {myPostsQuery.isLoading ? (
+          <div key="loading" className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
             <div className="space-y-4 rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-[var(--shadow-sm)]">
               <div className="h-8 w-48 skeleton" />
               <div className="h-48 w-full rounded-[1.25rem] skeleton" />
@@ -345,10 +344,8 @@ export default function NativeCompanyPostCreate() {
               <div className="h-56 rounded-[1.75rem] skeleton" />
             </div>
           </div>
-        )}
-
-        {!myPostsQuery.isLoading && creatorDenied && (
-          <Card className="rounded-[1.9rem] border-[color:var(--brand-100)] bg-white shadow-[var(--shadow-md)]">
+        ) : creatorDenied ? (
+          <Card key="denied" className="rounded-[1.9rem] border-[color:var(--brand-100)] bg-white shadow-[var(--shadow-md)]">
             <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
               <div className="space-y-4">
                 <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
@@ -386,10 +383,8 @@ export default function NativeCompanyPostCreate() {
               </div>
             </CardContent>
           </Card>
-        )}
-
-        {!myPostsQuery.isLoading && !creatorDenied && creatorError && (
-          <Card className="rounded-[1.75rem] border-rose-200 bg-rose-50/80 shadow-[var(--shadow-sm)]">
+        ) : creatorError ? (
+          <Card key="error" className="rounded-[1.75rem] border-rose-200 bg-rose-50/80 shadow-[var(--shadow-sm)]">
             <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-600 shadow-[var(--shadow-xs)]">
@@ -413,10 +408,8 @@ export default function NativeCompanyPostCreate() {
               </Button>
             </CardContent>
           </Card>
-        )}
-
-        {!myPostsQuery.isLoading && !creatorDenied && !creatorError && (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
+        ) : (
+          <div key="composer" className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
             <section id="creator-composer" className="space-y-5">
               <Card className="rounded-[1.85rem] border-slate-200 bg-white shadow-[var(--shadow-md)]">
                 <CardContent className="space-y-6 p-5 sm:p-6">

@@ -64,8 +64,11 @@ export interface AiAction {
 }
 
 export interface SafeAiProviderConfig {
+  id?: string;
   providerKey: string;
   providerName: string;
+  activeStatus?: 'active' | 'inactive';
+  isDefault?: boolean;
   modelName?: string;
   baseUrl?: string;
   apiKey?: string;
@@ -75,6 +78,8 @@ export interface SafeAiProviderConfig {
   maxOutputTokens?: number;
   dailyRequestLimit?: number;
   monthlyRequestLimit?: number;
+  dailyTokenLimit?: number;
+  monthlyTokenLimit?: number;
 }
 
 export interface AiProviderTestResult {

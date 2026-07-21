@@ -324,13 +324,18 @@ class AiProviderConfigService {
    */
   private toSafeConfig(row: AiProviderConfigRow, includeApiKey: boolean): SafeAiProviderConfig {
     const config: SafeAiProviderConfig = {
+      id: row.id,
       providerKey: row.provider_key,
       providerName: row.provider_name,
+      activeStatus: row.active_status,
+      isDefault: row.is_default,
       modelName: row.model_name || undefined,
       baseUrl: row.base_url || undefined,
       timeout: row.timeout_ms || undefined,
       dailyRequestLimit: row.daily_request_limit ?? undefined,
       monthlyRequestLimit: row.monthly_request_limit ?? undefined,
+      dailyTokenLimit: row.daily_token_limit ?? undefined,
+      monthlyTokenLimit: row.monthly_token_limit ?? undefined,
     };
 
     // Only include decrypted API key if explicitly requested (for provider execution)
