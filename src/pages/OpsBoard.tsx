@@ -32,28 +32,39 @@ const STAGE_LABEL: Record<string, string> = {
   "Round 2- Op's": "Ops Round",
   "Operations Interview": "Ops Round",
   "Interview - Skill Test": "Skill Test",
-  "Round 1- HR Screening": "HR Round 1",
+  "Round 1- HR Screening": "HR Round",
   "HR Interview": "HR Interview",
 };
 
-const STAGE_COLOR: Record<string, string> = {
-  "Ops Round": "bg-indigo-100 text-indigo-800",
-  "Skill Test": "bg-amber-100 text-amber-800",
-  "HR Round 1": "bg-sky-100 text-sky-800",
-  "HR Interview": "bg-sky-100 text-sky-800",
+const STAGE_CONFIG: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+  "Ops Round":    { bg: "bg-indigo-600", text: "text-white",        border: "border-indigo-700", dot: "bg-indigo-300" },
+  "Skill Test":   { bg: "bg-amber-500",  text: "text-white",        border: "border-amber-600",  dot: "bg-amber-200" },
+  "HR Round":     { bg: "bg-sky-500",    text: "text-white",        border: "border-sky-600",    dot: "bg-sky-200"    },
+  "HR Interview": { bg: "bg-sky-500",    text: "text-white",        border: "border-sky-600",    dot: "bg-sky-200"    },
 };
 
-function stageLabel(raw: string): string {
-  return STAGE_LABEL[raw] ?? raw;
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function stageLabel(raw: string) { return STAGE_LABEL[raw] ?? raw; }
 
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   try {
-    return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso));
-  } catch {
-    return "—";
-  }
+    return new Intl.DateTimeFormat("en-IN", {
+      hour: "numeric", minute: "2-digit", hour12: true,
+    }).format(new Date(iso));
+  } catch { return "—"; }
+}
+
+function fmtNow(): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
+  }).format(new Date());
+}
+
+function waitMins(iso: string | null): number {
+  if (!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
 }
 
 function sortEntries(entries: OpsBoardEntry[]): OpsBoardEntry[] {
@@ -64,30 +75,182 @@ function sortEntries(entries: OpsBoardEntry[]): OpsBoardEntry[] {
   });
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Score Components ───────────────────────────────────────────────────────────
+
+function AssessmentBadge({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="text-slate-300 text-sm font-medium">—</span>;
+  const pass = pct >= 60;
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className={`text-lg font-black tabular-nums ${pass ? "text-emerald-600" : "text-rose-600"}`}>
+        {pct.toFixed(0)}%
+      </span>
+      <span className={`text-[10px] font-bold uppercase tracking-wide ${pass ? "text-emerald-500" : "text-rose-500"}`}>
+        {pass ? "Pass" : "Fail"}
+      </span>
+    </div>
+  );
+}
+
+function TypingBadge({ wpm, acc }: { wpm: number | null; acc: number | null }) {
+  if (wpm == null) return <span className="text-slate-300 text-sm font-medium">—</span>;
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className="text-lg font-black tabular-nums text-slate-800">{Math.round(wpm)}</span>
+      <span className="text-[10px] text-slate-400 font-semibold">WPM{acc != null ? ` · ${acc.toFixed(0)}%` : ""}</span>
+    </div>
+  );
+}
+
+function WaitChip({ arrived }: { arrived: string | null }) {
+  const mins = waitMins(arrived);
+  const urgent = mins >= 30;
+  const mid    = mins >= 15;
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span className={`text-sm font-black tabular-nums ${urgent ? "text-rose-600" : mid ? "text-amber-600" : "text-slate-600"}`}>
+        {mins}m
+      </span>
+      <span className="text-[10px] text-slate-400 font-medium">{fmtTime(arrived)}</span>
+    </div>
+  );
+}
+
+// ── Row ────────────────────────────────────────────────────────────────────────
+
+function CandidateRow({ entry, rank }: { entry: OpsBoardEntry; rank: number }) {
+  const sl = stageLabel(entry.current_stage);
+  const cfg = STAGE_CONFIG[sl] ?? STAGE_CONFIG["HR Round"];
+
+  return (
+    <tr className="border-b border-slate-100 hover:bg-slate-50/60 transition-colors">
+      {/* Rank */}
+      <td className="py-3 pl-4 pr-2 w-10">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-xs font-black text-slate-500">
+          {rank}
+        </span>
+      </td>
+      {/* Candidate */}
+      <td className="py-3 px-3">
+        <p className="font-bold text-slate-900 leading-tight">{entry.candidate_name}</p>
+        <p className="text-xs text-slate-400 font-mono mt-0.5">{entry.candidate_code}</p>
+      </td>
+      {/* Applied Role */}
+      <td className="py-3 px-3">
+        <span className="text-sm text-slate-600 font-medium">{entry.applied_role ?? "—"}</span>
+      </td>
+      {/* Stage */}
+      <td className="py-3 px-3">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${cfg.bg} ${cfg.text}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+          {sl}
+        </span>
+      </td>
+      {/* Assessment */}
+      <td className="py-3 px-3 text-center">
+        <AssessmentBadge pct={entry.assessment_percentage} />
+      </td>
+      {/* Typing */}
+      <td className="py-3 px-3 text-center">
+        <TypingBadge wpm={entry.typing_net_wpm} acc={entry.typing_accuracy} />
+      </td>
+      {/* R1 Result */}
+      <td className="py-3 px-3 text-center">
+        {entry.skilltest_result ? (
+          <span className="inline-block rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+            {entry.skilltest_result}
+          </span>
+        ) : <span className="text-slate-300 text-sm">—</span>}
+      </td>
+      {/* Wait */}
+      <td className="py-3 pl-3 pr-4 text-center">
+        <WaitChip arrived={entry.arrived_at} />
+      </td>
+    </tr>
+  );
+}
+
+// ── Section ────────────────────────────────────────────────────────────────────
+
+function Section({
+  title, subtitle, badge, entries, accent,
+}: {
+  title: string;
+  subtitle: string;
+  badge: string;
+  entries: OpsBoardEntry[];
+  accent: string;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <div className="mb-6">
+      {/* Section header */}
+      <div className="flex items-center gap-3 mb-3">
+        <span className={`rounded-full px-3 py-1 text-xs font-black text-white ${accent}`}>
+          {badge} — {entries.length}
+        </span>
+        <span className="text-xs text-slate-400 font-medium">{subtitle}</span>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="py-2.5 pl-4 pr-2 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400 w-10">#</th>
+              <th className="py-2.5 px-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">Candidate</th>
+              <th className="py-2.5 px-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">Applied Role</th>
+              <th className="py-2.5 px-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">Stage</th>
+              <th className="py-2.5 px-3 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">Assessment</th>
+              <th className="py-2.5 px-3 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">Typing</th>
+              <th className="py-2.5 px-3 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">R1 Result</th>
+              <th className="py-2.5 pl-3 pr-4 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">Wait</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e, i) => (
+              <CandidateRow key={e.candidate_code} entry={e} rank={i + 1} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────────
 
 export default function OpsBoard() {
   const [searchParams] = useSearchParams();
   const branchParam = searchParams.get("branch") ?? "";
-  const dateParam = searchParams.get("date") ?? "";
+  const dateParam   = searchParams.get("date")   ?? "";
 
-  const [entries, setEntries] = useState<OpsBoardEntry[]>([]);
-  const [branches, setBranches] = useState<string[]>([]);
+  const [entries,        setEntries]        = useState<OpsBoardEntry[]>([]);
+  const [branches,       setBranches]       = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState(branchParam);
-  const [selectedDate, setSelectedDate] = useState(dateParam);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [selectedDate,   setSelectedDate]   = useState(dateParam);
+  const [lastUpdated,    setLastUpdated]     = useState<Date | null>(null);
+  const [clockStr,       setClockStr]       = useState(fmtNow());
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState<string | null>(null);
+  const [countdown,      setCountdown]      = useState(POLL_MS / 1000);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const clockRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Live clock
+  useEffect(() => {
+    clockRef.current = setInterval(() => setClockStr(fmtNow()), 1000);
+    return () => { if (clockRef.current) clearInterval(clockRef.current); };
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (selectedBranch) params.set("branch", selectedBranch);
-      if (selectedDate) params.set("date", selectedDate);
-      const qs = params.toString();
-
+      if (selectedDate)   params.set("date",   selectedDate);
+      const qs  = params.toString();
       const res = await fetch(`/api/ats/queue/ops-board${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { success: boolean; data: OpsBoardEntry[] };
@@ -103,203 +266,182 @@ export default function OpsBoard() {
     }
   }, [selectedBranch, selectedDate]);
 
-  // Fetch branches once
+  // Branches once
   useEffect(() => {
     fetch("/api/ats/queue/branches")
       .then(r => r.json())
-      .then((j: { success: boolean; data: string[] }) => {
-        if (j.success) setBranches(j.data);
-      })
+      .then((j: { success: boolean; data: string[] }) => { if (j.success) setBranches(j.data); })
       .catch(() => undefined);
   }, []);
 
-  // Auto-poll
+  // Poll + countdown
   useEffect(() => {
     void fetchData();
-    pollRef.current = setInterval(() => void fetchData(), POLL_MS);
+    setCountdown(POLL_MS / 1000);
+
+    pollRef.current      = setInterval(() => { void fetchData(); setCountdown(POLL_MS / 1000); }, POLL_MS);
+    countdownRef.current = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
+
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current)      clearInterval(pollRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
     };
   }, [fetchData]);
 
   const opsRound = entries.filter(e =>
     e.current_stage === "Round 2- Op's" || e.current_stage === "Operations Interview"
   );
-  const earlier = entries.filter(e =>
-    e.current_stage !== "Round 2- Op's" && e.current_stage !== "Operations Interview"
+  const skillTest = entries.filter(e => e.current_stage === "Interview - Skill Test");
+  const hrRound   = entries.filter(e =>
+    e.current_stage === "Round 1- HR Screening" || e.current_stage === "HR Interview"
   );
 
-  return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b px-4 py-3 flex items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <img src={mcnLogo} alt="MAS Callnet" className="h-8 w-auto" />
-          <div>
-            <h1 className="text-base font-bold text-slate-900 leading-tight">Interview Board</h1>
-            <p className="text-xs text-slate-500">Today's walk-in candidates &amp; scores</p>
-          </div>
-        </div>
+  const totalWaiting = entries.length;
+  const avgWait = entries.length
+    ? Math.round(entries.reduce((s, e) => s + waitMins(e.arrived_at), 0) / entries.length)
+    : 0;
 
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* Branch filter */}
-          {branches.length > 0 && (
-            <select
-              value={selectedBranch}
-              onChange={e => setSelectedBranch(e.target.value)}
-              className="h-8 rounded border border-slate-300 px-2 text-xs text-slate-700 bg-white"
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* ── Top bar ─────────────────────────────────────────────────────── */}
+      <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-20">
+        <div className="flex items-center justify-between gap-4 px-5 py-3">
+          {/* Brand */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <img src={mcnLogo} alt="MAS Callnet" className="h-9 w-auto" />
+            <div className="hidden sm:block">
+              <p className="text-base font-black text-slate-900 leading-tight">Interview Board</p>
+              <p className="text-xs text-slate-400 font-medium">Live walk-in candidates & scores</p>
+            </div>
+          </div>
+
+          {/* Stats strip */}
+          <div className="hidden md:flex items-center gap-5">
+            <div className="text-center">
+              <p className="text-2xl font-black text-slate-900 tabular-nums">{totalWaiting}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">In Queue</p>
+            </div>
+            <div className="h-8 w-px bg-slate-200" />
+            <div className="text-center">
+              <p className={`text-2xl font-black tabular-nums ${opsRound.length > 0 ? "text-indigo-600" : "text-slate-400"}`}>{opsRound.length}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Ops Round</p>
+            </div>
+            <div className="h-8 w-px bg-slate-200" />
+            <div className="text-center">
+              <p className="text-2xl font-black text-slate-500 tabular-nums">{avgWait}m</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Avg Wait</p>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {branches.length > 0 && (
+              <select
+                value={selectedBranch}
+                onChange={e => setSelectedBranch(e.target.value)}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              >
+                <option value="">All Branches</option>
+                {branches.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            )}
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            <button
+              onClick={() => void fetchData()}
+              className="h-8 px-3 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
             >
-              <option value="">All Branches</option>
-              {branches.map(b => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-          )}
-          {/* Date filter */}
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={e => setSelectedDate(e.target.value)}
-            className="h-8 rounded border border-slate-300 px-2 text-xs text-slate-700 bg-white"
-          />
-          <button
-            onClick={() => void fetchData()}
-            className="h-8 px-3 rounded border border-slate-300 text-xs text-slate-600 bg-white hover:bg-slate-50"
-          >
-            Refresh
-          </button>
-          {lastUpdated && (
-            <span className="text-[11px] text-slate-400">
-              Updated {fmtTime(lastUpdated.toISOString())}
-            </span>
-          )}
+              Refresh
+            </button>
+            <div className="text-right hidden sm:block">
+              <p className="text-xs font-black text-slate-700 tabular-nums">{clockStr}</p>
+              {lastUpdated && (
+                <p className="text-[10px] text-slate-400">
+                  Updated {fmtTime(lastUpdated.toISOString())} · {countdown}s
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      </header>
 
-      {/* Body */}
-      <div className="p-4 space-y-6 max-w-5xl mx-auto">
+      {/* ── Body ─────────────────────────────────────────────────────────── */}
+      <main className="flex-1 px-4 py-5 sm:px-6">
+
+        {/* Loading */}
         {loading && (
-          <div className="flex items-center justify-center py-20 text-slate-400 text-sm">
-            Loading candidates…
+          <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-indigo-500 mb-3" />
+            <p className="text-sm font-medium">Loading interview board…</p>
           </div>
         )}
 
+        {/* Error */}
         {!loading && error && (
-          <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {error}
+          <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700 mb-4">
+            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            Failed to load: {error}
           </div>
         )}
 
+        {/* Empty */}
         {!loading && !error && entries.length === 0 && (
-          <div className="rounded border border-dashed border-slate-300 bg-white p-10 text-center text-slate-400 text-sm">
-            No candidates at interview stages today
-            {selectedBranch ? ` for ${selectedBranch}` : ""}.
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="h-16 w-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+              <svg className="h-8 w-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </div>
+            <p className="text-lg font-bold text-slate-500">No candidates at interview stages</p>
+            <p className="text-sm text-slate-400 mt-1">
+              {selectedBranch ? `for ${selectedBranch}` : "Board will update automatically"}
+            </p>
           </div>
         )}
 
-        {/* Ops Round section */}
-        {opsRound.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="rounded-full bg-indigo-600 px-3 py-0.5 text-xs font-semibold text-white">
-                Ops Round — {opsRound.length}
-              </span>
-              <span className="text-xs text-slate-400">Ready for second-round interview</span>
-            </div>
-            <CandidateTable entries={opsRound} />
-          </section>
+        {/* Data */}
+        {!loading && !error && entries.length > 0 && (
+          <>
+            <Section
+              title="Ops Round"
+              subtitle="Ready for second-round interview with Operations"
+              badge="Ops Round"
+              entries={opsRound}
+              accent="bg-indigo-600"
+            />
+            <Section
+              title="Skill Test"
+              subtitle="Currently in skill / typing assessment"
+              badge="Skill Test"
+              entries={skillTest}
+              accent="bg-amber-500"
+            />
+            <Section
+              title="HR Round"
+              subtitle="In initial HR screening"
+              badge="HR Round"
+              entries={hrRound}
+              accent="bg-sky-500"
+            />
+          </>
         )}
+      </main>
 
-        {/* Earlier rounds section */}
-        {earlier.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="rounded-full bg-slate-200 px-3 py-0.5 text-xs font-semibold text-slate-600">
-                Earlier Rounds — {earlier.length}
-              </span>
-              <span className="text-xs text-slate-400">In progress / skill test</span>
-            </div>
-            <CandidateTable entries={earlier} dimmed />
-          </section>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Table sub-component ───────────────────────────────────────────────────────
-
-function CandidateTable({ entries, dimmed }: { entries: OpsBoardEntry[]; dimmed?: boolean }) {
-  return (
-    <div className={`overflow-x-auto rounded-lg border bg-white shadow-sm ${dimmed ? "opacity-70" : ""}`}>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-slate-50 text-xs text-slate-500">
-            <th className="px-4 py-2.5 text-left font-medium">Candidate</th>
-            <th className="px-4 py-2.5 text-left font-medium">Applied Role</th>
-            <th className="px-4 py-2.5 text-left font-medium">Stage</th>
-            <th className="px-4 py-2.5 text-left font-medium">Assessment</th>
-            <th className="px-4 py-2.5 text-left font-medium">Typing WPM</th>
-            <th className="px-4 py-2.5 text-left font-medium">R1 Result</th>
-            <th className="px-4 py-2.5 text-left font-medium">Arrived</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {entries.map((c, i) => {
-            const sl = stageLabel(c.current_stage);
-            const pass =
-              c.skilltest_result?.toLowerCase() === "selected" ||
-              (c.assessment_percentage != null && c.assessment_percentage >= 60);
-
-            return (
-              <tr key={`${c.candidate_code}-${i}`} className="hover:bg-slate-50">
-                <td className="px-4 py-3">
-                  <p className="font-semibold text-slate-900">{c.candidate_name}</p>
-                  <p className="text-xs text-slate-400">{c.candidate_code}</p>
-                </td>
-                <td className="px-4 py-3 text-slate-600 text-xs">{c.applied_role ?? "—"}</td>
-                <td className="px-4 py-3">
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STAGE_COLOR[sl] ?? "bg-slate-100 text-slate-600"}`}>
-                    {sl}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  {c.assessment_percentage != null ? (
-                    <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold ${pass ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                      {c.assessment_percentage.toFixed(1)}%
-                    </span>
-                  ) : (
-                    <span className="text-slate-300 text-xs">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {c.typing_net_wpm != null ? (
-                    <div>
-                      <span className="font-medium text-slate-800">{Math.round(c.typing_net_wpm)}</span>
-                      <span className="text-slate-400 text-xs"> WPM</span>
-                      {c.typing_accuracy != null && (
-                        <p className="text-[11px] text-slate-400">{c.typing_accuracy.toFixed(1)}% acc</p>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-slate-300 text-xs">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {c.skilltest_result ? (
-                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
-                      {c.skilltest_result}
-                    </span>
-                  ) : (
-                    <span className="text-slate-300 text-xs">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs text-slate-500">{fmtTime(c.arrived_at)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {/* ── Footer ───────────────────────────────────────────────────────── */}
+      <footer className="border-t border-slate-200 bg-white px-5 py-2.5 flex items-center justify-between">
+        <p className="text-[11px] text-slate-400 font-medium">
+          MAS Callnet PeopleOS — Walk-in Interview Board
+        </p>
+        <p className="text-[11px] text-slate-400 tabular-nums">
+          Auto-refresh every 30s
+        </p>
+      </footer>
     </div>
   );
 }

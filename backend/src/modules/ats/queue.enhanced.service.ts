@@ -473,7 +473,7 @@ export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Pr
       scores.assessment_percentage,
       scores.typing_net_wpm,
       scores.typing_accuracy,
-      COALESCE(isub.arrived_at, c.created_at)                            AS arrived_at
+      COALESCE(isub.submitted_at, c.created_at)                            AS arrived_at
     FROM ats_candidate c
     LEFT JOIN ats_interview_submission isub ON isub.candidate_id = c.id
     LEFT JOIN process_master pm            ON pm.id = c.applied_for_process
@@ -495,8 +495,8 @@ export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Pr
           = COALESCE(NULLIF(bm_ops.branch_name,''), NULLIF(bm_ops.branch_code,''))
         OR emp_ops.branch_id IS NULL
       )
-      AND (? IS NULL OR DATE(COALESCE(isub.arrived_at, c.created_at)) = ?)
-    ORDER BY COALESCE(isub.arrived_at, c.created_at) ASC`,
+      AND (? IS NULL OR DATE(COALESCE(isub.submitted_at, c.created_at)) = ?)
+    ORDER BY COALESCE(isub.submitted_at, c.created_at) ASC`,
     params
   );
 
@@ -521,7 +521,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
   const targetDate = date || getIstDateString();
   const conditions: string[] = [
     `c.current_stage IN ('Operations Interview', "Round 2- Op's", 'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test')`,
-    `DATE(COALESCE(isub.arrived_at, c.created_at)) = ?`,
+    `DATE(COALESCE(isub.submitted_at, c.created_at)) = ?`,
   ];
   const params: unknown[] = [targetDate];
 
@@ -542,7 +542,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       scores.assessment_percentage,
       scores.typing_net_wpm,
       scores.typing_accuracy,
-      COALESCE(isub.arrived_at, c.created_at)                                             AS arrived_at
+      COALESCE(isub.submitted_at, c.created_at)                                             AS arrived_at
     FROM ats_candidate c
     LEFT JOIN ats_interview_submission isub ON isub.candidate_id = c.id
     LEFT JOIN process_master pm            ON pm.id = c.applied_for_process
@@ -557,7 +557,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       GROUP BY aca.candidate_id
     ) scores ON scores.candidate_id = c.id
     WHERE ${conditions.join(' AND ')}
-    ORDER BY COALESCE(isub.arrived_at, c.created_at) ASC`,
+    ORDER BY COALESCE(isub.submitted_at, c.created_at) ASC`,
     params
   );
 
