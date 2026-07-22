@@ -253,7 +253,7 @@ export const navGroups: NavGroup[] = [
           { label: "TAT Dashboard", href: "/governance/tat-dashboard", icon: ic(BarChart3), pageCode: "TAT_DASHBOARD", description: "Turnaround-time monitoring" },
           { label: "Operations KPI",       href: "/operations-kpi",             icon: ic(Target),       pageCode: "OPERATIONS_KPI",          description: "Ops KPI" },
           { label: "Operations Dashboard", href: "/operations/dashboard",       icon: ic(Target),       pageCode: "OPERATIONS_DASHBOARD",    description: "Ops dashboard" },
-          { label: "Feedback Assignments", href: "/performance-feedback/assignments",  icon: ic(ClipboardList), description: "Feedback tasks" },
+          { label: "Feedback Assignments", href: "/performance-feedback/assignments",  icon: ic(ClipboardList), roles: ["admin","hr","manager","process_manager","super_admin"], description: "Feedback tasks" },
           { label: "Team Reports",         href: "/performance-feedback/team-reports", icon: ic(BarChart3),     roles: ["admin","hr","manager"], description: "Team feedback" },
         ],
       },

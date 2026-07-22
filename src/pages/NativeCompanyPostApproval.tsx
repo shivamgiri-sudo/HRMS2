@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, useRef } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -34,7 +34,7 @@ import {
   useRejectCompanyPost,
 } from "@/hooks/useCompanyFeed";
 import { useToast } from "@/hooks/use-toast";
-import { apiUrl } from "@/lib/apiBase";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 const STATUS_BORDER_MAP: Record<string, string> = {
   approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -61,8 +61,27 @@ function formatDateTime(value: string | null): string {
   }).format(date);
 }
 
-function getCompanyFeedImageUrl(fileId: string): string {
-  return apiUrl(`/api/files/company-feed/${fileId}`);
+function AuthImage({ path, className, onClick }: { path: string; className?: string; onClick?: () => void }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const prevPath = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (prevPath.current === path) return;
+    prevPath.current = path;
+    let active = true;
+    hrmsApi.getBlob(path)
+      .then((blob) => {
+        if (active) setBlobUrl(URL.createObjectURL(blob));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+    };
+  }, [path]);
+
+  if (!blobUrl) return <div className={`${className ?? ""} bg-slate-100 animate-pulse rounded`} />;
+  return <img src={blobUrl} alt="" className={className} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} />;
 }
 
 export default function NativeCompanyPostApproval() {
@@ -343,32 +362,24 @@ export default function NativeCompanyPostApproval() {
                             className={`grid gap-3 ${selectedPost.media.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
                           >
                             {selectedPost.media.slice(0, 4).map((media) => {
-                              const imgUrl = getCompanyFeedImageUrl(media.file_id);
+                              const imgPath = `/api/files/company-feed/${media.file_id}`;
                               return (
                                 <Fragment key={media.file_id}>
-                                  <img
-                                    src={imgUrl}
-                                    alt=""
-                                    role="button"
-                                    tabIndex={0}
-                                    onClick={() =>
-                                      setExpandedImage(expandedImage === imgUrl ? null : imgUrl)
-                                    }
-                                    onKeyDown={(e) =>
-                                      (e.key === "Enter" || e.key === " ") &&
-                                      setExpandedImage(expandedImage === imgUrl ? null : imgUrl)
-                                    }
+                                  <AuthImage
+                                    path={imgPath}
                                     className="cursor-zoom-in rounded object-cover w-full h-44"
+                                    onClick={() =>
+                                      setExpandedImage(expandedImage === imgPath ? null : imgPath)
+                                    }
                                   />
-                                  {expandedImage === imgUrl && (
+                                  {expandedImage === imgPath && (
                                     <div
                                       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
                                       onClick={() => setExpandedImage(null)}
                                     >
-                                      <img
-                                        src={imgUrl}
+                                      <AuthImage
+                                        path={imgPath}
                                         className="max-h-[90vh] max-w-[90vw] rounded"
-                                        alt=""
                                       />
                                     </div>
                                   )}
