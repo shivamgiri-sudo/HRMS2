@@ -288,7 +288,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       queryClient.clear();
       setUser({ id: authUser.id, email: authUser.email });
       scheduleRefresh();
-      queryClient.invalidateQueries();
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };
