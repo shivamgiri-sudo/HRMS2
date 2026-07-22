@@ -475,8 +475,7 @@
 }
 
 .reference-metric-card p,
-.reference-list-row p,
-.reference-quick-link span {
+.reference-list-row p {
   overflow-wrap: anywhere;
 }
 

@@ -449,7 +449,7 @@ export function ReferenceQuickLink({
         <Icon className="h-5 w-5" aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-[11px] font-semibold leading-tight text-[#1d2b45]">{title}</span>
+        <span className="block truncate text-[11px] font-semibold leading-tight text-[#1d2b45]">{title}</span>
         {subtitle ? <span className="mt-0.5 block text-[9px] leading-tight text-[#71809a]">{subtitle}</span> : null}
       </span>
       <ArrowRight className="h-4 w-4 shrink-0 text-[#94a3b8]" aria-hidden="true" />
