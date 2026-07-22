@@ -38,9 +38,13 @@ const NativeJoiningControlRoom         = lazy(() => import("@/pages/NativeJoinin
 const NativeOfferLetterGeneration      = lazy(() => import("@/pages/NativeOfferLetterGeneration"));
 const ATSBulkImportPage                = lazy(() => import("@/pages/ATSBulkImportPage"));
 const NativeATSCandidateRegistration   = lazy(() => import("@/pages/NativeATSCandidateRegistration"));
+const NativeJobRequisition             = lazy(() => import("@/pages/NativeJobRequisition"));
 
 export const recruitmentRouteElements = (
   <>
+      {/* Job Requisition — Stage 1: Hiring Demand Management */}
+      <Route path="/recruitment/job-requisition" element={<ProtectedRoute><Gate pageCode="JOB_REQUISITION"><NativeJobRequisition /></Gate></ProtectedRoute>} />
+
       {/* ATS Dashboards — CANONICAL: /ats/command-center */}
       <Route path="/ats/command-center" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSFullParityCommandCenter /></Gate></ProtectedRoute>} />
       {/* Legacy dashboard views — kept for role-specific bookmarks */}
@@ -74,7 +78,7 @@ export const recruitmentRouteElements = (
       {/* Onboarding bridge */}
       <Route path="/ats/onboarding-bridge"    element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />
       {/* CANONICAL onboarding requests: /ats/onboarding-requests */}
-      <Route path="/ats/onboarding-requests"  element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
+      <Route path="/ats/onboarding-requests"  element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_REQUESTS"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/hr-onboarding-requests"   element={<Navigate to="/ats/onboarding-requests" replace />} />
 

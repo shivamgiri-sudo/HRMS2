@@ -245,7 +245,7 @@ function StepHeader({ n, label, complete, open, toggle }: { n: number; label: st
 
 export default function NativeHROnboardingRequests() {
   const { user } = useAuth();
-  const { roleKeys } = useWorkforceAccess();
+  const { roleKeys, isLoading: roleLoading } = useWorkforceAccess();
   const role = String((user as any)?.role ?? '').toLowerCase();
   const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(k));
   const canChangePfEsi = roleKeys.some(k => ['payroll_hr', 'admin', 'super_admin', 'hr'].includes(k));
@@ -731,7 +731,8 @@ export default function NativeHROnboardingRequests() {
     }
   };
 
-  // ── Access guard
+  // ── Access guard — wait for roleKeys to load before evaluating
+  if (roleLoading) return null;
   if (user && !allowed) {
     return <DashboardLayout><div className="p-8 text-center font-bold text-red-600">You do not have access to this page.</div></DashboardLayout>;
   }
