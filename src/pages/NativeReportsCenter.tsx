@@ -35,7 +35,6 @@ const BRANCH_FILTER: FilterDef = { key: "branchId", label: "Branch", type: "text
 const PROCESS_FILTER: FilterDef = { key: "processId", label: "Process", type: "text", placeholder: "Process ID" };
 const DEPT_FILTER: FilterDef = { key: "departmentId", label: "Department", type: "text", placeholder: "Dept ID" };
 const MONTH_FILTER: FilterDef = { key: "month", label: "Month", type: "month" };
-const RUN_ID_FILTER: FilterDef = { key: "runId", label: "Payroll Run ID", type: "text", placeholder: "e.g. 42" };
 const YEAR_FILTER: FilterDef = { key: "year", label: "Year", type: "year", placeholder: String(new Date().getFullYear()) };
 const DATE_FROM: FilterDef = { key: "from", label: "From Date", type: "date" };
 const DATE_TO: FilterDef = { key: "to", label: "To Date", type: "date" };
@@ -112,7 +111,7 @@ const CATALOG: ReportDef[] = [
   { code: "payroll-register", name: "Salary Register", category: "Payroll", subcategory: "Monthly Processing", filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER], requiresRunSelector: true },
   { code: "payroll-variance", name: "Payroll Variance Report", category: "Payroll", subcategory: "Monthly Processing", filters: [MONTH_FILTER, BRANCH_FILTER], requiresRunSelector: true },
   { code: "payslip-status", name: "Payslip Release Status", category: "Payroll", subcategory: "Monthly Processing", filters: [MONTH_FILTER, BRANCH_FILTER], requiresRunSelector: true },
-  { code: "salary-sheet-export", name: "Salary Sheet (Onfido Format)", category: "Payroll", subcategory: "Monthly Processing", filters: [RUN_ID_FILTER], requiresRunSelector: true, directDownload: true, roles: ["admin", "finance", "payroll", "hr"] },
+  { code: "salary-sheet-export", name: "Salary Sheet (Onfido Format)", category: "Payroll", subcategory: "Monthly Processing", filters: [MONTH_FILTER, BRANCH_FILTER], requiresRunSelector: true, directDownload: true, roles: ["admin", "finance", "payroll", "hr"] },
   { code: "ytd-salary-summary", name: "YTD Salary Summary", category: "Payroll", subcategory: "Salary Analysis", filters: [{ key: "financialYear", label: "Financial Year", type: "text", placeholder: "2025-26" }, BRANCH_FILTER, PROCESS_FILTER] },
   { code: "cost-centre-salary-summary", name: "Cost Centre Salary Summary", category: "Payroll", subcategory: "Salary Analysis", filters: [MONTH_FILTER, { key: "costCentreId", label: "Cost Centre", type: "text" }] },
   { code: "process-lob-salary-cost", name: "Process / LOB Salary Cost", category: "Payroll", subcategory: "Salary Analysis", filters: [MONTH_FILTER, BRANCH_FILTER] },
@@ -430,11 +429,14 @@ export default function NativeReportsCenter() {
     try {
       // Direct file download reports (e.g. salary sheet XLSX)
       if (selectedReport.directDownload && selectedReport.code === "salary-sheet-export") {
-        const runId = filterValues["runId"]?.trim();
-        if (!runId) { setRunError("Please enter a Payroll Run ID to download the salary sheet."); setRunning(false); return; }
+        const month = filterValues["month"]?.trim();
+        const branchId = filterValues["branchId"]?.trim();
+        if (!month) { setRunError("Please select a Month to download the salary sheet."); setRunning(false); return; }
+        const params = new URLSearchParams({ month });
+        if (branchId) params.set("branchId", branchId);
         const a = document.createElement("a");
-        a.href = `/api/payroll/runs/${runId}/salary-sheet-export`;
-        a.download = `Salary Sheet Run-${runId}.xlsx`;
+        a.href = `/api/payroll/salary-sheet-export?${params.toString()}`;
+        a.download = `Salary Sheet ${month}.xlsx`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -835,7 +837,7 @@ export default function NativeReportsCenter() {
                     <div className="mt-3 flex items-center gap-2 text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
                       <CheckCircle2 size={13} />
                       {selectedReport.directDownload
-                        ? <span><span className="font-semibold">Tip:</span> Enter the Payroll Run ID and click Run to download the XLSX directly. Find the Run ID in Payroll → Finance Queue.</span>
+                        ? <span><span className="font-semibold">Tip:</span> Select the Month and optionally a Branch, then click Run to download the XLSX directly.</span>
                         : <span><span className="font-semibold">Tip:</span> This report uses payroll run data. Set the Month filter to the run month you want.</span>
                       }
                     </div>

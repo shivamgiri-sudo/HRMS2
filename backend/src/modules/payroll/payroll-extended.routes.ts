@@ -150,6 +150,27 @@ payrollExtendedRouter.get("/runs/:id/ecr", requireRole("admin", "finance", "payr
 // ESIC challan: handled by payroll.routes.ts /runs/:id/esic-challan (mounted first)
 
 // ── Salary Sheet XLSX export (mirrors Onfido Noida sheet format) ──────────────
+// Accepts either /runs/:id/salary-sheet-export OR /salary-sheet-export?month=YYYY-MM&branchId=X
+payrollExtendedRouter.get("/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { month, branchId } = req.query as { month?: string; branchId?: string };
+  if (!month) return res.status(400).json({ success: false, message: "month query param required (YYYY-MM)" });
+
+  // Find the most recent run for this month (optionally filtered by branch)
+  let runQuery = "SELECT id, run_month FROM salary_prep_run WHERE run_month = ?";
+  const params: (string | number)[] = [month];
+  if (branchId) {
+    runQuery += " AND branch_id = ?";
+    params.push(branchId);
+  }
+  runQuery += " ORDER BY created_at DESC LIMIT 1";
+  const [runRows] = await db.execute<RowDataPacket[]>(runQuery, params);
+  const foundRun = runRows[0];
+  if (!foundRun) return res.status(404).json({ success: false, message: `No payroll run found for ${month}${branchId ? ` (branch ${branchId})` : ""}` });
+
+  // Redirect to the ID-based endpoint
+  return res.redirect(`/api/payroll/runs/${foundRun.id}/salary-sheet-export`);
+}));
+
 payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
