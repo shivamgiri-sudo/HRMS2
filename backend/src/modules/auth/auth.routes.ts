@@ -57,12 +57,14 @@ interface RoleRow extends RowDataPacket {
 
 interface RequesterRow extends RowDataPacket {
   employee_id: string;
+  branch_id: string | null;
   designation: string | null;
 }
 
 interface EmployeeLookupRow extends RowDataPacket {
   employee_id: string;
   user_id: string | null;
+  branch_id: string | null;
   designation: string | null;
   emp_email: string | null;
   auth_email: string | null;
@@ -446,7 +448,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
   }
 
   const [requesterRows] = await db.execute<RequesterRow[]>(
-    `SELECT e.id AS employee_id,
+    `SELECT e.id AS employee_id, e.branch_id,
             COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -461,15 +463,19 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
   const requesterEmployeeId = requesterRows[0]?.employee_id
     ? String(requesterRows[0].employee_id)
     : null;
+  const requesterBranchId = requesterRows[0]?.branch_id
+    ? String(requesterRows[0].branch_id)
+    : null;
 
   let targetUserId = userId ? String(userId) : "";
   let targetEmployeeId: string | null = null;
   let targetDesignation: string | null = null;
   let targetUserEmail: string | null = null;
+  let targetBranchId: string | null = null;
 
   if (employeeId) {
     const [empRows] = await db.execute<EmployeeLookupRow[]>(
-      `SELECT e.id AS employee_id, e.user_id,
+      `SELECT e.id AS employee_id, e.user_id, e.branch_id,
               COALESCE(d.designation_name, e.emp_type, e.profile_type) AS designation,
               COALESCE(NULLIF(TRIM(e.official_email),''), NULLIF(TRIM(e.email),'')) AS emp_email,
               au.email AS auth_email
@@ -485,6 +491,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     }
     targetEmployeeId = String(empRows[0].employee_id);
     targetDesignation = empRows[0].designation ? String(empRows[0].designation) : null;
+    targetBranchId = empRows[0].branch_id ? String(empRows[0].branch_id) : null;
 
     if (empRows[0].user_id) {
       targetUserId = String(empRows[0].user_id);
@@ -563,8 +570,29 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     });
   }
 
-  const bypassScopeCheck = requesterRole === "super_admin" || requesterRole === "admin" || requesterRole === "hr";
-  if (!bypassScopeCheck) {
+  if (requesterRole === "hr") {
+    // HR can reset passwords for employees in their own branch only
+    if (!requesterBranchId) {
+      return res.status(403).json({
+        success: false,
+        error: "Your employee profile does not have a branch assigned"
+      });
+    }
+    const resolvedTargetBranchId = employeeId ? (targetBranchId ?? null) : await (async () => {
+      const [r] = await db.execute<RowDataPacket[]>(
+        `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+        [targetUserId]
+      );
+      return r[0]?.branch_id ? String(r[0].branch_id) : null;
+    })();
+    if (resolvedTargetBranchId !== requesterBranchId) {
+      return res.status(403).json({
+        success: false,
+        error: "You can only reset passwords for employees in your own branch"
+      });
+    }
+  } else if (requesterRole !== "super_admin") {
+    // admin / wfm: restricted to reporting downline
     if (!requesterEmployeeId || !targetEmployeeId) {
       return res.status(403).json({
         success: false,
