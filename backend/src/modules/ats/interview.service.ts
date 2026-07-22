@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { sendSelectionCongratulationsEmail } from './ats.email.service.js';
 import { sendOnboardingToken } from './ats.onboarding.service.js';
 import { env } from '../../config/env.js';
+import { inboxService } from '../inbox/inbox.service.js';
 
 /**
  * Interview Service
@@ -254,6 +255,37 @@ async function handleCandidateSelection(candidateId: string) {
     // notification table may not exist on all deployments
     console.error('[interview] Selection notification failed for candidate', candidateId, ':', err instanceof Error ? err.message : String(err));
   });
+
+  // Notify the recruiter who owns this candidate via work inbox
+  void (async () => {
+    try {
+      if (!candidate.preferred_recruiter_id) return;
+      const [rosterRows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? LIMIT 1`,
+        [candidate.preferred_recruiter_id]
+      );
+      const empId = rosterRows[0]?.employee_id as string | null;
+      if (!empId) return;
+      const [userRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM users WHERE employee_id = ? LIMIT 1`,
+        [empId]
+      );
+      const userId = userRows[0]?.id as string | null;
+      if (!userId) return;
+      await inboxService.createItem({
+        user_id: userId,
+        type: 'candidate_selected',
+        title: `Candidate Selected: ${candidate.full_name ?? 'Candidate'}`,
+        description: `${candidate.full_name ?? 'Candidate'} has been selected for ${candidate.applied_for_role ?? 'the role'} at ${candidate.branch_display_name ?? ''}. Onboarding link sent.`,
+        entity_type: 'ats_candidate',
+        entity_id: candidateId,
+        action_url: '/ats/onboarding-requests',
+        priority: 'high',
+      });
+    } catch (e) {
+      console.warn('[interview] recruiter inbox notification failed:', e);
+    }
+  })();
 }
 
 /**

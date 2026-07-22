@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { sendSelectedEmail, sendRejectedEmail } from './ats.email.service.js';
 import { approveOffer, rejectOffer } from './ats.onboarding.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
 
 /**
  * Branch Head Approval Service
@@ -221,6 +222,35 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
           hrPhone: '',
         }).catch((err: unknown) => console.error('[branch-head] approval email failed:', err));
       }
+
+      // Notify the submitting HR/recruiter that the offer was approved
+      void (async () => {
+        try {
+          const [submitterRows] = await db.execute<RowDataPacket[]>(
+            `SELECT phv.payroll_hr_id, u.id AS user_id
+             FROM ats_payroll_hr_validation phv
+             LEFT JOIN employees e ON e.id = phv.payroll_hr_id
+             LEFT JOIN users u ON u.employee_id = e.id
+             WHERE phv.id = ? LIMIT 1`,
+            [approval_id]
+          );
+          const userId = submitterRows[0]?.user_id as string | null;
+          if (userId) {
+            await inboxService.createItem({
+              user_id: userId,
+              type: 'offer_approved',
+              title: `Offer Approved: ${approval.full_name ?? 'Candidate'}`,
+              description: `${approval.full_name ?? 'Candidate'}'s offer has been approved by Branch Head${remarks ? `: "${remarks}"` : ''}. Proceed to employee conversion.`,
+              entity_type: 'ats_candidate',
+              entity_id: approval.candidate_id as string,
+              action_url: '/ats/onboarding-requests',
+              priority: 'high',
+            });
+          }
+        } catch (e) {
+          console.warn('[branch-head] offer approval inbox notification failed:', e);
+        }
+      })();
 
       return {
         success: true,

@@ -397,6 +397,23 @@ export default function NativeATSRecruiterWorkspace() {
   const [reassignLoading, setReassignLoading] = useState(false);
   const [reassignMsg, setReassignMsg] = useState("");
 
+  // Batch / Hiring Drive state (cascades from processName)
+  type OpenRequisition = {
+    id: string;
+    requisition_code: string;
+    designation_name: string;
+    planned_batch_no: string | null;
+    planned_batch_name: string | null;
+    open_positions: number;
+    target_joining_date: string | null;
+  };
+  type ProcessOption = { id: string; process_name: string; process_code: string };
+  const [branchProcesses, setBranchProcesses] = useState<ProcessOption[]>([]);
+  const [selectedProcessId, setSelectedProcessId] = useState("");
+  const [openBatches, setOpenBatches] = useState<OpenRequisition[]>([]);
+  const [selectedRequisitionId, setSelectedRequisitionId] = useState("");
+  const [loadingBatches, setLoadingBatches] = useState(false);
+
   const rank = STAGE_RANK[form.stageName] ?? 0;
   // Effective rank caps at the stage where rejection occurred — downstream rounds don't happen
   const effectiveRank = form.round1Result === "Rejected" ? Math.min(rank, 1)
@@ -408,6 +425,38 @@ export default function NativeATSRecruiterWorkspace() {
     : form.round2Result === "Rejected"
     ? (config.stageOptions as string[]).filter((s: string) => (STAGE_RANK[s] ?? 0) <= 3)
     : (config.stageOptions as string[]);
+
+  // Load process list from process_master when candidate branch changes
+  useEffect(() => {
+    const branch = selected?.branch;
+    if (!branch) { setBranchProcesses([]); return; }
+    hrmsApi.get<{ success: boolean; data: ProcessOption[] }>(
+      `/api/job-requisition/processes-for-branch/${encodeURIComponent(branch)}`
+    ).then(res => setBranchProcesses(res.data || [])).catch(() => setBranchProcesses([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.branch]);
+
+  // Load open batches when selected process changes
+  useEffect(() => {
+    const branch = selected?.branch;
+    if (!selectedProcessId || !branch) {
+      setOpenBatches([]);
+      setSelectedRequisitionId("");
+      return;
+    }
+    setLoadingBatches(true);
+    hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(
+      `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?processId=${encodeURIComponent(selectedProcessId)}`
+    ).then(res => {
+      setOpenBatches(res.data || []);
+    }).catch(() => {
+      setOpenBatches([]);
+    }).finally(() => {
+      setLoadingBatches(false);
+    });
+    setSelectedRequisitionId("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProcessId, selected?.branch]);
 
   const loadPending = async () => {
     const res = await hrmsApi.get<{ success: boolean; data: any[]; recruiter?: RecruiterProfile | null }>(
@@ -691,6 +740,10 @@ export default function NativeATSRecruiterWorkspace() {
     if (!selected || !recruiterProfile) return;
     const validationError = validateForm(form);
     if (validationError) { setMsg(validationError); return; }
+    if (openBatches.length > 0 && !selectedRequisitionId) {
+      setMsg("Batch / Hiring Drive is required — open positions exist for this process.");
+      return;
+    }
     setLoading(true);
     setMsg("Submitting update…");
     try {
@@ -741,9 +794,13 @@ export default function NativeATSRecruiterWorkspace() {
         performanceIncentives: form.performanceIncentives || null,
         substituteFlag: substituteMode ? true : undefined,
         substituteReason: substituteMode ? subReason : undefined,
+        ...(selectedRequisitionId ? { requisitionId: selectedRequisitionId } : {}),
       });
       setMsg("Update submitted successfully.");
       setScreen("workspace");
+      setOpenBatches([]);
+      setSelectedRequisitionId("");
+      setSelectedProcessId("");
       await refresh();
     } catch (err: any) {
       setMsg(err?.response?.data?.message || err.message || "Unable to submit update");
@@ -1283,6 +1340,9 @@ export default function NativeATSRecruiterWorkspace() {
                 className="btn-ghost"
                 onClick={() => {
                   setScreen("workspace");
+                  setOpenBatches([]);
+                  setSelectedRequisitionId("");
+                  setSelectedProcessId("");
                   setAssessmentSummary(null);
                   setAssessmentLoading(false);
                 }}
@@ -1383,10 +1443,56 @@ export default function NativeATSRecruiterWorkspace() {
               <div className="form-section sec-gray">
                 <div className="sec-title" style={{ color: "#475569" }}>Walk-in Summary</div>
                 <div className="rw-grid rw-3">
-                  {field("Interviewed for Process *", "processName", "select", config.processOptions)}
+                  {/* Process dropdown — from process_master for this branch */}
+                  <div>
+                    <label>Interviewed for Process *</label>
+                    <select
+                      value={selectedProcessId}
+                      onChange={e => {
+                        const opt = branchProcesses.find(p => p.id === e.target.value);
+                        setSelectedProcessId(e.target.value);
+                        updateForm({ processName: opt?.process_name || e.target.value });
+                      }}
+                    >
+                      <option value="">Select</option>
+                      {branchProcesses.length > 0
+                        ? branchProcesses.map(p => <option key={p.id} value={p.id}>{p.process_name}</option>)
+                        : config.processOptions.map(p => <option key={p} value={p}>{p}</option>)
+                      }
+                    </select>
+                  </div>
                   {field("Walk-in End Stage *", "stageName", "select", reachableStageOptions)}
                   {field("Final Decision *", "finalDecision", "select", config.decisionOptions)}
                 </div>
+                {/* Batch / Hiring Drive — cascades from process, required when open positions exist */}
+                {(openBatches.length > 0 || loadingBatches) && (
+                  <div style={{ marginTop: 10 }}>
+                    <label className="rw-label" style={{ display: "block", marginBottom: 4, fontWeight: 600, fontSize: 13 }}>
+                      Batch / Hiring Drive <span style={{ color: "#ef4444" }}>*</span>
+                      {loadingBatches && <span style={{ fontWeight: 400, marginLeft: 8, color: "#64748b" }}>Loading…</span>}
+                    </label>
+                    <select
+                      value={selectedRequisitionId}
+                      onChange={e => setSelectedRequisitionId(e.target.value)}
+                      disabled={loadingBatches}
+                      style={{ width: "100%", maxWidth: 480, padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, background: "#fff" }}
+                    >
+                      <option value="">— Select Batch / Hiring Drive —</option>
+                      {openBatches.map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.requisition_code}
+                          {b.planned_batch_no ? ` | Batch ${b.planned_batch_no}` : ""}
+                          {b.planned_batch_name ? ` — ${b.planned_batch_name}` : ""}
+                          {` | ${b.open_positions} open`}
+                          {b.target_joining_date ? ` | Joining ${b.target_joining_date.slice(0, 10)}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <p style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>
+                      Open hiring drives for this process at {selected?.branch || "this branch"}. Required before submitting.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Round 1 */}

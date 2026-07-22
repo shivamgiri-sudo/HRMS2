@@ -11,7 +11,11 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
-import { triggerPayrollBranchSignOff } from "../work-inbox/work-inbox.triggers.js";
+import {
+  triggerPayrollBranchSignOff,
+  triggerPayrollProcessSignOff,
+  triggerPayrollProcessFreezeRequest,
+} from "../work-inbox/work-inbox.triggers.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -21,10 +25,17 @@ export interface BranchReadinessRecord {
   branch_id: string;
   branch_name: string;
   process_month: string;
+  // process scope ('' = branch-level aggregate, UUID = process-scoped)
+  process_id: string;
+  process_name: string;
   // checklist items (0 = no, 1 = yes)
   attendance_frozen: number;
   attendance_frozen_at: string | null;
   attendance_frozen_by: string | null;
+  // WFM manual declaration
+  attendance_data_ready: number;
+  attendance_data_ready_at: string | null;
+  attendance_data_ready_by: string | null;
   incentives_status: "not_uploaded" | "uploaded" | "approved";
   incentives_confirmed_at: string | null;
   custom_deductions_uploaded: number;
@@ -41,6 +52,11 @@ export interface BranchReadinessRecord {
   branch_head_signoff_at: string | null;
   branch_head_signoff_by: string | null;
   branch_head_remarks: string | null;
+  // process manager sign-off
+  process_manager_signoff: number;
+  process_manager_signoff_at: string | null;
+  process_manager_signoff_by: string | null;
+  process_manager_remarks: string | null;
   // HO override
   ho_override_ready: number;
   ho_override_by: string | null;
@@ -56,6 +72,14 @@ export interface BranchReadinessRecord {
   projected_gross: number | null;
   projected_net: number | null;
   projection_computed_at: string | null;
+}
+
+/** Grouped structure for HO process-level view */
+export interface ProcessReadinessBranchGroup {
+  branch_id: string;
+  branch_name: string;
+  processes: BranchReadinessRecord[];
+  stats: { total: number; ready: number; avg_score: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -164,25 +188,51 @@ export const payrollBranchReadinessService = {
   // ensureRecord
   // -------------------------------------------------------------------------
 
-  async ensureRecord(month: string, branchId: string): Promise<void> {
+  async ensureRecord(month: string, branchId: string, processId = ''): Promise<void> {
     await ensureTable();
     if (!(await tableExists())) return;
+
+    let processName = '';
+    if (processId) {
+      try {
+        const [prows] = await db.execute<RowDataPacket[]>(
+          `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`,
+          [processId]
+        );
+        processName = (prows[0] as any)?.process_name ?? '';
+      } catch { /* non-critical */ }
+    }
 
     try {
       await db.execute(
         `INSERT IGNORE INTO payroll_branch_readiness
-           (branch_id, process_month,
+           (branch_id, process_month, process_id, process_name,
             attendance_frozen, incentives_status,
             custom_deductions_uploaded, overtime_entered,
             bank_details_pct, uan_complete_pct, noc_resolved, holiday_work_approved,
             branch_head_signoff, ho_override_ready,
             readiness_score, readiness_status, employee_count)
-         VALUES (?, ?, 0, 'not_uploaded', 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
-        [branchId, month]
+         VALUES (?, ?, ?, ?, 0, 'not_uploaded', 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
+        [branchId, month, processId, processName]
       );
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[BranchReadiness] ensureRecord failed — ${msg}`);
+      // Fallback: table may not yet have process_id column (migration pending)
+      try {
+        await db.execute(
+          `INSERT IGNORE INTO payroll_branch_readiness
+             (branch_id, process_month,
+              attendance_frozen, incentives_status,
+              custom_deductions_uploaded, overtime_entered,
+              bank_details_pct, uan_complete_pct, noc_resolved, holiday_work_approved,
+              branch_head_signoff, ho_override_ready,
+              readiness_score, readiness_status, employee_count)
+           VALUES (?, ?, 0, 'not_uploaded', 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
+          [branchId, month]
+        );
+      } catch (err2: unknown) {
+        const msg = err2 instanceof Error ? err2.message : String(err2);
+        console.warn(`[BranchReadiness] ensureRecord failed — ${msg}`);
+      }
     }
   },
 
@@ -190,7 +240,7 @@ export const payrollBranchReadinessService = {
   // refreshLiveMetrics
   // -------------------------------------------------------------------------
 
-  async refreshLiveMetrics(month: string, branchId: string): Promise<void> {
+  async refreshLiveMetrics(month: string, branchId: string, processId = ''): Promise<void> {
     const updates: Record<string, unknown> = {};
 
     // --- attendance_frozen ---------------------------------------------------
@@ -257,6 +307,8 @@ export const payrollBranchReadinessService = {
     // --- bank_details_pct ----------------------------------------------------
     const bankDetailsPct = await safeQuery(
       async () => {
+        const processFilter = processId ? 'AND e.process_id = ?' : '';
+        const processParams = processId ? [processId] : [];
         // Try employee_bank_detail table first
         try {
           const [rows] = await db.execute<RowDataPacket[]>(
@@ -271,8 +323,9 @@ export const payrollBranchReadinessService = {
               AND TRIM(ebd.account_number) != ''
              WHERE e.branch_id = ?
                AND e.active_status = 1
-               AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'`,
-            [branchId]
+               AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+               ${processFilter}`,
+            [branchId, ...processParams]
           );
           const total = Number((rows[0] as any)?.total ?? 0);
           const withBank = Number((rows[0] as any)?.with_bank ?? 0);
@@ -286,8 +339,9 @@ export const payrollBranchReadinessService = {
              FROM employees
              WHERE branch_id = ?
                AND active_status = 1
-               AND LOWER(COALESCE(employment_status, 'active')) = 'active'`,
-            [branchId]
+               AND LOWER(COALESCE(employment_status, 'active')) = 'active'
+               ${processFilter}`,
+            [branchId, ...processParams]
           );
           const total = Number((rows[0] as any)?.total ?? 0);
           const withBank = Number((rows[0] as any)?.with_bank ?? 0);
@@ -302,6 +356,8 @@ export const payrollBranchReadinessService = {
     // --- uan_complete_pct ----------------------------------------------------
     const uanCompletePct = await safeQuery(
       async () => {
+        const processFilter = processId ? 'AND process_id = ?' : '';
+        const processParams = processId ? [processId] : [];
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT
              COUNT(*) AS total,
@@ -309,8 +365,9 @@ export const payrollBranchReadinessService = {
            FROM employees
            WHERE branch_id = ?
              AND active_status = 1
-             AND LOWER(COALESCE(employment_status, 'active')) = 'active'`,
-          [branchId]
+             AND LOWER(COALESCE(employment_status, 'active')) = 'active'
+             ${processFilter}`,
+          [branchId, ...processParams]
         );
         const total = Number((rows[0] as any)?.total ?? 0);
         const withUan = Number((rows[0] as any)?.with_uan ?? 0);
@@ -390,13 +447,13 @@ export const payrollBranchReadinessService = {
     const setClauses = Object.keys(updates)
       .map((k) => `${k} = ?`)
       .join(", ");
-    const values = [...Object.values(updates), month, branchId];
+    const values = [...Object.values(updates), month, branchId, processId];
 
     try {
       await db.execute(
         `UPDATE payroll_branch_readiness
             SET ${setClauses}
-          WHERE process_month = ? AND branch_id = ?`,
+          WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
         values
       );
     } catch (err: unknown) {
@@ -412,7 +469,8 @@ export const payrollBranchReadinessService = {
   computeScore(record: Partial<BranchReadinessRecord>): number {
     let score = 0;
 
-    if (record.attendance_frozen) score += 25;
+    if (record.attendance_data_ready) score += 15; // WFM declaration (new)
+    if (record.attendance_frozen)     score += 10; // payroll freeze (was 25)
     if (record.incentives_status === "approved") score += 20;
     if (record.custom_deductions_uploaded) score += 10;
     if (record.overtime_entered) score += 10;
@@ -451,14 +509,18 @@ export const payrollBranchReadinessService = {
   // refreshProjection
   // -------------------------------------------------------------------------
 
-  async refreshProjection(month: string, branchId: string): Promise<void> {
+  async refreshProjection(month: string, branchId: string, processId = ''): Promise<void> {
     let projectedGross: number | null = null;
     let projectedNet: number | null = null;
     let employeeCount = 0;
     let employeeCountActive = 0;
     let employeeCountLeft = 0;
 
-    // Try salary_prep_run lines first
+    const processFilter = processId ? 'AND e.process_id = ?' : '';
+    const processFilterPlain = processId ? 'AND process_id = ?' : '';
+    const processParams = processId ? [processId] : [];
+
+    // Try salary_prep_run lines first (branch-level only; no process filter on runs)
     try {
       const [runRows] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM salary_prep_run
@@ -469,7 +531,7 @@ export const payrollBranchReadinessService = {
       );
       const runId = (runRows[0] as any)?.id as string | undefined;
 
-      if (runId) {
+      if (runId && !processId) {
         const [lineRows] = await db.execute<RowDataPacket[]>(
           `SELECT
              COUNT(DISTINCT employee_id) AS emp_count,
@@ -503,8 +565,9 @@ export const payrollBranchReadinessService = {
             AND esa.active_status = 1
            WHERE e.branch_id = ?
              AND e.active_status = 1
-             AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'`,
-          [branchId]
+             AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+             ${processFilter}`,
+          [branchId, ...processParams]
         );
         const row = estRows[0] as any;
         if (row) {
@@ -519,8 +582,9 @@ export const payrollBranchReadinessService = {
             `SELECT COUNT(*) AS emp_count FROM employees
               WHERE branch_id = ?
                 AND active_status = 1
-                AND LOWER(COALESCE(employment_status, 'active')) = 'active'`,
-            [branchId]
+                AND LOWER(COALESCE(employment_status, 'active')) = 'active'
+                ${processFilterPlain}`,
+            [branchId, ...processParams]
           );
           employeeCountActive = Number((empRows[0] as any)?.emp_count ?? 0);
         } catch {
@@ -542,8 +606,9 @@ export const payrollBranchReadinessService = {
               (last_working_day IS NOT NULL AND last_working_day >= ? AND last_working_day <= ?)
               OR (resignation_date IS NOT NULL AND resignation_date >= ? AND resignation_date <= ?
                   AND last_working_day IS NULL)
-            )`,
-        [branchId, monthStart, monthEnd, monthStart, monthEnd]
+            )
+            ${processFilterPlain}`,
+        [branchId, monthStart, monthEnd, monthStart, monthEnd, ...processParams]
       );
       employeeCountLeft = Number((leftRows[0] as any)?.left_count ?? 0);
     } catch {
@@ -564,8 +629,8 @@ export const payrollBranchReadinessService = {
                 employee_count = ?,
                 employee_count_active = ?,
                 employee_count_left = ?
-          WHERE process_month = ? AND branch_id = ?`,
-        [projectedGross, projectedNet, employeeCount, employeeCountActive, employeeCountLeft, month, branchId]
+          WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+        [projectedGross, projectedNet, employeeCount, employeeCountActive, employeeCountLeft, month, branchId, processId]
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

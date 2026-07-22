@@ -4,7 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Users, Clock, UserCheck, UserX, Search, Filter,
-  RefreshCw, Phone, TrendingUp, AlertCircle
+  RefreshCw, Phone, TrendingUp, AlertCircle, Target, X
 } from "lucide-react";
 import { formatISTTime } from "@/lib/utils";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -67,6 +67,19 @@ interface OpsRoundEntry {
   arrived_at: string | null;
 }
 
+interface OpenRequisition {
+  id: string;
+  requisition_code: string;
+  designation_name: string;
+  process_name: string | null;
+  requested_headcount: number;
+  open_positions: number;
+  planned_batch_name: string | null;
+  planned_batch_no: string | null;
+}
+
+const ACTIVE_DRIVE_KEY = 'hrms_active_drive_requisition';
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<QueueStatus, string> = {
@@ -116,6 +129,18 @@ export default function NativeWalkinQueueEnhanced() {
     const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     return ist.toISOString().slice(0, 10);
   });
+
+  // Active drive context — persisted in localStorage so the recruiter doesn't lose it on refresh
+  const [activeDrive, setActiveDrive] = useState<OpenRequisition | null>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_DRIVE_KEY);
+      return saved ? (JSON.parse(saved) as OpenRequisition) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [openRequisitions, setOpenRequisitions] = useState<OpenRequisition[]>([]);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -184,6 +209,7 @@ export default function NativeWalkinQueueEnhanced() {
   useEffect(() => {
     loadQueue();
     loadMetrics();
+    loadOpenRequisitions(branchFilter || undefined);
 
     // Auto-refresh every 5 seconds
     intervalRef.current = setInterval(() => {
@@ -197,6 +223,30 @@ export default function NativeWalkinQueueEnhanced() {
   }, [statusFilter, branchFilter, searchQuery, dateFilter]);
 
   // ── Actions ────────────────────────────────────────────────────────────────────
+
+  const loadOpenRequisitions = async (branch?: string) => {
+    try {
+      const path = branch
+        ? `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}`
+        : '/api/job-requisition?approval_status=approved&limit=50';
+      const res = await hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(path);
+      setOpenRequisitions(res.data || []);
+    } catch {
+      setOpenRequisitions([]);
+    }
+  };
+
+  const selectDrive = (req: OpenRequisition) => {
+    setActiveDrive(req);
+    localStorage.setItem(ACTIVE_DRIVE_KEY, JSON.stringify(req));
+    setShowDrivePicker(false);
+  };
+
+  const clearDrive = () => {
+    setActiveDrive(null);
+    localStorage.removeItem(ACTIVE_DRIVE_KEY);
+    setShowDrivePicker(false);
+  };
 
   const handleCallNext = async (tokenId: string) => {
     try {
@@ -285,6 +335,89 @@ export default function NativeWalkinQueueEnhanced() {
                   Real-time tracking of candidate walk-ins and interviews
                 </p>
               </div>
+
+              {/* Active Drive Banner */}
+              <div className={`rounded-lg border px-4 py-3 flex items-center justify-between gap-3 ${activeDrive ? 'bg-emerald-50 border-emerald-300' : 'bg-amber-50 border-amber-300'}`}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <Target className={`w-4 h-4 flex-shrink-0 ${activeDrive ? 'text-emerald-600' : 'text-amber-600'}`} />
+                  <div className="min-w-0">
+                    {activeDrive ? (
+                      <>
+                        <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Today's Hiring Drive</span>
+                        <div className="text-sm font-medium text-emerald-900 truncate">
+                          {activeDrive.requisition_code} — {activeDrive.designation_name}
+                          {activeDrive.process_name && ` | ${activeDrive.process_name}`}
+                          {activeDrive.planned_batch_name && ` | ${activeDrive.planned_batch_name}`}
+                          <span className="ml-2 text-xs text-emerald-600">({activeDrive.open_positions} open positions)</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">No Active Drive Selected</span>
+                        <div className="text-xs text-amber-700">Walk-ins won't be linked to any batch/requisition until you select one.</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => { void loadOpenRequisitions(branchFilter || undefined); setShowDrivePicker(true); }}
+                    className="px-3 py-1.5 text-xs font-medium rounded border bg-white hover:bg-gray-50"
+                  >
+                    {activeDrive ? 'Change' : 'Select Drive'}
+                  </button>
+                  {activeDrive && (
+                    <button onClick={clearDrive} className="p-1.5 text-gray-400 hover:text-red-500 rounded">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Drive Picker Modal */}
+              {showDrivePicker && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
+                    <div className="p-4 border-b flex items-center justify-between">
+                      <h3 className="font-semibold text-gray-900">Select Today's Hiring Drive</h3>
+                      <button onClick={() => setShowDrivePicker(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
+                      {openRequisitions.length === 0 ? (
+                        <p className="text-sm text-gray-500 text-center py-4">No approved active requisitions found.</p>
+                      ) : (
+                        openRequisitions.map((req) => (
+                          <button
+                            key={req.id}
+                            onClick={() => selectDrive(req)}
+                            className={`w-full text-left px-3 py-2.5 rounded-lg border hover:border-blue-400 hover:bg-blue-50 transition-colors ${activeDrive?.id === req.id ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200'}`}
+                          >
+                            <div className="font-medium text-sm text-gray-900">{req.designation_name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">
+                              {req.requisition_code}
+                              {req.process_name && ` | ${req.process_name}`}
+                              {req.planned_batch_name && ` | Batch: ${req.planned_batch_name}`}
+                              <span className="ml-1 text-blue-600">{req.open_positions} open</span>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="p-4 border-t flex justify-between">
+                      {activeDrive && (
+                        <button onClick={clearDrive} className="text-sm text-red-500 hover:text-red-700">
+                          Clear drive selection
+                        </button>
+                      )}
+                      <button onClick={() => setShowDrivePicker(false)} className="ml-auto px-4 py-2 text-sm border rounded hover:bg-gray-50">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Metrics Cards */}
               {metrics && (

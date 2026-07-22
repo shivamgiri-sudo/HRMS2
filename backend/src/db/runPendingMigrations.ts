@@ -360,6 +360,11 @@ const MIGRATION_MANIFEST: string[] = [
   "516_privacy_retention_worker_tables.sql",    // Retention run/candidate/approval/certificate tables
   "518_dpdp_feature_flags.sql",                 // DPDP feature flag config keys (all default OFF/dry-run)
   "519_ats_performance_indexes.sql",            // ATS command center covering indexes
+  "520_missing_page_codes_seed.sql",            // Missing page codes seed
+  "521_security_audit_event_table.sql",         // Security audit event table
+  "522_dpdp_withdrawal_admin_rerun.sql",        // DPDP withdrawal admin rerun
+  "523_job_requisition.sql",                    // Job requisition master + candidate linking tables
+  "524_job_requisition_batch_link.sql",         // Planned batch columns on job_requisition
   ];
 
 export type MigrationHealth = {

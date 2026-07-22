@@ -24,6 +24,7 @@ import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
+import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 
 const WORKERS_EXTERNAL = process.env.WORKERS_PROCESS === "external";
 
@@ -46,8 +47,9 @@ function startServer() {
       initBusinessActionSyncJobs();
       startBreachSlaCron();
       startRetentionCron();
+      startAtsRemindersScheduler();
       console.log(
-        "[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync, breach-sla, privacy-retention started"
+        "[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync, breach-sla, privacy-retention, ats-reminders started"
       );
 
       if (!WORKERS_EXTERNAL) {

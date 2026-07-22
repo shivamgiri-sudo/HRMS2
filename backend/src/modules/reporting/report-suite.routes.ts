@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { buildIdentityMappingExceptionsSql } from "./identity-mapping-report.js";
 import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } from "./identity-source-snapshot.js";
+import { resolveBranchScope } from "./reporting.scope.js";
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -212,13 +213,33 @@ reportSuiteRouter.post("/identity-source-snapshot/sync", requireRole("admin", "s
   return res.json({ success: true, data: result });
 }));
 
-reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll", "wfm", "manager", "ceo"), h(async (req, res) => {
+reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo", "operations", "quality", "recruiter", "recruitment_head", "trainer"), h(async (req, res) => {
   const code = String(req.params.code);
   const isExport = isExportRequest(req.query);
   const limit = limitParam(req.query.limit, isExport);
   const params: unknown[] = [];
   const clauses: string[] = [];
   let sql = "";
+
+  // Enforce branch scope: authenticated user must be within their authorized branch set.
+  // This prevents users from changing branchId param to see unauthorized data.
+  const userId = (req as any).user?.id ?? (req as any).user?.userId;
+  if (userId) {
+    const scope = await resolveBranchScope(String(userId));
+    if (!scope.isSuperAdmin && scope.branchIds.length > 0) {
+      // User-supplied branchId must be within their scope; if not supplied, restrict to scope
+      const requestedBranchId = req.query.branchId ? String(req.query.branchId) : null;
+      if (requestedBranchId && !scope.branchIds.includes(requestedBranchId)) {
+        return res.status(403).json({ success: false, error: "Branch not in your authorized scope." });
+      }
+      if (!requestedBranchId) {
+        // Apply scope automatically — use IN clause
+        const placeholders = scope.branchIds.map(() => "?").join(",");
+        clauses.push(`e.branch_id IN (${placeholders})`);
+        params.push(...scope.branchIds);
+      }
+    }
+  }
 
   switch (code) {
     case "employee-master":
@@ -282,10 +303,16 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
               ORDER BY mapping_status DESC, employee_name`;
       break;
     case "attendance-daily": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      // Pre-aggregate wfm_attendance_session to avoid multi-session row duplication.
+      // One logical attendance day = earliest punch in, latest punch out, sum of minutes.
       sql = `SELECT adr.record_date,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -294,26 +321,20 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                     d.dept_name AS department_name,
                     desig.designation_name,
                     COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-                    ws.start_time AS shift_start,
-                    ws.end_time AS shift_end,
-                    was.login_time AS punch_in,
-                    was.logout_time AS punch_out,
+                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+                    TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
+                    TIME_FORMAT(ws.end_time, '%H:%i') AS shift_end,
+                    TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
+                    TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
                     CASE
-                      WHEN was.login_time IS NOT NULL AND was.logout_time IS NOT NULL
-                      THEN SEC_TO_TIME(TIMESTAMPDIFF(SECOND, was.login_time, was.logout_time))
+                      WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
+                      THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
                       ELSE NULL
-                    END AS total_login_hours,
+                    END AS total_login_duration,
                     adr.raw_minutes AS productive_minutes,
                     adr.attendance_source,
                     adr.attendance_status,
-                    adr.late_mark,
-                    adr.late_by_minutes AS late_minutes,
-                    CASE
-                      WHEN was.total_login_minutes > COALESCE(ws.required_minutes, 540)
-                      THEN SEC_TO_TIME((was.total_login_minutes - COALESCE(ws.required_minutes, 540)) * 60)
-                      ELSE NULL
-                    END AS overtime_hours,
+                    adr.late_by_minutes,
                     adr.lwp_value,
                     CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
                     adr.is_locked
@@ -326,9 +347,17 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
                LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id AND was.session_date = adr.record_date
+               LEFT JOIN (
+                 SELECT employee_id, session_date,
+                        MIN(login_time) AS earliest_punch,
+                        MAX(logout_time) AS latest_punch,
+                        SUM(total_login_minutes) AS total_login_minutes
+                   FROM wfm_attendance_session
+                  GROUP BY employee_id, session_date
+               ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
+              ORDER BY adr.record_date DESC, b.branch_name, employee_name
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
     case "attendance-summary": {
@@ -736,54 +765,50 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     }
 
     case "shift-adherence-detail": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      // Aggregate sessions to prevent multi-session duplication before joining.
       sql = `SELECT adr.record_date,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
                     p.process_name,
-                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-                    ws.start_time AS scheduled_start,
-                    ws.end_time AS scheduled_end,
-                    was.login_time AS punch_in,
-                    was.logout_time AS punch_out,
+                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+                    TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
+                    TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
+                    TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
+                    TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
                     CASE
-                      WHEN was.login_time IS NOT NULL AND was.logout_time IS NOT NULL
-                      THEN SEC_TO_TIME(TIMESTAMPDIFF(SECOND, was.login_time, was.logout_time))
+                      WHEN agg_ses.earliest_punch IS NOT NULL AND agg_ses.latest_punch IS NOT NULL
+                      THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
                       ELSE NULL
-                    END AS total_login_hours,
-                    SEC_TO_TIME(COALESCE(ws.required_minutes, 540) * 60) AS scheduled_hours,
+                    END AS total_login_duration,
+                    COALESCE(ws.required_minutes, 540) AS scheduled_minutes,
+                    COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
                     adr.late_by_minutes AS late_minutes,
                     CASE
-                      WHEN was.logout_time IS NOT NULL AND ws.end_time IS NOT NULL
-                           AND TIME(was.logout_time) < ws.end_time
-                      THEN TIMESTAMPDIFF(MINUTE, TIME(was.logout_time), ws.end_time)
+                      WHEN agg_ses.latest_punch IS NOT NULL AND ws.end_time IS NOT NULL
+                           AND TIME(agg_ses.latest_punch) < ws.end_time
+                      THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), ws.end_time)
                       ELSE 0
                     END AS early_logout_minutes,
                     CASE
-                      WHEN was.total_login_minutes < COALESCE(ws.required_minutes, 540)
-                      THEN COALESCE(ws.required_minutes, 540) - was.total_login_minutes
-                      ELSE 0
-                    END AS shortfall_minutes,
-                    CASE
-                      WHEN was.total_login_minutes > COALESCE(ws.required_minutes, 540)
-                      THEN SEC_TO_TIME((was.total_login_minutes - COALESCE(ws.required_minutes, 540)) * 60)
-                      ELSE NULL
-                    END AS overtime_hours,
-                    CASE
                       WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
-                      THEN ROUND(LEAST(COALESCE(was.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
+                      THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
                       ELSE NULL
                     END AS adherence_pct,
                     adr.attendance_status,
                     CASE
                       WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
-                      WHEN adr.late_mark = 1 AND COALESCE(was.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+                      WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
                       WHEN adr.late_mark = 1 THEN 'LATE'
-                      WHEN COALESCE(was.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+                      WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
                       ELSE 'ON_TIME'
                     END AS adherence_status,
                     CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
@@ -794,36 +819,22 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
                  AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
-                 AND was.session_date = adr.record_date
+               LEFT JOIN (
+                 SELECT employee_id, session_date,
+                        MIN(login_time) AS earliest_punch,
+                        MAX(logout_time) AS latest_punch,
+                        SUM(total_login_minutes) AS total_login_minutes
+                   FROM wfm_attendance_session
+                  GROUP BY employee_id, session_date
+               ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
+              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
 
-    case "attendance-register-grid": {
-      const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code,
-                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    adr.record_date,
-                    CASE
-                      WHEN adr.attendance_status = 'present' THEN 'P'
-                      WHEN adr.attendance_status = 'half_day' THEN 'HD'
-                      WHEN adr.attendance_status = 'absent' THEN 'A'
-                      WHEN adr.attendance_status = 'leave_approved' THEN 'L'
-                      WHEN adr.attendance_status = 'week_off' THEN 'WO'
-                      WHEN adr.attendance_status = 'holiday' THEN 'H'
-                      ELSE UPPER(SUBSTRING(COALESCE(adr.attendance_status,'A'),1,3))
-                    END AS day_status,
-                    adr.late_mark, adr.lwp_value
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY employee_name, adr.record_date`;
-      break;
-    }
+    // attendance-register-grid is REMOVED — superseded by attendance-summary.
+    // Any API call to this code returns a redirect hint, not data.
 
     case "overtime-summary": {
       const isExport = isExportRequest(req.query);
@@ -837,7 +848,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
                     p.process_name,
-                    d.department_name,
+                    d.dept_name AS department_name,
                     dm.designation_name,
                     COUNT(DISTINCT adr.record_date) AS days_attended,
                     ROUND(SUM(adr.raw_minutes) / 60, 1) AS total_worked_hours,
@@ -865,7 +876,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                LEFT JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id AND spr2.run_month = ?
               WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, p.process_name, d.department_name, dm.designation_name
+                       b.branch_name, p.process_name, d.dept_name, dm.designation_name
               HAVING overtime_hours > 0
               ORDER BY overtime_hours DESC
               ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
@@ -886,7 +897,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
                     p.process_name,
-                    d.department_name,
+                    d.dept_name AS department_name,
                     dm.designation_name,
                     SUM(adr.attendance_status = 'absent') AS absent_days,
                     SUM(adr.late_mark = 1) AS late_days,
@@ -902,7 +913,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                LEFT JOIN designation_master dm ON dm.id = e.designation_id
               WHERE ${clauses.join(" AND ")}
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
-                       b.branch_name, p.process_name, d.department_name, dm.designation_name
+                       b.branch_name, p.process_name, d.dept_name, dm.designation_name
               HAVING absent_days >= ?
               ORDER BY absent_days DESC
               ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
@@ -2163,7 +2174,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
                     p.process_name,
-                    d.department_name,
+                    d.dept_name AS department_name,
                     dm.designation_name,
                     arr.session_date AS attendance_date,
                     arr.requested_status,
@@ -2205,7 +2216,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
                     p.process_name,
-                    d.department_name,
+                    d.dept_name AS department_name,
                     dm.designation_name,
                     arr.session_date AS dispute_date,
                     arr.dispute_type,

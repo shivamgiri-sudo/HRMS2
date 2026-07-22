@@ -148,6 +148,7 @@ import { magicalScriptRouter } from "./modules/quality-dashboard/magical-script.
 import { performanceDashboardRouter } from "./modules/performance-dashboard/performance-dashboard.routes.js";
 import { performanceIntelligenceRouter } from "./modules/performance-intelligence/performance-intelligence.routes.js";
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
+import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import {
@@ -320,6 +321,7 @@ app.use("/api/kpi/process-role", kpiProcessRoleRouter);
 app.use("/api/kpi-master", kpiMasterRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
+app.use("/api/job-requisition", jobRequisitionRouter);
 app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats/registration", registrationEnhancedRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)

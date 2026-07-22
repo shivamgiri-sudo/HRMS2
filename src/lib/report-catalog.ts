@@ -395,6 +395,42 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
   },
   {
+    code: "attendance-dispute-summary",
+    name: "Attendance Dispute Summary",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    description: "Attendance disputes with punch corrections and status changes",
+    rowGrain: "One row per dispute request",
+    primaryKey: ["employee_code", "dispute_date", "submitted_at"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "dispute_date", label: "Dispute Date", format: "date", width: 100 },
+      { key: "dispute_type", label: "Dispute Type", format: "status", width: 120 },
+      { key: "description", label: "Description", format: "text", width: 200 },
+      { key: "reason_code", label: "Reason Code", format: "text", width: 100 },
+      { key: "reason_label", label: "Reason Type", format: "text", width: 140 },
+      { key: "old_status", label: "Original Status", format: "status", width: 100 },
+      { key: "requested_status", label: "Requested Status", format: "status", width: 110 },
+      { key: "original_punch_in", label: "Orig Punch In", format: "time", width: 100 },
+      { key: "original_punch_out", label: "Orig Punch Out", format: "time", width: 100 },
+      { key: "requested_punch_in", label: "Req Punch In", format: "time", width: 100 },
+      { key: "requested_punch_out", label: "Req Punch Out", format: "time", width: 100 },
+      { key: "payroll_impact", label: "Payroll Impact", format: "boolean", width: 100 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 120 },
+      { key: "submitted_at", label: "Submitted At", format: "datetime", width: 140 },
+      { key: "reviewer_name", label: "Reviewed By", format: "text", width: 140 },
+      { key: "reviewed_at", label: "Reviewed At", format: "datetime", width: 140 },
+      { key: "resolution", label: "Resolution Notes", format: "text", width: 200 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
+  },
+  {
     code: "biometric-reconciliation",
     name: "Biometric Reconciliation",
     category: "Attendance",
@@ -442,6 +478,30 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "unplanned_shrinkage_hc", label: "Unplanned Shrinkage", format: "number", width: 140, align: "right" },
       { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 120, align: "right" },
       { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 150, align: "right" },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "monthly-shrinkage-trend",
+    name: "Monthly Shrinkage Trend",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Monthly shrinkage trends by branch and process with 3-month moving average",
+    rowGrain: "One row per month per branch per process",
+    primaryKey: ["month", "branch_name", "process_name"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "total_employee_days", label: "Total Emp Days", format: "number", width: 120, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "absent_days", label: "Absent Days", format: "number", width: 100, align: "right" },
+      { key: "leave_days", label: "Leave Days", format: "number", width: 100, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 120, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 150, align: "right" },
+      { key: "three_month_avg_shrinkage", label: "3-Month Avg %", format: "percentage", width: 120, align: "right" },
     ],
     viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager", "ceo"],
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
@@ -597,7 +657,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
   },
   {
-    code: "bank-advice",
+    code: "neft-transfer-file",
     name: "Bank Advice / Transfer Sheet",
     category: "Payroll",
     subcategory: "Monthly Processing",
@@ -622,7 +682,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // STATUTORY
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "pf-contribution-register",
+    code: "pf-monthly-summary",
     name: "PF Contribution Register",
     category: "Statutory",
     subcategory: "PF/EPF",
@@ -646,7 +706,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
   },
   {
-    code: "esic-contribution-register",
+    code: "esic-monthly-summary",
     name: "ESIC Contribution Register",
     category: "Statutory",
     subcategory: "ESIC",
@@ -668,7 +728,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
   },
   {
-    code: "pt-register",
+    code: "pt-monthly-register",
     name: "Professional Tax Register",
     category: "Statutory",
     subcategory: "Professional Tax",
@@ -692,7 +752,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // EXIT & SEPARATION
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "resignation-register",
+    code: "exit-movement-report",
     name: "Resignation Register",
     category: "Exit & Separation",
     subcategory: "Resignation",
@@ -718,7 +778,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
   },
   {
-    code: "fnf-settlement-register",
+    code: "ff-settlement-register",
     name: "F&F Settlement Register",
     category: "Exit & Separation",
     subcategory: "Full & Final",
@@ -774,7 +834,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // RECRUITMENT
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "recruitment-pipeline",
+    code: "ats-pipeline-summary",
     name: "Recruitment Pipeline Report",
     category: "Recruitment",
     subcategory: "Pipeline",
@@ -793,7 +853,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "recruiter", "recruitment_head"],
   },
   {
-    code: "candidate-tracker",
+    code: "offer-to-joining-tracker",
     name: "Candidate Tracker",
     category: "Recruitment",
     subcategory: "Pipeline",
@@ -822,7 +882,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // OPERATIONS & QUALITY
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "agent-performance-summary",
+    code: "productivity-individual-scorecard",
     name: "Agent Performance Summary",
     category: "Operations & Quality",
     subcategory: "Performance",
@@ -852,7 +912,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // WFM & ROSTER
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "roster-published",
+    code: "roster-adherence",
     name: "Published Roster Report",
     category: "WFM & Roster",
     subcategory: "Roster",
@@ -880,7 +940,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // ASSETS
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "asset-inventory",
+    code: "asset-inventory-report",
     name: "Asset Inventory Report",
     category: "Assets",
     subcategory: "Inventory",
@@ -904,39 +964,10 @@ export const REPORT_CATALOG: ReportMeta[] = [
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════
-  // TRAINING
-  // ═══════════════════════════════════════════════════════════════════════════════
-  {
-    code: "training-completion-status",
-    name: "Training Completion Status",
-    category: "Training",
-    subcategory: "Completion",
-    description: "Training/course completion status by employee",
-    rowGrain: "One row per employee per course",
-    primaryKey: ["employee_code", "course_id"],
-    columns: [
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "course_name", label: "Course Name", format: "text", width: 200 },
-      { key: "course_type", label: "Course Type", format: "text", width: 120 },
-      { key: "assigned_date", label: "Assigned Date", format: "date", width: 100 },
-      { key: "due_date", label: "Due Date", format: "date", width: 100 },
-      { key: "completion_date", label: "Completed Date", format: "date", width: 100 },
-      { key: "completion_status", label: "Status", format: "status", width: 100 },
-      { key: "score", label: "Score", format: "percentage", width: 80, align: "right" },
-      { key: "attempts", label: "Attempts", format: "number", width: 80, align: "right" },
-    ],
-    viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head", "trainer"],
-    exportRoles: ["super_admin", "admin", "hr", "hr_head"],
-  },
-
-  // ═══════════════════════════════════════════════════════════════════════════════
   // DOCUMENTS
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "document-expiry-tracker",
+    code: "employee-document-compliance",
     name: "Document Expiry Tracker",
     category: "Documents",
     subcategory: "Compliance",
@@ -962,7 +993,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // IDENTITY
   // ═══════════════════════════════════════════════════════════════════════════════
   {
-    code: "uan-status-report",
+    code: "uan-master-register",
     name: "UAN Status Report",
     category: "Identity",
     subcategory: "PF/UAN",

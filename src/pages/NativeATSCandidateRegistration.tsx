@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { apiUrl } from "@/lib/apiBase";
+
+// Read optional ?req=<uuid> from the URL — used when a QR code/campaign link is batch-specific
+const urlRequisitionId = (() => {
+  try {
+    const p = new URLSearchParams(window.location.search).get('req');
+    return p && /^[0-9a-f-]{36}$/i.test(p) ? p : null;
+  } catch {
+    return null;
+  }
+})();
 import { CompanyLogo } from "@/components/CompanyLogo";
 
 type BranchAlias = {
@@ -974,6 +984,7 @@ export default function NativeATSCandidateRegistration() {
         recruiterName:            coreData.sourceType === "Recruiter" ? (coreData.recruiterName || null) : null,
         referredBy:               coreData.sourceType === "Reference" ? (coreData.referredBy || null) : null,
         ...(preferredRecruiterId ? { preferredRecruiterId } : {}),
+        ...(urlRequisitionId ? { requisitionId: urlRequisitionId } : {}),
       };
       const apiRes = await hrmsApi.post<{ success: boolean; candidateId?: string; candidate_code?: string; branchName?: string; tokenNumber?: string | null; recruiter?: any; message?: string; data?: any }>(
         "/api/ats/registration/submit-enhanced",

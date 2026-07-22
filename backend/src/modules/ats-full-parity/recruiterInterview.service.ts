@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { sendOnboardingToken } from "../ats/ats.onboarding.service.js";
 import { sendRejectedEmail } from "../ats/ats.email.service.js";
+import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -469,6 +470,7 @@ interface SubmissionInput {
   performanceIncentives?: string;
   substituteFlag?: boolean;
   substituteReason?: string;
+  requisitionId?: string;
 }
 
 interface RecruiterRosterRow extends RowDataPacket {
@@ -708,6 +710,7 @@ export async function submitInterviewUpdate(
     reportingTiming: String(raw.reportingTiming || raw["Reporting Timing"] || "").trim() || undefined,
     otDetails: String(raw.otDetails || raw["OT Details"] || "").trim() || undefined,
     performanceIncentives: String(raw.performanceIncentives || raw["Performance Incentives"] || "").trim() || undefined,
+    requisitionId: String(raw.requisitionId || "").trim() || undefined,
   };
 
   if (!input.candidateId && !input.qToken) err("CandidateID or QToken required", 400);
@@ -1198,6 +1201,19 @@ export async function submitInterviewUpdate(
     }
 
     await conn.commit();
+
+    // Auto-link candidate to the selected requisition/batch (fire-and-forget)
+    if (input.requisitionId) {
+      jobRequisitionService.linkCandidate(
+        input.requisitionId,
+        candidate.id,
+        actorUserId ?? 'system',
+        'candidate_applied',
+        'auto-linked at interview feedback submission'
+      ).catch((e: unknown) => {
+        console.warn('[recruiter-submission auto-link]', e instanceof Error ? e.message : e);
+      });
+    }
 
     if (finalDecision === "Selected") {
       console.log(`[ats] Sending onboarding token to candidate ${candidate.id} (${candidate.email || 'NO EMAIL'})`);

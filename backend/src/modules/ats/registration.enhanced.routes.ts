@@ -18,6 +18,7 @@ import {
   sendCandidateSuccessEmail,
   sendRecruiterNotificationEmail,
 } from "./ats.email.service.js";
+import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 
 export const registrationEnhancedRouter = Router();
 
@@ -163,6 +164,7 @@ const enhancedRegistrationSchema = z.object({
   idProofAvailable: z.number().nullable().optional(),
   educationProofAvailable: z.number().nullable().optional(),
   sourcingChannel: z.string().default("Walk-In"),
+  requisitionId: z.string().uuid().optional(), // set by recruiter drive picker; absent = no change to existing behaviour
 });
 
 registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
@@ -537,7 +539,21 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       }
     }
 
-    // 8. Fetch candidate_code for the success response
+    // 8. Auto-link to requisition if recruiter set an active drive (fire-and-forget, safe)
+    if (input.requisitionId) {
+      jobRequisitionService.linkCandidate(
+        input.requisitionId,
+        candidateId,
+        'system',
+        'candidate_applied',
+        'auto-linked at walk-in registration'
+      ).catch((err: unknown) => {
+        // Intentionally non-blocking — registration already succeeded; link failure is not fatal
+        console.warn('[walk-in auto-link]', err instanceof Error ? err.message : err);
+      });
+    }
+
+    // 9. Fetch candidate_code for the success response
     const [codeRows] = await db.execute<CandidateCodeRow[]>(
       'SELECT candidate_code FROM ats_candidate WHERE id = ? LIMIT 1',
       [candidateId]

@@ -18,6 +18,8 @@ import {
   getOpsBoard,
   type QueueFilters,
 } from './queue.enhanced.service.js';
+import { sendRejectedEmailProfessional } from './ats.email.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
 
 export const queueRouter = Router();
 export const queuePublicRouter = Router();
@@ -332,6 +334,66 @@ queueRouter.post('/mark-no-show', h(async (req: Request, res: Response) => {
     }
 
     await markNoShow(queue_id);
+
+    // Fire re-engagement email + recruiter inbox notification — non-blocking
+    void (async () => {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT qt.recruiter_id, c.id AS candidate_id, c.full_name, c.email,
+                  c.applied_for_process, c.applied_for_branch, c.branch_display_name,
+                  COALESCE(c.candidate_code, c.id) AS application_ref
+           FROM ats_queue_token qt
+           JOIN ats_candidate c ON c.id = qt.candidate_id
+           WHERE qt.id = ? LIMIT 1`,
+          [queue_id]
+        );
+        const row = rows[0];
+        if (!row) return;
+
+        // Re-engagement email to candidate if they have an email
+        if (row.email) {
+          sendRejectedEmailProfessional({
+            candidateId: row.candidate_id as string,
+            to: row.email as string,
+            candidateName: (row.full_name as string) ?? 'Candidate',
+            branchDisplayName: (row.branch_display_name ?? row.applied_for_branch ?? '') as string,
+            processName: row.applied_for_process as string | null,
+            applicationRef: row.application_ref as string | null,
+          }).catch((e: unknown) => console.warn('[no-show email]', e));
+        }
+
+        // Recruiter inbox nudge
+        if (row.recruiter_id) {
+          // Resolve recruiter's user account id from roster
+          const [recRows] = await db.execute<RowDataPacket[]>(
+            `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? LIMIT 1`,
+            [row.recruiter_id]
+          );
+          const employeeId = recRows[0]?.employee_id as string | null;
+          if (employeeId) {
+            const [userRows] = await db.execute<RowDataPacket[]>(
+              `SELECT id FROM users WHERE employee_id = ? LIMIT 1`,
+              [employeeId]
+            );
+            const userId = userRows[0]?.id as string | null;
+            if (userId) {
+              inboxService.createItem({
+                user_id: userId,
+                type: 'candidate_no_show',
+                title: `No-Show: ${row.full_name ?? 'Candidate'}`,
+                description: `${row.full_name ?? 'Candidate'} did not attend their interview. Consider scheduling a follow-up call.`,
+                entity_type: 'ats_candidate',
+                entity_id: row.candidate_id as string,
+                action_url: '/ats/recruiter/workspace',
+                priority: 'normal',
+              }).catch((e: unknown) => console.warn('[no-show inbox]', e));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[no-show side-effects]', e);
+      }
+    })();
 
     return res.json({
       success: true,

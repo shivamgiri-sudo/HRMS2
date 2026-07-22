@@ -193,6 +193,18 @@ export default function NativeATSRegistrationEnhanced() {
     try {
       const branch = branches.find((item) => item.canonical_key === form.applied_for_branch);
 
+      // Read active drive set by the recruiter on the Walk-in Queue screen
+      const activeDriveRequisitionId = (() => {
+        try {
+          const saved = localStorage.getItem('hrms_active_drive_requisition');
+          if (!saved) return undefined;
+          const parsed = JSON.parse(saved) as { id?: string };
+          return parsed?.id || undefined;
+        } catch {
+          return undefined;
+        }
+      })();
+
       const res = await hrmsApi.post<{
         success: boolean;
         message?: string;
@@ -212,6 +224,7 @@ export default function NativeATSRegistrationEnhanced() {
         preferredShift: form.preferred_shift || null,
         preferredRecruiterId: form.recruiter_id || undefined,
         sourcingChannel: form.sourcing_channel,
+        ...(activeDriveRequisitionId ? { requisitionId: activeDriveRequisitionId } : {}),
       });
 
       if (res.success) {
