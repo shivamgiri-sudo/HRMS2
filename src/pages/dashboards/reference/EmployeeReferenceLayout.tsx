@@ -32,7 +32,7 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   const absent = asNumber(attendance.absentDays ?? attendance.absent);
   const late = asNumber(attendance.lateDays ?? attendance.late);
   const attendancePct = asNumber(attendance.attendancePct ?? attendance.attendance_pct);
-  const completion = asNumber(lms.completion_pct ?? lms.completionPct);
+  const completion = asNumber(lms.completion_pct ?? lms.completionPct ?? lms.course_completion_pct);
   const mcq = asNumber(lms.mcq_best_score ?? lms.mcqBestScore);
   const readiness = asNumber(lms.readiness_score ?? lms.readinessScore);
   const certification = String(lms.certification_status ?? lms.certificationStatus ?? "—");
@@ -68,7 +68,7 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
 
   const leaveRows = data.employee.balances.slice(0, 4).map((row, index) => {
     const label = String(row.leaveType ?? row.leave_type ?? row.leave_name ?? row.name ?? `Leave ${index + 1}`);
-    const remaining = asNumber(row.balance ?? row.remaining ?? row.available);
+    const remaining = asNumber(row.balance ?? row.remaining ?? row.available ?? row.available_days);
     const used = asNumber(row.used ?? row.used_days);
     const total = asNumber(row.total ?? row.entitled ?? row.allocated ?? row.allocated_days);
     return { label, remaining, used, total };

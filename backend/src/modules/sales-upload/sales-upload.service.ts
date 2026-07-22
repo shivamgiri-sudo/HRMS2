@@ -457,3 +457,262 @@ export async function getSalesKPIs(startDate: string, endDate: string): Promise<
   );
   return rows[0] ?? {};
 }
+
+// ── Neemans Dashboard ─────────────────────────────────────────────────────────
+
+function parseNeemansDate(raw: unknown): string | null {
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!isNaN(n) && n > 40000 && n < 60000) {
+    const d = new Date(Date.UTC(1900, 0, n - 1));
+    return d.toISOString().slice(0, 10);
+  }
+  const s = String(raw).trim();
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+export async function getNeemansTargets(month: string): Promise<Record<string, unknown>[]> {
+  return queryMasmis(
+    `SELECT month_label, daily_target, total_target FROM db_masmis.neemans_month_targets
+     WHERE month_label = ? OR ? = '' ORDER BY month_label DESC LIMIT 12`,
+    [month, month]
+  );
+}
+
+export async function setNeemansTarget(month: string, dailyTarget: number, totalTarget: number): Promise<void> {
+  await queryMasmis(
+    `INSERT INTO db_masmis.neemans_month_targets (month_label, daily_target, total_target)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE daily_target = VALUES(daily_target), total_target = VALUES(total_target)`,
+    [month, dailyTarget, totalTarget]
+  );
+}
+
+export async function getNeemansAgentDetails(): Promise<Record<string, unknown>[]> {
+  return queryMasmis(
+    `SELECT id, agent_id, agent_name, team, designation, doj, active FROM db_masmis.nms_Agent_Details ORDER BY agent_name`
+  );
+}
+
+export async function addNeemansAgentDetail(data: Record<string, unknown>): Promise<void> {
+  await queryMasmis(
+    `INSERT INTO db_masmis.nms_Agent_Details (agent_id, agent_name, team, designation, doj, active)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+    [String(data.agent_id ?? ""), String(data.agent_name ?? ""), String(data.team ?? ""), String(data.designation ?? ""), String(data.doj ?? "")]
+  );
+}
+
+export async function updateNeemansAgentDetail(id: number, data: Record<string, unknown>): Promise<void> {
+  await queryMasmis(
+    `UPDATE db_masmis.nms_Agent_Details SET agent_name=?, team=?, designation=?, active=? WHERE id=?`,
+    [String(data.agent_name ?? ""), String(data.team ?? ""), String(data.designation ?? ""), data.active ? 1 : 0, id]
+  );
+}
+
+export async function deleteNeemansAgentDetail(id: number): Promise<void> {
+  await queryMasmis(`DELETE FROM db_masmis.nms_Agent_Details WHERE id = ?`, [id]);
+}
+
+export async function getNeemansAprDashboard(month: string): Promise<Record<string, unknown>> {
+  const [kpis] = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       COUNT(*) AS total_calls,
+       COUNT(DISTINCT agent_id) AS agent_count,
+       ROUND(AVG(occupancy_pct), 1) AS avg_occupancy_pct,
+       ROUND(AVG(acht), 0) AS avg_acht,
+       SUM(attendance) AS total_attendance
+     FROM db_masmis.neemans_apr
+     WHERE DATE_FORMAT(call_date, '%Y-%m') = ?`,
+    [month]
+  );
+  const agents = await queryMasmis<Record<string, unknown>>(
+    `SELECT agent_id, agent_name, SUM(total_calls) AS calls, ROUND(AVG(occupancy_pct),1) AS occupancy_pct, ROUND(AVG(acht),0) AS acht
+     FROM db_masmis.neemans_apr
+     WHERE DATE_FORMAT(call_date, '%Y-%m') = ?
+     GROUP BY agent_id, agent_name ORDER BY calls DESC LIMIT 50`,
+    [month]
+  );
+  return { kpis: kpis ?? {}, agents };
+}
+
+export async function getNeemansAbcCartSnap(month: string): Promise<Record<string, unknown>[]> {
+  return queryMasmis<Record<string, unknown>>(
+    `SELECT section_label, metric_label, mtd_value, weekly_value, daily_value
+     FROM db_masmis.neemans_cart
+     WHERE month_label = ?
+     ORDER BY section_order, metric_order`,
+    [month]
+  );
+}
+
+export async function getNeemansDashboard(month: string): Promise<Record<string, unknown>> {
+  // 9 KPI cards
+  const [kpis] = await queryMasmis<Record<string, unknown>>(
+    `SELECT
+       COUNT(*) AS workable_data,
+       ROUND(SUM(CASE WHEN status NOT IN ('Not Connected','IVR') THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS connected_pct,
+       ROUND(SUM(CASE WHEN order_status = 'Confirmed' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS conversion_pct,
+       SUM(CASE WHEN order_status = 'Confirmed' THEN 1 ELSE 0 END) AS total_orders,
+       SUM(CASE WHEN order_status = 'Confirmed' THEN revenue ELSE 0 END) AS revenue,
+       ROUND(SUM(CASE WHEN payment_mode = 'Paid' THEN 1 ELSE 0 END)*100.0/NULLIF(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END),0),1) AS paid_pct,
+       ROUND(SUM(CASE WHEN payment_mode = 'COD' THEN 1 ELSE 0 END)*100.0/NULLIF(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END),0),1) AS cod_pct,
+       ROUND(SUM(CASE WHEN order_status = 'RTO' THEN 1 ELSE 0 END)*100.0/NULLIF(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END),0),1) AS rto_pct
+     FROM db_masmis.neemans_sale_raw
+     WHERE DATE_FORMAT(sale_date, '%Y-%m') = ?`,
+    [month]
+  );
+
+  // Target for prorated achievement
+  const [target] = await queryMasmis<{ daily_target: number; total_target: number }>(
+    `SELECT daily_target, total_target FROM db_masmis.neemans_month_targets WHERE month_label = ? LIMIT 1`,
+    [month]
+  );
+
+  // Days elapsed in the month so far
+  const [year, mon] = month.split("-").map(Number);
+  const today = new Date();
+  const daysElapsed = today.getFullYear() === year && today.getMonth() + 1 === mon
+    ? today.getDate()
+    : new Date(year, mon, 0).getDate();
+
+  const proratedTarget = target ? target.daily_target * daysElapsed : null;
+  const revenue = Number((kpis as Record<string, unknown>)?.revenue ?? 0);
+  const achievementPct = proratedTarget && proratedTarget > 0
+    ? Math.round((revenue / proratedTarget) * 100)
+    : null;
+
+  // Daily trend
+  const daily = await queryMasmis<Record<string, unknown>>(
+    `SELECT DATE_FORMAT(sale_date,'%Y-%m-%d') AS date,
+       SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END) AS orders,
+       SUM(CASE WHEN order_status='Confirmed' THEN revenue ELSE 0 END) AS revenue,
+       ROUND(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS conversion_pct
+     FROM db_masmis.neemans_sale_raw
+     WHERE DATE_FORMAT(sale_date,'%Y-%m') = ?
+     GROUP BY sale_date ORDER BY sale_date ASC`,
+    [month]
+  );
+
+  // Agent performance
+  const agents = await queryMasmis<Record<string, unknown>>(
+    `SELECT agent_name,
+       COUNT(*) AS total_leads,
+       SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END) AS sales,
+       SUM(CASE WHEN order_status='Confirmed' THEN revenue ELSE 0 END) AS revenue,
+       ROUND(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS conversion_pct,
+       ROUND(SUM(CASE WHEN payment_mode='COD' THEN 1 ELSE 0 END)*100.0/NULLIF(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END),0),1) AS cod_pct,
+       ROUND(SUM(CASE WHEN payment_mode='Paid' THEN 1 ELSE 0 END)*100.0/NULLIF(SUM(CASE WHEN order_status='Confirmed' THEN 1 ELSE 0 END),0),1) AS paid_pct
+     FROM db_masmis.neemans_sale_raw
+     WHERE DATE_FORMAT(sale_date,'%Y-%m') = ?
+     GROUP BY agent_name ORDER BY revenue DESC LIMIT 30`,
+    [month]
+  );
+
+  return {
+    kpis: { ...kpis, achievement_pct: achievementPct, prorated_target: proratedTarget, days_elapsed: daysElapsed },
+    target: target ?? null,
+    daily_trend: daily,
+    agents,
+  };
+}
+
+// ── Neemans Upload Functions ──────────────────────────────────────────────────
+
+export async function uploadNeemansSaleRaw(
+  buffer: Buffer, uploadedBy: string
+): Promise<{ rowsInserted: number }> {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const saleDate = parseNeemansDate(r["Date"] ?? r["sale_date"] ?? r["Order Date"]);
+    if (!saleDate) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.neemans_sale_raw
+         (upload_batch_id, sale_date, lead_id, agent_id, agent_name, status,
+          order_status, payment_mode, revenue, product, remarks)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        batchId, saleDate,
+        String(r["Lead ID"] ?? r["lead_id"] ?? ""),
+        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
+        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
+        String(r["Status"] ?? r["status"] ?? ""),
+        String(r["Order Status"] ?? r["order_status"] ?? ""),
+        String(r["Payment Mode"] ?? r["payment_mode"] ?? ""),
+        Number(r["Revenue"] ?? r["revenue"] ?? 0),
+        String(r["Product"] ?? r["product"] ?? ""),
+        String(r["Remarks"] ?? r["remarks"] ?? ""),
+      ]
+    );
+    count++;
+  }
+  const monthLabel = rows[0] ? (parseNeemansDate(rows[0]["Date"] ?? rows[0]["sale_date"] ?? rows[0]["Order Date"]) ?? "").slice(0, 7) : "";
+  await logUpload("neemans-sale-raw", monthLabel, count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+export async function uploadNeemansAllocation(
+  buffer: Buffer, uploadedBy: string
+): Promise<{ rowsInserted: number }> {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  const monthLabel = currentMonthLabel();
+  for (const r of rows) {
+    await queryMasmis(
+      `INSERT INTO db_masmis.neemans_allocation
+         (upload_batch_id, month_label, agent_id, agent_name, allocated_leads, contacted, not_contacted)
+       VALUES (?,?,?,?,?,?,?)`,
+      [
+        batchId, monthLabel,
+        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
+        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
+        Number(r["Allocated"] ?? r["allocated_leads"] ?? 0),
+        Number(r["Contacted"] ?? r["contacted"] ?? 0),
+        Number(r["Not Contacted"] ?? r["not_contacted"] ?? 0),
+      ]
+    );
+    count++;
+  }
+  await logUpload("neemans-allocation", monthLabel, count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}
+
+export async function uploadNeemansApr(
+  buffer: Buffer, uploadedBy: string
+): Promise<{ rowsInserted: number }> {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  const batchId = uuidv4();
+  let count = 0;
+  for (const r of rows) {
+    const callDate = parseNeemansDate(r["Date"] ?? r["call_date"]);
+    if (!callDate) continue;
+    await queryMasmis(
+      `INSERT INTO db_masmis.neemans_apr
+         (upload_batch_id, call_date, agent_id, agent_name, total_calls, attendance, occupancy_pct, acht)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [
+        batchId, callDate,
+        String(r["Agent ID"] ?? r["agent_id"] ?? ""),
+        String(r["Agent Name"] ?? r["agent_name"] ?? ""),
+        Number(r["Total Calls"] ?? r["total_calls"] ?? 0),
+        Number(r["Attendance"] ?? r["attendance"] ?? 0),
+        Number(r["Occupancy %"] ?? r["occupancy_pct"] ?? 0),
+        Number(r["ACHT"] ?? r["acht"] ?? 0),
+      ]
+    );
+    count++;
+  }
+  const monthLabel = rows[0] ? (parseNeemansDate(rows[0]["Date"] ?? rows[0]["call_date"]) ?? "").slice(0, 7) : "";
+  await logUpload("neemans-apr", monthLabel, count, uploadedBy, batchId);
+  return { rowsInserted: count };
+}

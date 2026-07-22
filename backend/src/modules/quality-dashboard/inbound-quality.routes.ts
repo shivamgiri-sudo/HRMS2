@@ -53,6 +53,16 @@ router.get("/raw-data",              h(async (req, res) => {
   res.json({ data: await svc.getRawData(parseFilters(req.query as Record<string, unknown>), limit) });
 }));
 
+// ── CLAP VOC Quotes (verbatim customer voice, 2026-07-17+) ───────────────────
+router.get("/clap-voc-quotes",         h(async (req, res) => res.json({ data: await svc.getClapVocQuotes(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-summary",h(async (req, res) => res.json({ data: await svc.getClapProductVocSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-quotes", h(async (req, res) => {
+  const f = parseFilters(req.query as Record<string, unknown>);
+  const branch = (req.query.branch as string | undefined) as ("customer" | "logistic" | "agent" | "product") | undefined;
+  res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch }) });
+}));
+router.get("/clap-intelligence",       h(async (req, res) => res.json({ data: await svc.getClapIntelligence(parseFilters(req.query as Record<string, unknown>)) })));
+
 // ── Agent master management (super_admin / qa only) ────────────────────────
 router.get("/agent-master",          h(async (_req, res) => res.json({ data: await svc.getAgentMaster() })));
 router.get("/missing-agents",        h(async (req, res) => res.json({ data: await svc.getMissingAgents(parseFilters(req.query as Record<string, unknown>)) })));

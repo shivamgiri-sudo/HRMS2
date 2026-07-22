@@ -564,7 +564,16 @@ router.get("/config", requireRole("admin", "hr", "super_admin"), h(async (_req: 
 }));
 
 // Absorbed from lms-dashboard.routes.ts
-router.get("/learner-progress/:employee_id", requireRole("admin", "hr", "trainer", "operations_head"), h(async (req: any, res: Response) => {
+router.get("/learner-progress/:employee_id", h(async (req: any, res: Response) => {
+  const userId = req.authUser!.id;
+  const isPrivileged = await hasRole(userId, "admin", "hr", "trainer", "operations_head", "ceo", "manager");
+  if (!isPrivileged) {
+    // Allow employees to access only their own record
+    const emp = await getEmployeeForUser(userId);
+    if (!emp || emp.id !== req.params.employee_id) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM lms_learner_progress WHERE employee_id = ? LIMIT 1`,
     [req.params.employee_id]

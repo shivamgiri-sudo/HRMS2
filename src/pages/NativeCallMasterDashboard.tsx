@@ -17,9 +17,10 @@ import type { InterventionFlag } from "@/components/dashboard/InterventionPanel"
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface KPIData {
   inbound?: { total: number; avg_quality: number; fatal_score: number; avg_cx: number; avg_compliance: number };
-  outbound?: { total: number; conversion: number; ob_quality: number };
+  outbound?: { total: number; conversion: number; ob_quality: number; cx_score?: number; trust_score?: number; happiness_index?: string };
   active_agents?: number;
 }
+interface ClientOption { id: number; name: string }
 interface TrendPoint { period: string; quality: number; calls: number; fatal: number }
 interface AgentRow { agent: string; calls: number; quality: number; compliance: number; fatal_rate: number }
 interface ClientRow { client: string; calls: number; avg_quality?: number; conversion?: number }
@@ -87,6 +88,8 @@ export default function NativeCallMasterDashboard() {
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(today());
   const [lob, setLob] = useState<"All" | "Inbound" | "Outbound">("All");
+  const [selectedClientId, setSelectedClientId] = useState<string>("");
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [refresh, setRefresh] = useState(0);
 
   const [kpis, setKpis]           = useState<KPIData | null>(null);
@@ -102,7 +105,8 @@ export default function NativeCallMasterDashboard() {
   const [flags, setFlags]         = useState<InterventionFlag[]>([]);
   const [sourceUnavailable, setSourceUnavailable] = useState(false);
 
-  const qs = `startDate=${from}&endDate=${to}&lob=${lob}`;
+  const clientParam = selectedClientId ? `&clientIds=${selectedClientId}` : "";
+  const qs = `startDate=${from}&endDate=${to}&lob=${lob}${clientParam}`;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -153,6 +157,13 @@ export default function NativeCallMasterDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Load client list once on mount for the filter dropdown
+  useEffect(() => {
+    hrmsApi.get<{ data: ClientOption[] }>("/api/call-master/clients")
+      .then(res => setClientOptions(res.data ?? []))
+      .catch(() => {});
+  }, []);
+
   if (!canAccess) {
     return (
       <DashboardLayout>
@@ -196,6 +207,15 @@ export default function NativeCallMasterDashboard() {
               <option value="Inbound">Inbound</option>
               <option value="Outbound">Outbound</option>
             </select>
+            {clientOptions.length > 0 && (
+              <select value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm min-w-[130px]">
+                <option value="">All Clients</option>
+                {clientOptions.map(c => (
+                  <option key={c.id} value={String(c.id)}>{c.name}</option>
+                ))}
+              </select>
+            )}
             <button onClick={() => setRefresh(r => r + 1)}
               className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
               <RefreshCcw className="h-4 w-4" /> Refresh

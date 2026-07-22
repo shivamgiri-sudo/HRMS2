@@ -693,3 +693,169 @@ export async function insertAgentMaster(masId: string, agentName: string) {
     [masId, agentName]
   );
 }
+
+// ── CLAP VOC Quotes (verbatim customer voice, populated from 2026-07-17) ─────
+
+const CLAP_BRANCHES = ["customer", "logistic", "agent", "product"] as const;
+type ClapBranch = (typeof CLAP_BRANCHES)[number];
+
+function buildClientFilter2(id?: string | number): { clause: string; params: (string | number)[] } {
+  if (!id) return { clause: "", params: [] };
+  return { clause: " AND q.ClientId = ?", params: [id] };
+}
+
+export async function getClapVocQuotes(filters: InboundQualityFilters) {
+  const { startDate, endDate, clientId } = filters;
+  const cf = buildClientFilter2(clientId);
+  const VOC_DATE_CUTOFF = "2026-07-17";
+  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+
+  const rows: Record<string, unknown>[] = [];
+  for (const branch of CLAP_BRANCHES) {
+    const pos = `customer_voc_${branch}_positive`;
+    const neg = `customer_voc_${branch}_negative`;
+    const result = await querySource<Record<string, unknown>>(
+      `SELECT
+        q.CallDate AS call_date,
+        COALESCE(am.AgentName, q.User) AS agent_name,
+        CONCAT('Client ', q.ClientId) AS client,
+        q.\`${pos}\` AS positive_quote,
+        q.\`${neg}\` AS negative_quote
+       FROM db_audit.call_quality_assessment q
+       LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+       WHERE q.CallDate BETWEEN ? AND ?
+         AND q.CallDate >= ?
+         AND (q.\`${pos}\` IS NOT NULL OR q.\`${neg}\` IS NOT NULL)
+         ${cf.clause ? cf.clause : ""}
+       ORDER BY q.CallDate DESC LIMIT 200`,
+      [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params]
+    );
+    rows.push(...result.map(r => ({ ...r, branch })));
+  }
+  return rows;
+}
+
+export async function getClapProductVocSummary(filters: InboundQualityFilters) {
+  const { startDate, endDate, clientId } = filters;
+  const cf = buildClientFilter2(clientId);
+  const VOC_DATE_CUTOFF = "2026-07-17";
+  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+
+  return querySource<{
+    branch: string; positive_count: number; negative_count: number; total_calls: number;
+  }>(
+    `SELECT
+      'customer' AS branch,
+      SUM(CASE WHEN customer_voc_customer_positive IS NOT NULL AND customer_voc_customer_positive != '' THEN 1 ELSE 0 END) AS positive_count,
+      SUM(CASE WHEN customer_voc_customer_negative IS NOT NULL AND customer_voc_customer_negative != '' THEN 1 ELSE 0 END) AS negative_count,
+      COUNT(*) AS total_calls
+     FROM db_audit.call_quality_assessment q
+     WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}
+     UNION ALL
+     SELECT
+      'logistic',
+      SUM(CASE WHEN customer_voc_logistic_positive IS NOT NULL AND customer_voc_logistic_positive != '' THEN 1 ELSE 0 END),
+      SUM(CASE WHEN customer_voc_logistic_negative IS NOT NULL AND customer_voc_logistic_negative != '' THEN 1 ELSE 0 END),
+      COUNT(*)
+     FROM db_audit.call_quality_assessment q
+     WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}
+     UNION ALL
+     SELECT
+      'agent',
+      SUM(CASE WHEN customer_voc_agent_positive IS NOT NULL AND customer_voc_agent_positive != '' THEN 1 ELSE 0 END),
+      SUM(CASE WHEN customer_voc_agent_negative IS NOT NULL AND customer_voc_agent_negative != '' THEN 1 ELSE 0 END),
+      COUNT(*)
+     FROM db_audit.call_quality_assessment q
+     WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}
+     UNION ALL
+     SELECT
+      'product',
+      SUM(CASE WHEN customer_voc_product_positive IS NOT NULL AND customer_voc_product_positive != '' THEN 1 ELSE 0 END),
+      SUM(CASE WHEN customer_voc_product_negative IS NOT NULL AND customer_voc_product_negative != '' THEN 1 ELSE 0 END),
+      COUNT(*)
+     FROM db_audit.call_quality_assessment q
+     WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}`,
+    [
+      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
+      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
+      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
+      effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params,
+    ]
+  );
+}
+
+export async function getClapProductVocQuotes(filters: InboundQualityFilters & { branch?: ClapBranch }) {
+  const { startDate, endDate, clientId, branch = "product" } = filters;
+  const cf = buildClientFilter2(clientId);
+  const VOC_DATE_CUTOFF = "2026-07-17";
+  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+  const posCol = `customer_voc_${branch}_positive`;
+  const negCol = `customer_voc_${branch}_negative`;
+
+  return querySource<{
+    call_date: string; agent_name: string; client: string; sentiment: string; quote: string;
+  }>(
+    `SELECT
+      q.CallDate AS call_date,
+      COALESCE(am.AgentName, q.User) AS agent_name,
+      CONCAT('Client ', q.ClientId) AS client,
+      CASE WHEN q.\`${posCol}\` IS NOT NULL AND q.\`${posCol}\` != '' THEN 'positive' ELSE 'negative' END AS sentiment,
+      COALESCE(q.\`${posCol}\`, q.\`${negCol}\`) AS quote
+     FROM db_audit.call_quality_assessment q
+     LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+     WHERE q.CallDate BETWEEN ? AND ?
+       AND q.CallDate >= ?
+       AND (q.\`${posCol}\` IS NOT NULL OR q.\`${negCol}\` IS NOT NULL)
+       ${cf.clause ? cf.clause : ""}
+     ORDER BY q.CallDate DESC LIMIT 300`,
+    [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params]
+  );
+}
+
+export async function getClapIntelligence(filters: InboundQualityFilters) {
+  const { startDate, endDate, clientId } = filters;
+  const cf = buildClientFilter2(clientId);
+  const VOC_DATE_CUTOFF = "2026-07-17";
+  const effectiveStart = startDate < VOC_DATE_CUTOFF ? VOC_DATE_CUTOFF : startDate;
+
+  const [summary] = await querySource<{
+    total_audits: number; avg_cq_score: number; positive_voc_count: number; negative_voc_count: number;
+  }>(
+    `SELECT
+      COUNT(*) AS total_audits,
+      ROUND(AVG(quality_percentage), 1) AS avg_cq_score,
+      SUM(CASE WHEN
+        (customer_voc_customer_positive IS NOT NULL AND customer_voc_customer_positive != '') OR
+        (customer_voc_logistic_positive IS NOT NULL AND customer_voc_logistic_positive != '') OR
+        (customer_voc_agent_positive    IS NOT NULL AND customer_voc_agent_positive    != '') OR
+        (customer_voc_product_positive  IS NOT NULL AND customer_voc_product_positive  != '')
+      THEN 1 ELSE 0 END) AS positive_voc_count,
+      SUM(CASE WHEN
+        (customer_voc_customer_negative IS NOT NULL AND customer_voc_customer_negative != '') OR
+        (customer_voc_logistic_negative IS NOT NULL AND customer_voc_logistic_negative != '') OR
+        (customer_voc_agent_negative    IS NOT NULL AND customer_voc_agent_negative    != '') OR
+        (customer_voc_product_negative  IS NOT NULL AND customer_voc_product_negative  != '')
+      THEN 1 ELSE 0 END) AS negative_voc_count
+     FROM db_audit.call_quality_assessment q
+     WHERE q.CallDate BETWEEN ? AND ? AND q.CallDate >= ?${cf.clause}`,
+    [effectiveStart, endDate, VOC_DATE_CUTOFF, ...cf.params]
+  );
+
+  const branchSummary = await getClapProductVocSummary(filters);
+
+  const insights: string[] = [];
+  if (summary) {
+    const posRate = summary.total_audits > 0
+      ? Math.round((summary.positive_voc_count / summary.total_audits) * 100)
+      : 0;
+    const negRate = summary.total_audits > 0
+      ? Math.round((summary.negative_voc_count / summary.total_audits) * 100)
+      : 0;
+    if (posRate >= 50) insights.push(`Strong positive VOC coverage at ${posRate}% of audits`);
+    if (negRate >= 20) insights.push(`Elevated negative VOC at ${negRate}% — review product/logistic branches`);
+    const topNeg = branchSummary.sort((a, b) => b.negative_count - a.negative_count)[0];
+    if (topNeg) insights.push(`Highest negative volume in '${topNeg.branch}' branch (${topNeg.negative_count} quotes)`);
+  }
+
+  return { summary, branch_summary: branchSummary, insights };
+}

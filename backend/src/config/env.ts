@@ -152,6 +152,9 @@ const envSchema = z.object({
   // Shivamgiri quality/APR database (shared by quality-dashboard module)
   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
 
+  // MASMIS uploaded/processed sales data (Neemans, Bellavita, GNC)
+  MASMIS_DB_NAME: z.string().default("db_masmis"),
+
   // Cross-DB source credentials — used by sourceDb.ts for db_audit, db_external, dialer_db queries
   // Falls back to DB_USER/DB_PASSWORD if not set
   SOURCE_DB_USER:     z.string().default(""),

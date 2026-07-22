@@ -84,16 +84,45 @@ export async function getKPIs(filters: CallMasterFilters) {
   }
 
   if (lob === "All" || lob === "Outbound") {
-    const [ob] = await querySource<{ total: number; conversion: number; ob_quality: number }>(
+    const [ob] = await querySource<{
+      total: number; conversion: number; ob_quality: number;
+      satisfaction_pct: number; positive_pct: number; negative_pct: number;
+      offer_accept_pct: number; cx_score: number; trust_score: number;
+    }>(
       `SELECT
         COUNT(*) AS total,
         ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)/COUNT(*)*100,2) AS conversion,
-        ROUND(AVG((Opening+Offered+ObjectionHandling+PrepaidPitch+UpsellingEfforts+OfferUrgency+SensitiveWordUsed)/7.0*100),2) AS ob_quality
+        ROUND(AVG((Opening+Offered+ObjectionHandling+PrepaidPitch+UpsellingEfforts+OfferUrgency+SensitiveWordUsed)/7.0*100),2) AS ob_quality,
+        ROUND(SUM(CASE WHEN LOWER(COALESCE(Feedback_Category,''))='positive' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS positive_pct,
+        ROUND(SUM(CASE WHEN LOWER(COALESCE(Feedback_Category,''))='negative' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS negative_pct,
+        ROUND(SUM(CASE WHEN LOWER(COALESCE(Feedback_Category,'')) NOT IN ('negative','') AND Feedback IS NOT NULL THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS satisfaction_pct,
+        ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS offer_accept_pct
        FROM db_external.CallDetails d
        WHERE d.CallDate BETWEEN ? AND ?${obF.clause}`,
       [startDate, endDate, ...obF.params]
     );
-    results.outbound = ob;
+    if (ob) {
+      // Composite scores from Mydashboards customer-intelligence formulas
+      // Trust Score = satisfaction*0.5 + offer_accept*0.3 + (100-negative)*0.2
+      const trustScore = Math.round(
+        (ob.satisfaction_pct ?? 0) * 0.5 +
+        (ob.offer_accept_pct ?? 0) * 0.3 +
+        (100 - (ob.negative_pct ?? 0)) * 0.2
+      );
+      // CX Score = positive*0.6 + offer_accept*0.4
+      const cxScore = Math.round(
+        (ob.positive_pct ?? 0) * 0.6 +
+        (ob.offer_accept_pct ?? 0) * 0.4
+      );
+      // Happiness Index = rule-based tier
+      const happinessIndex =
+        trustScore >= 70 && cxScore >= 65 && (ob.conversion ?? 0) > 0 ? "High"
+        : trustScore >= 50 || cxScore >= 50 ? "Medium"
+        : "Low";
+      results.outbound = { ...ob, cx_score: cxScore, trust_score: trustScore, happiness_index: happinessIndex };
+    } else {
+      results.outbound = ob;
+    }
   }
 
   // Active agents (union)
@@ -270,13 +299,14 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
   }>(
     `SELECT q.CallDate AS date,
       ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
-      CONCAT('Client ', q.ClientId) AS client,
+      ANY_VALUE(COALESCE(c.name, CONCAT('Client ', q.ClientId))) AS client,
       COUNT(*) AS total_calls,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_calls,
       ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS fatal_rate,
       ROUND(AVG(q.quality_percentage),2) AS avg_quality
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
      WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
      GROUP BY q.CallDate, q.User, q.ClientId
      ORDER BY q.CallDate DESC, q.User ASC LIMIT ?`,
@@ -290,24 +320,26 @@ export async function getCallsByClient(filters: CallMasterFilters) {
   if (lob !== "Outbound") {
     const ibF = buildInboundClientFilter(clientIds);
     return querySource<{ client: string; calls: number; avg_quality: number }>(
-      `SELECT CONCAT('Client ', q.ClientId) AS client,
+      `SELECT COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
         COUNT(*) AS calls,
         ROUND(AVG(q.quality_percentage),2) AS avg_quality
        FROM db_audit.call_quality_assessment q
+       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
        WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
-       GROUP BY q.ClientId ORDER BY calls DESC`,
+       GROUP BY q.ClientId, c.name ORDER BY calls DESC`,
       [startDate, endDate, ...ibF.params]
     );
   }
 
   const obF = buildOutboundClientFilter(clientIds);
   return querySource<{ client: string; calls: number; conversion: number }>(
-    `SELECT CONCAT('Client ', d.client_id) AS client,
+    `SELECT COALESCE(c.name, CONCAT('Client ', d.client_id)) AS client,
       COUNT(*) AS calls,
       ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS conversion
      FROM db_external.CallDetails d
+     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(d.client_id AS UNSIGNED)
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}
-     GROUP BY d.client_id ORDER BY calls DESC`,
+     GROUP BY d.client_id, c.name ORDER BY calls DESC`,
     [startDate, endDate, ...obF.params]
   );
 }
@@ -370,9 +402,11 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
 
 export async function getClientList() {
   return querySource<{ id: number; name: string }>(
-    `SELECT ClientId AS id, CONCAT('Client ', ClientId) AS name
-     FROM db_audit.call_quality_assessment
-     GROUP BY ClientId ORDER BY ClientId`
+    `SELECT q.ClientId AS id,
+       COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS name
+     FROM db_audit.call_quality_assessment q
+     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     GROUP BY q.ClientId, c.name ORDER BY q.ClientId`
   );
 }
 
@@ -386,9 +420,11 @@ export async function getExportData(
     const ibF = buildInboundClientFilter(clientIds);
     const paramCols = INBOUND_PARAMS.map((p) => `q.\`${p.key}\``).join(", ");
     return querySource<Record<string, unknown>>(
-      `SELECT q.CallDate, q.User AS agent_code, CONCAT('Client ', q.ClientId) AS client,
+      `SELECT q.CallDate, q.User AS agent_code,
+        COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
         q.quality_percentage, q.scenario, q.scenario1, ${paramCols}
        FROM db_audit.call_quality_assessment q
+       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
        WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
        ORDER BY q.CallDate DESC LIMIT ?`,
       [startDate, endDate, ...ibF.params, String(limit)]
@@ -397,13 +433,15 @@ export async function getExportData(
 
   const obF = buildOutboundClientFilter(clientIds);
   return querySource<Record<string, unknown>>(
-    `SELECT d.CallDate, d.AgentName, CONCAT('Client ', d.client_id) AS client,
+    `SELECT d.CallDate, d.AgentName,
+      COALESCE(c.name, CONCAT('Client ', d.client_id)) AS client,
       d.LengthSec, d.CallDisposition, d.StartTime, d.EndTime,
       d.Opening, d.Offered, d.ObjectionHandling, d.PrepaidPitch, d.UpsellingEfforts, d.OfferUrgency,
       ROUND((d.Opening+d.Offered+d.ObjectionHandling+d.PrepaidPitch+d.UpsellingEfforts+d.OfferUrgency)/6.0*100,1) AS OBQuality,
       d.SaleDone, d.ProductOffering, d.DiscountType, d.Category, d.SubCategory,
       d.Feedback, d.Feedback_Category, d.AreaForImprovement, d.SensitiveWordContext, d.NotInterestedBucketReason
      FROM db_external.CallDetails d
+     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(d.client_id AS UNSIGNED)
      WHERE d.CallDate BETWEEN ? AND ?${obF.clause}
        AND d.AgentName IS NOT NULL AND d.AgentName != ''
      ORDER BY d.CallDate DESC LIMIT ?`,
