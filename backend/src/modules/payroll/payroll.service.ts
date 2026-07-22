@@ -525,7 +525,8 @@ export const payrollService = {
     // Also skipped when employee has an approved ESI opt-out (voluntary declaration).
     const esicApplicable = !p.esicOptOut && gross <= p.esicWageLimit;
     const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
-    const esicEmr = esicApplicable ? r2(gross * 0.0325) : 0;
+    const esicEmrPct = (p.esicEmployerPct ?? 3.25) / 100;
+    const esicEmr = esicApplicable ? r2(gross * esicEmrPct) : 0;
 
     // Gratuity: configurable % of Basic — employer cost, not employee deduction
     // Always require configuration; no hardcoded 4.81% fallback (B5 fix: load from statutory_config)

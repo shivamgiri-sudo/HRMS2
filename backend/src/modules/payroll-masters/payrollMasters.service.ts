@@ -112,7 +112,7 @@ function calcGrossAndCtc(data: {
   const gross  = data.basic_amt + conv + med + other + bonus + data.portfolio_amt + data.special_allowance_amt + data.pli_amt;
   const pfBase   = Math.min(data.basic_amt, 15000);
   const pfEr     = pfBase * 0.12;
-  const esicEr   = gross <= 21000 ? gross * 0.0325 : 0;
+  const esicEr   = gross <= 21000 ? gross * 0.0325 : 0; // 3.25% — kept as constant; CTC preview only
   const ctc      = gross + pfEr + esicEr;
   return { gross_monthly: Math.round(gross * 100) / 100, ctc_monthly: Math.round(ctc * 100) / 100 };
 }

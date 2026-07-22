@@ -105,6 +105,7 @@ interface AttendanceRow {
 interface StatutoryRow {
   pf_employee_pct: number;
   esic_employee_pct: number;
+  esic_employer_pct: number;
   esic_wage_limit: number;
   pf_wage_limit: number;
   professional_tax: number;
@@ -145,11 +146,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   const statConfig: Record<string, number> = {};
   for (const r of statKvRows as Array<{ config_key: string; config_value: number }>) statConfig[r.config_key.toLowerCase()] = Number(r.config_value);
   const stat: StatutoryRow = {
-    pf_employee_pct: statConfig["pf_employee_pct"] ?? 12,
+    pf_employee_pct:   statConfig["pf_employee_pct"]   ?? 12,
     esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
-    esic_wage_limit: statConfig["esic_wage_limit"] ?? 21000,
-    pf_wage_limit: statConfig["pf_wage_limit"] ?? 15000,
-    professional_tax: statConfig["professional_tax"] ?? 0,
+    esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
+    esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
+    pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
+    professional_tax:  statConfig["professional_tax"]  ?? 0,
   };
 
   const empConds: string[] = ["esa.active_status = 1", "LOWER(e.employment_status) = 'active'", "e.active_status = 1"];
@@ -271,6 +273,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       lwpDays: 0,
       pfEmployeePct: stat.pf_employee_pct,
       esicEmployeePct: stat.esic_employee_pct,
+      esicEmployerPct: stat.esic_employer_pct,
       esicWageLimit: stat.esic_wage_limit,
       pfWageLimit: stat.pf_wage_limit,
       professionalTax,

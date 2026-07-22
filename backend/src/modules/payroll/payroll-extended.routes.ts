@@ -147,27 +147,7 @@ payrollExtendedRouter.get("/runs/:id/ecr", requireRole("admin", "finance", "payr
   return res.json({ success: true, run_id: req.params.id, data: rows });
 }));
 
-payrollExtendedRouter.get("/runs/:id/esic-challan", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const [runRows] = await db.execute<RowDataPacket[]>("SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1", [req.params.id]);
-  const run = runRows[0];
-  if (!run) return res.status(404).json({ success: false, message: "Run not found" });
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.employee_code, CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
-            spl.gross_salary AS wages, spl.esic_employee AS employee_contribution, spl.esic_employer AS employer_contribution
-       FROM salary_prep_line spl
-       JOIN employees e ON e.id = spl.employee_id
-      WHERE spl.run_id = ? AND spl.status != 'cancelled'
-      ORDER BY e.employee_code`,
-    [req.params.id],
-  );
-  const totals = rows.reduce((acc: any, row: any) => {
-    acc.total_wages += Number(row.wages);
-    acc.employee_total += Number(row.employee_contribution);
-    acc.employer_total += Number(row.employer_contribution);
-    return acc;
-  }, { total_wages: 0, employee_total: 0, employer_total: 0 });
-  return res.json({ success: true, run_id: req.params.id, period: run.run_month, employee_count: rows.length, ...totals, data: rows });
-}));
+// ESIC challan: handled by payroll.routes.ts /runs/:id/esic-challan (mounted first)
 
 // ── Salary Sheet XLSX export (mirrors Onfido Noida sheet format) ──────────────
 payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {

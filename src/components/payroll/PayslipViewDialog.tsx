@@ -135,7 +135,9 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
   // Deduction components from salary_prep_line
   const pfEmployee     = record.pfEmployee     ?? 0;
+  const pfEmployer     = record.pfEmployer     ?? 0;
   const esicEmployee   = record.esicEmployee   ?? 0;
+  const esicEmployer   = record.esicEmployer   ?? 0;
   const professionalTax= record.professionalTax?? 0;
   const tdsAmount      = record.tdsAmount      ?? 0;
   const lwpDeduction   = record.lwpDeduction   ?? 0;
@@ -520,6 +522,38 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
               <span className="font-bold text-2xl text-primary">{fmt(record.netSalary)}</span>
             </div>
           </div>
+
+          {/* ── Employer Contributions (CTC components, not deducted from employee) ── */}
+          {(pfEmployer > 0 || esicEmployer > 0) && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Employer Contributions (CTC)
+              </p>
+              <table className="w-full text-sm">
+                <tbody>
+                  {pfEmployer > 0 && (
+                    <tr className="border-b border-slate-100">
+                      <td className="py-1.5 text-muted-foreground">PF Employer (EPF + EPS)</td>
+                      <td className="py-1.5 text-right font-mono font-semibold">{fmt(pfEmployer)}</td>
+                    </tr>
+                  )}
+                  {esicEmployer > 0 && (
+                    <tr className="border-b border-slate-100">
+                      <td className="py-1.5 text-muted-foreground">ESIC Employer (3.25%)</td>
+                      <td className="py-1.5 text-right font-mono font-semibold">{fmt(esicEmployer)}</td>
+                    </tr>
+                  )}
+                  <tr className="font-semibold">
+                    <td className="py-1.5">Total Employer Cost</td>
+                    <td className="py-1.5 text-right font-mono">{fmt(pfEmployer + esicEmployer)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="mt-2 text-[11px] text-slate-400">
+                These are borne by the employer and are part of your CTC. They are not deducted from your in-hand salary.
+              </p>
+            </div>
+          )}
 
           {/* ── Salary Trend ─────────────────────────────────────────────── */}
           <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">

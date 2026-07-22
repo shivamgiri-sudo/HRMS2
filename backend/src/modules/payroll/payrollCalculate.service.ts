@@ -219,6 +219,7 @@ interface AttendanceRow {
 interface StatutoryRow {
   pf_employee_pct: number;
   esic_employee_pct: number;
+  esic_employer_pct: number;
   esic_wage_limit: number;
   pf_wage_limit: number;
   professional_tax: number;
@@ -249,11 +250,12 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
   // 2b. Legacy flat-row fallback (PF / ESIC / PT values)
   const stat: StatutoryRow = {
-    pf_employee_pct:  statConfig["pf_employee_pct"]  ?? statConfig["pf_employee_pct"]  ?? 12,
+    pf_employee_pct:   statConfig["pf_employee_pct"]   ?? 12,
     esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
-    esic_wage_limit:  statConfig["esic_wage_limit"]  ?? 21000,
-    pf_wage_limit:    statConfig["pf_wage_limit"]    ?? 15000,
-    professional_tax: statConfig["professional_tax"] ?? 200,
+    esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
+    esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
+    pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
+    professional_tax:  statConfig["professional_tax"]  ?? 200,
   };
 
   // 3. Fetch eligible employees (scoped to run's process/branch filters)
@@ -779,6 +781,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
       lwpDays: 0, // LWP already absorbed into days-based gross; pass 0 to avoid double-deduction
       pfEmployeePct: stat.pf_employee_pct,
       esicEmployeePct: stat.esic_employee_pct,
+      esicEmployerPct: stat.esic_employer_pct,
       esicWageLimit: stat.esic_wage_limit,
       pfWageLimit: stat.pf_wage_limit,
       professionalTax,

@@ -29,6 +29,7 @@ export function calculateSalary(
   basicPct: number,
   hraPct: number,
   _isMetro: boolean,
+  esicEmployerPct = 3.25,
 ): SalaryComponents {
   // Single-pass: derive gross from CTC by subtracting employer-side costs.
   // We don't know gross yet, so approximate employer PF/ESIC/gratuity iteratively.
@@ -42,7 +43,7 @@ export function calculateSalary(
   const estimatedGross = annualCtc * 0.88;
   const estimatedBasic = estimatedGross * (basicPct / 100);
   const pfEmployerAnnual = estimatedBasic * 0.12;
-  const esicEmployerAnnual = esicApplies ? estimatedGross * 0.0325 : 0;
+  const esicEmployerAnnual = esicApplies ? estimatedGross * (esicEmployerPct / 100) : 0;
   const gratuityAnnual = (estimatedBasic / 26 / 12) * 15;
   const adminChargesAnnual = estimatedBasic * 0.005;
 
@@ -63,7 +64,7 @@ export function calculateSalary(
 
   // Employer side (returned for display/records — already used to derive gross above)
   const pfEmployer = estimatedBasic * 0.12; // consistent with gross derivation
-  const esicEmployer = esicApplies ? gross * 0.0325 : 0;
+  const esicEmployer = esicApplies ? gross * (esicEmployerPct / 100) : 0;
   const gratuity = (basic / 26 / 12) * 15;
   const adminCharges = basic * 0.005;
   const bonus = basic * 0.0833;

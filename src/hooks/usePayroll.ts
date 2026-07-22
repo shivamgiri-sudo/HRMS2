@@ -68,7 +68,9 @@ export interface PayrollRecord {
   paidWorkingDays?: number;
   finalPayableDays?: number;
   pfEmployee?: number;
+  pfEmployer?: number;
   esicEmployee?: number;
+  esicEmployer?: number;
   professionalTax?: number;
   tdsAmount?: number;
   lwpDeduction?: number;
@@ -151,7 +153,9 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     paidWorkingDays:      row.paid_working_days     !== undefined ? Number(row.paid_working_days)     : undefined,
     finalPayableDays:     row.final_payable_days    !== undefined ? Number(row.final_payable_days)    : undefined,
     pfEmployee:           row.pf_employee           !== undefined ? Number(row.pf_employee)           : undefined,
+    pfEmployer:           row.pf_employer           !== undefined ? Number(row.pf_employer)           : undefined,
     esicEmployee:         row.esic_employee         !== undefined ? Number(row.esic_employee)         : undefined,
+    esicEmployer:         row.esic_employer         !== undefined ? Number(row.esic_employer)         : undefined,
     professionalTax:      row.professional_tax      !== undefined ? Number(row.professional_tax)      : undefined,
     tdsAmount:            row.tds                   !== undefined ? Number(row.tds)                   : undefined,
     lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,

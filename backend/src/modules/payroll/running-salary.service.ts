@@ -111,6 +111,7 @@ export async function computeRunningSalary(
   }
   const pfEmployeePct  = statConfig["pf_employee_pct"]   ?? 12;
   const esicEmpPct     = statConfig["esic_employee_pct"] ?? 0.75;
+  const esicEmrPct     = statConfig["esic_employer_pct"] ?? 3.25;
   const esicWageLimit  = statConfig["esic_wage_limit"]   ?? 21000;
   const pfWageLimit    = statConfig["pf_wage_limit"]     ?? 15000;
   const defaultPt      = statConfig["professional_tax"]  ?? 200;
@@ -203,7 +204,7 @@ export async function computeRunningSalary(
     grossMonthlyCTC: earnedSalaryTillDate,
     workingDays: Math.max(1, cappedEarned),
     lwpDays: 0, // LWP already baked into cappedEarned
-    pfEmployeePct, esicEmployeePct: esicEmpPct, esicWageLimit, pfWageLimit,
+    pfEmployeePct, esicEmployeePct: esicEmpPct, esicEmployerPct: esicEmrPct, esicWageLimit, pfWageLimit,
     professionalTax: ptEarned,
     tds: 0,
     basicPct: effectiveBasicPct,
@@ -274,7 +275,7 @@ export async function computeRunningSalary(
     grossMonthlyCTC: projectedSalary,
     workingDays: Math.max(1, projectedPayableDays),
     lwpDays: 0,
-    pfEmployeePct, esicEmployeePct: esicEmpPct, esicWageLimit, pfWageLimit,
+    pfEmployeePct, esicEmployeePct: esicEmpPct, esicEmployerPct: esicEmrPct, esicWageLimit, pfWageLimit,
     professionalTax: ptProjected,
     tds: 0,
     basicPct: effectiveBasicPct,

@@ -154,7 +154,7 @@ function computeCTC(f: PackageFormState): number {
   const basic = toNum(f.basic_amt);
   const gross = computeGross(f);
   const pfEmployer = Math.min(basic, 15000) * 0.12;
-  const esic = gross <= 21000 ? gross * 0.0325 : 0;
+  const esic = gross <= 21000 ? gross * 0.0325 : 0; // 3.25% statutory default
   return Math.round(gross + pfEmployer + esic);
 }
 
@@ -1089,7 +1089,7 @@ function SlabRow({ slab, pkg, onEdit, onAdd }: SlabRowProps) {
     pkg.ctc_monthly ??
     (() => {
       const pf = Math.min(pkg.basic_amt, 15000) * 0.12;
-      const esic = gross <= 21000 ? gross * 0.0325 : 0;
+      const esic = gross <= 21000 ? gross * 0.0325 : 0; // 3.25% statutory default
       return Math.round(gross + pf + esic);
     })();
 
