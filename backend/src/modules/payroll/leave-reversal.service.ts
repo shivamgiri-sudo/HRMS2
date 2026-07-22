@@ -26,7 +26,7 @@ interface LeaveRequestRow {
 }
 
 interface BalanceRow {
-  balance_days: number;
+  balance_days: number; // alias: allocated_days + adjusted_days - used_days
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -102,23 +102,24 @@ export async function checkAndReverseLeave(params: {
     const daysAvailable = leave.total_days;
     const daysToReverse = Math.min(daysAvailable, excessDays);
 
-    // ── 6a. Current balance ────────────────────────────────────────────────
+    // ── 6a. Current balance (available = allocated + adjusted - used) ─────
+    const balanceYear = runMonth.slice(0, 4);
     const [balanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT balance_days
+      `SELECT (COALESCE(allocated_days, 0) + COALESCE(adjusted_days, 0) - COALESCE(used_days, 0)) AS balance_days
        FROM leave_balance_ledger
-       WHERE employee_id = ? AND leave_type_id = ?`,
-      [employeeId, leave.leave_type_id]
+       WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+      [employeeId, leave.leave_type_id, balanceYear]
     );
     const balanceBefore = Number((balanceRows as BalanceRow[])[0]?.balance_days ?? 0);
     const balanceAfter  = balanceBefore + daysToReverse;
 
-    // ── 6c. Update leave balance ledger ───────────────────────────────────
+    // ── 6c. Restore balance by reducing used_days (reverses the deduction
+    //        that happened when the leave was approved) ────────────────────
     await db.execute<ResultSetHeader>(
       `UPDATE leave_balance_ledger
-       SET balance_days = balance_days + ?,
-           credit_days  = credit_days  + ?
-       WHERE employee_id = ? AND leave_type_id = ?`,
-      [daysToReverse, daysToReverse, employeeId, leave.leave_type_id]
+       SET used_days = GREATEST(0, used_days - ?)
+       WHERE employee_id = ? AND leave_type_id = ? AND balance_year = ?`,
+      [daysToReverse, employeeId, leave.leave_type_id, balanceYear]
     );
 
     // ── 6d. Insert reversal log ────────────────────────────────────────────
