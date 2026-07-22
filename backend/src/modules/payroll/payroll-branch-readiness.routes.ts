@@ -17,6 +17,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { db } from "../../db/mysql.js";
+import { triggerPayrollAttendanceFreezeRequest } from "../work-inbox/work-inbox.triggers.js";
 
 export const payrollBranchReadinessRouter = Router();
 
@@ -32,6 +33,74 @@ function resolveMonth(raw: unknown): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
+
+// ---------------------------------------------------------------------------
+// GET /export?month=YYYY-MM&format=csv
+// CSV export for HO summary
+// Roles: payroll_head, super_admin, admin
+// NOTE: Must be registered before /:branchId to avoid Express matching "export"
+//       as a branchId parameter.
+// ---------------------------------------------------------------------------
+
+payrollBranchReadinessRouter.get(
+  "/export",
+  requireAuth,
+  requireRole("payroll_head", "super_admin", "admin"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const month = resolveMonth(req.query.month);
+      const format = (req.query.format as string) ?? "csv";
+
+      if (format !== "csv") {
+        return res.status(400).json({
+          success: false,
+          message: "Only 'csv' format is supported",
+        });
+      }
+
+      const data = await payrollBranchReadinessService.getHOSummary(month);
+
+      // CSV header
+      const csvRows = [
+        "Branch Name,Employee Count,Attendance Frozen,Incentives Status,Custom Deductions,Overtime Entered,Bank Details %,UAN Complete %,NOC Resolved,Holiday Work Approved,Branch Head Signoff,Readiness Score,Readiness Status,Projected Gross,Projected Net,HO Override",
+      ];
+
+      // CSV data rows
+      for (const branch of data) {
+        const row = [
+          branch.branch_name ?? "—",
+          branch.employee_count,
+          branch.attendance_frozen ? "Yes" : "No",
+          branch.incentives_status.replace("_", " "),
+          branch.custom_deductions_uploaded ? "Yes" : "No",
+          branch.overtime_entered ? "Yes" : "No",
+          `${branch.bank_details_pct}%`,
+          `${branch.uan_complete_pct}%`,
+          branch.noc_resolved ? "Yes" : "No",
+          branch.holiday_work_approved ? "Yes" : "No",
+          branch.branch_head_signoff ? "Yes" : "No",
+          branch.readiness_score,
+          branch.readiness_status.replace("_", " "),
+          branch.projected_gross != null ? branch.projected_gross.toFixed(2) : "—",
+          branch.projected_net != null ? branch.projected_net.toFixed(2) : "—",
+          branch.ho_override_ready ? "Yes" : "No",
+        ];
+        csvRows.push(row.join(","));
+      }
+
+      const csv = csvRows.join("\n");
+      const filename = `branch-readiness-${month}.csv`;
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(csv);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[BranchReadiness] GET /export error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to generate CSV export" });
+    }
+  }
+);
 
 // ---------------------------------------------------------------------------
 // GET /summary?month=YYYY-MM
@@ -269,6 +338,46 @@ payrollBranchReadinessRouter.post(
 );
 
 // ---------------------------------------------------------------------------
+// POST /:branchId/request-freeze
+// Branch head / WFM signals that attendance data is complete and requests
+// the payroll head to perform the attendance freeze.
+// Roles: branch_head, payroll_branch
+// ---------------------------------------------------------------------------
+
+payrollBranchReadinessRouter.post(
+  "/:branchId/request-freeze",
+  requireAuth,
+  requireRole("branch_head", "payroll_branch"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { branchId } = req.params;
+      const month = resolveMonth(req.query.month ?? req.body?.month);
+
+      // Resolve branch name for the notification
+      let branchName = branchId;
+      try {
+        const [rows] = await db.execute<any[]>(
+          `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
+          [branchId]
+        );
+        branchName = (rows[0] as any)?.branch_name ?? branchId;
+      } catch { /* non-critical */ }
+
+      await triggerPayrollAttendanceFreezeRequest(branchId, branchName, month);
+
+      return res.json({
+        success: true,
+        message: "Attendance freeze request sent to Payroll Head",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[BranchReadiness] POST /:branchId/request-freeze error:", msg);
+      return res.status(500).json({ success: false, message: "Failed to send freeze request" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // GET /:branchId/projection?month=YYYY-MM
 // Salary bill projection
 // Roles: branch_head, payroll_branch, payroll_head, super_admin
@@ -306,68 +415,3 @@ payrollBranchReadinessRouter.get(
   }
 );
 
-// ---------------------------------------------------------------------------
-// GET /export?month=YYYY-MM&format=csv
-// CSV export for HO summary
-// Roles: payroll_head, super_admin, admin
-// ---------------------------------------------------------------------------
-
-payrollBranchReadinessRouter.get(
-  "/export",
-  requireAuth,
-  requireRole("payroll_head", "super_admin", "admin"),
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const month = resolveMonth(req.query.month);
-      const format = (req.query.format as string) ?? "csv";
-
-      if (format !== "csv") {
-        return res.status(400).json({
-          success: false,
-          message: "Only 'csv' format is supported",
-        });
-      }
-
-      const data = await payrollBranchReadinessService.getHOSummary(month);
-
-      // CSV header
-      const csvRows = [
-        "Branch Name,Employee Count,Attendance Frozen,Incentives Status,Custom Deductions,Overtime Entered,Bank Details %,UAN Complete %,NOC Resolved,Holiday Work Approved,Branch Head Signoff,Readiness Score,Readiness Status,Projected Gross,Projected Net,HO Override",
-      ];
-
-      // CSV data rows
-      for (const branch of data) {
-        const row = [
-          branch.branch_name ?? "—",
-          branch.employee_count,
-          branch.attendance_frozen ? "Yes" : "No",
-          branch.incentives_status.replace("_", " "),
-          branch.custom_deductions_uploaded ? "Yes" : "No",
-          branch.overtime_entered ? "Yes" : "No",
-          `${branch.bank_details_pct}%`,
-          `${branch.uan_complete_pct}%`,
-          branch.noc_resolved ? "Yes" : "No",
-          branch.holiday_work_approved ? "Yes" : "No",
-          branch.branch_head_signoff ? "Yes" : "No",
-          branch.readiness_score,
-          branch.readiness_status.replace("_", " "),
-          branch.projected_gross != null ? branch.projected_gross.toFixed(2) : "—",
-          branch.projected_net != null ? branch.projected_net.toFixed(2) : "—",
-          branch.ho_override_ready ? "Yes" : "No",
-        ];
-        csvRows.push(row.join(","));
-      }
-
-      const csv = csvRows.join("\n");
-      const filename = `branch-readiness-${month}.csv`;
-
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      return res.send(csv);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[BranchReadiness] GET /export error:", msg);
-      return res.status(500).json({ success: false, message: "Failed to generate CSV export" });
-    }
-  }
-);

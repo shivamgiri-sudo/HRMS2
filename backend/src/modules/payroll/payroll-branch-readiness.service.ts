@@ -11,6 +11,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { triggerPayrollBranchSignOff } from "../work-inbox/work-inbox.triggers.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -791,6 +792,20 @@ export const payrollBranchReadinessService = {
       entity_id: branchId,
       change_summary: { month, branch_id: branchId, remarks },
     });
+
+    // Notify payroll head via work-inbox
+    void (async () => {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
+          [branchId]
+        );
+        const branchName = (rows[0] as any)?.branch_name ?? branchId;
+        await triggerPayrollBranchSignOff(branchId, branchName, month);
+      } catch {
+        // non-critical — don't fail the sign-off if notification fails
+      }
+    })();
 
     // Recompute score/status after sign-off
     const rec = await this.getOrRefresh(month, branchId);

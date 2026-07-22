@@ -119,3 +119,41 @@ export async function triggerResignationDiscussion(
     dueAt: dueAt(itemType),
   });
 }
+
+export async function triggerPayrollBranchSignOff(
+  branchId: string,
+  branchName: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "PAYROLL_BRANCH_SIGNOFF_NOTIFY",
+    title: `${branchName} signed off for ${month} — ready for payroll freeze`,
+    description: `Branch Head has confirmed all payroll inputs are complete for ${branchName} (${month}). Review and freeze attendance to proceed.`,
+    moduleCode: "payroll",
+    entityType: "branch_readiness",
+    entityId: branchId,
+    assignedToRole: "payroll_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("PAYROLL_BRANCH_SIGNOFF_NOTIFY"),
+  });
+}
+
+export async function triggerPayrollAttendanceFreezeRequest(
+  branchId: string,
+  branchName: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "PAYROLL_ATTENDANCE_FREEZE_REQUEST",
+    title: `${branchName} requesting attendance freeze for ${month}`,
+    description: `Branch Head / WFM has confirmed attendance data is complete for ${branchName} (${month}). Please freeze attendance in the Payroll module to unblock readiness.`,
+    moduleCode: "payroll",
+    entityType: "branch_readiness",
+    entityId: branchId,
+    assignedToRole: "payroll_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("PAYROLL_ATTENDANCE_FREEZE_REQUEST"),
+  });
+}

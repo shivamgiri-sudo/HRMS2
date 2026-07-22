@@ -156,6 +156,28 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     deeplinkPattern:   "/payroll/branch-readiness?branchId={entityId}",
     requiresScope:     true,
   },
+  {
+    itemType:          "PAYROLL_BRANCH_SIGNOFF_NOTIFY",
+    displayName:       "Branch signed off — ready for payroll freeze",
+    module:            "PAYROLL",
+    entityType:        "branch_readiness",
+    defaultAssigneeRoles: ["payroll_head", "super_admin"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/payroll/branch-readiness",
+    requiresScope:     false,
+  },
+  {
+    itemType:          "PAYROLL_ATTENDANCE_FREEZE_REQUEST",
+    displayName:       "Branch requesting attendance freeze",
+    module:            "PAYROLL",
+    entityType:        "branch_readiness",
+    defaultAssigneeRoles: ["payroll_head", "super_admin"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   24,
+    deeplinkPattern:   "/payroll/branch-readiness",
+    requiresScope:     false,
+  },
   // ── Exit ─────────────────────────────────────────────────────────────────────
   {
     itemType:          "RESIGNATION_PENDING_REVIEW",

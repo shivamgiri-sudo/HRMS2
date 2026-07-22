@@ -14,6 +14,9 @@ import {
   ChevronRight,
   ShieldCheck,
   X,
+  Download,
+  ChevronDown,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -36,6 +39,11 @@ import {
 } from "../../components/ui/sheet";
 import { Textarea } from "../../components/ui/textarea";
 import { Skeleton } from "../../components/ui/skeleton";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../components/ui/collapsible";
 import { useWorkforceAccess } from "../../hooks/useUserRole";
 import { hrmsApi } from "../../lib/hrmsApi";
 
@@ -59,6 +67,9 @@ interface BranchReadiness {
   branch_head_signoff_by: string | null;
   branch_head_remarks: string | null;
   ho_override_ready: number;
+  ho_override_by: string | null;
+  ho_override_at: string | null;
+  ho_override_reason: string | null;
   readiness_score: number;
   readiness_status: "not_started" | "in_progress" | "ready" | "blocked";
   employee_count: number;
@@ -84,7 +95,8 @@ function fmtCurrency(v: number | null | undefined): string {
 
 function fmtDateTime(v: string | null | undefined): string {
   if (!v) return "—";
-  return new Date(v).toLocaleString("en-IN", {
+  // Replace space separator with T so V8 parses as local time, not UTC
+  return new Date(v.replace(" ", "T")).toLocaleString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -150,7 +162,7 @@ function ScoreCircle({ score, size = 64 }: { score: number; size?: number }) {
           className={colors.ring}
         />
       </svg>
-      <span className={`absolute text-sm font-bold tabular-nums ${colors.text}`}>{score}</span>
+      <span className={`absolute text-sm font-bold tabular-nums ${colors.text}`}>{score}%</span>
     </div>
   );
 }
@@ -228,7 +240,7 @@ function getChecklistDisplay(branch: BranchReadiness, def: ChecklistDef): string
     const val = branch[def.key as keyof BranchReadiness] as number;
     return `${val}%`;
   }
-  if (def.key === "incentives_status") return branch.incentives_status.replace("_", " ");
+  if (def.key === "incentives_status") return branch.incentives_status.replace(/_/g, " ");
   return null;
 }
 
@@ -258,7 +270,9 @@ function BranchCard({
             <CardTitle className="text-base leading-tight">{branch.branch_name}</CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
               {branch.employee_count_active || branch.employee_count} Active
-              {branch.employee_count_left > 0 && <span className="text-orange-600"> · {branch.employee_count_left} Left (salary due)</span>}
+              {branch.employee_count_left > 0 && (
+                <span className="text-orange-600"> · {branch.employee_count_left} Left (salary due)</span>
+              )}
             </p>
           </div>
           <ScoreCircle score={branch.readiness_score} size={56} />
@@ -316,17 +330,24 @@ function BranchCard({
             {branch.branch_head_signoff ? "Signed Off" : "Pending Sign-off"}
           </Badge>
           {canOverride && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-xs h-7"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOverride(branch);
-              }}
-            >
-              HO Override
-            </Button>
+            branch.ho_override_ready ? (
+              <Badge variant="outline" className="text-blue-700 bg-blue-50 border-blue-200 text-xs">
+                <CheckCircle2 className="w-3 h-3 mr-1" />
+                Overridden
+              </Badge>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs h-7"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOverride(branch);
+                }}
+              >
+                HO Override
+              </Button>
+            )
           )}
         </div>
 
@@ -345,17 +366,35 @@ function DetailDrawer({
   branch,
   open,
   onClose,
+  month,
 }: {
   branch: BranchReadiness | null;
   open: boolean;
   onClose: () => void;
+  month: string;
 }) {
+  const qc = useQueryClient();
+
+  const projectionMutation = useMutation({
+    mutationFn: async () => {
+      if (!branch) return;
+      await hrmsApi.get(
+        `/api/payroll/branch-readiness/${branch.branch_id}/projection?month=${month}`
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["branch-readiness"] });
+      toast.success("Projection refreshed");
+    },
+    onError: () => toast.error("Failed to refresh projection"),
+  });
+
   if (!branch) return null;
   const colors = getScoreColors(branch.readiness_score);
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-[420px] overflow-y-auto">
+      <SheetContent className="w-full sm:w-[420px] overflow-y-auto">
         <SheetHeader>
           <SheetTitle>{branch.branch_name} — Readiness Detail</SheetTitle>
         </SheetHeader>
@@ -368,7 +407,7 @@ function DetailDrawer({
                 variant="outline"
                 className={`mt-1 capitalize ${colors.badge}`}
               >
-                {branch.readiness_status.replace("_", " ")}
+                {branch.readiness_status.replace(/_/g, " ")}
               </Badge>
             </div>
           </div>
@@ -411,7 +450,19 @@ function DetailDrawer({
 
           {/* Projections */}
           <div className="rounded-lg border p-3 space-y-2">
-            <p className="text-sm font-semibold">Salary Projections</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Salary Projections</p>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                disabled={projectionMutation.isPending}
+                onClick={() => projectionMutation.mutate()}
+                title="Refresh projection"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${projectionMutation.isPending ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Projected Gross</span>
               <span className="font-medium">{fmtCurrency(branch.projected_gross)}</span>
@@ -458,13 +509,26 @@ function DetailDrawer({
             )}
           </div>
 
+          {/* HO Override details */}
           {branch.ho_override_ready ? (
-            <Badge
-              variant="outline"
-              className="text-blue-700 bg-blue-50 border-blue-200"
-            >
-              HO Override Applied
-            </Badge>
+            <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-1">
+              <Badge
+                variant="outline"
+                className="text-blue-700 bg-blue-50 border-blue-200"
+              >
+                HO Override Applied
+              </Badge>
+              {branch.ho_override_by && (
+                <p className="text-xs text-muted-foreground">
+                  By: {branch.ho_override_by} on {fmtDateTime(branch.ho_override_at)}
+                </p>
+              )}
+              {branch.ho_override_reason && (
+                <p className="text-xs text-muted-foreground italic">
+                  Reason: "{branch.ho_override_reason}"
+                </p>
+              )}
+            </div>
           ) : null}
         </div>
       </SheetContent>
@@ -583,7 +647,7 @@ function SignOffDialog({
             ready for processing.
           </p>
           <Textarea
-            placeholder="Remarks (optional)"
+            placeholder="Remarks (required)"
             value={remarks}
             onChange={(e) => setRemarks(e.target.value)}
             rows={3}
@@ -595,7 +659,7 @@ function SignOffDialog({
           </Button>
           <Button
             onClick={() => mutation.mutate()}
-            disabled={mutation.isPending}
+            disabled={!remarks.trim() || mutation.isPending}
           >
             {mutation.isPending ? "Signing off…" : "Confirm Sign-off"}
           </Button>
@@ -621,6 +685,8 @@ function ManualToggleButton({
   label: string;
 }) {
   const qc = useQueryClient();
+  const [confirmingUndo, setConfirmingUndo] = useState(false);
+
   const mutation = useMutation({
     mutationFn: async (newVal: number) => {
       await hrmsApi.post(`/api/payroll/branch-readiness/${branchId}/checklist?month=${month}`, {
@@ -630,20 +696,63 @@ function ManualToggleButton({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["branch-readiness"] });
+      setConfirmingUndo(false);
     },
-    onError: () => toast.error(`Failed to update ${label}`),
+    onError: () => {
+      toast.error(`Failed to update ${label}`);
+      setConfirmingUndo(false);
+    },
   });
 
   const isDone = Boolean(currentValue);
+
+  if (!isDone) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="text-xs h-7"
+        disabled={mutation.isPending}
+        onClick={() => mutation.mutate(1)}
+      >
+        {mutation.isPending ? "…" : "Mark as Done"}
+      </Button>
+    );
+  }
+
+  if (confirmingUndo) {
+    return (
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="destructive"
+          className="text-xs h-7"
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate(0)}
+        >
+          {mutation.isPending ? "…" : "Confirm Undo"}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-xs h-7"
+          onClick={() => setConfirmingUndo(false)}
+        >
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <Button
       size="sm"
-      variant={isDone ? "default" : "outline"}
-      className={`text-xs h-7 ${isDone ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+      variant="default"
+      className="text-xs h-7 bg-emerald-600 hover:bg-emerald-700 text-white"
       disabled={mutation.isPending}
-      onClick={() => mutation.mutate(isDone ? 0 : 1)}
+      onClick={() => setConfirmingUndo(true)}
     >
-      {mutation.isPending ? "…" : isDone ? "Mark as Pending" : "Mark as Done"}
+      Mark as Pending
     </Button>
   );
 }
@@ -653,11 +762,14 @@ function ManualToggleButton({
 function BranchView({
   branchId,
   month,
+  isBranchRole,
 }: {
   branchId: string;
   month: string;
+  isBranchRole: boolean;
 }) {
   const [signOffOpen, setSignOffOpen] = useState(false);
+  const qc = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery<BranchReadiness>({
     queryKey: ["branch-readiness", month, branchId],
@@ -668,6 +780,31 @@ function BranchView({
       return res.data;
     },
     staleTime: 30_000,
+  });
+
+  const projectionMutation = useMutation({
+    mutationFn: async () => {
+      await hrmsApi.get(
+        `/api/payroll/branch-readiness/${branchId}/projection?month=${month}`
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["branch-readiness"] });
+      toast.success("Projection refreshed");
+    },
+    onError: () => toast.error("Failed to refresh projection"),
+  });
+
+  const freezeRequestMutation = useMutation({
+    mutationFn: async () => {
+      await hrmsApi.post(`/api/payroll/branch-readiness/${branchId}/request-freeze`, {
+        month,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Attendance freeze request sent to Payroll Head");
+    },
+    onError: () => toast.error("Failed to send freeze request"),
   });
 
   if (isLoading) {
@@ -696,6 +833,9 @@ function BranchView({
   const colors = getScoreColors(data.readiness_score);
   const canSignOff = Boolean(data.attendance_frozen) && !data.branch_head_signoff;
 
+  // Build list of failing checklist items for blocked guidance
+  const failingItems = CHECKLIST_DEFS.filter((def) => !getChecklistValue(data, def));
+
   return (
     <div className="space-y-6">
       {/* Score gauge */}
@@ -704,11 +844,13 @@ function BranchView({
         <div>
           <p className="text-lg font-semibold">{data.branch_name}</p>
           <Badge variant="outline" className={`mt-1 capitalize ${colors.badge}`}>
-            {data.readiness_status.replace("_", " ")}
+            {data.readiness_status.replace(/_/g, " ")}
           </Badge>
           <p className="text-xs text-muted-foreground mt-1">
             {data.employee_count_active || data.employee_count} Active
-            {data.employee_count_left > 0 && <span className="text-orange-600"> · {data.employee_count_left} Left (salary due)</span>}
+            {data.employee_count_left > 0 && (
+              <span className="text-orange-600"> · {data.employee_count_left} Left (salary due)</span>
+            )}
             {" "}· {data.process_month}
           </p>
         </div>
@@ -727,6 +869,43 @@ function BranchView({
           </div>
         )}
       </div>
+
+      {/* Blocked guidance */}
+      {data.readiness_status === "blocked" && failingItems.length > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-2">
+          <div className="flex items-center gap-2 text-red-800 font-medium text-sm">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            Payroll readiness is blocked. Complete the following to unblock:
+          </div>
+          <ul className="text-xs text-red-700 space-y-1 list-disc list-inside">
+            {failingItems.map((def) => (
+              <li key={String(def.key)}>{def.label}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Attendance freeze request */}
+      {isBranchRole && !data.attendance_frozen && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-amber-900">Attendance not yet frozen</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Once attendance data is final, notify the Payroll Head to freeze it.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-amber-400 text-amber-800 hover:bg-amber-100 whitespace-nowrap"
+            disabled={freezeRequestMutation.isPending}
+            onClick={() => freezeRequestMutation.mutate()}
+          >
+            <Bell className="w-3.5 h-3.5 mr-1.5" />
+            {freezeRequestMutation.isPending ? "Sending…" : "Request Freeze"}
+          </Button>
+        </div>
+      )}
 
       {/* Checklist cards */}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -784,31 +963,58 @@ function BranchView({
 
       {/* Projections */}
       {(data.projected_gross != null || data.projected_net != null) && (
-        <div className="rounded-lg border p-4 grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs text-muted-foreground">Projected Gross</p>
-            <p className="text-base font-semibold">{fmtCurrency(data.projected_gross)}</p>
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Salary Projections</p>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              disabled={projectionMutation.isPending}
+              onClick={() => projectionMutation.mutate()}
+              title="Refresh projection"
+            >
+              <RefreshCw className={`w-4 h-4 ${projectionMutation.isPending ? "animate-spin" : ""}`} />
+            </Button>
           </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Projected Net</p>
-            <p className="text-base font-semibold">{fmtCurrency(data.projected_net)}</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground">Projected Gross</p>
+              <p className="text-base font-semibold">{fmtCurrency(data.projected_gross)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Projected Net</p>
+              <p className="text-base font-semibold">{fmtCurrency(data.projected_net)}</p>
+            </div>
           </div>
+          {data.projection_computed_at && (
+            <p className="text-xs text-muted-foreground">
+              Computed: {fmtDateTime(data.projection_computed_at)}
+            </p>
+          )}
         </div>
       )}
 
       {/* How It Works — process guide */}
-      <details className="rounded-lg border p-4 bg-blue-50/50">
-        <summary className="text-sm font-medium cursor-pointer text-blue-900">How Payroll Readiness Works</summary>
-        <ol className="mt-3 space-y-2 text-xs text-blue-800 list-decimal list-inside">
-          <li><strong>WFM finalizes attendance</strong> → "Attendance Frozen" auto-detects from the system</li>
-          <li><strong>Branch Head / WFM uploads incentives</strong> in the Incentives module → status updates automatically</li>
-          <li><strong>Branch Head marks</strong> "Custom Deductions" and "Overtime Entered" as done (toggle buttons above)</li>
-          <li><strong>Bank details &amp; UAN %</strong> are computed from employee records — update in Employee profiles</li>
-          <li><strong>NOC &amp; Holiday Work</strong> are resolved in their respective modules</li>
-          <li><strong>Branch Head signs off</strong> when all items are green (attendance must be frozen first)</li>
-          <li><strong>HO can override</strong> readiness status if needed (with mandatory reason)</li>
-        </ol>
-      </details>
+      <Collapsible>
+        <div className="rounded-lg border p-4 bg-blue-50/50">
+          <CollapsibleTrigger className="flex items-center justify-between w-full text-sm font-medium text-blue-900">
+            How Payroll Readiness Works
+            <ChevronDown className="w-4 h-4 transition-transform [[data-state=open]_&]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <ol className="mt-3 space-y-2 text-xs text-blue-800 list-decimal list-inside">
+              <li><strong>WFM finalizes attendance</strong> → Use "Request Freeze" above to notify Payroll Head</li>
+              <li><strong>Branch Head / WFM uploads incentives</strong> in the Incentives module → status updates automatically</li>
+              <li><strong>Branch Head marks</strong> "Custom Deductions" and "Overtime Entered" as done (toggle buttons above)</li>
+              <li><strong>Bank details &amp; UAN %</strong> are computed from employee records — update in Employee profiles</li>
+              <li><strong>NOC &amp; Holiday Work</strong> are resolved in their respective modules</li>
+              <li><strong>Branch Head signs off</strong> when all items are green (attendance must be frozen first)</li>
+              <li><strong>HO can override</strong> readiness status if needed (with mandatory reason)</li>
+            </ol>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
 
       {/* Sign-off button */}
       <div className="flex justify-end">
@@ -875,11 +1081,11 @@ function HOView({ month }: { month: string }) {
   const { roleKeys } = useWorkforceAccess();
   const canOverride =
     roleKeys.includes("payroll_head") || roleKeys.includes("super_admin");
+  const canExport =
+    canOverride || roleKeys.includes("admin");
 
   const [detailBranch, setDetailBranch] = useState<BranchReadiness | null>(null);
   const [overrideBranch, setOverrideBranch] = useState<BranchReadiness | null>(null);
-
-  const qc = useQueryClient();
 
   const { data: branches = [], isLoading, error, refetch } = useQuery<BranchReadiness[]>({
     queryKey: ["branch-readiness", month],
@@ -890,6 +1096,7 @@ function HOView({ month }: { month: string }) {
       return res.data ?? [];
     },
     staleTime: 60_000,
+    refetchInterval: 120_000,
   });
 
   const stats = useMemo(() => {
@@ -897,12 +1104,13 @@ function HOView({ month }: { month: string }) {
     const ready = branches.filter((b) => b.readiness_status === "ready").length;
     const inProgress = branches.filter((b) => b.readiness_status === "in_progress").length;
     const blocked = branches.filter((b) => b.readiness_status === "blocked").length;
+    const notStarted = branches.filter((b) => b.readiness_status === "not_started").length;
     const avgScore =
       total > 0 ? Math.round(branches.reduce((s, b) => s + b.readiness_score, 0) / total) : 0;
-    return { total, ready, inProgress, blocked, avgScore };
+    return { total, ready, inProgress, blocked, notStarted, avgScore };
   }, [branches]);
 
-  const frozenCount = branches.filter((b) => !b.attendance_frozen).length;
+  const notFrozenCount = branches.filter((b) => !b.attendance_frozen).length;
 
   if (isLoading) {
     return (
@@ -936,13 +1144,13 @@ function HOView({ month }: { month: string }) {
   return (
     <div className="space-y-4">
       {/* Warning banner */}
-      {frozenCount > 0 && (
+      {notFrozenCount > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-sm">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           <span>
-            <strong>{frozenCount}</strong> branch{frozenCount > 1 ? "es" : ""} not
+            <strong>{notFrozenCount}</strong> branch{notFrozenCount > 1 ? "es" : ""} not
             attendance-frozen — payroll run creation will be blocked for{" "}
-            {frozenCount > 1 ? "those branches" : "that branch"}.
+            {notFrozenCount > 1 ? "those branches" : "that branch"}.
           </span>
         </div>
       )}
@@ -965,7 +1173,12 @@ function HOView({ month }: { month: string }) {
           value={stats.blocked}
           colorClass="border-red-200 text-red-700"
         />
-        <StatChip label="Avg Score" value={stats.avgScore} />
+        <StatChip
+          label="Not Started"
+          value={stats.notStarted}
+          colorClass="border-gray-200 text-gray-500"
+        />
+        <StatChip label="Avg Score" value={`${stats.avgScore}%`} />
       </div>
 
       {/* Branch cards */}
@@ -992,6 +1205,7 @@ function HOView({ month }: { month: string }) {
         branch={detailBranch}
         open={!!detailBranch}
         onClose={() => setDetailBranch(null)}
+        month={month}
       />
 
       <OverrideDialog
@@ -1022,6 +1236,11 @@ export default function BranchPayrollReadiness() {
     !isHORole &&
     (roleKeys.includes("branch_head") || roleKeys.includes("payroll_branch"));
 
+  const canExport =
+    roleKeys.includes("payroll_head") ||
+    roleKeys.includes("super_admin") ||
+    roleKeys.includes("admin");
+
   // Determine branch_id for branch view from scopes
   const branchId = useMemo(() => {
     const branchScope = scopes.find((s) => s.branch_id);
@@ -1051,6 +1270,17 @@ export default function BranchPayrollReadiness() {
               onChange={(e) => setMonth(e.target.value)}
               className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
+            {canExport && (
+              <a
+                href={`/api/payroll/branch-readiness/export?month=${month}&format=csv`}
+                download={`branch-readiness-${month}.csv`}
+              >
+                <Button variant="outline" size="sm">
+                  <Download className="w-3.5 h-3.5 mr-1.5" />
+                  Export CSV
+                </Button>
+              </a>
+            )}
             {(isHORole || isBranchRole) && (
               <Button variant="outline" size="sm" onClick={handleRefreshAll}>
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
@@ -1070,7 +1300,7 @@ export default function BranchPayrollReadiness() {
         ) : isHORole ? (
           <HOView month={month} />
         ) : isBranchRole && branchId ? (
-          <BranchView branchId={branchId} month={month} />
+          <BranchView branchId={branchId} month={month} isBranchRole={isBranchRole} />
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <X className="w-8 h-8 mb-2" />
