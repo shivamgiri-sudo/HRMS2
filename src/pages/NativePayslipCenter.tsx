@@ -10,7 +10,7 @@ import { numberToWords } from "@/lib/numberToWords";
 
 type PayrollRun = { id: string; month: number; year: number; status: string; total_employees?: number; total_gross?: number; total_net?: number; };
 type PayrollLine = { employee_id: string; employee_name: string; employee_code?: string; gross_pay: number; net_pay: number; pf_employee: number; esic_employee: number; pt_amount: number; total_deductions: number; payslip_id?: string; payslip_status?: string; };
-type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; pt_amount: number; lwp_deduction?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; epf_number?: string; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; };
+type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; pt_amount: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; };
 type PayslipComponent = { component_code: string; component_name: string; component_type: string; amount: number | string; };
 type NeftSummary = { total: number; with_bank: number; missing_bank: number; total_net: number; };
 type Form16Data = { financial_year: string; period: string; employee: { name: string; pan: string | null; designation: string | null; period: string }; gross_salary: number; standard_deduction: number; tds_deducted: number; net_taxable_income: number; declaration: { hra: number; "80c": number; "80d": number; regime: string; } | null; };
@@ -54,11 +54,14 @@ async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
     designation: payslip.designation || "N/A",
     department: payslip.department || "N/A",
     epfNo: payslip.epf_number || "",
+    uanNo: payslip.uan_number || "",
+    panNo: payslip.pan_number || "",
+    bankAccount: payslip.bank_account_masked || "",
     esiNo: payslip.esi_number || "",
     location: payslip.branch_name || payslip.location_name || "N/A",
     wDays: Number(payslip.working_days ?? 0),
     earnedDays: Number(payslip.present_days ?? 0),
-    lwpDays: Number(payslip.lwp_deduction ?? 0) > 0 ? Math.round((Number(payslip.working_days ?? 0) - Number(payslip.present_days ?? 0))) : 0,
+    lwpDays: Number(payslip.lwp_days ?? 0),
     totalDaysInMonth: Number(payslip.working_days ?? 30),
     basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
     pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,

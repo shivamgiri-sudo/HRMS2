@@ -13,7 +13,7 @@ export function RecentPayslipWidget() {
   });
   const slips: any[] = Array.isArray(data?.data) ? data.data : [];
   const latest = slips[0] ?? null;
-  const netPay = latest?.net_pay ?? latest?.total_net ?? latest?.components?.reduce((s: number, c: any) => c.component_type === "earning" ? s + (c.amount ?? 0) : s - (c.amount ?? 0), 0) ?? 0;
+  const netPay = latest?.net_salary ?? latest?.net_pay ?? 0;
 
   return (
     <Card className="rounded-2xl border border-slate-200 shadow-sm bg-white">

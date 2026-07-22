@@ -146,7 +146,7 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
 
   // Helper to get earning amount by component code
   const getEarning = (code: string): number => {
-    const comp = record.earnings?.find(e =>
+    const comp = record.earningComponents?.find(e =>
       e.component_code.toUpperCase() === code.toUpperCase()
     );
     return Number(comp?.amount ?? 0);
@@ -341,8 +341,8 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                       </tr>
 
                       {/* Dynamically render all non-BASIC earning components */}
-                      {record.earnings && record.earnings.length > 0 ? (
-                        record.earnings
+                      {record.earningComponents && record.earningComponents.length > 0 ? (
+                        record.earningComponents
                           .filter(e => e.component_code !== 'BASIC' && Number(e.amount) > 0)
                           .map((comp) => (
                             <tr key={comp.component_code} className="border-b">

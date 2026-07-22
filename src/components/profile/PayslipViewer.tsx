@@ -370,10 +370,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const esic = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(record.esic_employee ?? 0);
     const pt = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(record.professional_tax ?? 0);
     const tds = getDeduction('TDS') || Number(record.tds ?? 0);
+    const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? 0);
     const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY');
     const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? 0);
-    // LWP is already reflected in reduced gross (pro-rata), not a cash deduction from net
-    const knownDeductions = pf + esic + pt + tds + loan + adDed;
+    const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
     const otherDed = Math.max(Number(record.total_deductions ?? 0) - knownDeductions, 0);
 
     await downloadMasCallnetPayslip({
@@ -394,7 +394,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       lwpDays: Number(record.lwp_days ?? 0),
       totalDaysInMonth: Number(record.working_days ?? 30),
       basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
-      pf, esic, pt, tds, lwpDeduction: 0, loan, adDed, otherDed,
+      pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
       grossSalary: Number(record.gross_salary ?? 0),
@@ -416,7 +416,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     ? Number(runningSalary.earned_salary_till_date ?? 0)
     : Number(latestRecord?.gross_salary ?? 0);
   const displayDeductions = (runningSalary && !hasCurrentMonthPayslip)
-    ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0) + Number(runningSalary.professional_tax ?? 0)
+    ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0)
+      + Number(runningSalary.professional_tax ?? 0) + Number(runningSalary.tds ?? 0)
     : Number(latestRecord?.total_deductions ?? 0);
   const displayNet = (runningSalary && !hasCurrentMonthPayslip)
     ? Number(runningSalary.earned_net_till_date ?? 0)
