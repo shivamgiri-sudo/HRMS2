@@ -91,6 +91,103 @@ function fallbackReport(code: string) {
 
 reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: CATALOG })));
 
+// ─── Report Metadata Endpoint ─────────────────────────────────────────────────
+// Returns column definitions, row grain, RBAC info for UI rendering
+reportSuiteRouter.get("/meta/:code", h(async (req, res) => {
+  const code = String(req.params.code);
+  const meta = getReportMeta(code);
+  return res.json({ success: true, data: meta });
+}));
+
+// Report metadata registry (source of truth for column definitions)
+function getReportMeta(code: string) {
+  const metas: Record<string, {
+    columns: Array<{ key: string; label: string; format: string; align?: string }>;
+    rowGrain: string;
+    primaryKey: string[];
+  }> = {
+    "attendance-daily": {
+      columns: [
+        { key: "record_date", label: "Date", format: "date" },
+        { key: "employee_code", label: "Emp Code", format: "text" },
+        { key: "employee_name", label: "Employee Name", format: "text" },
+        { key: "branch_name", label: "Branch", format: "text" },
+        { key: "process_name", label: "Process", format: "text" },
+        { key: "shift_name", label: "Roster Shift", format: "text" },
+        { key: "shift_start", label: "Shift Start", format: "time" },
+        { key: "shift_end", label: "Shift End", format: "time" },
+        { key: "punch_in", label: "Punch In", format: "time" },
+        { key: "punch_out", label: "Punch Out", format: "time" },
+        { key: "total_login_duration", label: "Total Login Hours", format: "duration" },
+        { key: "productive_minutes", label: "Productive Minutes", format: "minutes" },
+        { key: "attendance_status", label: "Status", format: "status" },
+        { key: "late_by_minutes", label: "Late (mins)", format: "number", align: "right" },
+      ],
+      rowGrain: "One row per employee per attendance date",
+      primaryKey: ["employee_code", "record_date"],
+    },
+    "payroll-register": {
+      columns: [
+        { key: "payroll_month", label: "Payroll Month", format: "text" },
+        { key: "employee_code", label: "Emp Code", format: "text" },
+        { key: "employee_name", label: "Employee Name", format: "text" },
+        { key: "branch_name", label: "Branch", format: "text" },
+        { key: "process_name", label: "Process", format: "text" },
+        { key: "department_name", label: "Department", format: "text" },
+        { key: "designation_name", label: "Designation", format: "text" },
+        { key: "basic_pay", label: "Basic", format: "currency", align: "right" },
+        { key: "hra", label: "HRA", format: "currency", align: "right" },
+        { key: "gross_salary", label: "Gross Salary", format: "currency", align: "right" },
+        { key: "pf_employee", label: "PF (Employee)", format: "currency", align: "right" },
+        { key: "esic_employee", label: "ESIC (Employee)", format: "currency", align: "right" },
+        { key: "professional_tax", label: "PT", format: "currency", align: "right" },
+        { key: "tds", label: "TDS", format: "currency", align: "right" },
+        { key: "lwp_deduction", label: "LWP Deduction", format: "currency", align: "right" },
+        { key: "total_deductions", label: "Total Deductions", format: "currency", align: "right" },
+        { key: "net_pay", label: "Net Pay", format: "currency", align: "right" },
+        { key: "payable_days", label: "Payable Days", format: "number", align: "right" },
+        { key: "lwp_days", label: "LWP Days", format: "number", align: "right" },
+      ],
+      rowGrain: "One row per employee per payroll month",
+      primaryKey: ["employee_code", "payroll_month"],
+    },
+    "biometric-reconciliation": {
+      columns: [
+        { key: "record_date", label: "Date", format: "date" },
+        { key: "employee_code", label: "Emp Code", format: "text" },
+        { key: "employee_name", label: "Employee Name", format: "text" },
+        { key: "branch_name", label: "Branch", format: "text" },
+        { key: "process_name", label: "Process", format: "text" },
+        { key: "attendance_status", label: "Attendance Status", format: "status" },
+        { key: "processed_biometric_duration", label: "Processed Biometric", format: "duration" },
+        { key: "biometric_punch_in", label: "Biometric Punch In", format: "time" },
+        { key: "biometric_punch_out", label: "Biometric Punch Out", format: "time" },
+        { key: "raw_biometric_duration", label: "Raw Biometric", format: "duration" },
+        { key: "reconciliation_status", label: "Reconciliation Status", format: "status" },
+        { key: "reconciliation_description", label: "Description", format: "text" },
+      ],
+      rowGrain: "One row per employee per date",
+      primaryKey: ["employee_code", "record_date"],
+    },
+    "daily-shrinkage-report": {
+      columns: [
+        { key: "record_date", label: "Date", format: "date" },
+        { key: "branch_name", label: "Branch", format: "text" },
+        { key: "process_name", label: "Process", format: "text" },
+        { key: "total_scheduled", label: "Scheduled HC", format: "number", align: "right" },
+        { key: "present_hc", label: "Present HC", format: "number", align: "right" },
+        { key: "absent_hc", label: "Absent HC", format: "number", align: "right" },
+        { key: "leave_hc", label: "Leave HC", format: "number", align: "right" },
+        { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", align: "right" },
+        { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", align: "right" },
+      ],
+      rowGrain: "One row per date per branch per process",
+      primaryKey: ["record_date", "branch_name", "process_name"],
+    },
+  };
+  return metas[code] ?? { columns: [], rowGrain: "Unknown", primaryKey: [] };
+}
+
 reportSuiteRouter.post("/identity-source-snapshot/sync", requireRole("admin", "super_admin"), h(async (_req, res) => {
   const result = await runIdentitySourceSnapshotSync();
   return res.json({ success: true, data: result });

@@ -57,7 +57,7 @@ const NativeBadges                  = lazy(() => import("@/pages/NativeBadges"))
 const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
 const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboard"));
-const NativeReportsCenter           = lazy(() => import("@/pages/NativeReportsCenter"));
+const NativeReportsCenter           = lazy(() => import("@/pages/NativeReportsCenterV2"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
 const CompanyCalendar               = lazy(() => import("@/pages/CompanyCalendar"));
@@ -165,7 +165,7 @@ export const platformRouteElements = (
       <Route path="/engagement/leaderboard"      element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
 
       {/* Reports */}
-      <Route path="/reports"                     element={<ProtectedRoute><NativeReportsCenter /></ProtectedRoute>} />
+      <Route path="/reports"                     element={<ProtectedRoute roles={['super_admin','admin','hr','hr_head','finance','payroll','wfm','manager','process_manager','branch_head','ceo','quality','operations']}><Gate pageCode="REPORTS_CENTER"><NativeReportsCenter /></Gate></ProtectedRoute>} />
 
       {/* Communication */}
       <Route path="/communication/templates"     element={<ProtectedRoute roles={['admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />
