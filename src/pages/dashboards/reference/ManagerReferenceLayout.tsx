@@ -30,6 +30,7 @@ import {
   formatValue,
   metricDetail,
   metricValue,
+  numberAt,
   statusCount,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
@@ -42,7 +43,7 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
   const absent = metricDetail(m, "att", "absent");
   const late = metricDetail(m, "att", "late");
   const attendance = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
-  const onboarding = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
+  const newJoiners = numberAt(data.workforce, "summary", "new_joiners_30d") ?? metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
   const openActions = asNumber(data.summary.workItems?.pending_count);
   const overdue = asNumber(data.summary.workItems?.overdue_count);
   const approvedLeaves = statusCount(data.managerLeaves, "approved");
@@ -54,7 +55,14 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
     label: String(row.period ?? row.label ?? ""),
     value: Number(row.performance_score ?? row.score ?? row.headcount ?? row.value ?? 0),
   }));
-  const productivity = asNumber(data.orgKpi.productivity_pct ?? data.orgKpi.productivity ?? data.orgKpi.score);
+  const orgScore = asNumber(data.orgKpi.org_average_score ?? data.orgKpi.score);
+  const processes = arrayAt(data.orgKpi, "processes");
+  // Derive productivity donut from KPI process scores: above average = achieved, within 10% below = in progress, further below = at risk
+  const threshold = orgScore ?? 0;
+  const achievedCount = processes.filter((p) => asNumber(p.score) !== null && (asNumber(p.score) as number) >= threshold).length;
+  const inProgressCount = processes.filter((p) => { const s = asNumber(p.score); return s !== null && s >= threshold - 10 && s < threshold; }).length;
+  const atRiskCount = processes.filter((p) => { const s = asNumber(p.score); return s !== null && s < threshold - 10; }).length;
+  const productivity = orgScore;
   const adherence = attendance;
 
   return (
@@ -69,7 +77,7 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
           { label: "Present Today", value: present, helper: attendance === null ? "Live" : `${attendance}%`, icon: UserCheck, tone: "green" },
           { label: "On Leave", value: approvedLeaves, helper: team ? `${Math.round((approvedLeaves / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: CalendarDays, tone: "amber" },
           { label: "Absent", value: absent, helper: team && absent !== null ? `${Math.round((absent / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: UserMinus, tone: "red" },
-          { label: "New Joiners (This Month)", value: onboarding, helper: "Current month", icon: UserPlus, tone: "violet" },
+          { label: "New Joiners (This Month)", value: newJoiners, helper: "Last 30 days", icon: UserPlus, tone: "violet" },
           { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/ats/dashboard" },
         ]}
       />
@@ -136,10 +144,10 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
         </ReferencePanel>
 
         <ReferencePanel title="Productivity Snapshot" action={<span className="text-[10px] text-[#61708a]">This Month</span>}>
-          <ReferenceDonut compact centerValue={productivity === null ? null : `${productivity}%`} centerLabel="Productivity" data={[
-            { name: "Goals Achieved", value: productivity ?? 0 },
-            { name: "In Progress", value: asNumber(data.orgKpi.in_progress_pct) ?? 0 },
-            { name: "At Risk", value: asNumber(data.orgKpi.at_risk_pct) ?? 0 },
+          <ReferenceDonut compact centerValue={productivity === null ? null : `${productivity}/100`} centerLabel="Avg KPI Score" data={[
+            { name: "Goals Achieved", value: achievedCount || (productivity ?? 0) },
+            { name: "In Progress", value: inProgressCount },
+            { name: "At Risk", value: atRiskCount },
           ]} />
         </ReferencePanel>
 

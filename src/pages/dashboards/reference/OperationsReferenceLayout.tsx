@@ -58,7 +58,7 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
     <div className="reference-dashboard-page">
       <ReferenceHeader
         title="Operations Dashboard"
-        subtitle="Live volume, SLA adherence, AHT and floor headcount"
+        subtitle="Live volume, login adherence, AHT and floor headcount"
         badge="Ops View"
       />
 
@@ -74,9 +74,9 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
             tone: "blue",
           },
           {
-            label: "SLA Adherence",
+            label: "Login Adherence",
             value: slaAdherence !== null ? `${slaAdherence.toFixed(1)}%` : null,
-            helper: "within target threshold",
+            helper: "agents logged in vs scheduled",
             icon: Target,
             tone: slaAdherence !== null && slaAdherence >= 90 ? "green" : slaAdherence !== null && slaAdherence >= 75 ? "amber" : "red",
             trend: m.sla?.variancePct,

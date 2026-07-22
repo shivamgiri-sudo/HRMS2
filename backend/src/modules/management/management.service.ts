@@ -412,6 +412,7 @@ export const managementService = {
       roleRows,
       pageRows,
       integrationRows,
+      twoFaRows,
       moduleRows,
       activityRows,
     ] = await Promise.all([
@@ -427,6 +428,9 @@ export const managementService = {
            SUM(active_status = 1) AS active
          FROM integration_config`
       ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
+      ).catch(() => [[{ count: 0 }]] as any),
       db.execute<RowDataPacket[]>(
         `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
            FROM ats_candidate
@@ -495,6 +499,7 @@ export const managementService = {
         configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
         systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
         uptime: uptimeFormatted,
+        usersWithout2fa: numberValue((twoFaRows as any)[0]?.[0]?.count ?? 0),
       },
       modules,
       activities: activityRows[0],
@@ -790,6 +795,53 @@ export const managementService = {
       `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
     ).catch(() => [[{ overdue: 0 }]] as any);
 
+    // Pending timesheets (work_item type = timesheet)
+    const [timesheetResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
+    ).catch(() => [[{ count: 0 }]] as any);
+
+    // Expired employee documents
+    const [expiredDocsResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS count FROM employee_document
+       WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE() AND active_status = 1`
+    ).catch(() => [[{ count: 0 }]] as any);
+
+    // Pending policy acknowledgements
+    const [pendingPolicyResult] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS count FROM policy_acknowledgement
+       WHERE acknowledged = 0`
+    ).catch(() => [[{ count: 0 }]] as any);
+
+    // Appraisal completion percentage
+    const [appraisalResult] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         ROUND(
+           SUM(pa.status IN ('completed','approved')) * 100.0
+           / NULLIF(COUNT(*), 0)
+         , 2) AS completion_pct
+       FROM performance_appraisal pa
+       WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
+    ).catch(() => [[{ completion_pct: null }]] as any);
+
+    // Process breakdown for Operations dashboard
+    const [processBreakdownResult] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         pm.id,
+         pm.process_name,
+         COUNT(DISTINCT e.id) AS headcount,
+         SUM(adr.attendance_status = 'present') AS present_count,
+         ROUND(SUM(adr.attendance_status = 'present') * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0), 2) AS attendance_pct
+       FROM process_master pm
+       LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
+         AND adr.record_date = (SELECT MAX(r) FROM (SELECT MAX(record_date) AS r FROM attendance_daily_record WHERE record_date <= CURDATE()) sub)
+       WHERE pm.active_status = 1
+       GROUP BY pm.id, pm.process_name
+       HAVING headcount > 0
+       ORDER BY headcount DESC
+       LIMIT 15`
+    ).catch(() => [[]] as any);
+
     // Team members snapshot for Manager dashboard roster panel
     const [teamMembersResult] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -841,6 +893,19 @@ export const managementService = {
         employee_name: String(row.employee_name),
         branch_name: row.branch_name ? String(row.branch_name) : null,
         today_status: String(row.today_status),
+      })),
+      pending_timesheets: numberValue((timesheetResult as any)[0]?.[0]?.count ?? 0),
+      expired_documents: numberValue((expiredDocsResult as any)[0]?.[0]?.count ?? 0),
+      pending_policy_acknowledgements: numberValue((pendingPolicyResult as any)[0]?.[0]?.count ?? 0),
+      appraisal_completion_pct: (appraisalResult as any)[0]?.[0]?.completion_pct !== null
+        ? Number(Number((appraisalResult as any)[0]?.[0]?.completion_pct ?? 0).toFixed(2))
+        : null,
+      process_breakdown: (processBreakdownResult as any[]).map((row: any) => ({
+        id: String(row.id),
+        process_name: String(row.process_name),
+        headcount: numberValue(row.headcount),
+        present_count: numberValue(row.present_count),
+        attendance_pct: row.attendance_pct !== null ? Number(row.attendance_pct) : null,
       })),
       leave_balance_usage_pct: leaveBalanceUsagePct,
       leave_summary: leaveSummaryResult.map((row) => ({

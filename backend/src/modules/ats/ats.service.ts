@@ -374,11 +374,20 @@ export const atsService = {
     // Selected candidates (last 30 days)
     const selectedCount = (by_stage["selected"] ?? 0) + (by_stage["Selected"] ?? 0) +
       (by_stage["Onboarded"] ?? 0) + (by_stage["converted"] ?? 0);
-    // Previous 30 days for trend comparison
+    // Previous 30 days for trend comparison (selected)
     const [prevRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM ats_candidate
        WHERE active_status = 1
          AND current_stage IN ('selected','Selected','Onboarded','converted')
+         AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+         AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+      []
+    ).catch(() => [[{ cnt: 0 }]] as any);
+
+    // Previous 30 days for onboarding submitted trend (HR dashboard)
+    const [prevSubmittedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM ats_onboarding_bridge
+       WHERE bridge_status = 'submitted'
          AND updated_at >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
          AND updated_at < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
       []
@@ -393,6 +402,7 @@ export const atsService = {
       open_positions: openPositions,
       selected_candidates: selectedCount,
       previous_selected: Number(prevRows[0]?.cnt ?? 0),
+      previous_submitted: Number(prevSubmittedRows[0]?.cnt ?? 0),
     };
   },
 

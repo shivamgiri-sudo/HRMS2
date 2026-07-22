@@ -128,15 +128,84 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
     []
   ).catch(() => [[{}]] as any);
 
+  // Shift summary — breakdown by shift timing
+  const [shiftRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(NULLIF(sm.shift_name, ''), adr.shift_code, 'Default') AS shift_name,
+       COUNT(DISTINCT adr.employee_id) AS total,
+       SUM(adr.attendance_status IN ('present','half_day')) AS present,
+       SUM(adr.attendance_status = 'absent') AS absent,
+       SUM(adr.late_mark = 1) AS late,
+       ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(DISTINCT adr.employee_id), 0), 2) AS coverage_pct
+     FROM attendance_daily_record adr
+     JOIN employees e ON e.id = adr.employee_id
+     LEFT JOIN shift_master sm ON sm.id = adr.shift_id
+     WHERE ${where}
+     GROUP BY COALESCE(NULLIF(sm.shift_name, ''), adr.shift_code, 'Default')
+     ORDER BY total DESC
+     LIMIT 10`,
+    params,
+  ).catch(() => [[]] as any);
+
+  // Late arrival trend — hourly buckets for today
+  const todayParams: any[] = [today(), today()];
+  const [lateArrivalRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       HOUR(adr.clock_in_time) AS hour_bucket,
+       COUNT(*) AS count
+     FROM attendance_daily_record adr
+     JOIN employees e ON e.id = adr.employee_id
+     WHERE adr.record_date = ? AND adr.late_mark = 1 AND adr.clock_in_time IS NOT NULL
+       AND adr.record_date = ?
+     GROUP BY HOUR(adr.clock_in_time)
+     ORDER BY hour_bucket`,
+    todayParams,
+  ).catch(() => [[]] as any);
+
+  // Roster coverage buckets — fully/partially/understaffed by process today
+  const [rosterCoverageRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       SUM(CASE WHEN present_pct >= 90 THEN 1 ELSE 0 END) AS fully_covered,
+       SUM(CASE WHEN present_pct >= 70 AND present_pct < 90 THEN 1 ELSE 0 END) AS partially_covered,
+       SUM(CASE WHEN present_pct < 70 THEN 1 ELSE 0 END) AS understaffed
+     FROM (
+       SELECT
+         e.process_id,
+         ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS present_pct
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+       WHERE adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE())
+         AND e.process_id IS NOT NULL
+       GROUP BY e.process_id
+     ) process_pcts`,
+    [],
+  ).catch(() => [[{ fully_covered: 0, partially_covered: 0, understaffed: 0 }]] as any);
+
   const summary = rows[0] ?? {};
   const live = liveRows[0] ?? {};
   const reg = regRows[0] ?? {};
+  const coverage = (rosterCoverageRows as any[])[0] ?? {};
 
   return res.json({
     success: true,
     data: {
       ...summary,
       ...live,
+      fully_covered: Number(coverage.fully_covered ?? 0),
+      partially_covered: Number(coverage.partially_covered ?? 0),
+      understaffed: Number(coverage.understaffed ?? 0),
+      shift_summary: (shiftRows as any[]).map((row: any) => ({
+        shift_name: String(row.shift_name),
+        total: Number(row.total ?? 0),
+        present: Number(row.present ?? 0),
+        absent: Number(row.absent ?? 0),
+        late: Number(row.late ?? 0),
+        coverage_pct: row.coverage_pct !== null ? Number(row.coverage_pct) : null,
+      })),
+      late_arrival_trend: (lateArrivalRows as any[]).map((row: any) => ({
+        label: `${String(row.hour_bucket).padStart(2, "0")}:00`,
+        value: Number(row.count ?? 0),
+      })),
       regularization_summary: {
         pending: Number(reg.pending ?? 0),
         approved: Number(reg.approved ?? 0),
