@@ -42,9 +42,17 @@ function monthParam(value: unknown) {
   return /^\d{4}-\d{2}$/.test(text) ? text : new Date().toISOString().slice(0, 7);
 }
 
-function limitParam(value: unknown) {
+function limitParam(value: unknown, isExport = false) {
+  if (isExport) {
+    return 0; // 0 means no limit for exports
+  }
   const n = Number(value ?? 500);
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 5000) : 500;
+}
+
+function isExportRequest(query: any): boolean {
+  const exportParam = String(query.export ?? query.fullExport ?? "").toLowerCase();
+  return exportParam === "true" || exportParam === "1" || exportParam === "yes";
 }
 
 function addEmployeeFilters(query: any, clauses: string[], params: unknown[], alias = "e") {
@@ -56,7 +64,8 @@ function addEmployeeFilters(query: any, clauses: string[], params: unknown[], al
 }
 
 async function queryRows(sql: string, params: unknown[], limit: number) {
-  const [rows] = await db.execute<RowDataPacket[]>(`${sql} LIMIT ${limit}`, params);
+  const finalSql = limit > 0 ? `${sql} LIMIT ${limit}` : sql;
+  const [rows] = await db.execute<RowDataPacket[]>(finalSql, params);
   return rows;
 }
 
@@ -89,7 +98,8 @@ reportSuiteRouter.post("/identity-source-snapshot/sync", requireRole("admin", "s
 
 reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll", "wfm", "manager", "ceo"), h(async (req, res) => {
   const code = String(req.params.code);
-  const limit = limitParam(req.query.limit);
+  const isExport = isExportRequest(req.query);
+  const limit = limitParam(req.query.limit, isExport);
   const params: unknown[] = [];
   const clauses: string[] = [];
   let sql = "";
@@ -160,12 +170,49 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    adr.attendance_source, adr.attendance_status, adr.raw_minutes, adr.dialler_minutes, adr.biometric_minutes,
-                    adr.lwp_value, adr.late_mark, adr.late_by_minutes, adr.is_locked
-               FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
+      sql = `SELECT adr.record_date,
+                    e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    p.process_name,
+                    d.dept_name AS department_name,
+                    desig.designation_name,
+                    COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
+                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
+                    ws.start_time AS shift_start,
+                    ws.end_time AS shift_end,
+                    was.login_time AS punch_in,
+                    was.logout_time AS punch_out,
+                    CASE
+                      WHEN was.login_time IS NOT NULL AND was.logout_time IS NOT NULL
+                      THEN SEC_TO_TIME(TIMESTAMPDIFF(SECOND, was.login_time, was.logout_time))
+                      ELSE NULL
+                    END AS total_login_hours,
+                    adr.raw_minutes AS productive_minutes,
+                    adr.attendance_source,
+                    adr.attendance_status,
+                    adr.late_mark,
+                    adr.late_by_minutes AS late_minutes,
+                    CASE
+                      WHEN was.total_login_minutes > COALESCE(ws.required_minutes, 540)
+                      THEN SEC_TO_TIME((was.total_login_minutes - COALESCE(ws.required_minutes, 540)) * 60)
+                      ELSE NULL
+                    END AS overtime_hours,
+                    adr.lwp_value,
+                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
+                    adr.is_locked
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN designation_master desig ON desig.id = e.designation_id
+               LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
+               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
+               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id AND was.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, employee_name`;
+              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
       break;
     }
     case "attendance-summary": {
@@ -187,19 +234,46 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       break;
     }
     case "biometric-reconciliation": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+      if (req.query.reconciliationStatus) {
+        clauses.push(`CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
+                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
+                          ELSE 'OK' END = ?`);
+        params.push(String(req.query.reconciliationStatus));
+      }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    adr.attendance_status, adr.biometric_minutes, ibd.first_punch, ibd.last_punch, ibd.biometric_minutes AS imported_minutes,
+      sql = `SELECT adr.record_date,
+                    e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    p.process_name,
+                    adr.attendance_status,
+                    adr.biometric_minutes AS processed_biometric_minutes,
+                    TIME_FORMAT(SEC_TO_TIME(adr.biometric_minutes * 60), '%H:%i') AS processed_biometric_duration,
+                    TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS biometric_punch_in,
+                    TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS biometric_punch_out,
+                    ibd.biometric_minutes AS raw_biometric_minutes,
+                    TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i') AS raw_biometric_duration,
                     CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
                          WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
-                         ELSE 'OK' END AS reconciliation_status
-               FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
+                         ELSE 'OK' END AS reconciliation_status,
+                    CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'No biometric record for marked present'
+                         WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'Biometric punch exists but marked absent'
+                         ELSE 'Reconciled' END AS reconciliation_description
+               FROM attendance_daily_record adr
+               JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, reconciliation_status DESC`;
+              ORDER BY adr.record_date DESC, reconciliation_status DESC
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
     case "leave-balance":
@@ -230,27 +304,101 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT spr.run_month, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    spl.gross_salary, spl.total_deductions, spl.net_salary, spl.working_days, spl.present_days, spl.leave_days, spl.lwp_days, spl.status
-               FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+      sql = `SELECT spr.run_month AS payroll_month,
+                    e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    p.process_name,
+                    d.dept_name AS department_name,
+                    desig.designation_name,
+                    e.date_of_joining,
+                    e.employment_status,
+                    spl.working_days AS payable_days,
+                    spl.present_days,
+                    spl.leave_days,
+                    spl.lwp_days AS unpaid_days,
+                    COALESCE(spl.basic, 0) AS basic,
+                    COALESCE(spl.hra, 0) AS hra,
+                    COALESCE(spl.special_allowance, 0) AS other_earnings,
+                    COALESCE(spl.overtime_pay, 0) AS overtime_amount,
+                    spl.gross_salary AS gross_earnings,
+                    COALESCE(spl.pf_employee, 0) AS pf,
+                    COALESCE(spl.esic_employee, 0) AS esi,
+                    COALESCE(spl.professional_tax, 0) AS professional_tax,
+                    COALESCE(spl.tds_amount, 0) AS tds,
+                    COALESCE(spl.advance_recovery, 0) AS loan_deduction,
+                    spl.total_deductions,
+                    spl.net_salary AS net_pay,
+                    spl.status AS payroll_status,
+                    CASE
+                      WHEN spr.disbursed_at IS NOT NULL THEN 'Disbursed'
+                      WHEN spr.status = 'approved' THEN 'Approved'
+                      ELSE 'Processing'
+                    END AS bank_payment_status
+               FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+               JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN designation_master desig ON desig.id = e.designation_id
               WHERE ${clauses.join(" AND ")}
-              ORDER BY employee_name`;
+              ORDER BY b.branch_name, p.process_name, employee_name`;
       break;
     }
     case "payroll-variance": {
       const month = monthParam(req.query.month);
+      const minVarianceAmount = Number(req.query.minVarianceAmount ?? 0);
+      const minVariancePct = Number(req.query.minVariancePct ?? 0);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    spr.run_month, spl.net_salary AS current_net,
-                    prev.net_salary AS previous_net,
-                    ROUND(((spl.net_salary - COALESCE(prev.net_salary,0)) / NULLIF(prev.net_salary,0))*100,2) AS net_variance_pct,
-                    spl.lwp_days
-               FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    p.process_name,
+                    COALESCE(prev.gross_salary, 0) AS previous_month_gross,
+                    spl.gross_salary AS current_month_gross,
+                    (spl.gross_salary - COALESCE(prev.gross_salary, 0)) AS gross_variance,
+                    CASE
+                      WHEN prev.gross_salary > 0
+                      THEN ROUND((spl.gross_salary - prev.gross_salary) / prev.gross_salary * 100, 2)
+                      ELSE NULL
+                    END AS gross_variance_pct,
+                    COALESCE(prev.net_salary, 0) AS previous_month_net,
+                    spl.net_salary AS current_month_net,
+                    (spl.net_salary - COALESCE(prev.net_salary, 0)) AS net_variance,
+                    CASE
+                      WHEN prev.net_salary > 0
+                      THEN ROUND((spl.net_salary - prev.net_salary) / prev.net_salary * 100, 2)
+                      ELSE NULL
+                    END AS net_variance_pct,
+                    (spl.gross_salary - spl.total_deductions) - (COALESCE(prev.gross_salary, 0) - COALESCE(prev.total_deductions, 0)) AS earnings_variance,
+                    (spl.total_deductions - COALESCE(prev.total_deductions, 0)) AS deduction_variance,
+                    (spl.working_days - COALESCE(prev.working_days, 0)) AS payable_day_variance,
+                    (spl.present_days - COALESCE(prev.present_days, 0)) AS attendance_variance,
+                    COALESCE(spl.lwp_days, 0) AS current_lwp_days,
+                    COALESCE(prev.lwp_days, 0) AS previous_lwp_days,
+                    CASE
+                      WHEN ABS(spl.net_salary - COALESCE(prev.net_salary, 0)) > 5000 AND COALESCE(prev.net_salary, 0) > 0
+                           AND ABS((spl.net_salary - prev.net_salary) / prev.net_salary) > 0.1 THEN 'Significant Variance'
+                      WHEN spl.net_salary > COALESCE(prev.net_salary, 0) THEN 'Increase'
+                      WHEN spl.net_salary < COALESCE(prev.net_salary, 0) THEN 'Decrease'
+                      ELSE 'No Change'
+                    END AS variance_reason
+               FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+               JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN salary_prep_run pspr ON pspr.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
+                 AND LOWER(COALESCE(pspr.status,'')) NOT IN ('draft','cancelled')
                LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
               WHERE ${clauses.join(" AND ")}
-              ORDER BY ABS(COALESCE(net_variance_pct,0)) DESC`;
+              ${minVarianceAmount > 0 ? `AND ABS(spl.net_salary - COALESCE(prev.net_salary, 0)) >= ${minVarianceAmount}` : ''}
+              ${minVariancePct > 0 ? `AND ABS((spl.net_salary - COALESCE(prev.net_salary, 0)) / NULLIF(prev.net_salary, 0) * 100) >= ${minVariancePct}` : ''}
+              ORDER BY ABS(spl.net_salary - COALESCE(prev.net_salary, 0)) DESC`;
       break;
     }
     case "payslip-status": {
@@ -444,19 +592,30 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, COALESCE(ws.shift_name, 'Unassigned') AS shift_name,
+      sql = `SELECT adr.record_date,
+                    b.branch_name,
+                    p.process_name,
+                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+                    COUNT(*) AS scheduled_headcount,
                     SUM(adr.attendance_status IN ('present','half_day')) AS present_count,
                     SUM(adr.attendance_status = 'absent') AS absent_count,
+                    SUM(adr.attendance_status = 'leave_approved') AS leave_count,
+                    SUM(adr.attendance_status = 'week_off') AS week_off_count,
+                    SUM(adr.attendance_status = 'holiday') AS holiday_count,
+                    SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
+                    SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
                     SUM(adr.late_mark = 1) AS late_count,
-                    COUNT(*) AS total_count
+                    ROUND(SUM(adr.attendance_status IN ('present','half_day')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
                  AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
               WHERE ${clauses.join(" AND ")}
-              GROUP BY adr.record_date, ws.shift_name
-              ORDER BY adr.record_date DESC, shift_name`;
+              GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
+              ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
       break;
     }
 
@@ -465,21 +624,64 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT adr.record_date, e.employee_code,
+      sql = `SELECT adr.record_date,
+                    e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    COALESCE(ws.shift_name, 'Unassigned') AS roster_shift,
-                    ws.start_time AS shift_start,
+                    b.branch_name,
+                    p.process_name,
+                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
+                    ws.start_time AS scheduled_start,
+                    ws.end_time AS scheduled_end,
+                    was.login_time AS punch_in,
+                    was.logout_time AS punch_out,
+                    CASE
+                      WHEN was.login_time IS NOT NULL AND was.logout_time IS NOT NULL
+                      THEN SEC_TO_TIME(TIMESTAMPDIFF(SECOND, was.login_time, was.logout_time))
+                      ELSE NULL
+                    END AS total_login_hours,
+                    SEC_TO_TIME(COALESCE(ws.required_minutes, 540) * 60) AS scheduled_hours,
+                    adr.late_by_minutes AS late_minutes,
+                    CASE
+                      WHEN was.logout_time IS NOT NULL AND ws.end_time IS NOT NULL
+                           AND TIME(was.logout_time) < ws.end_time
+                      THEN TIMESTAMPDIFF(MINUTE, TIME(was.logout_time), ws.end_time)
+                      ELSE 0
+                    END AS early_logout_minutes,
+                    CASE
+                      WHEN was.total_login_minutes < COALESCE(ws.required_minutes, 540)
+                      THEN COALESCE(ws.required_minutes, 540) - was.total_login_minutes
+                      ELSE 0
+                    END AS shortfall_minutes,
+                    CASE
+                      WHEN was.total_login_minutes > COALESCE(ws.required_minutes, 540)
+                      THEN SEC_TO_TIME((was.total_login_minutes - COALESCE(ws.required_minutes, 540)) * 60)
+                      ELSE NULL
+                    END AS overtime_hours,
+                    CASE
+                      WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
+                      THEN ROUND(LEAST(COALESCE(was.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
+                      ELSE NULL
+                    END AS adherence_pct,
                     adr.attendance_status,
-                    adr.late_mark,
-                    adr.late_by_minutes,
-                    CASE WHEN adr.late_mark = 1 THEN 'LATE' WHEN adr.attendance_status = 'absent' THEN 'ABSENT' ELSE 'ON_TIME' END AS adherence_status
+                    CASE
+                      WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
+                      WHEN adr.late_mark = 1 AND COALESCE(was.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+                      WHEN adr.late_mark = 1 THEN 'LATE'
+                      WHEN COALESCE(was.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+                      ELSE 'ON_TIME'
+                    END AS adherence_status,
+                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
                  AND wra.roster_date = adr.record_date
                LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
+                 AND was.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adherence_status DESC`;
+              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
       break;
     }
 
@@ -508,99 +710,178 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     }
 
     case "overtime-summary": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name,
-                    ROUND(SUM(COALESCE(spl2.overtime_pay,0)), 0) AS total_overtime_pay,
-                    COUNT(DISTINCT adr.record_date) AS days_attended
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    p.process_name,
+                    d.department_name,
+                    dm.designation_name,
+                    COUNT(DISTINCT adr.record_date) AS days_attended,
+                    ROUND(SUM(adr.raw_minutes) / 60, 1) AS total_worked_hours,
+                    ROUND(SUM(
+                      CASE WHEN arc.full_day_minutes IS NOT NULL THEN arc.full_day_minutes
+                           ELSE TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time) END
+                    ) / 60, 1) AS total_scheduled_hours,
+                    ROUND(SUM(
+                      GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
+                    ) / 60, 1) AS overtime_hours,
+                    TIME_FORMAT(SEC_TO_TIME(SUM(
+                      GREATEST(0, adr.raw_minutes - COALESCE(arc.full_day_minutes, TIMESTAMPDIFF(MINUTE, sm.start_time, sm.end_time), 480))
+                    ) * 60), '%H:%i') AS overtime_duration,
+                    ROUND(SUM(COALESCE(spl2.overtime_pay,0)), 0) AS overtime_pay
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN designation_master dm ON dm.id = e.designation_id
+               LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
+               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
+               LEFT JOIN wfm_shift_master sm ON sm.id = wra.shift_id
                LEFT JOIN salary_prep_line spl2 ON spl2.employee_id = e.id
                LEFT JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id AND spr2.run_month = ?
-              WHERE ${clauses.join(" AND ")} AND COALESCE(spl2.overtime_pay, 0) > 0
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, d.dept_name
-              ORDER BY total_overtime_pay DESC`;
+              WHERE ${clauses.join(" AND ")} AND adr.attendance_status IN ('present','half_day')
+              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+                       b.branch_name, p.process_name, d.department_name, dm.designation_name
+              HAVING overtime_hours > 0
+              ORDER BY overtime_hours DESC
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       params.push(month);
       break;
     }
 
     case "habitual-absentee-list": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       const threshold = Number(req.query.threshold ?? 3);
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, d.dept_name AS department_name,
+      sql = `SELECT e.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name,
+                    p.process_name,
+                    d.department_name,
+                    dm.designation_name,
                     SUM(adr.attendance_status = 'absent') AS absent_days,
+                    SUM(adr.late_mark = 1) AS late_days,
                     SUM(adr.lwp_value) AS lwp_days,
                     COUNT(*) AS total_working_days,
-                    ROUND(SUM(adr.attendance_status = 'absent') / COUNT(*) * 100, 1) AS absent_pct
+                    ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 1) AS absent_pct,
+                    GROUP_CONCAT(DISTINCT CASE WHEN adr.attendance_status = 'absent' THEN DATE_FORMAT(adr.record_date, '%d') END ORDER BY adr.record_date SEPARATOR ',') AS absent_dates
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN designation_master dm ON dm.id = e.designation_id
               WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, d.dept_name
+              GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
+                       b.branch_name, p.process_name, d.department_name, dm.designation_name
               HAVING absent_days >= ?
-              ORDER BY absent_days DESC`;
+              ORDER BY absent_days DESC
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       params.push(threshold);
       break;
     }
 
     case "daily-shrinkage-report": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, b.branch_name, p.process_name,
                     COUNT(*) AS total_scheduled,
                     SUM(adr.attendance_status IN ('present','half_day')) AS present_hc,
-                    COUNT(*) - SUM(adr.attendance_status IN ('present','half_day')) AS absent_hc,
-                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / COUNT(*) * 100, 2) AS shrinkage_pct
+                    SUM(adr.attendance_status = 'absent') AS absent_hc,
+                    SUM(adr.attendance_status = 'leave_approved') AS leave_hc,
+                    SUM(adr.attendance_status = 'week_off') AS week_off_hc,
+                    SUM(adr.attendance_status = 'holiday') AS holiday_hc,
+                    COUNT(*) - SUM(adr.attendance_status IN ('present','half_day','leave_approved','week_off','holiday')) AS unplanned_shrinkage_hc,
+                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+                    ROUND((SUM(adr.attendance_status = 'absent')) / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               GROUP BY adr.record_date, b.branch_name, p.process_name
-              ORDER BY adr.record_date DESC, shrinkage_pct DESC`;
+              ORDER BY adr.record_date DESC, total_shrinkage_pct DESC
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
 
     case "monthly-shrinkage-trend": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       addEmployeeFilters(req.query, clauses, params);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
-                    COUNT(*) AS total_scheduled,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS present_hc,
-                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / COUNT(*) * 100, 2) AS avg_shrinkage_pct
+                    COUNT(DISTINCT adr.record_date) AS working_days,
+                    COUNT(*) AS total_employee_days,
+                    SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
+                    SUM(adr.attendance_status = 'absent') AS absent_days,
+                    SUM(adr.attendance_status = 'leave_approved') AS leave_days,
+                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+                    ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct,
+                    ROUND(AVG(
+                      (COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100
+                    ) OVER (PARTITION BY b.branch_name, p.process_name ORDER BY DATE_FORMAT(adr.record_date,'%Y-%m') ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS three_month_avg_shrinkage
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
-              ORDER BY month DESC, avg_shrinkage_pct DESC`;
+              ORDER BY month DESC, total_shrinkage_pct DESC
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
 
     case "punch-raw-export": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       clauses.push("ibd.activity_date BETWEEN ? AND ?"); params.push(from, to);
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-      sql = `SELECT ibd.employee_code, e.biometric_code, ibd.activity_date,
-                    ibd.first_punch, ibd.last_punch, ibd.biometric_minutes, ibd.total_punches
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+      sql = `SELECT ibd.employee_code,
+                    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    e.biometric_code,
+                    b.branch_name,
+                    p.process_name,
+                    ibd.activity_date,
+                    TIME_FORMAT(ibd.first_punch, '%H:%i:%s') AS first_punch,
+                    TIME_FORMAT(ibd.last_punch, '%H:%i:%s') AS last_punch,
+                    ibd.biometric_minutes,
+                    TIME_FORMAT(SEC_TO_TIME(ibd.biometric_minutes * 60), '%H:%i:%s') AS total_duration,
+                    ibd.total_punches
                FROM integration_biometric_daily ibd
                LEFT JOIN employees e ON e.employee_code = ibd.employee_code
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
-              ORDER BY ibd.activity_date DESC, ibd.employee_code`;
+              ORDER BY ibd.activity_date DESC, ibd.employee_code
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
 
@@ -1709,60 +1990,135 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
 
     // ─── Missing Attendance ───────────────────────────────────────────────────
     case "late-arrival-summary": {
-      const month = monthParam(req.query.month);
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`);
+      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      const minLateMinutes = Number(req.query.minLateMinutes ?? 0);
       addEmployeeFilters(req.query, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       clauses.push("adr.late_mark = 1");
-      sql = `SELECT e.employee_code,
+      if (minLateMinutes > 0) {
+        clauses.push("adr.late_by_minutes >= ?"); params.push(minLateMinutes);
+      }
+      sql = `SELECT adr.record_date,
+                    e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
-                    COUNT(*) AS late_arrival_days,
-                    SUM(COALESCE(adr.late_minutes, 0)) AS total_late_minutes
+                    b.branch_name,
+                    p.process_name,
+                    COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
+                    ws.start_time AS scheduled_start,
+                    was.login_time AS punch_in,
+                    adr.late_by_minutes AS late_minutes,
+                    COALESCE(arc.grace_minutes, 15) AS grace_minutes,
+                    GREATEST(0, adr.late_by_minutes - COALESCE(arc.grace_minutes, 15)) AS net_late_minutes,
+                    CASE
+                      WHEN adr.late_by_minutes <= COALESCE(arc.grace_minutes, 15) THEN 'Within Grace'
+                      WHEN adr.late_by_minutes <= 30 THEN 'Mild Late'
+                      WHEN adr.late_by_minutes <= 60 THEN 'Moderate Late'
+                      ELSE 'Severe Late'
+                    END AS late_status,
+                    CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS approved_exception,
+                    COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager
                FROM attendance_daily_record adr
                JOIN employees e ON e.id = adr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
+               LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
+                 AND wra.roster_date = adr.record_date
+               LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+               LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
+                 AND was.session_date = adr.record_date
+               LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
               WHERE ${clauses.join(" AND ")}
-              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name, p.process_name
-              ORDER BY late_arrival_days DESC`;
+              ORDER BY adr.record_date DESC, adr.late_by_minutes DESC`;
       break;
     }
 
     case "regularization-summary": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
-      clauses.push("DATE_FORMAT(arr.attendance_date,'%Y-%m') = ?"); params.push(month);
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+      clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    b.branch_name, p.process_name,
-                    arr.attendance_date, arr.requested_status, arr.reason,
+                    b.branch_name,
+                    p.process_name,
+                    d.department_name,
+                    dm.designation_name,
+                    arr.session_date AS attendance_date,
+                    arr.requested_status,
+                    arr.reason,
+                    arr.reason_code,
+                    arm.label AS reason_label,
+                    arr.requested_by_type,
                     arr.status AS approval_status,
-                    arr.approved_by, arr.created_at AS requested_at
+                    arr.created_at AS submitted_at,
+                    reviewer.full_name AS reviewer_name,
+                    arr.reviewed_at AS approved_at,
+                    arr.reviewer_note
                FROM attendance_regularization arr
                JOIN employees e ON e.id = arr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN designation_master dm ON dm.id = e.designation_id
+               LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+               LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
               WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.attendance_date DESC, employee_name`;
+              ORDER BY arr.session_date DESC, employee_name
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
 
     case "attendance-dispute-summary": {
+      const isExport = isExportRequest(req.query);
+      const limit = limitParam(req.query.limit, isExport);
+      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
-      if (req.query.status) { clauses.push("ad.status = ?"); params.push(String(req.query.status)); }
-      clauses.push("DATE_FORMAT(ad.dispute_date,'%Y-%m') = ?"); params.push(month);
+      if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
+      if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
+      if (req.query.disputeType) { clauses.push("arr.dispute_type = ?"); params.push(String(req.query.disputeType)); }
+      clauses.push("arr.dispute_type IS NOT NULL");
+      clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name,
-                    ad.dispute_date, ad.dispute_type, ad.description,
-                    ad.status, ad.resolution, ad.resolved_at
-               FROM attendance_dispute ad
-               JOIN employees e ON e.id = ad.employee_id
+                    p.process_name,
+                    d.department_name,
+                    dm.designation_name,
+                    arr.session_date AS dispute_date,
+                    arr.dispute_type,
+                    arr.reason AS description,
+                    arr.reason_code,
+                    arm.label AS reason_label,
+                    arr.old_status,
+                    arr.new_status AS requested_status,
+                    TIME_FORMAT(arr.old_punch_in, '%H:%i') AS original_punch_in,
+                    TIME_FORMAT(arr.old_punch_out, '%H:%i') AS original_punch_out,
+                    TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
+                    TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
+                    arr.payroll_impact,
+                    arr.status AS approval_status,
+                    arr.created_at AS submitted_at,
+                    reviewer.full_name AS reviewer_name,
+                    arr.reviewed_at,
+                    arr.reviewer_note AS resolution
+               FROM attendance_regularization arr
+               JOIN employees e ON e.id = arr.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN department_master d ON d.id = e.department_id
+               LEFT JOIN designation_master dm ON dm.id = e.designation_id
+               LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+               LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
               WHERE ${clauses.join(" AND ")}
-              ORDER BY ad.dispute_date DESC`;
+              ORDER BY arr.session_date DESC, employee_name
+              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
       break;
     }
 
@@ -2699,5 +3055,15 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
   }
 
   const data = await queryRows(sql, params, limit);
-  return res.json({ success: true, code, data, meta: { count: data.length, limit, fallback: data[0]?.report_status === "PENDING_DATA_BUILDER" } });
+  return res.json({
+    success: true,
+    code,
+    data,
+    meta: {
+      count: data.length,
+      limit: limit || "unlimited",
+      isFullExport: isExport,
+      fallback: data[0]?.report_status === "PENDING_DATA_BUILDER"
+    }
+  });
 }));
