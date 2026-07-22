@@ -178,6 +178,28 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     deeplinkPattern:   "/payroll/branch-readiness",
     requiresScope:     false,
   },
+  {
+    itemType:          "PAYROLL_PROCESS_SIGNOFF_NOTIFY",
+    displayName:       "Process signed off — ready for payroll freeze",
+    module:            "PAYROLL",
+    entityType:        "process_readiness",
+    defaultAssigneeRoles: ["payroll_head", "super_admin"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/payroll/process-readiness",
+    requiresScope:     true,
+  },
+  {
+    itemType:          "PAYROLL_PROCESS_FREEZE_REQUEST",
+    displayName:       "Process requesting attendance freeze",
+    module:            "PAYROLL",
+    entityType:        "process_readiness",
+    defaultAssigneeRoles: ["payroll_head", "super_admin"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   24,
+    deeplinkPattern:   "/payroll/process-readiness",
+    requiresScope:     true,
+  },
   // ── Exit ─────────────────────────────────────────────────────────────────────
   {
     itemType:          "RESIGNATION_PENDING_REVIEW",

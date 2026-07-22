@@ -24,6 +24,7 @@ import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
+import { payrollProcessReadinessRouter } from "./modules/payroll/payroll-process-readiness.routes.js";
 import { payrollCalendarRouter } from "./modules/payroll/payroll-calendar.routes.js";
 import { payrollCostSummaryRouter } from "./modules/payroll/payroll-cost-summary.routes.js";
 import { payrollStatutoryFilingRouter } from "./modules/payroll/payroll-statutory-filing.routes.js";
@@ -289,6 +290,7 @@ app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
 app.use("/api/payroll/branch-readiness", listEndpointLimiter, payrollBranchReadinessRouter);
+app.use("/api/payroll/process-readiness", listEndpointLimiter, payrollProcessReadinessRouter);
 app.use("/api/payroll/calendar", listEndpointLimiter, payrollCalendarRouter);
 app.use("/api/payroll/cost-summary", listEndpointLimiter, payrollCostSummaryRouter);
 app.use("/api/payroll/statutory-filing", listEndpointLimiter, payrollStatutoryFilingRouter);

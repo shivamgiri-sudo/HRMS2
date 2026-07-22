@@ -157,3 +157,45 @@ export async function triggerPayrollAttendanceFreezeRequest(
     dueAt: dueAt("PAYROLL_ATTENDANCE_FREEZE_REQUEST"),
   });
 }
+
+export async function triggerPayrollProcessSignOff(
+  branchId: string,
+  processId: string,
+  processName: string,
+  branchName: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "PAYROLL_PROCESS_SIGNOFF_NOTIFY",
+    title: `${processName} (${branchName}) signed off for ${month}`,
+    description: `Process Manager has confirmed all payroll inputs are complete for process "${processName}" in ${branchName} (${month}). Review and freeze to proceed.`,
+    moduleCode: "payroll",
+    entityType: "process_readiness",
+    entityId: processId,
+    assignedToRole: "payroll_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("PAYROLL_PROCESS_SIGNOFF_NOTIFY"),
+  });
+}
+
+export async function triggerPayrollProcessFreezeRequest(
+  branchId: string,
+  processId: string,
+  processName: string,
+  branchName: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "PAYROLL_PROCESS_FREEZE_REQUEST",
+    title: `${processName} (${branchName}) requesting attendance freeze for ${month}`,
+    description: `WFM has declared attendance data complete for process "${processName}" in ${branchName} (${month}). Please freeze attendance to unblock process readiness.`,
+    moduleCode: "payroll",
+    entityType: "process_readiness",
+    entityId: processId,
+    assignedToRole: "payroll_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("PAYROLL_PROCESS_FREEZE_REQUEST"),
+  });
+}

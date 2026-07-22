@@ -657,16 +657,17 @@ export const payrollBranchReadinessService = {
 
   async getOrRefresh(
     month: string,
-    branchId: string
+    branchId: string,
+    processId = ''
   ): Promise<BranchReadinessRecord> {
     const hasTable = await tableExists();
 
     if (hasTable) {
-      await this.ensureRecord(month, branchId);
+      await this.ensureRecord(month, branchId, processId);
     }
 
-    await this.refreshLiveMetrics(month, branchId);
-    await this.refreshProjection(month, branchId);
+    await this.refreshLiveMetrics(month, branchId, processId);
+    await this.refreshProjection(month, branchId, processId);
 
     // Compute score/status and persist
     let record: Partial<BranchReadinessRecord> = {};
@@ -677,9 +678,9 @@ export const payrollBranchReadinessService = {
           `SELECT r.*, COALESCE(b.branch_name, ?) AS branch_name
              FROM payroll_branch_readiness r
              LEFT JOIN branch_master b ON b.id = r.branch_id
-            WHERE r.process_month = ? AND r.branch_id = ?
+            WHERE r.process_month = ? AND r.branch_id = ? AND r.process_id = ?
             LIMIT 1`,
-          [branchId, month, branchId]
+          [branchId, month, branchId, processId]
         );
         if ((rows as any[]).length > 0) {
           record = rows[0] as Partial<BranchReadinessRecord>;
@@ -702,8 +703,8 @@ export const payrollBranchReadinessService = {
         await db.execute(
           `UPDATE payroll_branch_readiness
               SET readiness_score = ?, readiness_status = ?
-            WHERE process_month = ? AND branch_id = ?`,
-          [score, status, month, branchId]
+            WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+          [score, status, month, branchId, processId]
         );
       } catch {
         // best-effort
@@ -717,9 +718,9 @@ export const payrollBranchReadinessService = {
           `SELECT r.*, COALESCE(b.branch_name, ?) AS branch_name
              FROM payroll_branch_readiness r
              LEFT JOIN branch_master b ON b.id = r.branch_id
-            WHERE r.process_month = ? AND r.branch_id = ?
+            WHERE r.process_month = ? AND r.branch_id = ? AND r.process_id = ?
             LIMIT 1`,
-          [branchId, month, branchId]
+          [branchId, month, branchId, processId]
         );
         if ((finalRows as any[]).length > 0) {
           return finalRows[0] as BranchReadinessRecord;
@@ -734,9 +735,14 @@ export const payrollBranchReadinessService = {
       branch_id: branchId,
       branch_name: String(record.branch_name ?? branchId),
       process_month: month,
+      process_id: processId,
+      process_name: String((record as any).process_name ?? ''),
       attendance_frozen: Number(record.attendance_frozen ?? 0),
       attendance_frozen_at: (record.attendance_frozen_at as string) ?? null,
       attendance_frozen_by: (record.attendance_frozen_by as string) ?? null,
+      attendance_data_ready: Number((record as any).attendance_data_ready ?? 0),
+      attendance_data_ready_at: (record as any).attendance_data_ready_at ?? null,
+      attendance_data_ready_by: (record as any).attendance_data_ready_by ?? null,
       incentives_status:
         (record.incentives_status as BranchReadinessRecord["incentives_status"]) ??
         "not_uploaded",
@@ -755,6 +761,10 @@ export const payrollBranchReadinessService = {
       branch_head_signoff_at: (record.branch_head_signoff_at as string) ?? null,
       branch_head_signoff_by: (record.branch_head_signoff_by as string) ?? null,
       branch_head_remarks: (record.branch_head_remarks as string) ?? null,
+      process_manager_signoff: Number((record as any).process_manager_signoff ?? 0),
+      process_manager_signoff_at: (record as any).process_manager_signoff_at ?? null,
+      process_manager_signoff_by: (record as any).process_manager_signoff_by ?? null,
+      process_manager_remarks: (record as any).process_manager_remarks ?? null,
       ho_override_ready: Number(record.ho_override_ready ?? 0),
       ho_override_by: (record.ho_override_by as string) ?? null,
       ho_override_at: (record.ho_override_at as string) ?? null,
@@ -831,7 +841,8 @@ export const payrollBranchReadinessService = {
     month: string,
     branchId: string,
     userId: string,
-    remarks: string
+    remarks: string,
+    processId = ''
   ): Promise<void> {
     if (!(await tableExists())) {
       console.warn("[BranchReadiness] branchHeadSignOff — table absent, skipped");
@@ -844,8 +855,8 @@ export const payrollBranchReadinessService = {
               branch_head_signoff_at = NOW(),
               branch_head_signoff_by = ?,
               branch_head_remarks = ?
-        WHERE process_month = ? AND branch_id = ?`,
-      [userId, remarks, month, branchId]
+        WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+      [userId, remarks, month, branchId, processId]
     );
 
     // Audit log
@@ -873,7 +884,7 @@ export const payrollBranchReadinessService = {
     })();
 
     // Recompute score/status after sign-off
-    const rec = await this.getOrRefresh(month, branchId);
+    const rec = await this.getOrRefresh(month, branchId, processId);
     const score = this.computeScore(rec);
     const status = await this.computeStatus(
       score,
@@ -885,8 +896,8 @@ export const payrollBranchReadinessService = {
       await db.execute(
         `UPDATE payroll_branch_readiness
             SET readiness_score = ?, readiness_status = ?
-          WHERE process_month = ? AND branch_id = ?`,
-        [score, status, month, branchId]
+          WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+        [score, status, month, branchId, processId]
       );
     } catch {
       // best-effort
@@ -901,7 +912,8 @@ export const payrollBranchReadinessService = {
     month: string,
     branchId: string,
     userId: string,
-    reason: string
+    reason: string,
+    processId = ''
   ): Promise<void> {
     if (!(await tableExists())) {
       console.warn("[BranchReadiness] hoOverride — table absent, skipped");
@@ -916,8 +928,8 @@ export const payrollBranchReadinessService = {
               ho_override_reason = ?,
               readiness_status = 'ready',
               readiness_score = 100
-        WHERE process_month = ? AND branch_id = ?`,
-      [userId, reason, month, branchId]
+        WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+      [userId, reason, month, branchId, processId]
     );
 
     // Audit log
@@ -927,8 +939,153 @@ export const payrollBranchReadinessService = {
       module_key: "payroll",
       entity_type: "branch_readiness",
       entity_id: branchId,
-      change_summary: { month, branch_id: branchId, reason },
+      change_summary: { month, branch_id: branchId, process_id: processId, reason },
     });
+  },
+
+  // -------------------------------------------------------------------------
+  // processManagerSignOff — process-level sign-off (distinct from branch_head)
+  // -------------------------------------------------------------------------
+
+  async processManagerSignOff(
+    month: string,
+    branchId: string,
+    processId: string,
+    userId: string,
+    remarks: string
+  ): Promise<void> {
+    if (!(await tableExists())) {
+      console.warn("[BranchReadiness] processManagerSignOff — table absent, skipped");
+      return;
+    }
+
+    await db.execute(
+      `UPDATE payroll_branch_readiness
+          SET process_manager_signoff = 1,
+              process_manager_signoff_at = NOW(),
+              process_manager_signoff_by = ?,
+              process_manager_remarks = ?
+        WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+      [userId, remarks, month, branchId, processId]
+    );
+
+    void logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "PAYROLL_PROCESS_SIGNOFF",
+      module_key: "payroll",
+      entity_type: "process_readiness",
+      entity_id: processId,
+      change_summary: { month, branch_id: branchId, process_id: processId, remarks },
+    });
+
+    // Notify payroll head via work-inbox (non-critical)
+    void (async () => {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT pm.process_name, bm.branch_name
+             FROM process_master pm
+             JOIN branch_master bm ON bm.id = pm.branch_id
+            WHERE pm.id = ? LIMIT 1`,
+          [processId]
+        );
+        const processName = (rows[0] as any)?.process_name ?? processId;
+        const branchName  = (rows[0] as any)?.branch_name ?? branchId;
+        await triggerPayrollProcessSignOff(branchId, processId, processName, branchName, month);
+      } catch { /* non-critical */ }
+    })();
+
+    const rec = await this.getOrRefresh(month, branchId, processId);
+    const score = this.computeScore(rec);
+    const status = await this.computeStatus(score, rec.attendance_frozen, rec.ho_override_ready);
+    try {
+      await db.execute(
+        `UPDATE payroll_branch_readiness
+            SET readiness_score = ?, readiness_status = ?
+          WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+        [score, status, month, branchId, processId]
+      );
+    } catch { /* best-effort */ }
+  },
+
+  // -------------------------------------------------------------------------
+  // getSummaryForBranch — processes for one branch
+  // -------------------------------------------------------------------------
+
+  async getSummaryForBranch(
+    month: string,
+    branchId: string
+  ): Promise<BranchReadinessRecord[]> {
+    let processes: Array<{ id: string; process_name: string }> = [];
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, process_name FROM process_master
+          WHERE branch_id = ? AND active_status = 1
+          ORDER BY process_name`,
+        [branchId]
+      );
+      processes = rows as Array<{ id: string; process_name: string }>;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[BranchReadiness] getSummaryForBranch process list failed — ${msg}`);
+      return [];
+    }
+
+    const results: BranchReadinessRecord[] = [];
+    for (const proc of processes) {
+      try {
+        const rec = await this.getOrRefresh(month, branchId, proc.id);
+        results.push(rec);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[BranchReadiness] getSummaryForBranch process ${proc.id} failed — ${msg}`);
+      }
+    }
+    return results;
+  },
+
+  // -------------------------------------------------------------------------
+  // getHOSummaryGrouped — all branches each with their processes
+  // -------------------------------------------------------------------------
+
+  async getHOSummaryGrouped(month: string): Promise<ProcessReadinessBranchGroup[]> {
+    let branches: Array<{ id: string; branch_name: string }> = [];
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
+        []
+      );
+      branches = rows as Array<{ id: string; branch_name: string }>;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[BranchReadiness] getHOSummaryGrouped branch list failed — ${msg}`);
+      return [];
+    }
+
+    const groups: ProcessReadinessBranchGroup[] = [];
+
+    for (const branch of branches) {
+      const processes = await this.getSummaryForBranch(month, branch.id);
+      const total = processes.length;
+      const ready = processes.filter(p => p.readiness_status === 'ready').length;
+      const avg_score = total > 0
+        ? Math.round(processes.reduce((s, p) => s + p.readiness_score, 0) / total)
+        : 0;
+      groups.push({
+        branch_id: branch.id,
+        branch_name: branch.branch_name,
+        processes,
+        stats: { total, ready, avg_score },
+      });
+    }
+
+    // Sort: branches with most blocked/not_started first
+    groups.sort((a, b) => {
+      const aReady = a.stats.ready / Math.max(1, a.stats.total);
+      const bReady = b.stats.ready / Math.max(1, b.stats.total);
+      return aReady - bReady;
+    });
+
+    return groups;
   },
 
   // -------------------------------------------------------------------------

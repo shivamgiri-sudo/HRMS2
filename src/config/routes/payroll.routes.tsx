@@ -27,6 +27,7 @@ const HolidayWorkApprovals      = lazy(() => import("@/pages/payroll/HolidayWork
 const PayrollValidationScreen   = lazy(() => import("@/pages/payroll/PayrollValidationScreen"));
 const NocManagement             = lazy(() => import("@/pages/payroll/NocManagement"));
 const BranchPayrollReadiness    = lazy(() => import("@/pages/payroll/BranchPayrollReadiness"));
+const ProcessPayrollReadiness   = lazy(() => import("@/pages/payroll/ProcessPayrollReadiness"));
 const PayrollCalendar           = lazy(() => import("@/pages/payroll/PayrollCalendar"));
 const PayrollCostSummary        = lazy(() => import("@/pages/payroll/PayrollCostSummary"));
 const StatutoryFilingTracker    = lazy(() => import("@/pages/payroll/StatutoryFilingTracker"));
@@ -66,6 +67,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/validation"          element={<ProtectedRoute roles={['super_admin','payroll_head']}><PayrollValidationScreen /></ProtectedRoute>} />
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><NocManagement /></ProtectedRoute>} />
       <Route path="/payroll/branch-readiness"    element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll']}><BranchPayrollReadiness /></ProtectedRoute>} />
+      <Route path="/payroll/process-readiness"  element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll','process_manager','wfm']}><ProcessPayrollReadiness /></ProtectedRoute>} />
       <Route path="/payroll/calendar"            element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><PayrollCalendar /></ProtectedRoute>} />
       <Route path="/payroll/cost-summary"        element={<ProtectedRoute roles={['super_admin','payroll_head','finance']}><PayrollCostSummary /></ProtectedRoute>} />
       <Route path="/payroll/statutory-filing"    element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><StatutoryFilingTracker /></ProtectedRoute>} />
