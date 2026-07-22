@@ -63,10 +63,29 @@ function addEmployeeFilters(query: any, clauses: string[], params: unknown[], al
   if (query.managerId) { clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`); params.push(String(query.managerId), String(query.managerId)); }
 }
 
-async function queryRows(sql: string, params: unknown[], limit: number) {
-  const finalSql = limit > 0 ? `${sql} LIMIT ${limit}` : sql;
+async function queryRows(sql: string, params: unknown[], limit: number, offset = 0) {
+  let finalSql = sql;
+  if (limit > 0) {
+    finalSql = `${sql} LIMIT ${limit} OFFSET ${offset}`;
+  }
   const [rows] = await db.execute<RowDataPacket[]>(finalSql, params);
   return rows;
+}
+
+async function queryRowsWithCount(sql: string, params: unknown[], limit: number, offset = 0): Promise<{ rows: RowDataPacket[]; totalCount: number }> {
+  // Get total count by wrapping the query
+  const countSql = `SELECT COUNT(*) as total FROM (${sql}) AS count_query`;
+  const [countResult] = await db.execute<RowDataPacket[]>(countSql, params);
+  const totalCount = countResult[0]?.total ?? 0;
+
+  // Get paginated data
+  let dataSql = sql;
+  if (limit > 0) {
+    dataSql = `${sql} LIMIT ${limit} OFFSET ${offset}`;
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(dataSql, params);
+
+  return { rows, totalCount };
 }
 
 function humanizeCode(code: string) {
@@ -3151,14 +3170,20 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "finance", "payroll",
     }
   }
 
-  const data = await queryRows(sql, params, limit);
+  const offset = Number(req.query.offset ?? 0);
+  const { rows: data, totalCount } = await queryRowsWithCount(sql, params, limit, offset);
   return res.json({
     success: true,
     code,
     data,
+    totalCount,
     meta: {
       count: data.length,
+      totalCount,
       limit: limit || "unlimited",
+      offset,
+      page: limit > 0 ? Math.floor(offset / limit) + 1 : 1,
+      totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 1,
       isFullExport: isExport,
       fallback: data[0]?.report_status === "PENDING_DATA_BUILDER"
     }
