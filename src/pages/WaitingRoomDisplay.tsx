@@ -255,12 +255,15 @@ export default function WaitingRoomDisplay() {
       try { getAudioCtx().resume(); setAudioReady(true); } catch {/* */}
       document.removeEventListener("click", unlock);
       document.removeEventListener("keydown", unlock);
+      document.removeEventListener("touchstart", unlock);
     };
     document.addEventListener("click", unlock);
     document.addEventListener("keydown", unlock);
+    document.addEventListener("touchstart", unlock);
     return () => {
       document.removeEventListener("click", unlock);
       document.removeEventListener("keydown", unlock);
+      document.removeEventListener("touchstart", unlock);
     };
   }, []);
 
@@ -326,8 +329,16 @@ export default function WaitingRoomDisplay() {
         utt.rate = 0.88;
         utt.pitch = 1.0;
         utt.volume = 1.0;
-        utt.onend = () => { isSpeakingRef.current = false; drainQueue(); };
-        utt.onerror = () => { isSpeakingRef.current = false; drainQueue(); };
+        // Safety watchdog: Chrome sometimes silently drops the utterance (idle engine bug)
+        // or pauses when the tab loses focus without firing onend/onerror.
+        const safetyTimer = setTimeout(() => {
+          if (isSpeakingRef.current) { isSpeakingRef.current = false; drainQueue(); }
+        }, 20_000);
+        utt.onend = () => { clearTimeout(safetyTimer); isSpeakingRef.current = false; drainQueue(); };
+        utt.onerror = () => { clearTimeout(safetyTimer); isSpeakingRef.current = false; drainQueue(); };
+        // cancel() resets Chrome's TTS engine to prevent the silent-speak bug
+        // where speak() enqueues but never fires after ~15s of idle.
+        window.speechSynthesis.cancel();
         window.speechSynthesis.speak(utt);
       };
       const voices = window.speechSynthesis.getVoices();
@@ -898,15 +909,13 @@ export default function WaitingRoomDisplay() {
         }
         .wr-ticker-text.hidden { opacity: 0; }
 
-        /* Audio hint */
+        /* Audio hint — no auto-fade; React removes it on tap */
         .wr-audio-hint {
           position: fixed; bottom: 56px; right: 18px;
           background: rgba(0,0,0,0.65); color: rgba(255,255,255,0.7);
           font-size: 11px; font-weight: 500; padding: 6px 12px;
           border-radius: 8px; z-index: 201; pointer-events: none;
-          animation: wr-fadeout 3s ease forwards 5s;
         }
-        @keyframes wr-fadeout { to { opacity: 0; } }
       `}</style>
 
       <div className="wr">
