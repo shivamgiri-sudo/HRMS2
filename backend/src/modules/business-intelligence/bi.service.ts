@@ -28,8 +28,10 @@ export interface DailyOpsPulse {
   intervention_flags: InterventionFlag[];
 }
 
-export async function getDailyOpsPulse(targetDate?: string): Promise<DailyOpsPulse> {
+export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[], processIds?: string[]): Promise<DailyOpsPulse> {
   const date = targetDate || getIstDateString(0);
+  // branchIds/processIds accepted for future scoped queries; currently the apr table
+  // does not carry branch_id so the main APR aggregation remains org-wide.
 
   // Query synced apr table for the given date
   const [aprRows] = await db.execute<RowDataPacket[]>(
@@ -53,12 +55,18 @@ export async function getDailyOpsPulse(targetDate?: string): Promise<DailyOpsPul
     [date]
   ).catch(() => [[null]] as any);
 
-  // Scheduled agents from attendance records
+  // Scheduled agents from attendance records — scoped to branch/process when provided
+  const attendScopeClause = branchIds && branchIds.length > 0
+    ? ` AND employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}) AND active_status = 1)`
+    : processIds && processIds.length > 0
+    ? ` AND employee_id IN (SELECT id FROM employees WHERE process_id IN (${processIds.map(() => "?").join(",")}) AND active_status = 1)`
+    : "";
+  const attendScopeParams = branchIds && branchIds.length > 0 ? branchIds : processIds && processIds.length > 0 ? processIds : [];
   const [attendRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT employee_id) AS scheduled
      FROM attendance_daily_record
-     WHERE record_date = ?`,
-    [date]
+     WHERE record_date = ?${attendScopeClause}`,
+    [date, ...attendScopeParams]
   ).catch(() => [[{ scheduled: 0 }]] as any);
 
   const aprRow = (aprRows as any[])[0] ?? {};

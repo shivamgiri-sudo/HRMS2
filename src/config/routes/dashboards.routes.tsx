@@ -17,6 +17,7 @@ const QualityDashboardRole     = lazy(() => import("@/pages/dashboards/QualityDa
 const OperationsDashboardRole  = lazy(() => import("@/pages/dashboards/OperationsDashboardRole"));
 const RecruiterDashboard       = lazy(() => import("@/pages/dashboards/RecruiterDashboard"));
 const WfmAttendanceDashboard   = lazy(() => import("@/pages/dashboards/WfmAttendanceDashboard"));
+const ItManagerDashboard       = lazy(() => import("@/pages/dashboards/ItManagerDashboard"));
 
 export const dashboardRouteElements = (
   <>
@@ -36,5 +37,6 @@ export const dashboardRouteElements = (
       <Route path="/operations-dashboard"   element={<ProtectedRoute roles={["operations_manager","admin","super_admin","ceo","manager","process_manager","branch_head"]}><OperationsDashboardRole /></ProtectedRoute>} />
       <Route path="/recruiter-dashboard"    element={<ProtectedRoute roles={["recruiter","hr","admin","super_admin","manager"]}><RecruiterDashboard /></ProtectedRoute>} />
       <Route path="/wfm-attendance"         element={<ProtectedRoute roles={["wfm","admin","super_admin","hr","manager","operations_manager"]}><WfmAttendanceDashboard /></ProtectedRoute>} />
+      <Route path="/it/dashboard"           element={<ProtectedRoute roles={["it","branch_it","it_admin","admin","super_admin"]}><ItManagerDashboard /></ProtectedRoute>} />
   </>
 );

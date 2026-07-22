@@ -9,7 +9,8 @@ export type RoleDashboardVariant =
   | "super_admin"
   | "quality"
   | "operations"
-  | "recruiter";
+  | "recruiter"
+  | "it_manager";
 
 export const ROLE_VARIANT_MAP: Readonly<Record<RoleDashboardVariant, readonly string[]>> = {
   super_admin: ["super_admin", "admin"],
@@ -43,6 +44,7 @@ export const ROLE_VARIANT_MAP: Readonly<Record<RoleDashboardVariant, readonly st
   quality: ["qa", "quality_analyst", "quality_lead", "qa_analyst", "qa_lead"],
   operations: ["operations_manager", "ops_manager", "floor_manager", "process_lead"],
   recruiter: ["recruiter", "recruitment_hr", "talent_acquisition", "ta_lead"],
+  it_manager: ["it", "branch_it", "it_admin"],
 };
 
 const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
@@ -55,6 +57,7 @@ const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
   "quality",
   "operations",
   "recruiter",
+  "it_manager",
   "manager",
   "employee",
 ];

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  BarChart3, Briefcase, Crown, GraduationCap, Receipt, Shield, User, Users,
+  BarChart3, Briefcase, Crown, GraduationCap, Receipt, Server, Shield, ShieldCheck, User, UserPlus, Users,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -15,17 +15,23 @@ import {
 export { resolveRoleDashboardVariant } from "./dashboards/roleDashboardAccess";
 
 const VARIANT_META: Record<RoleDashboardVariant, { label: string; icon: React.ElementType }> = {
-  super_admin: { label: "Super Admin",  icon: Shield },
-  ceo:         { label: "CEO",          icon: Crown },
-  hr:          { label: "HR",           icon: Users },
-  wfm:         { label: "WFM",          icon: BarChart3 },
-  payroll:     { label: "Payroll",      icon: Receipt },
-  manager:     { label: "Manager",      icon: Briefcase },
-  employee:    { label: "My Dashboard", icon: User },
+  super_admin:    { label: "Super Admin",  icon: Shield },
+  ceo:            { label: "CEO",          icon: Crown },
+  hr:             { label: "HR",           icon: Users },
+  wfm:            { label: "WFM",          icon: BarChart3 },
+  wfm_attendance: { label: "WFM Attend.",  icon: BarChart3 },
+  payroll:        { label: "Payroll",      icon: Receipt },
+  manager:        { label: "Manager",      icon: Briefcase },
+  quality:        { label: "Quality",      icon: ShieldCheck },
+  operations:     { label: "Operations",   icon: BarChart3 },
+  recruiter:      { label: "Recruiter",    icon: UserPlus },
+  it_manager:     { label: "IT Manager",   icon: Server },
+  employee:       { label: "My Dashboard", icon: User },
 };
 
 const ALL_VARIANTS: RoleDashboardVariant[] = [
-  "super_admin", "ceo", "hr", "wfm", "payroll", "manager", "employee",
+  "super_admin", "ceo", "hr", "wfm", "wfm_attendance", "payroll",
+  "quality", "operations", "recruiter", "it_manager", "manager", "employee",
 ];
 
 export default function Index() {

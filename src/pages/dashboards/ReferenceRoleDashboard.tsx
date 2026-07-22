@@ -38,6 +38,7 @@ import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import { QualityReferenceLayout } from "./reference/QualityReferenceLayout";
 import { OperationsReferenceLayout } from "./reference/OperationsReferenceLayout";
 import { RecruiterReferenceLayout } from "./reference/RecruiterReferenceLayout";
+import { ItManagerReferenceLayout } from "./reference/ItManagerReferenceLayout";
 import "./role-dashboard-reference.css";
 
 const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
@@ -52,6 +53,7 @@ const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
   quality: "MANAGEMENT_DASHBOARD",
   operations: "MANAGEMENT_DASHBOARD",
   recruiter: "MANAGEMENT_DASHBOARD",
+  it_manager: "IT_MANAGER_DASHBOARD",
 };
 
 function unwrap(value: unknown): unknown {
@@ -280,6 +282,14 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     accessGranted && ["ceo", "super_admin", "manager"].includes(variant),
   );
 
+  const itProvisioningQuery = useQuery({
+    queryKey: ["reference-dashboard-it-provisioning", branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/provisioning/it/stats${params}`))),
+    enabled: accessGranted && variant === "it_manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
   const qualitySummaryQuery = useQuery({
     queryKey: ["reference-dashboard-quality-summary", branchId, processId],
     queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/summary${params}`),
@@ -333,6 +343,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(["ceo", "super_admin", "manager"].includes(variant) ? [orgKpiQuery] : []),
     ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
     ...(["operations", "manager", "super_admin", "ceo"].includes(variant) ? [qaQualityQuery] : []),
+    ...(variant === "it_manager" ? [itProvisioningQuery] : []),
   ] : [];
 
   // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
@@ -376,7 +387,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ? mergeRecruiterDashboardData(atsQuery.data, recruiterHiringQuery.data)
     : atsQuery.data ?? {};
 
-  const data: ReferenceDashboardData = {
+  const data: ReferenceDashboardData & { itProvisioning?: Record<string, unknown> } = {
     variant,
     summary,
     metrics,
@@ -392,6 +403,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     managerLeaves: managerLeavesQuery.data ?? [],
     quality: mergedQuality,
     orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
+    itProvisioning: itProvisioningQuery.data,
     loading: roleLoading || activeQueryResults.some((query) => query.isLoading),
     refreshing: activeQueryResults.some((query) => query.isFetching),
     generatedAt: summary.generatedAt,
@@ -462,6 +474,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {variant === "quality" ? <QualityReferenceLayout data={data} /> : null}
         {variant === "operations" ? <OperationsReferenceLayout data={data} /> : null}
         {variant === "recruiter" ? <RecruiterReferenceLayout data={data} /> : null}
+        {variant === "it_manager" ? <ItManagerReferenceLayout data={data} /> : null}
       </main>
     </DashboardLayout>
   );

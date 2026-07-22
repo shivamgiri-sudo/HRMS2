@@ -333,6 +333,88 @@ router.post("/roles/revoke", requireRole("admin"), h(async (req: AuthenticatedRe
   res.json({ ok: true });
 }));
 
+// GET /api/access/branches — lightweight branch list for scope picker (admin/hr)
+router.get("/branches", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, branch_name, branch_code FROM branch_master WHERE active_status = 1 ORDER BY branch_name`
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// GET /api/access/processes — lightweight process list for scope picker (admin/hr)
+router.get("/processes", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const branchId = String(req.query.branchId ?? "").trim();
+  const where = branchId
+    ? `WHERE pm.active_status = 1 AND EXISTS (SELECT 1 FROM employees e WHERE e.process_id = pm.id AND e.branch_id = ? AND e.active_status = 1)`
+    : `WHERE pm.active_status = 1`;
+  const params = branchId ? [branchId] : [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pm.id, pm.process_name, pm.process_code FROM process_master pm ${where} ORDER BY pm.process_name`,
+    params
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// GET /api/access/roles/user-scopes/:userId — get all scope assignments for a user (admin)
+router.get("/roles/user-scopes/:userId", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT uas.id, uas.role_key, uas.scope_type, uas.branch_id, uas.process_id,
+            uas.department_id, uas.active_status, uas.assigned_at,
+            b.branch_name, pm.process_name,
+            wrc.role_name
+     FROM user_assignment_scope uas
+     LEFT JOIN branch_master b ON b.id = uas.branch_id
+     LEFT JOIN process_master pm ON pm.id = uas.process_id
+     LEFT JOIN workforce_role_catalog wrc ON wrc.role_key = uas.role_key
+     WHERE uas.user_id = ? AND uas.active_status = 1
+     ORDER BY uas.role_key, uas.assigned_at DESC`,
+    [req.params.userId]
+  );
+  res.json({ success: true, data: rows });
+}));
+
+// POST /api/access/roles/assign-scope — assign a branch/process scope to a user's role (admin)
+router.post("/roles/assign-scope", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { user_id, role_key, scope_type, branch_id, process_id } = req.body;
+  if (!user_id || !role_key || !scope_type) {
+    return res.status(400).json({ error: "user_id, role_key and scope_type are required" });
+  }
+  // Verify the user actually has this role active
+  const [[roleRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM user_roles WHERE user_id = ? AND role_key = ? AND active_status = 1 LIMIT 1`,
+    [user_id, role_key]
+  );
+  if (!roleRow) {
+    return res.status(400).json({ error: `User does not have active role '${role_key}'. Assign the role first.` });
+  }
+  // Avoid exact duplicates (same user+role+scope_type+branch+process active)
+  const [[existing]] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM user_assignment_scope
+     WHERE user_id = ? AND role_key = ? AND scope_type = ?
+       AND (branch_id <=> ?) AND (process_id <=> ?) AND active_status = 1
+     LIMIT 1`,
+    [user_id, role_key, scope_type, branch_id ?? null, process_id ?? null]
+  );
+  if (existing) {
+    return res.json({ ok: true, note: "scope already exists" });
+  }
+  await db.execute(
+    `INSERT INTO user_assignment_scope (id, user_id, role_key, scope_type, branch_id, process_id, active_status, assigned_by_user_id, assigned_at)
+     VALUES (UUID(), ?, ?, ?, ?, ?, 1, ?, NOW())`,
+    [user_id, role_key, scope_type, branch_id ?? null, process_id ?? null, req.authUser!.id]
+  );
+  res.json({ ok: true });
+}));
+
+// DELETE /api/access/roles/remove-scope/:scopeId — remove a scope row (admin)
+router.delete("/roles/remove-scope/:scopeId", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  await db.execute(
+    `UPDATE user_assignment_scope SET active_status = 0 WHERE id = ?`,
+    [req.params.scopeId]
+  );
+  res.json({ ok: true });
+}));
+
 // Sensitive action log query (admin only)
 // Import getAuditLogExtended from audit.log.routes
 // This endpoint now supports rich filtering via audit.log.routes.getAuditLogExtended

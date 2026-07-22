@@ -33,9 +33,16 @@ const ORG_ALL_ROLES = new Set([
   "ho_rta", "compliance_head", "ho_it",
 ]);
 
+// Roles that should be scoped to their assigned branch(es) only.
+// branch_hr, hr_branch, payroll_branch, branch_finance moved here from ORG_ALL_ROLES
+// so that branch-scoped staff only see their own branch data.
 const BRANCH_ALL_ROLES = new Set([
-  "branch_head", "bm", "branch_manager", "branch_hr", "hr_branch", "branch_finance",
-  "payroll_branch", "branch_it",
+  "branch_head", "bm", "branch_manager",
+  "branch_hr", "hr_branch",
+  "branch_finance",
+  "payroll_branch",
+  "branch_it",
+  "it",   // IT department manager — scoped to their assigned branch
 ]);
 
 const PROCESS_OR_TEAM_ROLES = new Set([
@@ -115,8 +122,13 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
     resolveEmployeeScope(userId),
   ]);
 
+  // Only elevate to ORG_ALL when BOTH conditions hold:
+  // 1. The user has a scope_type='all' assignment in user_assignment_scope, AND
+  // 2. Their effective role is inherently org-wide (i.e. in ORG_ALL_ROLES).
+  // This prevents branch managers, IT staff, or process managers from accidentally
+  // receiving company-wide data just because an admin created a broad assignment row.
   const hasAllScope = assignments.some((row) => String(row.scope_type ?? "").toLowerCase() === "all");
-  if (hasAllScope && !SELF_ONLY_ROLES.has(effectiveRole)) {
+  if (hasAllScope && ORG_ALL_ROLES.has(effectiveRole) && !SELF_ONLY_ROLES.has(effectiveRole)) {
     return { level: "ORG_ALL", branchIds: [], processIds: [], userId, role: effectiveRole };
   }
 

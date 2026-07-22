@@ -15,4 +15,9 @@ export type AppRole =
   | "qa"
   | "trainer"
   | "recruiter"
+  | "it"
+  | "branch_it"
+  | "it_admin"
+  | "quality_analyst"
+  | "operations_manager"
   | "employee";

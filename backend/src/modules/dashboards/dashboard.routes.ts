@@ -109,7 +109,8 @@ router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) =>
   });
 }));
 
-router.get("/PAYROLL_HR_DASHBOARD/operational-summary", h(async (_req: AuthenticatedRequest, res: any) => {
+router.get("/PAYROLL_HR_DASHBOARD/operational-summary", h(async (req: AuthenticatedRequest, res: any) => {
+  const { scope } = await requestedScope(req);
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
@@ -151,13 +152,16 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", h(async (_req: Authentic
     return result;
   }).catch(() => ({ initiated: 0, in_progress: 0, completed: 0, failed: 0 }));
 
+  const branchReadinessScope = scope.level === "ORG_ALL" || scope.branchIds.length === 0
+    ? { sql: "1=1", params: [] as string[] }
+    : { sql: `r.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`, params: [...scope.branchIds] };
   const branchReadiness = await db.execute<RowDataPacket[]>(
     `SELECT r.branch_id, b.branch_name, r.readiness_score, r.readiness_status, r.employee_count, r.branch_head_signoff
        FROM payroll_branch_readiness r
        LEFT JOIN branch_master b ON b.id = r.branch_id
-      WHERE r.process_month = ?
+      WHERE r.process_month = ? AND ${branchReadinessScope.sql}
       ORDER BY r.readiness_score ASC`,
-    [currentMonth],
+    [currentMonth, ...branchReadinessScope.params],
   ).then(([rows]) => rows as any[]).catch(() => []);
 
   const momTrend = await db.execute<RowDataPacket[]>(
@@ -349,6 +353,8 @@ router.get("/:dashboardCode/root-causes", h(async (req: AuthenticatedRequest, re
 }));
 
 router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRequest, res: any) => {
+  const { context } = await requestedScope(req);
+  // Scope to items assigned to this user or their primary role — prevents cross-role data leakage
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT assigned_to_role AS role, COUNT(*) AS total,
             SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
@@ -356,8 +362,10 @@ router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRe
             SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
        FROM work_item
       WHERE assigned_to_role IS NOT NULL
+        AND (assigned_to_user_id = ? OR assigned_to_role = ?)
       GROUP BY assigned_to_role
       ORDER BY overdue DESC, pending DESC`,
+    [req.authUser!.id, context.primaryRole],
   ).catch(() => [[]] as any);
   return res.json({ success: true, data: { accountability: (rows as any[]).map((row) => ({ ...row, total: Number(row.total), pending: Number(row.pending), overdue: Number(row.overdue), completed: Number(row.completed), completionRate: Number(row.total) > 0 ? Math.round(Number(row.completed) / Number(row.total) * 100) : 0 })), generatedAt: new Date().toISOString() } });
 }));

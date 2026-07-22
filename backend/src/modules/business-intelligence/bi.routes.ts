@@ -11,6 +11,8 @@ import {
   getRevenueAtRisk,
   getQualityIntervention,
 } from './bi.service.js';
+import { resolveDashboardScope, narrowDashboardScope } from '../../shared/dashboardScope.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
 
 export const biRouter = Router();
 biRouter.use(requireAuth);
@@ -25,7 +27,14 @@ const FINANCE_ROLES = ['super_admin', 'admin', 'ceo', 'payroll_head', 'finance_h
 biRouter.get('/daily-operations-pulse', requireRole(...OPS_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const date = req.query.date ? String(req.query.date) : undefined;
-    const data = await getDailyOpsPulse(date);
+    const ctx = await getUserRoleContext(req.authUser!.id);
+    const base = await resolveDashboardScope(req.authUser!.id, ctx.primaryRole);
+    const scope = await narrowDashboardScope(
+      base,
+      String(req.query.branchId ?? ""),
+      String(req.query.processId ?? ""),
+    );
+    const data = await getDailyOpsPulse(date, scope.level === "ORG_ALL" ? undefined : scope.branchIds, scope.processIds);
     return res.json({ success: true, data });
   }));
 

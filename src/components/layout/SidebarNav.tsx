@@ -17,6 +17,8 @@ export type NavItem = {
   badge?: number;
   pageCode?: string;
   roles?: string[];
+  /** When true, visible to all authenticated users regardless of role (e.g. My Space items) */
+  public?: boolean;
   description?: string;
   /** Sub-items — when present this item becomes a collapsible master */
   children?: NavItem[];

@@ -82,12 +82,15 @@ export function DashboardLayout({ children, subheader }: Props) {
 
     const isSuperAdmin = hasAnyRole("super_admin");
 
-    const canShow = (item: { pageCode?: string; roles?: string[]; adminOnly?: boolean }) => {
+    const canShow = (item: { pageCode?: string; roles?: string[]; adminOnly?: boolean; public?: boolean }) => {
       if (isSuperAdmin) return true;
       if (item.pageCode) return visibleSet.has(item.pageCode) || canViewPage(item.pageCode);
       if (item.roles?.length) return hasAnyRole(...item.roles);
       if ((item as any).adminOnly && !isAdminOrHR) return false;
-      return true;
+      // Explicitly marked public items are visible to all authenticated users
+      if (item.public === true) return true;
+      // Default DENY — items without an explicit guard are hidden unless super_admin
+      return false;
     };
 
     return navGroups
