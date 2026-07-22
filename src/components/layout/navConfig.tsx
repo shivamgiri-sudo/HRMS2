@@ -23,7 +23,7 @@ export const navGroups: NavGroup[] = [
       { label: "Notifications", href: "/notifications", icon: ic(Bell),          description: "Personal updates" },
       { label: "Work Inbox",    href: "/work-inbox",    icon: ic(ClipboardList), pageCode: "WORK_INBOX", description: "Pending actions" },
       { label: "My Team",        href: "/my-team",       icon: ic(Users2),        roles: ["manager","process_manager","tl","team_leader","assistant_manager","branch_head"], description: "Team attendance, leave, KPI & approvals" },
-      { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head"], description: "Reports" },
+      { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head","wfm"], description: "Reports" },
       { label: "My Dashboard",        href: "/my-dashboard",        icon: ic(LayoutDashboard), pageCode: "EMPLOYEE_SELF_DASHBOARD", description: "Employee dashboard" },
       { label: "CEO Dashboard",       href: "/ceo/dashboard",       icon: ic(Crown),           pageCode: "CEO_DASHBOARD", roles: ["ceo"], description: "CEO dashboard" },
       { label: "HR Dashboard",        href: "/hr/dashboard",        icon: ic(Users),           pageCode: "HR_DASHBOARD", roles: ["hr", "admin"], description: "HR dashboard" },
