@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
-import { useAuthStore } from "@/store/authStore";
+import { useAuth } from "@/contexts/AuthContext";
 import { REPORT_CATALOG as CENTRAL_CATALOG } from "@/lib/report-catalog";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -817,7 +817,7 @@ function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[])
 // ─── Main Component ─────────────────────────────────────────────────────────────
 
 export default function NativeReportsCenterV2() {
-  const { user } = useAuthStore();
+  const { user } = useAuth();
   const userRoles = useMemo(() => user?.roles ?? [], [user]);
 
   const [selectedReport, setSelectedReport] = useState<ReportDef | null>(null);
