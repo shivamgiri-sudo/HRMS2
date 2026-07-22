@@ -129,6 +129,7 @@ export default function NativeCompanyPostCreate() {
   const [content, setContent] = useState("");
   const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
   const [submitError, setSubmitError] = useState<string>("");
+  const [formKey, setFormKey] = useState(0);
   const draftImagesRef = useRef<DraftImage[]>([]);
 
   useEffect(() => {
@@ -306,6 +307,7 @@ export default function NativeCompanyPostCreate() {
       setContent("");
       setDraftImages([]);
       setSubmitError("");
+      setFormKey((k) => k + 1);
       void myPostsQuery.refetch();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to submit company post.";
@@ -447,7 +449,7 @@ export default function NativeCompanyPostCreate() {
                     </div>
                   </div>
 
-                  <form className="space-y-6" onSubmit={handleSubmit}>
+                  <form key={formKey} className="space-y-6" onSubmit={handleSubmit}>
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <Label htmlFor="company-post-copy">Post copy</Label>
@@ -462,6 +464,9 @@ export default function NativeCompanyPostCreate() {
                         onChange={(event) => setContent(event.target.value)}
                         placeholder="Share a townhall highlight, operations update, employee moment, or compliance-safe internal announcement."
                         className="min-h-[220px] rounded-[1.4rem] border-slate-200 bg-slate-50/60 px-4 py-3 text-[15px] leading-7 text-slate-700"
+                        data-gramm="false"
+                        data-gramm_editor="false"
+                        data-enable-grammarly="false"
                       />
                       <p className="text-xs text-slate-500">
                         Keep it concise and professional. Policy checks run before any approver sees it.

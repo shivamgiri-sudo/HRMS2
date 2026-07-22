@@ -153,8 +153,8 @@ export const navGroups: NavGroup[] = [
       {
         label: "Lifecycle",    href: "/employee-lifecycle", icon: ic(Users), pageCode: "EMPLOYEE_LIFECYCLE", description: "Employee lifecycle",
         children: [
-          { label: "Employee Stat Cards", href: "/employee-stat-card", icon: ic(Users), description: "Employee profile and live stats" },
-          { label: "Career Timeline",         href: "/employee-journey",      icon: ic(TrendingUp), description: "Career progression timeline" },
+          { label: "Employee Stat Cards", href: "/employee-stat-card", icon: ic(Users), roles: ["admin","hr","manager","process_manager","branch_head","super_admin"], description: "Employee profile and live stats" },
+          { label: "Career Timeline",         href: "/employee-journey",      icon: ic(TrendingUp), roles: ["admin","hr","manager","process_manager","branch_head","super_admin"], description: "Career progression timeline" },
           { label: "Employee Lifecycle", href: "/employee-lifecycle",    icon: ic(Users),     pageCode: "EMPLOYEE_LIFECYCLE", roles: ["admin","hr"], description: "Lifecycle" },
           { label: "Career Planning",    href: "/career-planning",       icon: ic(TrendingUp),pageCode: "CAREER_PLANNING",   description: "Career paths" },
           { label: "Exit Command Center",  href: "/exit/command-center",     icon: ic(UserMinus), pageCode: "EXIT_COMMAND_CENTER",     description: "Exit ops" },
@@ -204,7 +204,7 @@ export const navGroups: NavGroup[] = [
           { label: "Attendance Billing", href: "/attendance/billing-config", icon: ic(Settings2), roles: ["admin","hr","wfm","super_admin"], description: "Attendance billing rules" },
           { label: "COSEC Monitoring",      href: "/wfm/cosec-monitoring",      icon: ic(Activity),  pageCode: "WFM_LIVE_TRACKER", description: "Biometric sync" },
           { label: "Operations Board",      href: "/display/ops-board",         icon: ic(Activity),  roles: ["super_admin","admin","wfm","manager","process_manager","operations_manager"], description: "Live operations display" },
-          { label: "Break Desk",            href: "/break-desk",                icon: ic(ShieldCheck),                             description: "Guard desk portal" },
+          { label: "Break Desk",            href: "/break-desk",                icon: ic(ShieldCheck), roles: ["super_admin","admin","wfm","security_head","visitor_security","visitor_reception"], description: "Guard desk portal" },
           { label: "Break Reports",         href: "/break-reports",             icon: ic(Clock),     roles: ["super_admin","admin","hr","wfm","manager","process_manager"], description: "Daily break & attendance report" },
           { label: "Break Desk Devices",    href: "/break-management/devices",  icon: ic(Settings2), roles: ["super_admin","admin","wfm"], description: "Kiosk tokens & devices" },
         ],
@@ -239,10 +239,10 @@ export const navGroups: NavGroup[] = [
         ],
       },
       {
-        label: "Performance",  href: "/performance", icon: ic(Target), description: "Performance management",
+        label: "Performance",  href: "/performance", icon: ic(Target), roles: ["admin","hr","ceo","coo","manager","process_manager","branch_head","operations_manager","qa","quality_analyst","analyst","super_admin","employee","agent","team_leader","tl"], description: "Performance management",
         children: [
-          { label: "Performance Hub",      href: "/performance-hub",            icon: ic(BarChart3),    description: "Role-scoped KPI hub" },
-          { label: "Performance",          href: "/performance",                icon: ic(Target),       description: "Performance" },
+          { label: "Performance Hub",      href: "/performance-hub",            icon: ic(BarChart3),    roles: ["admin","hr","ceo","coo","manager","process_manager","branch_head","operations_manager","qa","quality_analyst","analyst","super_admin"], description: "Role-scoped KPI hub" },
+          { label: "Performance",          href: "/performance",                icon: ic(Target),       roles: ["admin","hr","ceo","coo","manager","process_manager","branch_head","operations_manager","qa","quality_analyst","analyst","super_admin","employee","agent","team_leader","tl"], description: "Performance" },
           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
@@ -342,10 +342,10 @@ export const navGroups: NavGroup[] = [
   {
     title: "Support",
     items: [
-      { label: "Helpdesk",       href: "/helpdesk",                          icon: ic(ShieldCheck), description: "Helpdesk" },
+      { label: "Helpdesk",       href: "/helpdesk",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","process_manager","branch_head"], description: "Helpdesk" },
       { label: "Support Command",href: "/support/command-center",            icon: ic(ShieldCheck), pageCode: "SUPPORT_COMMAND_CENTER",    description: "Support ops" },
       { label: "Grievance",      href: "/support/grievance-command-center",  icon: ic(ClipboardList), pageCode: "GRIEVANCE_COMMAND_CENTER", description: "Grievances" },
-      { label: "Benefits",       href: "/benefits",                          icon: ic(ShieldCheck), description: "Benefits" },
+      { label: "Benefits",       href: "/benefits",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","branch_head"], description: "Benefits" },
       { label: "Letters",        href: "/letters",                           icon: ic(FileText),    pageCode: "LETTERS", roles: ["admin","hr"], description: "HR letters" },
       { label: "Appointment E-sign", href: "/letters/appointment-esign",     icon: ic(FileCheck),   pageCode: "APPOINTMENT_ESIGN", roles: ["admin","hr","super_admin"], description: "Appointment letter e-signature tracking" },
     ],
@@ -356,9 +356,9 @@ export const navGroups: NavGroup[] = [
     title: "Admin",
     items: [
       {
-        label: "Access & Settings", href: "/settings", icon: ic(Settings), description: "Access & configuration",
+        label: "Access & Settings", href: "/settings", icon: ic(Settings), roles: ["admin","super_admin","hr","manager","it","payroll_head","wfm"], description: "Access & configuration",
         children: [
-          { label: "Settings",         href: "/settings",                    icon: ic(Settings),   description: "Settings" },
+          { label: "Settings",         href: "/settings",                    icon: ic(Settings),   roles: ["admin","super_admin","hr","manager","it","payroll_head","wfm"], description: "Settings" },
           { label: "Access Control",   href: "/settings/access-control",    icon: ic(Settings),   pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Access" },
           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },
           { label: "Module Access",    href: "/super-admin/module-access",  icon: ic(Lock),       pageCode: "MODULE_ACCESS", roles: ["super_admin"], description: "Module permissions" },
@@ -405,11 +405,11 @@ export const navGroups: NavGroup[] = [
         label: "System",         href: "/customization", icon: ic(Settings2), description: "System tools",
         children: [
           { label: "Customization",    href: "/customization",      icon: ic(Settings2), pageCode: "CUSTOMIZATION_MANAGER", description: "Customization rules" },
-          { label: "Visitor Mgmt",    href: "/visitor-management", icon: ic(UserPlus),                                     description: "Visitor access & security" },
+          { label: "Visitor Mgmt",    href: "/visitor-management", icon: ic(UserPlus), roles: ["admin","super_admin","hr","branch_head","security_head","visitor_security","visitor_reception","branch_hr","hr_branch"],  description: "Visitor access & security" },
           { label: "Visitor Approvals", href: "/visitor-management/approvals", icon: ic(CheckCircle), roles: ["admin","super_admin","hr","branch_head"], description: "Visitor approval queue" },
           { label: "Visitor Desk", href: "/visitor-management/desk", icon: ic(UserPlus), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Reception and check-in desk" },
           { label: "Visitor Security", href: "/visitor-management/security", icon: ic(ShieldCheck), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Visitor security operations" },
-          { label: "Assets",           href: "/assets",             icon: ic(Package),                                      description: "Assets" },
+          { label: "Assets",           href: "/assets",             icon: ic(Package), roles: ["admin","hr","super_admin","manager","branch_head"], description: "Assets" },
           { label: "Assets Manager",   href: "/assets-manager",     icon: ic(Package),   pageCode: "ASSETS_MANAGER",        description: "Asset management" },
           { label: "Mobility",         href: "/mobility",           icon: ic(Users),     pageCode: "MOBILITY",              description: "Mobility" },
           { label: "ERP",              href: "/erp",                icon: ic(Server),    pageCode: "ERP",                   description: "ERP" },
