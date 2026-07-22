@@ -336,12 +336,13 @@ function AgentDetailModal({ agent, onClose }: { agent: AgentRisk; onClose: () =>
 
 // ─── Tab Definition ───────────────────────────────────────────────────────────
 
-type TabId = "overview" | "quality" | "inbound" | "sales" | "insights" | "roi";
+type TabId = "overview" | "quality" | "inbound" | "clap" | "sales" | "insights" | "roi";
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "overview",  label: "Overview",           icon: <BarChart2 className="h-4 w-4" /> },
   { id: "quality",   label: "Quality Deep",       icon: <Activity className="h-4 w-4" /> },
   { id: "inbound",   label: "Inbound Quality",    icon: <Shield className="h-4 w-4" /> },
+  { id: "clap",      label: "CLAP VOC",           icon: <Zap className="h-4 w-4" /> },
   { id: "sales",     label: "Sales & Funnel",     icon: <TrendingUp className="h-4 w-4" /> },
   { id: "insights",  label: "AI Insights",        icon: <Brain className="h-4 w-4" /> },
   { id: "roi",       label: "ROI Calculator",     icon: <DollarSign className="h-4 w-4" /> },
@@ -412,6 +413,12 @@ export default function NativeQualityDashboard() {
     const avg = rows.length ? rows.reduce((s: number, x: any) => s + (Number(x.repeat_pct)||0), 0) / rows.length : 0;
     return { repeat_count: repeats, repeat_pct: total ? Math.round(repeats/total*1000)/10 : 0, avg_repeats: Math.round(avg*10)/10, breakdown: rows };
   }), enabled: activeTab === "inbound" });
+
+  // ── CLAP VOC queries ─────────────────────────────────────────────────────────
+  const clapQs = `startDate=${from}&endDate=${to}${clientId ? `&clientId=${clientId}` : ""}`;
+  const clapVocQ      = useQuery({ queryKey: ["clap-voc",      ...key], queryFn: () => hrmsApi.get<{ data: {call_date:string;agent_name:string;client:string;branch:string;positive_quote:string|null;negative_quote:string|null}[] }>(`/api/inbound-quality/clap-voc-quotes?${clapQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "clap" });
+  const clapSummaryQ  = useQuery({ queryKey: ["clap-summary",  ...key], queryFn: () => hrmsApi.get<{ data: {branch:string;positive_count:number;negative_count:number;total_calls:number}[] }>(`/api/inbound-quality/clap-product-voc-summary?${clapQs}`).then(r => (r as any).data ?? []), enabled: activeTab === "clap" });
+  const clapIntelQ    = useQuery({ queryKey: ["clap-intel",    ...key], queryFn: () => hrmsApi.get<{ data: {summary:{positive_voc_count:number;negative_voc_count:number;avg_cq_score:number;total_audits:number};insights:string[]} }>(`/api/inbound-quality/clap-intelligence?${clapQs}`).then(r => (r as any).data ?? null), enabled: activeTab === "clap" });
 
   const s = summaryQ.data;
   const pct = (n: number) => s && s.total_calls > 0 ? `${((n / s.total_calls) * 100).toFixed(1)}% of total` : "–";
@@ -1169,12 +1176,124 @@ export default function NativeQualityDashboard() {
     </div>
   );
 
+  // ─── Tab: CLAP VOC ───────────────────────────────────────────────────────────
+
+  const CLAP_BRANCH_META: Record<string, { label: string; pos_color: string; neg_color: string }> = {
+    customer: { label: "Customer",  pos_color: "bg-emerald-100 text-emerald-800", neg_color: "bg-red-100 text-red-800" },
+    logistic: { label: "Logistics", pos_color: "bg-blue-100 text-blue-800",     neg_color: "bg-orange-100 text-orange-800" },
+    agent:    { label: "Agent",     pos_color: "bg-violet-100 text-violet-800",  neg_color: "bg-rose-100 text-rose-800" },
+    product:  { label: "Product",   pos_color: "bg-amber-100 text-amber-800",    neg_color: "bg-red-100 text-red-800" },
+  };
+
+  const [clapBranch, setClapBranch] = useState<string>("customer");
+
+  const ClapVocTab = (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50 to-indigo-50 p-5 shadow-sm">
+        <div className="flex items-center gap-3 mb-1">
+          <Zap className="h-5 w-5 text-purple-600" />
+          <h2 className="font-black text-purple-900">CLAP Voice of Customer</h2>
+          <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-700">Since Jul 17, 2026</span>
+        </div>
+        <p className="text-xs text-purple-600">Customer · Logistics · Agent · Product — verbatim feedback captured during inbound quality audits</p>
+      </div>
+
+      {/* Intelligence strip */}
+      {clapIntelQ.isLoading ? <Spinner /> : clapIntelQ.data?.summary && (() => {
+        const s = clapIntelQ.data!.summary;
+        return (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiCard label="Total Audited" value={s.total_audits ?? 0} icon={<BarChart2 className="h-5 w-5" />} tone="blue" animate />
+            <KpiCard label="Avg CQ Score" value={`${safeNumber(s.avg_cq_score).toFixed(1)}%`} icon={<Target className="h-5 w-5" />} tone="slate" />
+            <KpiCard label="Positive VOC" value={s.positive_voc_count ?? 0} icon={<TrendingUp className="h-5 w-5" />} tone="emerald" animate />
+            <KpiCard label="Negative VOC" value={s.negative_voc_count ?? 0} icon={<AlertTriangle className="h-5 w-5" />} tone="red" animate />
+          </div>
+        );
+      })()}
+
+      {/* AI Insights from CLAP */}
+      {clapIntelQ.data?.insights && clapIntelQ.data.insights.length > 0 && (
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-blue-800 flex items-center gap-2"><Brain className="h-4 w-4" /> CLAP Intelligence Insights</p>
+          <div className="space-y-2">
+            {clapIntelQ.data.insights.map((ins, i) => (
+              <div key={i} className="flex items-start gap-2 text-sm text-blue-700">
+                <span className="mt-0.5 flex-shrink-0 h-4 w-4 rounded-full bg-blue-200 flex items-center justify-center text-[10px] font-black">{i + 1}</span>
+                <span>{ins}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Branch summary bar chart */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="mb-4 text-sm font-bold text-slate-700">VOC Volume by Branch</p>
+        {clapSummaryQ.isLoading ? <Spinner size="sm" /> : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={clapSummaryQ.data ?? []} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="branch" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+              <Bar dataKey="positive_count" name="Positive" fill="#10b981" radius={[3,3,0,0]} />
+              <Bar dataKey="negative_count" name="Negative" fill="#ef4444" radius={[3,3,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Branch selector + quote cards */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-bold text-slate-700 mr-2">Verbatim Quotes —</p>
+          {Object.entries(CLAP_BRANCH_META).map(([id, m]) => (
+            <button key={id} onClick={() => setClapBranch(id)}
+              className={`rounded-full px-3 py-1 text-xs font-bold border transition-colors ${clapBranch === id ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-300 hover:border-slate-500"}`}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+        {clapVocQ.isLoading ? <Spinner size="sm" /> : (() => {
+          const quotes = (clapVocQ.data ?? []).filter((q: any) => q.branch === clapBranch);
+          const meta = CLAP_BRANCH_META[clapBranch] ?? CLAP_BRANCH_META.customer;
+          if (quotes.length === 0) return <p className="py-8 text-center text-sm text-slate-400">No VOC quotes for this branch in the selected period (data available from Jul 17, 2026)</p>;
+          return (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {quotes.slice(0, 20).map((q: any, i: number) => (
+                <div key={i} className="rounded-xl border border-slate-100 p-4 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
+                    <span className="font-medium text-slate-600">{q.agent_name || "—"}</span>
+                    <span>{q.call_date}</span>
+                  </div>
+                  <div className="text-xs text-slate-500">{q.client}</div>
+                  {q.positive_quote && (
+                    <div className={`rounded-lg px-3 py-2 text-xs ${meta.pos_color}`}>
+                      <span className="font-bold">+ </span>{q.positive_quote}
+                    </div>
+                  )}
+                  {q.negative_quote && (
+                    <div className={`rounded-lg px-3 py-2 text-xs ${meta.neg_color}`}>
+                      <span className="font-bold">− </span>{q.negative_quote}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   const TAB_CONTENT: Record<TabId, React.ReactNode> = {
     overview: OverviewTab,
     quality:  QualityTab,
     inbound:  InboundQualityTab,
+    clap:     ClapVocTab,
     sales:    SalesTab,
     insights: InsightsTab,
     roi:      RoiTab,

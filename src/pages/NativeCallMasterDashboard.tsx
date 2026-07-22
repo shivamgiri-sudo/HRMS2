@@ -6,7 +6,7 @@ import {
 import {
   Phone, TrendingUp, TrendingDown, Users, AlertTriangle, Shield,
   Award, Download, RefreshCcw, ChevronDown, ChevronUp, Activity,
-  Target, Zap, BarChart2,
+  Target, Zap, BarChart2, DownloadCloud,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -39,7 +39,7 @@ const firstOfMonth = () => {
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
 };
 
-type Tab = "overview" | "opening" | "customer" | "outbound" | "export";
+type Tab = "overview" | "opening" | "customer" | "outbound" | "script" | "export";
 
 function Spinner() {
   return (
@@ -183,6 +183,7 @@ export default function NativeCallMasterDashboard() {
     { id: "opening",   label: "Opening Intelligence" },
     { id: "customer",  label: "Customer Intelligence" },
     { id: "outbound",  label: "Outbound Sales" },
+    { id: "script",    label: "Magical Script" },
     { id: "export",    label: "Export" },
   ];
 
@@ -352,7 +353,12 @@ export default function NativeCallMasterDashboard() {
 
         {/* ── OUTBOUND SALES TAB ─────────────────────────────────────── */}
         {!loading && tab === "outbound" && (
-          <OutboundSalesTab qs={qs} obSummary={obSummary} />
+          <OutboundSalesTab qs={qs} obSummary={obSummary} kpis={kpis} />
+        )}
+
+        {/* ── MAGICAL SCRIPT TAB ─────────────────────────────────────── */}
+        {!loading && tab === "script" && (
+          <MagicalScriptTab qs={qs} />
         )}
 
         {/* ── AI INSIGHTS / EXPORT TAB ───────────────────────────────── */}
@@ -472,7 +478,7 @@ function CustomerIntelligenceTab({ qs, ciExec }: { qs: string; ciExec: CIExec | 
   );
 }
 
-function OutboundSalesTab({ qs, obSummary }: { qs: string; obSummary: OBSummary | null }) {
+function OutboundSalesTab({ qs, obSummary, kpis }: { qs: string; obSummary: OBSummary | null; kpis: KPIData | null }) {
   const [dailyTrend, setDailyTrend] = useState<{ date: string; calls: number; sales: number; conversion: number }[]>([]);
   const [agents, setAgents] = useState<{ agent: string; calls: number; sales: number; conversion: number }[]>([]);
 
@@ -486,12 +492,43 @@ function OutboundSalesTab({ qs, obSummary }: { qs: string; obSummary: OBSummary 
   return (
     <div className="space-y-5">
       {obSummary && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatCard label="Total Calls" value={n(obSummary.total).toLocaleString()} icon={Phone} color="blue" />
-          <StatCard label="Sales" value={n(obSummary.sales).toLocaleString()} icon={Award} color="green" />
-          <StatCard label="Conversion" value={pct(obSummary.conversion)} icon={Target} color="amber" />
-          <StatCard label="Avg Call Duration" value={`${n(obSummary.avg_duration)}m`} icon={Activity} color="purple" />
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <StatCard label="Total Calls" value={n(obSummary.total).toLocaleString()} icon={Phone} color="blue" />
+            <StatCard label="Sales" value={n(obSummary.sales).toLocaleString()} icon={Award} color="green" />
+            <StatCard label="Conversion" value={pct(obSummary.conversion)} icon={Target} color="amber" />
+            <StatCard label="Avg Call Duration" value={`${n(obSummary.avg_duration)}m`} icon={Activity} color="purple" />
+          </div>
+          {/* Customer sentiment scores from outbound */}
+          {(kpis?.outbound?.trust_score != null || kpis?.outbound?.cx_score != null) && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+              <StatCard
+                label="Trust Score"
+                value={`${n(kpis?.outbound?.trust_score)}/100`}
+                sub="satisfaction·offer·sentiment weighted"
+                icon={Shield}
+                color={n(kpis?.outbound?.trust_score) >= 70 ? "green" : n(kpis?.outbound?.trust_score) >= 50 ? "amber" : "red"}
+              />
+              <StatCard
+                label="CX Score"
+                value={`${n(kpis?.outbound?.cx_score)}/100`}
+                sub="positive feedback + offer acceptance"
+                icon={Zap}
+                color={n(kpis?.outbound?.cx_score) >= 65 ? "green" : n(kpis?.outbound?.cx_score) >= 50 ? "amber" : "red"}
+              />
+              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div className={`rounded-xl p-2 ${kpis?.outbound?.happiness_index === "High" ? "bg-emerald-50 text-emerald-600" : kpis?.outbound?.happiness_index === "Medium" ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"}`}>
+                    <TrendingUp className="h-5 w-5" />
+                  </div>
+                </div>
+                <p className="mt-3 text-2xl font-bold text-slate-800">{kpis?.outbound?.happiness_index ?? "—"}</p>
+                <p className="text-xs font-medium text-slate-500">Happiness Index</p>
+                <p className="mt-0.5 text-xs text-slate-400">trust ≥70 + cx ≥65 + conversion &gt;0</p>
+              </div>
+            </div>
+          )}
+        </>
       )}
       <div className="grid gap-5 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -523,6 +560,157 @@ function OutboundSalesTab({ qs, obSummary }: { qs: string; obSummary: OBSummary 
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Magical Script Tab ────────────────────────────────────────────────────────
+
+interface ScriptStage { stage: number; title: string; goal: string; script: string; tip: string }
+interface ObjectionRow { objection: string; frequency: number; resolution_rate: number; top_rebuttal?: string }
+interface ScriptData {
+  summary: { total_calls: number; conversion_rate: number; avg_talk_time_sec: number; objection_types_found: number; rebuttal_coverage: number };
+  call_flow: ScriptStage[];
+  top_objections: ObjectionRow[];
+  generated_at: string;
+}
+
+const STAGE_COLORS = ["bg-blue-500", "bg-indigo-500", "bg-violet-500", "bg-amber-500", "bg-emerald-500", "bg-teal-500"];
+
+function MagicalScriptTab({ qs }: { qs: string }) {
+  const [data, setData] = useState<ScriptData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [openStage, setOpenStage] = useState<number | null>(null);
+  const [generated, setGenerated] = useState(false);
+
+  function generate() {
+    setLoading(true);
+    hrmsApi.get<{ data: ScriptData }>(`/api/quality-dashboard/magical-script?${qs}`)
+      .then(r => { setData((r as any).data ?? r); setGenerated(true); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }
+
+  if (!generated) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-indigo-50 py-16 text-center gap-4">
+        <div className="rounded-full bg-indigo-100 p-5">
+          <Zap className="h-8 w-8 text-indigo-600" />
+        </div>
+        <div>
+          <p className="text-lg font-bold text-slate-800">Magical Script Generator</p>
+          <p className="mt-1 text-sm text-slate-500 max-w-md mx-auto">
+            Generates a data-driven call flow script based on real objection patterns and rebuttal effectiveness from your selected date range.
+          </p>
+        </div>
+        <button onClick={generate} disabled={loading}
+          className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60">
+          <Zap className="h-4 w-4" /> Generate Script for Selected Period
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) return <Spinner />;
+  if (!data) return null;
+
+  const { summary, call_flow, top_objections } = data;
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}m ${s % 60}s`;
+
+  return (
+    <div className="space-y-5">
+      {/* Header banner */}
+      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-indigo-500">AI-Powered · Rule-Based</p>
+            <h2 className="mt-0.5 text-xl font-black text-indigo-900">Magical Call Script</h2>
+            <p className="mt-1 text-xs text-indigo-600">Generated from {summary.total_calls.toLocaleString()} calls · {summary.objection_types_found} objection types · {summary.rebuttal_coverage} rebuttals matched</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {[
+              { label: "Conversion", value: `${summary.conversion_rate}%` },
+              { label: "Avg Talk Time", value: fmtTime(summary.avg_talk_time_sec) },
+              { label: "Rebuttal Coverage", value: `${summary.rebuttal_coverage}/${summary.objection_types_found}` },
+            ].map(s => (
+              <div key={s.label} className="rounded-xl bg-white/70 px-4 py-2 text-center shadow-sm">
+                <p className="text-base font-black text-indigo-900">{s.value}</p>
+                <p className="text-xs text-indigo-500">{s.label}</p>
+              </div>
+            ))}
+            <button onClick={generate} className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700">
+              <DownloadCloud className="h-4 w-4" /> Regenerate
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Call flow stages */}
+      <div className="space-y-3">
+        <p className="text-sm font-semibold text-slate-600 flex items-center gap-2"><Activity className="h-4 w-4 text-slate-400" /> Call Flow — {call_flow.length} Stages</p>
+        {call_flow.map((stage, i) => {
+          const isOpen = openStage === stage.stage;
+          return (
+            <div key={stage.stage} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <button
+                onClick={() => setOpenStage(isOpen ? null : stage.stage)}
+                className="w-full flex items-center gap-4 p-4 text-left hover:bg-slate-50 transition-colors"
+              >
+                <div className={`flex-shrink-0 h-8 w-8 rounded-full ${STAGE_COLORS[i] ?? "bg-slate-400"} flex items-center justify-center text-white font-black text-sm`}>
+                  {stage.stage}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-slate-800">{stage.title}</p>
+                  <p className="text-xs text-slate-500 truncate">{stage.goal}</p>
+                </div>
+                <ChevronDown className={`h-4 w-4 text-slate-400 flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+              </button>
+              {isOpen && (
+                <div className="border-t border-slate-100 px-5 pb-5 pt-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1.5">Script</p>
+                    <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-700 whitespace-pre-line leading-relaxed font-mono">
+                      {stage.script}
+                    </div>
+                  </div>
+                  <div className={`rounded-xl border px-4 py-3 text-sm ${stage.tip.startsWith("⚠") ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-100 bg-blue-50 text-blue-800"}`}>
+                    <span className="font-bold">Tip: </span>{stage.tip}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Objection breakdown */}
+      {top_objections.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="mb-4 text-sm font-semibold text-slate-700 flex items-center gap-2"><Shield className="h-4 w-4 text-red-400" /> Top Objections &amp; Resolution Rates</p>
+          <div className="space-y-3">
+            {top_objections.map((obj, i) => (
+              <div key={i} className="rounded-xl border border-slate-100 p-4">
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <p className="text-sm font-semibold text-slate-800">{obj.objection}</p>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{obj.frequency} calls</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${obj.resolution_rate >= 30 ? "bg-emerald-100 text-emerald-700" : obj.resolution_rate >= 15 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                      {obj.resolution_rate}% resolved
+                    </span>
+                  </div>
+                </div>
+                <div className="mb-2 h-1.5 rounded-full bg-slate-100">
+                  <div className={`h-1.5 rounded-full ${obj.resolution_rate >= 30 ? "bg-emerald-500" : obj.resolution_rate >= 15 ? "bg-amber-400" : "bg-red-400"}`}
+                    style={{ width: `${Math.min(obj.resolution_rate, 100)}%` }} />
+                </div>
+                {obj.top_rebuttal && (
+                  <p className="text-xs text-slate-500 italic">Recommended: &quot;{obj.top_rebuttal}&quot;</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
