@@ -43,6 +43,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { useAuthStore } from "@/store/authStore";
+import { REPORT_CATALOG as CENTRAL_CATALOG } from "@/lib/report-catalog";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -165,9 +166,116 @@ const STATUS_FILTER: FilterDef = {
   ],
 };
 
-// ─── Report Catalog with Full Definitions ──────────────────────────────────────
+// ─── Filter Mapping for Central Catalog ───────────────────────────────────────
 
-const CATALOG: ReportDef[] = [
+function buildFiltersForReport(code: string): FilterDef[] {
+  const dateFilters = [DATE_FROM, DATE_TO];
+  const monthFilter = [MONTH_FILTER];
+  const branchProcess = [BRANCH_FILTER, PROCESS_FILTER];
+  const branchOnly = [BRANCH_FILTER];
+
+  const filterMap: Record<string, FilterDef[]> = {
+    "headcount": [...branchProcess, DEPT_FILTER],
+    "employee-master": [...branchProcess, DEPT_FILTER, STATUS_FILTER, ...dateFilters],
+    "manager-mapping": branchProcess,
+    "org-structure-snapshot": branchOnly,
+    "cost-centre-headcount": branchOnly,
+    "employee-movement": [...dateFilters, ...branchProcess],
+    "confirmation-due-list": branchProcess,
+    "contract-expiry-list": branchOnly,
+    "lifecycle-events": [...branchProcess, ...dateFilters],
+    "increment-promotion-history": [...branchOnly, ...dateFilters],
+    "birthday-list": [...branchOnly, MONTH_FILTER],
+    "anniversary-list": [...branchOnly, MONTH_FILTER],
+    "attendance-daily": [...dateFilters, ...branchProcess],
+    "daily-hc-shift": [...dateFilters, ...branchProcess],
+    "shift-adherence-detail": [...dateFilters, ...branchProcess],
+    "attendance-summary": [...monthFilter, ...branchProcess],
+    "attendance-register-grid": [...monthFilter, ...branchProcess],
+    "late-arrival-summary": [...monthFilter, ...branchProcess],
+    "overtime-summary": [...monthFilter, ...branchProcess],
+    "biometric-reconciliation": [...dateFilters, ...branchProcess],
+    "regularization-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
+    "attendance-dispute-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
+    "habitual-absentee-list": [...monthFilter, ...branchProcess],
+    "daily-shrinkage-report": [...dateFilters, ...branchProcess],
+    "monthly-shrinkage-trend": [...dateFilters, ...branchProcess],
+    "punch-raw-export": [...dateFilters, ...branchProcess],
+    "leave-balance": [...branchProcess],
+    "leave-allocation-register": branchOnly,
+    "leave-utilization": [...dateFilters, BRANCH_FILTER],
+    "leave-trend-monthly": branchOnly,
+    "leave-lwp-reconciliation": [...monthFilter, branchOnly[0]],
+    "maternity-paternity-register": branchOnly,
+    "leave-encashment-register": branchOnly,
+    "leave-lapse-summary": branchOnly,
+    "holiday-master-list": branchOnly,
+    "payroll-register": [...monthFilter, ...branchProcess],
+    "payroll-variance": [...monthFilter, ...branchProcess],
+    "salary-sheet-onfido": [...monthFilter, branchOnly[0]],
+    "bank-advice": [...monthFilter, branchOnly[0]],
+    "payroll-reconciliation": [...monthFilter, branchOnly[0]],
+    "arrear-payment-register": [...monthFilter, branchOnly[0]],
+    "pf-contribution-register": [...monthFilter, branchOnly[0]],
+    "pf-ecr-format": [...monthFilter, branchOnly[0]],
+    "esic-contribution-register": [...monthFilter, branchOnly[0]],
+    "pt-register": [...monthFilter, branchOnly[0]],
+    "tds-computation-register": branchOnly,
+    "form-16-status": branchOnly,
+    "investment-declaration-status": branchOnly,
+    "gratuity-liability-register": branchOnly,
+    "resignation-register": [...dateFilters, ...branchProcess],
+    "fnf-pending-register": branchOnly,
+    "fnf-settlement-register": [...dateFilters, branchOnly[0]],
+    "clearance-status-register": branchOnly,
+    "monthly-attrition-summary": [...dateFilters, ...branchProcess],
+    "exit-reason-analysis": [...dateFilters, ...branchProcess],
+    "tenure-distribution": branchProcess,
+    "early-attrition-report": [...dateFilters, ...branchProcess],
+    "recruitment-pipeline": branchProcess,
+    "candidate-tracker": [...dateFilters, ...branchProcess],
+    "source-effectiveness": [...dateFilters, branchOnly[0]],
+    "recruiter-productivity": [...dateFilters, branchOnly[0]],
+    "offer-tracker": [...dateFilters, ...branchProcess],
+    "joining-pending": branchProcess,
+    "agent-performance-summary": [...monthFilter, ...branchProcess],
+    "team-performance-summary": [...monthFilter, ...branchProcess],
+    "quality-audit-log": [...dateFilters, ...branchProcess],
+    "fatal-error-register": [...dateFilters, ...branchProcess],
+    "roster-published": [...dateFilters, ...branchProcess],
+    "roster-variance": [...dateFilters, ...branchProcess],
+    "shift-swap-register": [...dateFilters, ...branchProcess],
+    "week-off-calendar": [...dateFilters, ...branchProcess],
+    "asset-inventory": branchOnly,
+    "asset-allocation-register": branchOnly,
+    "asset-movement-log": [...dateFilters, branchOnly[0]],
+    "training-completion-status": branchProcess,
+    "certification-status": branchProcess,
+    "training-batch-summary": [...dateFilters, ...branchProcess],
+    "document-expiry-tracker": branchOnly,
+    "document-verification-status": branchOnly,
+    "missing-documents-report": branchProcess,
+    "uan-status-report": branchOnly,
+    "esic-status-report": branchOnly,
+    "pan-verification-status": branchOnly,
+    "bank-account-verification": branchOnly,
+    "identity-source-snapshot": branchOnly,
+  };
+
+  return filterMap[code] ?? [...dateFilters, ...branchProcess];
+}
+
+// ─── Build CATALOG from central source + local filters ────────────────────────
+
+const CATALOG: ReportDef[] = CENTRAL_CATALOG.map(r => ({
+  ...r,
+  filters: buildFiltersForReport(r.code),
+}));
+
+// ─── Legacy inline kept for compatibility (will be removed once all reports added to central catalog) ──
+// These are deduplicated by code — CENTRAL_CATALOG takes precedence
+
+const _LEGACY_CATALOG_UNUSED: ReportDef[] = [
   // Attendance - Daily
   {
     code: "attendance-daily",
@@ -579,10 +687,24 @@ const CATEGORY_GRADIENTS: Record<string, { from: string; to: string; icon: typeo
   "Attendance": { from: "from-violet-500", to: "to-purple-600", icon: CalendarDays },
   "Leave": { from: "from-emerald-500", to: "to-teal-600", icon: Clock },
   "Payroll": { from: "from-amber-500", to: "to-orange-600", icon: CreditCard },
-  "Statutory & Compliance": { from: "from-red-500", to: "to-rose-600", icon: FileCheck },
+  "Statutory": { from: "from-red-500", to: "to-rose-600", icon: FileCheck },
+  "Exit & Separation": { from: "from-slate-500", to: "to-gray-700", icon: HelpCircle },
+  "Attrition & Trends": { from: "from-orange-500", to: "to-red-600", icon: TrendingDown },
+  "Recruitment": { from: "from-sky-500", to: "to-blue-600", icon: UserPlus },
+  "Operations & Quality": { from: "from-teal-500", to: "to-green-600", icon: BarChart3 },
+  "WFM & Roster": { from: "from-cyan-500", to: "to-teal-600", icon: Layers },
+  "Assets": { from: "from-amber-600", to: "to-yellow-700", icon: Package },
+  "Training": { from: "from-indigo-500", to: "to-violet-600", icon: Award },
+  "Documents": { from: "from-green-500", to: "to-emerald-600", icon: FileCheck },
+  "Identity": { from: "from-rose-500", to: "to-pink-600", icon: Globe },
 };
 
-const CATEGORY_ORDER = ["HR & Workforce", "Attendance", "Payroll"];
+const CATEGORY_ORDER = [
+  "HR & Workforce", "Attendance", "Leave", "Payroll", "Statutory",
+  "Exit & Separation", "Attrition & Trends", "Recruitment",
+  "Operations & Quality", "WFM & Roster", "Assets", "Training",
+  "Documents", "Identity",
+];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
