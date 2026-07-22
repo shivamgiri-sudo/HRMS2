@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@/stores/auth.store";
-import { useWorkforceAccess } from "@/hooks/useWorkforceAccess";
+import { useAuthStore } from "@/store/authStore";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -971,7 +971,7 @@ function SingleProcessView({ userId, roleKeys }: { userId: string; roleKeys: str
 // ---------------------------------------------------------------------------
 
 export default function ProcessPayrollReadiness() {
-  const user = useAuthStore((s) => s.user);
+  const { user } = useAuthStore();
   const { roleKeys, isLoading: roleLoading } = useWorkforceAccess();
 
   const isHO = roleKeys.some(r => ["payroll_head", "super_admin", "admin", "payroll"].includes(r));
