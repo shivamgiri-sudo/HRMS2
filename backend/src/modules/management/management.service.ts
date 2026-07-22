@@ -848,6 +848,7 @@ export const managementService = {
          e.id, e.employee_code, e.full_name as employee_name,
          e.designation_id, e.employment_status,
          b.branch_name,
+         COALESCE(dm.designation_name, e.designation_id) as designation_name,
          COALESCE(
            (SELECT adr.attendance_status FROM attendance_daily_record adr
             WHERE adr.employee_id = e.id AND adr.record_date = CURDATE() LIMIT 1),
@@ -855,6 +856,7 @@ export const managementService = {
          ) as today_status
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
        WHERE e.employment_status = 'active'
        ORDER BY e.full_name ASC
        LIMIT 20`
@@ -893,6 +895,9 @@ export const managementService = {
         employee_name: String(row.employee_name),
         branch_name: row.branch_name ? String(row.branch_name) : null,
         today_status: String(row.today_status),
+        status: String(row.today_status),
+        attendance_status: String(row.today_status),
+        designation_name: row.designation_name ? String(row.designation_name) : null,
       })),
       pending_timesheets: numberValue((timesheetResult as any)[0]?.[0]?.count ?? 0),
       expired_documents: numberValue((expiredDocsResult as any)[0]?.[0]?.count ?? 0),

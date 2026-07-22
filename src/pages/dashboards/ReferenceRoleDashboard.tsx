@@ -281,24 +281,24 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   );
 
   const qualitySummaryQuery = useQuery({
-    queryKey: ["reference-dashboard-quality-summary"],
-    queryFn: () => hrmsApi.get<unknown>("/api/quality-dashboard/summary"),
+    queryKey: ["reference-dashboard-quality-summary", branchId, processId],
+    queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/summary${params}`),
     enabled: accessGranted && variant === "quality",
     staleTime: 60_000,
     retry: 1,
   });
 
   const qualityTrendQuery = useQuery({
-    queryKey: ["reference-dashboard-quality-trend"],
-    queryFn: () => hrmsApi.get<unknown>("/api/quality-dashboard/trend?granularity=day"),
+    queryKey: ["reference-dashboard-quality-trend", branchId, processId],
+    queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/trend?granularity=day${branchId ? `&branchId=${branchId}` : ""}${processId ? `&processId=${processId}` : ""}`),
     enabled: accessGranted && variant === "quality",
     staleTime: 60_000,
     retry: 1,
   });
 
   const qualityAgentsQuery = useQuery({
-    queryKey: ["reference-dashboard-quality-agents"],
-    queryFn: () => hrmsApi.get<unknown>("/api/quality-dashboard/agents?limit=100"),
+    queryKey: ["reference-dashboard-quality-agents", branchId, processId],
+    queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/agents?limit=100${branchId ? `&branchId=${branchId}` : ""}${processId ? `&processId=${processId}` : ""}`),
     enabled: accessGranted && variant === "quality",
     staleTime: 60_000,
     retry: 1,
@@ -410,7 +410,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     return parts.length > 0 ? `${parts.join(". ")}. Available dashboard data is still shown.` : null;
   }, [employeeSourceErrors, networkErrorCount, unavailableMetrics]);
 
-  const filterControl = ["wfm", "ceo"].includes(variant) ? (
+  const filterControl = ["wfm", "ceo", "quality", "operations", "manager", "super_admin"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <ScopedFilterBar
         onBranchChange={setBranchId}

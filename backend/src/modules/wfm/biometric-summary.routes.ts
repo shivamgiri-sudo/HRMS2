@@ -97,7 +97,9 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
             SUM(CASE WHEN adr.late_by_minutes > 240 THEN 1 ELSE 0 END) AS variance_4_plus,
             ROUND(SUM(COALESCE(adr.raw_minutes,0)) / 60, 2) AS total_ot_hours,
             COUNT(DISTINCT CASE WHEN adr.raw_minutes > 480 THEN adr.employee_id END) AS overtime_employees,
-            ROUND((SUM(CASE WHEN adr.raw_minutes > 480 THEN adr.raw_minutes - 480 ELSE 0 END)) / 60, 2) AS overtime_hours
+            ROUND((SUM(CASE WHEN adr.raw_minutes > 480 THEN adr.raw_minutes - 480 ELSE 0 END)) / 60, 2) AS overtime_hours,
+            ROUND(AVG(CASE WHEN adr.late_mark = 1 THEN adr.late_by_minutes ELSE NULL END), 1) AS avg_late_minutes,
+            ROUND(SUM(CASE WHEN adr.work_mode IN ('wfh','remote') THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS early_leave_pct
        FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
       WHERE ${where}`,

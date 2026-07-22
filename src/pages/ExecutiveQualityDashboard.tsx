@@ -53,9 +53,15 @@ function statusBadge(status: string): string {
 
 const ALLOWED_ROLES = ["super_admin", "admin", "ceo", "coo"] as const;
 
+function toISODate(d: Date) { return d.toISOString().slice(0, 10); }
+function daysAgo(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return toISODate(d); }
+
 export default function ExecutiveQualityDashboard() {
   const { user } = useAuth();
   const [daysBack, setDaysBack] = useState<7 | 30>(30);
+  const [fromDate, setFromDate] = useState(() => daysAgo(30));
+  const [toDate, setToDate] = useState(() => toISODate(new Date()));
+  const [useCustomRange, setUseCustomRange] = useState(false);
 
   const { data: roleData, isLoading: roleLoading } = useUserRole();
   const isAllowed =
@@ -63,10 +69,14 @@ export default function ExecutiveQualityDashboard() {
       (ALLOWED_ROLES as readonly string[]).includes(r)
     ) ?? false;
 
+  const queryParams = useCustomRange
+    ? `fromDate=${fromDate}&toDate=${toDate}`
+    : `daysBack=${daysBack}`;
+
   const { data, isLoading, isError, error } = useQuery<ExecutiveQualityData>({
-    queryKey: ["executive-quality-summary", daysBack],
+    queryKey: ["executive-quality-summary", queryParams],
     queryFn: () =>
-      hrmsApi.get(`/api/executive/quality-summary?daysBack=${daysBack}`).then((r) => r.data),
+      hrmsApi.get(`/api/executive/quality-summary?${queryParams}`).then((r) => r.data),
     enabled: !!user && isAllowed,
   });
 
@@ -178,15 +188,15 @@ export default function ExecutiveQualityDashboard() {
               Org-wide quality KPIs, performer rankings and process health
             </p>
           </div>
-          {/* Days selector */}
-          <div className="flex items-center gap-2">
+          {/* Period selector */}
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-slate-500 mr-1">Period:</span>
             {([7, 30] as const).map((d) => (
               <button
                 key={d}
-                onClick={() => setDaysBack(d)}
+                onClick={() => { setDaysBack(d); setUseCustomRange(false); }}
                 className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                  daysBack === d
+                  !useCustomRange && daysBack === d
                     ? "bg-slate-900 text-white border-slate-900"
                     : "bg-white text-slate-600 border-slate-300 hover:border-slate-500"
                 }`}
@@ -194,6 +204,25 @@ export default function ExecutiveQualityDashboard() {
                 {d}d
               </button>
             ))}
+            <button
+              onClick={() => setUseCustomRange(true)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                useCustomRange
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-600 border-slate-300 hover:border-slate-500"
+              }`}
+            >
+              Custom
+            </button>
+            {useCustomRange && (
+              <>
+                <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm" />
+                <span className="text-slate-400 text-sm">—</span>
+                <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm" />
+              </>
+            )}
           </div>
         </div>
 
