@@ -93,7 +93,8 @@ export default function WorkforcePageGate({ pageCode, children }: WorkforcePageG
 
   // Show a minimal inline spinner — ProtectedRoute already waited for auth/role queries,
   // so this loading state is almost never visible in practice after initial page load.
-  if (isLoading || !data) {
+  // Do not block on !data: if loading is done but data is absent the isError branch handles it.
+  if (isLoading) {
     return (
       <div className="flex h-40 items-center justify-center">
         <div className="h-6 w-6 animate-spin rounded-full border-4 border-slate-200 border-t-slate-600" />

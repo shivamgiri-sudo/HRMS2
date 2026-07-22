@@ -195,75 +195,73 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     can_export: number | boolean;
   };
 
-  // 1. Roles from MySQL user_roles
-  const [roleRows] = await db.execute<RowDataPacket[]>(
-    "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-    [userId]
-  );
+  // Batch 1: all queries independent of each other run in parallel
+  const [[roleRows], [empRows], [scopeRows], [disabledRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+      [userId]
+    ),
+    db.execute<RowDataPacket[]>(
+      "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id
+       FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
+      [userId]
+    ),
+    db.execute<RowDataPacket[]>(
+      "SELECT page_code FROM page_catalog WHERE active_status = 0"
+    ),
+  ]);
+
   const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
-
-  // 2. Employee record linked to this user
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, employee_code, first_name, last_name, full_name FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-    [userId]
-  );
   const emp = (empRows as EmployeeRow[])[0] ?? null;
-
-  // 3. Assignment scopes
-  const [scopeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id
-     FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
-    [userId]
-  );
   const scopes = scopeRows as ScopeRow[];
-
-  const [disabledRows] = await db.execute<RowDataPacket[]>(
-    "SELECT page_code FROM page_catalog WHERE active_status = 0"
-  );
   const disabledPageCodes = (disabledRows as DisabledPageRow[]).map((row) => String(row.page_code));
 
-  // 4. Page permissions - union of all role grants (most permissive wins).
-  // page_catalog.active_status is the global compliance kill-switch:
-  // disabled pages are hidden even if a role or direct user assignment grants access.
+  // Batch 2: page-permissions (depends on roles) + user-page-overrides run in parallel
   const allRoleKeys = [...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")])].filter(Boolean);
-  let pages: AccessMeResponse["pages"] = [];
-  if (allRoleKeys.length > 0) {
-    const placeholders = allRoleKeys.map(() => "?").join(",");
-    const [pageRows] = await db.execute<RowDataPacket[]>(
-      `SELECT rpa.page_code,
-              MAX(rpa.can_view)   AS can_view,
-              MAX(rpa.can_create) AS can_create,
-              MAX(rpa.can_edit)   AS can_edit,
-              MAX(rpa.can_delete) AS can_delete,
-              MAX(rpa.can_export) AS can_export
-       FROM role_page_access rpa
-       LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
-       WHERE rpa.role_key IN (${placeholders})
-         AND rpa.active_status = 1
-         AND COALESCE(pc.active_status, 1) = 1
-       GROUP BY rpa.page_code`,
-      allRoleKeys
-    );
-    pages = (pageRows as PageRow[]).map((r) => ({
-      page_code:  r.page_code as string,
-      can_view:   Boolean(r.can_view),
-      can_create: Boolean(r.can_create),
-      can_edit:   Boolean(r.can_edit),
-      can_delete: Boolean(r.can_delete),
-      can_export: Boolean(r.can_export),
-    }));
-  }
 
-  // 5. User page overrides — take precedence over role-based access
-  const [userPageRows] = await db.execute<RowDataPacket[]>(
-    `SELECT upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export
-     FROM user_page_access upa
-     LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
-     WHERE upa.user_id = ?
-       AND upa.active_status = 1
-       AND COALESCE(pc.active_status, 1) = 1`,
-    [userId]
-  );
+  const placeholders = allRoleKeys.map(() => "?").join(",");
+  const [pageRowsResult, [userPageRows]] = await Promise.all([
+    allRoleKeys.length > 0
+      ? db.execute<RowDataPacket[]>(
+          `SELECT rpa.page_code,
+                  MAX(rpa.can_view)   AS can_view,
+                  MAX(rpa.can_create) AS can_create,
+                  MAX(rpa.can_edit)   AS can_edit,
+                  MAX(rpa.can_delete) AS can_delete,
+                  MAX(rpa.can_export) AS can_export
+           FROM role_page_access rpa
+           LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
+           WHERE rpa.role_key IN (${placeholders})
+             AND rpa.active_status = 1
+             AND COALESCE(pc.active_status, 1) = 1
+           GROUP BY rpa.page_code`,
+          allRoleKeys
+        )
+      : Promise.resolve([[], []] as unknown as [RowDataPacket[], import("mysql2").FieldPacket[]]),
+    db.execute<RowDataPacket[]>(
+      `SELECT upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export
+       FROM user_page_access upa
+       LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
+       WHERE upa.user_id = ?
+         AND upa.active_status = 1
+         AND COALESCE(pc.active_status, 1) = 1`,
+      [userId]
+    ),
+  ]);
+
+  const [pageRows] = pageRowsResult;
+  let pages: AccessMeResponse["pages"] = (pageRows as PageRow[]).map((r) => ({
+    page_code:  r.page_code as string,
+    can_view:   Boolean(r.can_view),
+    can_create: Boolean(r.can_create),
+    can_edit:   Boolean(r.can_edit),
+    can_delete: Boolean(r.can_delete),
+    can_export: Boolean(r.can_export),
+  }));
 
   // Merge: user overrides replace role-based for matching page_code
   const pageMap = new Map(pages.map(p => [p.page_code, p]));

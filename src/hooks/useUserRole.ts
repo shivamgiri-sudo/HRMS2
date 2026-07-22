@@ -156,7 +156,8 @@ export const useUserRole = () => {
     enabled: !!user?.id,
     retry: 1,
     retryDelay: 1000,
-    staleTime: 30_000,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
 };
 

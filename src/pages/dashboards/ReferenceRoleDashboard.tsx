@@ -387,6 +387,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ? mergeRecruiterDashboardData(atsQuery.data, recruiterHiringQuery.data)
     : atsQuery.data ?? {};
 
+  // Show skeleton only until the primary query resolves; secondary cards render progressively.
+  const primaryLoading = roleLoading || (variant !== "employee" ? summaryQuery.isLoading : employeeQuery.isLoading);
+
   const data: ReferenceDashboardData & { itProvisioning?: Record<string, unknown> } = {
     variant,
     summary,
@@ -404,7 +407,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     quality: mergedQuality,
     orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
     itProvisioning: itProvisioningQuery.data,
-    loading: roleLoading || activeQueryResults.some((query) => query.isLoading),
+    loading: primaryLoading,
     refreshing: activeQueryResults.some((query) => query.isFetching),
     generatedAt: summary.generatedAt,
   };
