@@ -275,6 +275,9 @@ export default function AuthClean() {
                           placeholder="name@company.com or EMP001"
                           className="h-11 rounded-xl border-slate-200 bg-slate-50 pl-10 focus:bg-white focus:border-[#1B6AB5] focus:ring-[#1B6AB5]/20"
                           disabled={loading}
+                          data-gramm="false"
+                          data-gramm_editor="false"
+                          data-enable-grammarly="false"
                         />
                       </div>
                     </div>
@@ -294,6 +297,9 @@ export default function AuthClean() {
                           placeholder="Enter your password"
                           className="h-11 rounded-xl border-slate-200 bg-slate-50 pl-10 pr-11 focus:bg-white focus:border-[#1B6AB5] focus:ring-[#1B6AB5]/20"
                           disabled={loading}
+                          data-gramm="false"
+                          data-gramm_editor="false"
+                          data-enable-grammarly="false"
                         />
                         <button
                           type="button"

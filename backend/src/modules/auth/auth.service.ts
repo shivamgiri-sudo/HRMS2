@@ -94,6 +94,7 @@ interface AuthUserRow extends RowDataPacket {
 }
 
 interface OrgSettingRow extends RowDataPacket {
+  setting_key: string;
   setting_value: string | null;
 }
 
@@ -360,12 +361,17 @@ export const authService = {
 
       const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
 
+      // Fetch both org_settings in one query to avoid two sequential round-trips
+      const [orgSettingRows] = await db.execute<OrgSettingRow[]>(
+        `SELECT setting_key, setting_value FROM org_settings
+          WHERE setting_key IN ('single_device_session_mode', 'two_factor_enabled')`
+      ).catch(() => [[] as OrgSettingRow[]] as unknown as [OrgSettingRow[], unknown[]]);
+      const orgMap: Record<string, string> = {};
+      for (const r of orgSettingRows) orgMap[r.setting_key] = r.setting_value ?? '';
+
       // Check single device session mode - if enabled, revoke all other sessions
       try {
-        const [singleDeviceRows] = await db.execute<OrgSettingRow[]>(
-          "SELECT setting_value FROM org_settings WHERE setting_key = 'single_device_session_mode' LIMIT 1"
-        );
-        const singleDeviceMode = singleDeviceRows[0]?.setting_value === '1' || singleDeviceRows[0]?.setting_value === 'true';
+        const singleDeviceMode = orgMap['single_device_session_mode'] === '1' || orgMap['single_device_session_mode'] === 'true';
 
         if (singleDeviceMode) {
           // Revoke all OTHER refresh tokens (not the one we just created)
@@ -445,11 +451,8 @@ export const authService = {
         }).catch(() => {});
       }
 
-      // Check global 2FA toggle in org_settings
-      const [tfaSettingRows] = await db.execute<OrgSettingRow[]>(
-        "SELECT setting_value FROM org_settings WHERE setting_key = 'two_factor_enabled' LIMIT 1"
-      );
-      const tfaEnabled = tfaSettingRows[0]?.setting_value !== 'false';
+      // Check global 2FA toggle — reuse orgMap fetched above
+      const tfaEnabled = orgMap['two_factor_enabled'] !== 'false';
       const twoFactorRequired = tfaEnabled && !mustChangePassword;
 
       if (twoFactorRequired) {

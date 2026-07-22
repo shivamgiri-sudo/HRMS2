@@ -200,6 +200,9 @@ export function AdminPasswordResetDialog({
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   className="h-10 w-full rounded-md border border-input bg-background px-3 pr-10 text-sm"
+                  data-gramm="false"
+                  data-gramm_editor="false"
+                  data-enable-grammarly="false"
                 />
                 <button
                   type="button"
@@ -217,6 +220,9 @@ export function AdminPasswordResetDialog({
                 onChange={(event) => setConfirmPassword(event.target.value)}
                 placeholder="Confirm temporary password"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                data-gramm="false"
+                data-gramm_editor="false"
+                data-enable-grammarly="false"
               />
               <p className="text-xs text-muted-foreground">
                 Minimum 10 characters with uppercase, lowercase, number and special character.

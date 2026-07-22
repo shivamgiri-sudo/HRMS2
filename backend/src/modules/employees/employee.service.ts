@@ -186,34 +186,36 @@ export const employeeService = {
     const where = `WHERE ${conds.join(" AND ")}`;
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         e.id, e.employee_code,
-         e.first_name, e.last_name,
-         e.mobile, e.avatar_url, e.photo_url,
-         e.date_of_joining, e.employment_status, e.employment_type,
-         e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
-         e.reporting_manager_id,
-         COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
-         desig.designation_name,
-         dept.dept_name        AS department_name,
-         cc.cost_centre_name,
-         pm.process_name,
-         bm.branch_name,
-         CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
-       FROM employees e
-       LEFT JOIN designation_master  desig ON desig.id = e.designation_id
-       LEFT JOIN department_master   dept  ON dept.id  = e.department_id
-       LEFT JOIN cost_centre_master  cc    ON cc.id    = e.cost_centre_id
-       LEFT JOIN process_master      pm    ON pm.id    = e.process_id
-       LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
-       LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
-       ${where} ORDER BY e.employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
-      params
-    );
-    const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM employees e ${where}`, params
-    );
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id, e.employee_code,
+           e.first_name, e.last_name,
+           e.mobile, e.avatar_url, e.photo_url,
+           e.date_of_joining, e.employment_status, e.employment_type,
+           e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
+           e.reporting_manager_id,
+           COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+           desig.designation_name,
+           dept.dept_name        AS department_name,
+           cc.cost_centre_name,
+           pm.process_name,
+           bm.branch_name,
+           CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
+         FROM employees e
+         LEFT JOIN designation_master  desig ON desig.id = e.designation_id
+         LEFT JOIN department_master   dept  ON dept.id  = e.department_id
+         LEFT JOIN cost_centre_master  cc    ON cc.id    = e.cost_centre_id
+         LEFT JOIN process_master      pm    ON pm.id    = e.process_id
+         LEFT JOIN branch_master       bm    ON bm.id    = e.branch_id
+         LEFT JOIN employees           mgr   ON mgr.id   = COALESCE(e.reporting_manager_id, e.manager_id)
+         ${where} ORDER BY e.employee_code ASC LIMIT ${limit} OFFSET ${offset}`,
+        params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM employees e ${where}`, params
+      ),
+    ]);
     return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
 

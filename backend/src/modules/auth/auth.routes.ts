@@ -123,30 +123,19 @@ function validateTemporaryPassword(password: string): string | null {
   return null;
 }
 
-async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId: string, maxDepth = 25): Promise<boolean> {
-  let currentEmployeeId: string | null = targetEmployeeId;
-  const visited = new Set<string>();
-  let depth = 0;
-
-  while (currentEmployeeId && !visited.has(currentEmployeeId) && depth < maxDepth) {
-    visited.add(currentEmployeeId);
-    depth++;
-    const result: [ReportingRow[], unknown] = await db.execute<ReportingRow[]>(
-      `SELECT reporting_manager_id
-         FROM employees
-        WHERE id = ? AND active_status = 1
-        LIMIT 1`,
-      [currentEmployeeId]
-    );
-    const rows = result[0];
-    const managerId: string | null = rows[0]?.reporting_manager_id
-      ? String(rows[0].reporting_manager_id)
-      : null;
-    if (managerId === requesterEmployeeId) return true;
-    currentEmployeeId = managerId;
-  }
-
-  return false;
+async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `WITH RECURSIVE chain AS (
+       SELECT id, reporting_manager_id FROM employees WHERE id = ? AND active_status = 1
+       UNION ALL
+       SELECT e.id, e.reporting_manager_id
+         FROM employees e JOIN chain c ON e.id = c.reporting_manager_id
+        WHERE e.active_status = 1
+     )
+     SELECT 1 FROM chain WHERE id = ? LIMIT 1`,
+    [targetEmployeeId, requesterEmployeeId]
+  );
+  return rows.length > 0;
 }
 
 // POST /api/auth/login — public (rate limited)
@@ -443,14 +432,16 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     ? "super_admin"
     : roles.has("admin")
       ? "admin"
-      : roles.has("wfm") || roles.has("wfm_admin")
-        ? "wfm"
-        : null;
+      : roles.has("hr")
+        ? "hr"
+        : roles.has("wfm") || roles.has("wfm_admin")
+          ? "wfm"
+          : null;
 
   if (!requesterRole) {
     return res.status(403).json({
       success: false,
-      error: "Only Super Admin, Admin or WFM can reset employee passwords"
+      error: "Only Super Admin, Admin, HR or WFM can reset employee passwords"
     });
   }
 
@@ -572,7 +563,8 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
     });
   }
 
-  if (requesterRole !== "super_admin") {
+  const bypassScopeCheck = requesterRole === "super_admin" || requesterRole === "admin" || requesterRole === "hr";
+  if (!bypassScopeCheck) {
     if (!requesterEmployeeId || !targetEmployeeId) {
       return res.status(403).json({
         success: false,

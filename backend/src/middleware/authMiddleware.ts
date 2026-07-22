@@ -7,7 +7,7 @@ import { getUserRoleContext } from '../shared/roleResolver.js';
  *  Cuts the two per-request DB queries to zero for repeat requests within the TTL window.
  *  Cache is invalidated when a user's role or read-only status changes (max 30s stale).
  */
-const AUTH_CONTEXT_CACHE = new Map<string, { primaryRole: string | undefined; isReadOnly: boolean; exp: number }>();
+const AUTH_CONTEXT_CACHE = new Map<string, { primaryRole: string | undefined; roleKeys: string[] | undefined; isReadOnly: boolean; exp: number }>();
 const AUTH_CACHE_TTL_MS = 30_000;
 
 function getCachedAuthContext(userId: string) {
@@ -16,8 +16,8 @@ function getCachedAuthContext(userId: string) {
   return null;
 }
 
-function setCachedAuthContext(userId: string, primaryRole: string | undefined, isReadOnly: boolean) {
-  AUTH_CONTEXT_CACHE.set(userId, { primaryRole, isReadOnly, exp: Date.now() + AUTH_CACHE_TTL_MS });
+function setCachedAuthContext(userId: string, primaryRole: string | undefined, isReadOnly: boolean, roleKeys?: string[]) {
+  AUTH_CONTEXT_CACHE.set(userId, { primaryRole, roleKeys, isReadOnly, exp: Date.now() + AUTH_CACHE_TTL_MS });
 }
 
 export function invalidateAuthContextCache(userId: string) {
@@ -29,6 +29,7 @@ export interface AuthenticatedRequest extends Request {
     id: string;
     email?: string;
     role?: string;
+    roles?: string[];
     isDemo?: boolean;
     isReadOnly?: boolean;
   };
@@ -111,17 +112,20 @@ export async function requireAuth(
 
       // Resolve primary role and isReadOnly — use 30s in-process cache to avoid 2 DB queries per request
       let resolvedRole: string | undefined;
+      let resolvedRoleKeys: string[] | undefined;
       let isReadOnly = false;
       const cached = getCachedAuthContext(mysqlUser.id);
       if (cached) {
         resolvedRole = cached.primaryRole;
+        resolvedRoleKeys = cached.roleKeys;
         isReadOnly = cached.isReadOnly;
       } else {
         try {
           const ctx = await getUserRoleContext(mysqlUser.id);
           resolvedRole = ctx.primaryRole;
+          resolvedRoleKeys = ctx.roleKeys;
         } catch {
-          // Non-fatal — role stays undefined; requireRole middleware does its own DB lookup
+          // Non-fatal — role stays undefined; requireRole middleware falls back to DB lookup
         }
         try {
           const { db } = await import('../db/mysql.js');
@@ -131,12 +135,13 @@ export async function requireAuth(
           );
           isReadOnly = Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as ReadOnlyRow).is_read_only : false;
         } catch { /* keep false */ }
-        setCachedAuthContext(mysqlUser.id, resolvedRole, isReadOnly);
+        setCachedAuthContext(mysqlUser.id, resolvedRole, isReadOnly, resolvedRoleKeys);
       }
       req.authUser = {
         id: mysqlUser.id,
         email: mysqlUser.email,
         role: resolvedRole,
+        roles: resolvedRoleKeys,
         isReadOnly
       };
       return next();

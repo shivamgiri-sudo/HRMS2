@@ -37,16 +37,19 @@ export function requireRole(...allowedRoles: string[]) {
         });
       }
 
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT role_key
-           FROM user_roles
-          WHERE user_id = ? AND active_status = 1`,
-        [req.authUser.id],
-      );
+      // Use roles already fetched by requireAuth (cached) — skip second DB round-trip
+      let roleKeyList: string[];
+      if (req.authUser.roles && req.authUser.roles.length > 0) {
+        roleKeyList = req.authUser.roles;
+      } else {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+          [req.authUser.id],
+        );
+        roleKeyList = (rows as { role_key: string }[]).map((row) => row.role_key);
+      }
 
-      const userRoles = normalizeRoleInputs(
-        (rows as { role_key: string }[]).map((row) => row.role_key),
-      );
+      const userRoles = normalizeRoleInputs(roleKeyList);
 
       if (userRoles.includes("super_admin")) {
         (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;

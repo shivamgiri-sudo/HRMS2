@@ -233,62 +233,116 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
   );
   if (!emp) return res.status(404).json({ success: false, error: "Employee not found" });
 
-  let salary: RowDataPacket | null = null;
-  if (canSeeCompensation) {
-    const [salaryRows] = await db.execute<RowDataPacket[]>(
-      `SELECT esa.id,
-              esa.structure_id,
-              ssm.structure_code,
-              ssm.structure_name,
-              esa.ctc_annual,
-              ROUND(esa.ctc_annual / 12, 2) AS monthly_ctc,
-              ROUND((esa.ctc_annual / 12) * ssm.basic_pct / 100, 2) AS basic,
-              ROUND((esa.ctc_annual / 12) * ssm.hra_pct / 100, 2) AS hra,
-              ROUND(
-                (esa.ctc_annual / 12)
-                - ((esa.ctc_annual / 12) * ssm.basic_pct / 100)
-                - ((esa.ctc_annual / 12) * ssm.hra_pct / 100),
-                2
-              ) AS other_allowances,
-              DATE_FORMAT(esa.effective_from, '%Y-%m-%d') AS effective_from
-         FROM employee_salary_assignment esa
-         JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
-        WHERE esa.employee_id = ?
-          AND esa.active_status = 1
-        ORDER BY esa.effective_from DESC, esa.created_at DESC
+  // Run all independent queries in parallel after the main employee row is fetched
+  const [
+    salaryResult,
+    [leaveBalances],
+    [[attendance]],
+    [performanceRows],
+    [[assetRow]],
+    clDocResult,
+    docResult,
+    [tierRows],
+    journeyResult,
+  ] = await Promise.all([
+    canSeeCompensation
+      ? db.execute<RowDataPacket[]>(
+          `SELECT esa.id,
+                  esa.structure_id,
+                  ssm.structure_code,
+                  ssm.structure_name,
+                  esa.ctc_annual,
+                  ROUND(esa.ctc_annual / 12, 2) AS monthly_ctc,
+                  ROUND((esa.ctc_annual / 12) * ssm.basic_pct / 100, 2) AS basic,
+                  ROUND((esa.ctc_annual / 12) * ssm.hra_pct / 100, 2) AS hra,
+                  ROUND(
+                    (esa.ctc_annual / 12)
+                    - ((esa.ctc_annual / 12) * ssm.basic_pct / 100)
+                    - ((esa.ctc_annual / 12) * ssm.hra_pct / 100),
+                    2
+                  ) AS other_allowances,
+                  DATE_FORMAT(esa.effective_from, '%Y-%m-%d') AS effective_from
+             FROM employee_salary_assignment esa
+             JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
+            WHERE esa.employee_id = ?
+              AND esa.active_status = 1
+            ORDER BY esa.effective_from DESC, esa.created_at DESC
+            LIMIT 1`,
+          [targetId],
+        )
+      : Promise.resolve([[] as RowDataPacket[], [] as any]),
+    db.execute<RowDataPacket[]>(
+      `SELECT lt.leave_code,
+              lt.leave_name,
+              COALESCE(lbl.allocated_days, 0) + COALESCE(lbl.adjusted_days, 0) - COALESCE(lbl.used_days, 0) AS available_days,
+              COALESCE(lbl.used_days, 0) AS used_days
+         FROM leave_balance_ledger lbl
+         JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
+        WHERE lbl.employee_id = ?
+          AND lbl.balance_year = YEAR(CURDATE())
+        ORDER BY lt.leave_name`,
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) AS present_days,
+         COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS working_days,
+         ROUND(
+           COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) * 100.0 /
+           NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END), 0),
+         1) AS attendance_pct
+         FROM attendance_daily_record
+        WHERE employee_id = ?
+          AND YEAR(record_date) = YEAR(CURDATE())
+          AND MONTH(record_date) = MONTH(CURDATE())`,
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT pfr.overall_score, pfc.period
+         FROM performance_feedback_report pfr
+         JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
+        WHERE pfr.employee_id = ?
+        ORDER BY pfr.report_generated_at DESC
         LIMIT 1`,
       [targetId],
-    );
-    salary = salaryRows[0] ?? null;
-  }
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS active_assets FROM asset_assignment WHERE employee_id = ? AND returned_date IS NULL`,
+      [targetId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
+         SUM(CASE WHEN status IN ('uploaded','submitted','pending_verification','signed') THEN 1 ELSE 0 END) AS checklist_awaiting,
+         SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS checklist_verified
+         FROM employee_joining_document_checklist WHERE employee_id = ?`,
+      [targetId],
+    ).catch(() => [[{ checklist_missing: null, checklist_awaiting: null, checklist_verified: null }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
+         SUM(CASE WHEN file_url IS NOT NULL AND file_url <> '' AND verified = 0 THEN 1 ELSE 0 END) AS awaiting_verification,
+         SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_docs
+         FROM employee_documents WHERE employee_id = ?`,
+      [targetId],
+    ).catch(() => [[{ missing_docs: 0, awaiting_verification: 0, verified_docs: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(gtm.tier_name, gt.tier_name, 'Unassigned') AS tier_name,
+              ets.total_points
+         FROM employee_tier_status ets
+         LEFT JOIN gamification_tier_master gtm ON gtm.tier_id = ets.current_tier_id
+         LEFT JOIN gamification_tier gt ON gt.id = ets.current_tier_id
+        WHERE ets.employee_id = ?
+        LIMIT 1`,
+      [targetId],
+    ),
+    listComprehensiveJourney(targetId, { includeCompensation: canSeeCompensation }).catch(() => []),
+  ]);
 
-  const [leaveBalances] = await db.execute<RowDataPacket[]>(
-    `SELECT lt.leave_code,
-            lt.leave_name,
-            COALESCE(lbl.allocated_days, 0) + COALESCE(lbl.adjusted_days, 0) - COALESCE(lbl.used_days, 0) AS available_days,
-            COALESCE(lbl.used_days, 0) AS used_days
-       FROM leave_balance_ledger lbl
-       JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-      WHERE lbl.employee_id = ?
-        AND lbl.balance_year = YEAR(CURDATE())
-      ORDER BY lt.leave_name`,
-    [targetId],
-  );
-
-  const [[attendance]] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) AS present_days,
-       COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS working_days,
-       ROUND(
-         COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) * 100.0 /
-         NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END), 0),
-       1) AS attendance_pct
-       FROM attendance_daily_record
-      WHERE employee_id = ?
-        AND YEAR(record_date) = YEAR(CURDATE())
-        AND MONTH(record_date) = MONTH(CURDATE())`,
-    [targetId],
-  );
+  const salary: RowDataPacket | null = canSeeCompensation ? ((salaryResult[0] as RowDataPacket[])[0] ?? null) : null;
+  const clDocRow = (clDocResult as any)[0]?.[0];
+  const docRow = (docResult as any)[0]?.[0];
+  const journey = journeyResult as unknown as RowDataPacket[];
 
   // db_bill attendance fallback when mas_hrms has no records for current month
   let attendanceData: { present_days: number; working_days: number; attendance_pct: number | null; source?: string } =
@@ -329,66 +383,10 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
     } catch (_) { /* db_bill unavailable — skip silently */ }
   }
 
-  const [performanceRows] = await db.execute<RowDataPacket[]>(
-    `SELECT pfr.overall_score, pfc.period
-       FROM performance_feedback_report pfr
-       JOIN performance_feedback_cycle pfc ON pfc.cycle_id = pfr.cycle_id
-      WHERE pfr.employee_id = ?
-      ORDER BY pfr.report_generated_at DESC
-      LIMIT 1`,
-    [targetId],
-  );
-
-  const [[assetRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS active_assets
-       FROM asset_assignment
-      WHERE employee_id = ?
-        AND returned_date IS NULL`,
-    [targetId],
-  );
-
-  // Documents — combine joining-document checklist + general employee_documents
-  const [[clDocRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
-       SUM(CASE WHEN status IN ('uploaded','submitted','pending_verification','signed') THEN 1 ELSE 0 END) AS checklist_awaiting,
-       SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS checklist_verified
-       FROM employee_joining_document_checklist WHERE employee_id = ?`,
-    [targetId],
-  ).catch(() => [[{ checklist_missing: null, checklist_awaiting: null, checklist_verified: null }]] as any) as any;
-
-  const [[docRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       SUM(CASE WHEN (file_url IS NULL OR file_url = '') THEN 1 ELSE 0 END) AS missing_docs,
-       SUM(CASE WHEN file_url IS NOT NULL AND file_url <> '' AND verified = 0 THEN 1 ELSE 0 END) AS awaiting_verification,
-       SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_docs
-       FROM employee_documents
-      WHERE employee_id = ?`,
-    [targetId],
-  ).catch(() => [[{ missing_docs: 0, awaiting_verification: 0, verified_docs: 0 }]] as any) as any;
-
   const clTotal = Number(clDocRow?.checklist_missing ?? 0) + Number(clDocRow?.checklist_awaiting ?? 0) + Number(clDocRow?.checklist_verified ?? 0);
   const resolvedMissingDocs    = clTotal > 0 ? Number(clDocRow?.checklist_missing ?? 0)  : Number(docRow?.missing_docs ?? 0);
   const resolvedAwaitingVerify = clTotal > 0 ? Number(clDocRow?.checklist_awaiting ?? 0) : Number(docRow?.awaiting_verification ?? 0);
   const resolvedVerifiedDocs   = clTotal > 0 ? Number(clDocRow?.checklist_verified ?? 0) : Number(docRow?.verified_docs ?? 0);
-
-  const [tierRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(gtm.tier_name, gt.tier_name, 'Unassigned') AS tier_name,
-            ets.total_points
-       FROM employee_tier_status ets
-       LEFT JOIN gamification_tier_master gtm ON gtm.tier_id = ets.current_tier_id
-       LEFT JOIN gamification_tier gt ON gt.id = ets.current_tier_id
-      WHERE ets.employee_id = ?
-      LIMIT 1`,
-    [targetId],
-  );
-
-  let journey: RowDataPacket[] = [];
-  try {
-    journey = await listComprehensiveJourney(targetId, { includeCompensation: canSeeCompensation }) as unknown as RowDataPacket[];
-  } catch {
-    journey = [];
-  }
 
   return res.json({
     success: true,
