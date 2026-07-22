@@ -153,9 +153,15 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 
+function normaliseIST(s: string): string {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s.replace(" ", "T") + "+05:30";
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) return s + "+05:30";
+  return s;
+}
+
 function formatElapsedWait(arrivalIso: string | null, nowMs: number): string {
   if (!arrivalIso) return "--";
-  const arrival = new Date(arrivalIso);
+  const arrival = new Date(normaliseIST(arrivalIso));
   if (isNaN(arrival.getTime())) return "--";
   const elapsed = Math.floor((nowMs - arrival.getTime()) / 60_000);
   if (elapsed < 1) return "< 1 min";

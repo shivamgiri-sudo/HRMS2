@@ -47,17 +47,26 @@ const fmt = (value?: string) => {
   return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const getIstDateString = (d = new Date()) => {
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  return ist.toISOString().slice(0, 10);
+};
+const today = () => getIstDateString();
 const monthStart = () => {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+  const ist = new Date(new Date().getTime() + 5.5 * 60 * 60 * 1000);
+  return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-01`;
 };
 
+const normaliseIST = (s: string) => {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s.replace(" ", "T") + "+05:30";
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) return s + "+05:30";
+  return s;
+};
 const inDateRange = (value?: string, from?: string, to?: string) => {
   if (!value) return false;
-  const t = new Date(value).getTime();
-  const f = from ? new Date(`${from}T00:00:00`).getTime() : -Infinity;
-  const e = to ? new Date(`${to}T23:59:59`).getTime() : Infinity;
+  const t = new Date(normaliseIST(value)).getTime();
+  const f = from ? new Date(`${from}T00:00:00+05:30`).getTime() : -Infinity;
+  const e = to ? new Date(`${to}T23:59:59+05:30`).getTime() : Infinity;
   return t >= f && t <= e;
 };
 
@@ -106,7 +115,9 @@ export default function NativeATSWaitingQueue() {
         created_at: c.created_at,
         assignment: undefined,
         submitted: false,
-        pendingMinutes: Math.max(0, Math.floor((Date.now() - new Date(c.created_at || 0).getTime()) / 60000)),
+        pendingMinutes: c.created_at
+          ? Math.max(0, Math.floor((Date.now() - new Date(normaliseIST(c.created_at)).getTime()) / 60000))
+          : 0,
       }));
 
       setRows(waiting);

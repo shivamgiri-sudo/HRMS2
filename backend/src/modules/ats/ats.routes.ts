@@ -340,8 +340,7 @@ atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "super_admin", 
     { allowCeoAllRead: true }
   );
   const data = await atsQueueService.listActiveQueue(
-    { sql: scoped.sql ?? '', params: scoped.params ?? [] },
-    new Date()
+    { sql: scoped.sql ?? '', params: scoped.params ?? [] }
   );
   return res.json({ success: true, data, alert_count: data.filter((r) => r.over_threshold).length });
 }));

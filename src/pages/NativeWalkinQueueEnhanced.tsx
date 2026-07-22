@@ -112,7 +112,10 @@ export default function NativeWalkinQueueEnhanced() {
   const [statusFilter, setStatusFilter] = useState<QueueStatus | "all">("all");
   const [branchFilter, setBranchFilter] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [dateFilter, setDateFilter] = useState(new Date().toISOString().split('T')[0]);
+  const [dateFilter, setDateFilter] = useState(() => {
+    const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    return ist.toISOString().slice(0, 10);
+  });
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 

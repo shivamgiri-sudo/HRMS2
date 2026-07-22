@@ -304,7 +304,10 @@ export default function NativeATSHiringEntry() {
   const isCalling = location.pathname.includes("/calling-entry");
   const { user } = useAuth();
   const roleKeys = useMemo(() => user?.roles?.map((r: any) => r.role_key) ?? [], [user?.roles]);
-  const todayIso = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const todayIso = useMemo(() => {
+    const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    return ist.toISOString().slice(0, 10);
+  }, []);
 
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);

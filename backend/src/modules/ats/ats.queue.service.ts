@@ -115,20 +115,19 @@ export const atsQueueService = {
   },
 
   async listActiveQueue(
-    scopeFilter: { sql: string; params: unknown[] },
-    now: Date
+    scopeFilter: { sql: string; params: unknown[] }
   ): Promise<Array<AtsQueueToken & { candidate_name: string; mobile: string; wait_minutes: number; over_threshold: boolean }>> {
     const scopeSql = scopeFilter.sql ? `AND (${scopeFilter.sql})` : '';
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT qt.*,
               c.full_name AS candidate_name,
               c.mobile,
-              TIMESTAMPDIFF(MINUTE, qt.arrival_time, ?) AS wait_minutes
+              TIMESTAMPDIFF(MINUTE, qt.arrival_time, NOW()) AS wait_minutes
          FROM ats_queue_token qt
          JOIN ats_candidate c ON c.id = qt.candidate_id
         WHERE qt.status = 'active' ${scopeSql}
         ORDER BY qt.arrival_time ASC`,
-      [now.toISOString().slice(0, 19).replace('T', ' '), ...(scopeFilter.params || [])]
+      [...(scopeFilter.params || [])]
     );
 
     return (rows as RowDataPacket[]).map((r) => ({

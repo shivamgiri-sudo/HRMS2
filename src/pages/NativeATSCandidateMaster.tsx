@@ -166,8 +166,8 @@ const todayIso = () => localDateIso();
 
 const toUtc = (value: string): string => {
   const s = value.includes("T") ? value : value.replace(" ", "T");
-  // Append Z if no timezone designator present
-  if (!s.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(s)) return s + "Z";
+  // MySQL DATETIME strings have no tz — treat as IST wall clock (+05:30), not UTC
+  if (!s.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(s)) return s + "+05:30";
   return s;
 };
 
