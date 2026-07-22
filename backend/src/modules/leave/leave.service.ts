@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { leavePolicyService } from "./leave-policy.service.js";
 import type {
   LeaveBalanceLedger,
   LeaveHoliday,
@@ -62,11 +63,70 @@ export const leaveService = {
 
   async submitRequest(input: LeaveRequestInput): Promise<LeaveRequest> {
     const id = randomUUID();
+
+    // ── Resolve leave_code for policy enforcement ─────────────────────────
+    const [ltCodeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT leave_code FROM leave_type_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+      [input.leaveTypeId]
+    );
+    const leaveCode = (ltCodeRows as Array<{ leave_code: string }>)[0]?.leave_code ?? null;
+
+    // ── CL / ML policy enforcement ────────────────────────────────────────
+    if (leaveCode === 'CL' || leaveCode === 'ML') {
+      // More than 2 continuous days must be applied as EL
+      if (input.totalDays > 2) {
+        throw new Error(
+          `${leaveCode} can only be applied for up to 2 continuous days. For longer leave, please apply for Earned Leave (EL).`
+        );
+      }
+
+      // Combined CL+ML monthly cap (policy engine: leave → cl_ml_policy → monthly_cap_days, default 2)
+      const capCheck = await leavePolicyService.checkMonthlyCapExceeded(
+        input.employeeId, input.fromDate, input.toDate, input.totalDays
+      );
+      if (capCheck.exceeded) {
+        throw new Error(
+          `Monthly leave limit reached for ${capCheck.monthBreached}. ` +
+          `You have already used ${capCheck.usedDays} of ${capCheck.cap} allowed CL/ML days this month.`
+        );
+      }
+    }
+
+    // ── EL policy enforcement ─────────────────────────────────────────────
+    let initialStatus = 'pending';
+    if (leaveCode === 'EL') {
+      // Single-application cap: max 12 days
+      const singleGo = leavePolicyService.checkELSingleGoCap(input.totalDays);
+      if (singleGo.exceeded) {
+        throw new Error(
+          `Earned Leave cannot exceed ${singleGo.cap} days in a single application.`
+        );
+      }
+
+      // No two EL requests in the same calendar month
+      const sameMonth = await leavePolicyService.checkELInSameMonth(
+        input.employeeId, input.fromDate, input.toDate
+      );
+      if (sameMonth.hasConflict) {
+        throw new Error(
+          `You already have an Earned Leave request in ${sameMonth.conflictMonth}. Only one EL application per calendar month is allowed.`
+        );
+      }
+
+      // 3rd occurrence in the year → requires Branch Head approval
+      const occurrences = await leavePolicyService.checkELOccurrences(
+        input.employeeId, new Date(input.fromDate).getFullYear()
+      );
+      if (occurrences.isException) {
+        initialStatus = 'pending_branch_head';
+      }
+    }
+
     await db.execute(
-      `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO leave_request (id, employee_id, leave_type_id, from_date, to_date, total_days, reason, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, input.employeeId, input.leaveTypeId, input.fromDate, input.toDate,
-       input.totalDays, input.reason ?? null]
+       input.totalDays, input.reason ?? null, initialStatus]
     );
 
     // Notify reporting manager — they are Stage 1 approver
