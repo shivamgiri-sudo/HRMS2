@@ -8,6 +8,7 @@ import {
   Award, Download, RefreshCcw, ChevronDown, ChevronUp, Activity,
   Target, Zap, BarChart2, DownloadCloud,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -53,7 +54,7 @@ function StatCard({
   label, value, sub, icon: Icon, color = "blue", trend,
 }: {
   label: string; value: string | number; sub?: string;
-  icon: React.ComponentType<{ className?: string }>; color?: string; trend?: "up" | "down";
+  icon: LucideIcon; color?: string; trend?: "up" | "down";
 }) {
   const colors: Record<string, string> = {
     blue: "bg-blue-50 text-blue-600", green: "bg-emerald-50 text-emerald-600",
@@ -157,11 +158,15 @@ export default function NativeCallMasterDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Load client list once on mount for the filter dropdown
+  // Load client list on mount — retry up to 3 times (cold-start pool can abort on first request)
   useEffect(() => {
-    hrmsApi.get<{ data: ClientOption[] }>("/api/call-master/clients")
-      .then(res => setClientOptions(res.data ?? []))
-      .catch(() => {});
+    let tries = 0;
+    function tryLoad() {
+      hrmsApi.get<{ data: ClientOption[] }>("/api/call-master/clients")
+        .then(res => setClientOptions(res.data ?? []))
+        .catch(() => { if (tries++ < 3) setTimeout(tryLoad, 1500 * tries); });
+    }
+    tryLoad();
   }, []);
 
   if (!canAccess) {
@@ -582,12 +587,17 @@ function MagicalScriptTab({ qs }: { qs: string }) {
   const [loading, setLoading] = useState(false);
   const [openStage, setOpenStage] = useState<number | null>(null);
   const [generated, setGenerated] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
 
   function generate() {
     setLoading(true);
+    setGenError(null);
     hrmsApi.get<{ data: ScriptData }>(`/api/quality-dashboard/magical-script?${qs}`)
       .then(r => { setData((r as any).data ?? r); setGenerated(true); })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Script generation failed — please try again.";
+        setGenError(msg);
+      })
       .finally(() => setLoading(false));
   }
 
@@ -603,6 +613,12 @@ function MagicalScriptTab({ qs }: { qs: string }) {
             Generates a data-driven call flow script based on real objection patterns and rebuttal effectiveness from your selected date range.
           </p>
         </div>
+        {genError && (
+          <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 max-w-md">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 text-red-500" />
+            <span>{genError}</span>
+          </div>
+        )}
         <button onClick={generate} disabled={loading}
           className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60">
           <Zap className="h-4 w-4" /> Generate Script for Selected Period

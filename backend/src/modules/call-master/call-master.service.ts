@@ -315,24 +315,23 @@ export async function getFatalAgentSummary(filters: CallMasterFilters, limit = 5
 }
 
 export async function getCallsByClient(filters: CallMasterFilters) {
-  const { startDate, endDate, clientIds, lob = "Inbound" } = filters;
+  const { startDate, endDate, clientIds, lob = "All" } = filters;
 
-  if (lob !== "Outbound") {
-    const ibF = buildInboundClientFilter(clientIds);
-    return querySource<{ client: string; calls: number; avg_quality: number }>(
-      `SELECT COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
-        COUNT(*) AS calls,
-        ROUND(AVG(q.quality_percentage),2) AS avg_quality
-       FROM db_audit.call_quality_assessment q
-       LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
-       WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
-       GROUP BY q.ClientId, c.name ORDER BY calls DESC`,
-      [startDate, endDate, ...ibF.params]
-    );
-  }
-
+  const ibF = buildInboundClientFilter(clientIds);
   const obF = buildOutboundClientFilter(clientIds);
-  return querySource<{ client: string; calls: number; conversion: number }>(
+
+  const ibQuery = () => querySource<{ client: string; calls: number; avg_quality?: number; conversion?: number }>(
+    `SELECT COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS client,
+      COUNT(*) AS calls,
+      ROUND(AVG(q.quality_percentage),2) AS avg_quality
+     FROM db_audit.call_quality_assessment q
+     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
+     WHERE q.CallDate BETWEEN ? AND ?${ibF.clause}
+     GROUP BY q.ClientId, c.name ORDER BY calls DESC`,
+    [startDate, endDate, ...ibF.params]
+  );
+
+  const obQuery = () => querySource<{ client: string; calls: number; avg_quality?: number; conversion?: number }>(
     `SELECT COALESCE(c.name, CONCAT('Client ', d.client_id)) AS client,
       COUNT(*) AS calls,
       ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),2) AS conversion
@@ -342,6 +341,20 @@ export async function getCallsByClient(filters: CallMasterFilters) {
      GROUP BY d.client_id, c.name ORDER BY calls DESC`,
     [startDate, endDate, ...obF.params]
   );
+
+  if (lob === "Outbound") return obQuery();
+  if (lob === "Inbound") return ibQuery();
+
+  // lob === "All": merge inbound + outbound by client name
+  const [ib, ob] = await Promise.all([ibQuery(), obQuery()]);
+  const merged = new Map<string, { client: string; calls: number; avg_quality?: number; conversion?: number }>();
+  for (const r of ib) merged.set(r.client, { ...r });
+  for (const r of ob) {
+    const existing = merged.get(r.client);
+    if (existing) { existing.calls += r.calls; }
+    else merged.set(r.client, r);
+  }
+  return [...merged.values()].sort((a, b) => b.calls - a.calls);
 }
 
 export async function getCallsByDay(filters: CallMasterFilters) {
@@ -401,12 +414,12 @@ export async function getActiveAgentsList(filters: CallMasterFilters) {
 }
 
 export async function getClientList() {
+  // Query the client master directly — never scan call_quality_assessment without a date range
   return querySource<{ id: number; name: string }>(
-    `SELECT q.ClientId AS id,
-       COALESCE(c.name, CONCAT('Client ', q.ClientId)) AS name
-     FROM db_audit.call_quality_assessment q
-     LEFT JOIN shivamgiri.md_clients c ON c.dialdesk_client_id = CAST(q.ClientId AS UNSIGNED)
-     GROUP BY q.ClientId, c.name ORDER BY q.ClientId`
+    `SELECT dialdesk_client_id AS id, name
+     FROM shivamgiri.md_clients
+     WHERE dialdesk_client_id IS NOT NULL AND name IS NOT NULL AND name != ''
+     ORDER BY name`
   );
 }
 
