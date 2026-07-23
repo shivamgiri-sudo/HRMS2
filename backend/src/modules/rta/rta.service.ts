@@ -277,9 +277,12 @@ export async function getLiveAttendanceSummary(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS rostered,
+       SUM(CASE WHEN adr.attendance_status NOT IN ('on_leave','leave','week_off','holiday') THEN 1 ELSE 0 END) AS expected_to_work,
        SUM(CASE WHEN adr.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) AS logged_in,
        SUM(CASE WHEN adr.clock_out_time IS NOT NULL THEN 1 ELSE 0 END) AS logged_out,
        SUM(CASE WHEN adr.attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
+       SUM(CASE WHEN adr.attendance_status IN ('on_leave','leave') THEN 1 ELSE 0 END) AS on_leave,
+       SUM(CASE WHEN adr.attendance_status = 'week_off' THEN 1 ELSE 0 END) AS week_off,
        SUM(CASE WHEN adr.late_mark = 1 THEN 1 ELSE 0 END) AS late_count,
        ROUND(AVG(LEAST(100, (COALESCE(adr.raw_minutes, 0) / 480) * 100)), 1) AS adherence_pct
      FROM attendance_daily_record adr
@@ -287,17 +290,25 @@ export async function getLiveAttendanceSummary(
     [dataDate, ...filterParams]
   );
 
+  const rostered = Number(rows[0]?.rostered ?? 0);
+  const expectedToWork = Number(rows[0]?.expected_to_work ?? 0);
+  const loggedIn = Number(rows[0]?.logged_in ?? 0);
+
   return {
     ts: Date.now(),
     requested_date: requestedDate,
     data_date: dataDate,
     is_latest_available: isLatestAvailable,
-    rostered: Number(rows[0]?.rostered ?? 0),
-    logged_in: Number(rows[0]?.logged_in ?? 0),
+    rostered,
+    expected_to_work: expectedToWork,
+    logged_in: loggedIn,
     logged_out: Number(rows[0]?.logged_out ?? 0),
     absent: Number(rows[0]?.absent ?? 0),
+    on_leave: Number(rows[0]?.on_leave ?? 0),
+    week_off: Number(rows[0]?.week_off ?? 0),
     late_count: Number(rows[0]?.late_count ?? 0),
     adherence_pct: Number(rows[0]?.adherence_pct ?? 0),
+    attendance_pct: expectedToWork > 0 ? Math.round((loggedIn / expectedToWork) * 1000) / 10 : 0,
   };
 }
 

@@ -16,19 +16,23 @@ export function LiveAttendanceDonut() {
 
   const live = liveData?.data ?? liveData ?? {};
   const total   = Number(live.rostered   ?? 0);
+  const expectedToWork = Number(live.expected_to_work ?? total);
   const present = Number(live.logged_in  ?? 0);
   const absent  = Number(live.absent     ?? 0);
   const late    = Number(live.late_count ?? 0);
-  const attPct  = total > 0 ? Math.round((present / total) * 1000) / 10 : 0;
-  const onLeave = 0; // leave data not in live-summary; shown as 0 until reconciliation runs
-  const notMarked = Math.max(0, total - present - absent - late - onLeave);
+  const onLeave = Number(live.on_leave   ?? 0);
+  const weekOff = Number(live.week_off   ?? 0);
+  // Use server-calculated attendance_pct if available, else calculate from expected_to_work
+  const attPct  = live.attendance_pct != null ? Number(live.attendance_pct) : (expectedToWork > 0 ? Math.round((present / expectedToWork) * 1000) / 10 : 0);
+  const notMarked = Math.max(0, expectedToWork - present - absent - late);
 
   const chartData = [
     { name: "Present",    value: present,   fill: "#3BAD49", pct: attPct.toFixed(1) },
-    { name: "Late",       value: late,      fill: "#F59E0B", pct: total > 0 ? ((late / total) * 100).toFixed(1) : "0.0" },
-    { name: "Absent",     value: absent,    fill: "#E8231A", pct: total > 0 ? ((absent / total) * 100).toFixed(1) : "0.0" },
+    { name: "Late",       value: late,      fill: "#F59E0B", pct: expectedToWork > 0 ? ((late / expectedToWork) * 100).toFixed(1) : "0.0" },
+    { name: "Absent",     value: absent,    fill: "#E8231A", pct: expectedToWork > 0 ? ((absent / expectedToWork) * 100).toFixed(1) : "0.0" },
     { name: "On Leave",   value: onLeave,   fill: "#1B6AB5", pct: total > 0 ? ((onLeave / total) * 100).toFixed(1) : "0.0" },
-    { name: "Not Marked", value: notMarked, fill: "#cbd5e1", pct: total > 0 ? ((notMarked / total) * 100).toFixed(1) : "0.0" },
+    { name: "Week Off",   value: weekOff,   fill: "#8b5cf6", pct: total > 0 ? ((weekOff / total) * 100).toFixed(1) : "0.0" },
+    { name: "Not Marked", value: notMarked, fill: "#cbd5e1", pct: expectedToWork > 0 ? ((notMarked / expectedToWork) * 100).toFixed(1) : "0.0" },
   ].filter((d) => d.value > 0 && total > 0);
 
   const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });

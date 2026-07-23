@@ -72,11 +72,13 @@ router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) =>
        SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
        SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late,
        SUM(CASE WHEN attendance_status = 'missing_punch' THEN 1 ELSE 0 END) AS missed_punch,
+       SUM(CASE WHEN attendance_status IN ('on_leave','leave','leave_approved') THEN 1 ELSE 0 END) AS on_leave,
        COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS total_working_days,
+       COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off','on_leave','leave','leave_approved') THEN 1 END) AS expected_to_work,
        ROUND(
          (SUM(CASE WHEN attendance_status IN ('present','week_off_worked') THEN 1 ELSE 0 END)
           + SUM(CASE WHEN attendance_status = 'half_day' THEN 0.5 ELSE 0 END))
-         / NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END), 0) * 100,
+         / NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off','on_leave','leave','leave_approved') THEN 1 END), 0) * 100,
          1
        ) AS attendance_pct
      FROM attendance_daily_record
@@ -99,7 +101,9 @@ router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) =>
             absent: Number(row?.absent ?? 0),
             late: Number(row?.late ?? 0),
             missedPunch: Number(row?.missed_punch ?? 0),
+            onLeave: Number(row?.on_leave ?? 0),
             totalWorkingDays: Number(row?.total_working_days ?? 0),
+            expectedToWork: Number(row?.expected_to_work ?? 0),
             attendanceRate: Number(row?.attendance_pct ?? 0),
           },
         },

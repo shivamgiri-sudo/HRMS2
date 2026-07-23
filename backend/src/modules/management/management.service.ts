@@ -361,6 +361,7 @@ export const managementService = {
       db.execute<RowDataPacket[]>(
         `SELECT
            COUNT(*) AS total,
+           SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')) AS expected_to_work,
            SUM(adr.attendance_status = 'present') AS present,
            SUM(adr.attendance_status = 'half_day') AS half_day
          FROM attendance_daily_record adr
@@ -381,7 +382,7 @@ export const managementService = {
     const attendance = attendanceRows[0][0] ?? {};
     const headcount = numberValue(workforce.headcount);
     const exits = numberValue(workforce.exits_30d);
-    const attendanceTotal = numberValue(attendance.total);
+    const expectedToWork = numberValue(attendance.expected_to_work);
     const averageKpi = kpiRows.length
       ? (kpiRows as any[]).reduce((sum, row) => sum + numberValue(row.overall_score), 0) / kpiRows.length
       : 0;
@@ -394,11 +395,11 @@ export const managementService = {
       avg_kpi_score: Number(averageKpi.toFixed(2)),
       open_tickets: numberValue(ticketRows[0][0]?.open_tickets),
       pending_leaves: numberValue(leaveRows[0][0]?.pending_leaves),
-      attendance_rate: attendanceTotal > 0
+      attendance_rate: expectedToWork > 0
         ? Number(
             ((
               (numberValue(attendance.present) + numberValue(attendance.half_day) * 0.5)
-              / attendanceTotal
+              / expectedToWork
             ) * 100).toFixed(2)
           )
         : 0,
@@ -677,9 +678,15 @@ export const managementService = {
       attendanceRows.map((row) => [String(row.status), numberValue(row.value)]),
     );
     const attendanceTotal = Object.values(attendanceByStatus).reduce((sum, value) => sum + value, 0);
+    // Expected to work = total - leave/week_off/holiday (employees who should have been present)
+    const nonWorkingStatuses = ['leave_approved', 'on_leave', 'leave', 'week_off', 'holiday'];
+    const nonWorkingCount = nonWorkingStatuses.reduce(
+      (sum, status) => sum + numberValue(attendanceByStatus[status]),
+      0,
+    );
+    const expectedToWork = attendanceTotal - nonWorkingCount;
     const absentEquivalent =
       numberValue(attendanceByStatus.absent)
-      + numberValue(attendanceByStatus.leave_approved)
       + numberValue(attendanceByStatus.unreconciled)
       + numberValue(attendanceByStatus.half_day) * 0.5;
     const productiveEquivalent =
@@ -830,7 +837,11 @@ export const managementService = {
          pm.process_name,
          COUNT(DISTINCT e.id) AS headcount,
          SUM(adr.attendance_status = 'present') AS present_count,
-         ROUND(SUM(adr.attendance_status = 'present') * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0), 2) AS attendance_pct
+         SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')) AS expected_to_work,
+         ROUND(
+           SUM(adr.attendance_status = 'present') * 100.0 /
+           NULLIF(SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')), 0),
+         2) AS attendance_pct
        FROM process_master pm
        LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
@@ -876,12 +887,13 @@ export const managementService = {
         attrition_rate_30d: attritionRate30d,
         open_pipeline: openPipeline,
         analysts_in_training: analystsInTraining,
-        shrinkage_pct: attendanceTotal > 0
-          ? Number(((absentEquivalent / attendanceTotal) * 100).toFixed(2))
+        shrinkage_pct: expectedToWork > 0
+          ? Number(((absentEquivalent / expectedToWork) * 100).toFixed(2))
           : null,
-        attendance_pct: attendanceTotal > 0
-          ? Number(((productiveEquivalent / attendanceTotal) * 100).toFixed(2))
+        attendance_pct: expectedToWork > 0
+          ? Number(((productiveEquivalent / expectedToWork) * 100).toFixed(2))
           : null,
+        expected_to_work: expectedToWork,
       },
       on_leave: onLeaveCount,
       total_branches: totalBranches,

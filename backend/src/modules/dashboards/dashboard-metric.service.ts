@@ -176,14 +176,18 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       scopeParams
     ).catch(() => [[null]] as any);
 
-    // Get total active employees for attendance rate calculation
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total_employees FROM employees WHERE employment_status = 'active' AND ${scopeSql}`,
+    // Get employees expected to work today (rostered, excluding leave/week-off)
+    const [expectedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS expected_to_work
+       FROM attendance_daily_record
+       WHERE record_date = ${IST_DATE_EXPR}
+         AND attendance_status NOT IN ('on_leave', 'leave', 'week_off', 'holiday')
+         AND ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ total_employees: 0 }]] as any);
+    ).catch(() => [[{ expected_to_work: 0 }]] as any);
 
     const livePresent = Number((liveRows[0] as any)?.live_present ?? 0);
-    const totalEmployees = Number((empRows[0] as any)?.total_employees ?? 0);
+    const expectedToWork = Number((expectedRows[0] as any)?.expected_to_work ?? 0);
 
     // Prefer live data, fall back to processed data
     const r = rows[0] as any;
@@ -191,15 +195,19 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const absent = Number(r?.absent ?? 0);
     const late = Number(r?.late ?? 0);
     const missedPunch = Number(r?.missedPunch ?? 0);
+    const totalRecords = Number(r?.total ?? 0);
 
     // Use live present count if available, otherwise use processed
     const present = livePresent > 0 ? livePresent : processedPresent;
-    const attendanceRate = totalEmployees > 0 ? Math.round((present / totalEmployees) * 100) : null;
+    // Denominator: employees expected to work (from attendance records, excluding leave/week-off)
+    // Fall back to total records if expected query returns 0
+    const denominator = expectedToWork > 0 ? expectedToWork : (totalRecords > 0 ? totalRecords : 0);
+    const attendanceRate = denominator > 0 ? Math.round((present / denominator) * 100) : null;
 
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
 
-    return wrapEnriched("ATTENDANCE", attendanceRate, { present, absent, late, missedPunch, attendanceRate }, status, true, scope.branchIds[0], scope.processIds[0]);
+    return wrapEnriched("ATTENDANCE", attendanceRate, { present, absent, late, missedPunch, expectedToWork: denominator, attendanceRate }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("ATTENDANCE");
   }
