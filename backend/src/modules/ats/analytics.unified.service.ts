@@ -183,7 +183,7 @@ export async function getRecruiterTrends(recruiterId?: string): Promise<{
       COUNT(*) as interviews_conducted,
       SUM(CASE WHEN interview_status = 'selected' THEN 1 ELSE 0 END) as selections_made,
       ROUND((SUM(CASE WHEN interview_status = 'selected' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as selection_rate,
-      ROUND(AVG((communication_rating + technical_rating + cultural_fit_rating) / 3), 2) as avg_rating
+      ROUND(AVG((communication_rating + stability_rating) / 2), 2) as avg_rating
     FROM ats_interview_result
     WHERE interviewed_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
     ${recruiterId ? 'AND recruiter_id = ?' : ''}

@@ -1551,9 +1551,9 @@ export interface HiringActivityAnalytics {
   funnel: { stage: string; count: number; pct: number }[];
   byOutcome: { label: string; count: number }[];
   bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
-  byProcess: { label: string; total: number; selected: number; joined: number }[];
+  byProcess: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byRecruiter: { label: string; total: number; walkins: number; selected: number; joined: number; selRate: number }[];
-  byBranch: { label: string; total: number; selected: number; joined: number }[];
+  byBranch: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byGender: { label: string; count: number; joined: number }[];
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
@@ -1597,53 +1597,11 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   //
   // JOINED: exists in employees table matched by mobile or personal_email only
 
-  const IS_CONTACTED = `(
-    arha.contacted_flag = 1
-    OR (
-      COALESCE(arha.current_status, arha.recruiter_remarks, '') != ''
-      AND LOWER(COALESCE(arha.current_status, arha.recruiter_remarks, '')) NOT REGEXP
-        'not contacted|no response|no answer|wrong number|invalid|switched off|busy|not reachable|unreachable'
-    )
-  )`;
-
-  const IS_WALKIN = `EXISTS (
-    SELECT 1 FROM ats_candidate ac
-     WHERE (
-       ac.id = arha.linked_candidate_id
-       OR ac.mobile = arha.mobile
-       OR (arha.candidate_email IS NOT NULL AND arha.candidate_email != ''
-           AND ac.email = arha.candidate_email)
-     )
-     AND ac.walkin_end_stage IS NOT NULL
-     AND ac.walkin_end_stage != ''
-  )`;
-
-  const IS_SELECTED = `(
-    arha.final_selection_flag = 1
-    OR arha.current_status IN ('Selected','Joined')
-    OR arha.joining_status IN ('Offer Extended','Joined')
-    OR EXISTS (
-      SELECT 1 FROM ats_candidate ac
-       WHERE (
-         ac.id = arha.linked_candidate_id
-         OR ac.mobile = arha.mobile
-         OR (arha.candidate_email IS NOT NULL AND arha.candidate_email != ''
-             AND ac.email = arha.candidate_email)
-       )
-       AND LOWER(COALESCE(ac.final_decision,''))
-           IN ('selected','offered','joining confirmed','converted')
-    )
-  )`;
-
-  const IS_JOINED = `EXISTS (
-    SELECT 1 FROM employees e
-     WHERE e.mobile = arha.mobile
-        OR e.alternate_mobile = arha.mobile
-        OR (
-          arha.candidate_email IS NOT NULL AND arha.candidate_email != ''
-          AND e.personal_email = arha.candidate_email
-        )
-  )`;
+  // Use pre-computed flag columns — avoids expensive correlated subqueries on every row
+  const IS_CONTACTED = `arha.contacted_flag = 1`;
+  const IS_WALKIN    = `arha.walkin_flag = 1`;
+  const IS_SELECTED  = `arha.final_selection_flag = 1`;
+  const IS_JOINED    = `arha.joined_flag = 1`;
 
   // Build follow-up params reusing already-resolved branch
   const followupClauses: string[] = [
