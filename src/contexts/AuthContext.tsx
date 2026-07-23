@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
-import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { apiUrl } from "@/lib/apiBase";
 import { useInactivityTimeout } from "@/hooks/useInactivityTimeout";
 
@@ -239,19 +238,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Best-effort GPS for login location — uses cached position (no prompt if already granted)
-      const loginGeo = await new Promise<{ latitude: number | null; longitude: number | null }>((resolve) => {
-        if (!navigator?.geolocation) return resolve({ latitude: null, longitude: null });
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-          () => resolve({ latitude: null, longitude: null }),
-          { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false },
-        );
-      });
       const { ok, payload } = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, password, login_lat: loginGeo.latitude, login_lng: loginGeo.longitude }),
+        body: JSON.stringify({ identifier, password }),
       });
       if (!ok) {
         return { error: new Error(payload?.error || payload?.message || 'Authentication failed') };
