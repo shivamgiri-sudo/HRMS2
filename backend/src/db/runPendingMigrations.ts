@@ -377,6 +377,7 @@ const MIGRATION_MANIFEST: string[] = [
   "523_job_requisition.sql",                    // Job requisition master + candidate linking tables
   "524_job_requisition_batch_link.sql",         // Planned batch columns on job_requisition
   "528_job_requisition_handover.sql",           // Handover workflow columns on job_requisition
+  "530_auth_session_security_hardening.sql",    // Pre-auth challenge table, token family columns, auth invitation
   "535_attendance_reconciliation_issue.sql",    // NCOSEC-to-payroll attendance reconciliation issue ledger
   "536_attendance_reconciliation_apr_issue_types.sql", // APR payroll attendance reconciliation issue types
   "537_payroll_attendance_conflict_review.sql", // Payroll attendance control tower review ledger
