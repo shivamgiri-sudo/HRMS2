@@ -89,7 +89,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     pages: [
       "ATS_DASHBOARD","ATS_RECRUITER_QUEUE","ATS_RECRUITER_WORKSPACE",
       "ATS_WAITING_QUEUE","ATS_CANDIDATE_MASTER","ATS_ONBOARDING_BRIDGE","ATS_EXTENSIONS",
-      "HELPDESK","WORK_INBOX",
+      "HELPDESK","WORK_INBOX","RECRUITER_DASHBOARD",
     ],
   },
   {
@@ -147,8 +147,37 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     employeeCode: "EMP-WFM-001",
     pages: [
       "WFM_ROSTER","WFM_LIVE_TRACKER","WFM_EXTENSIONS","RTA_BOARD",
+      "WFM_DASHBOARD","WFM_ATTENDANCE_DASHBOARD",
       "OPERATIONS_DASHBOARD","OPERATIONS_KPI","MANAGEMENT_DASHBOARD",
       "HELPDESK","WORK_INBOX","ADVANCED_REPORTS",
+    ],
+  },
+  {
+    email:        "operations@mascallnet.com",
+    password:     "local-demo-operations",
+    role:         "operations_manager",
+    label:        "Operations Manager",
+    userId:       "demo-operations-id",
+    fullName:     "Local Operations Manager",
+    employeeId:   "demo-emp-operations",
+    employeeCode: "EMP-OPS-001",
+    pages: [
+      "OPERATIONS_DASHBOARD","OPERATIONS_KPI","QUALITY_DASHBOARD",
+      "MANAGEMENT_DASHBOARD","WORKFORCE_COMMAND_CENTER","HELPDESK",
+      "WORK_INBOX","ADVANCED_REPORTS",
+    ],
+  },
+  {
+    email:        "it@mascallnet.com",
+    password:     "local-demo-it",
+    role:         "it",
+    label:        "IT Manager",
+    userId:       "demo-it-id",
+    fullName:     "Local IT Manager",
+    employeeId:   "demo-emp-it",
+    employeeCode: "EMP-IT-001",
+    pages: [
+      "IT_MANAGER_DASHBOARD","ASSETS_MANAGER","HELPDESK","WORK_INBOX",
     ],
   },
   {
