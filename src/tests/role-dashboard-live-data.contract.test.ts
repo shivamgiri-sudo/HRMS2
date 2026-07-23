@@ -292,6 +292,7 @@ describe("role dashboard live-data contracts", () => {
     expect(ceo).not.toContain('label: "Login Adherence", value: attendance');
     expect(ceo).not.toContain('title="Executive AI Briefing"');
     expect(superAdmin).not.toContain('helper: "Excellent"');
+    expect(superAdmin).toContain('row.recordCountEstimated ? "Approximately " : ""');
   });
 
   it("uses direct quality pass/fail counts and stable-row deduplication", () => {
