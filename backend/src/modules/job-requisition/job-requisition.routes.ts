@@ -119,9 +119,11 @@ jobRequisitionRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { branchName } = req.params;
     const processId = req.query.processId as string | undefined;
+    const processName = req.query.processName as string | undefined;
     const data = await jobRequisitionService.getOpenRequisitionsForBranch(
       decodeURIComponent(branchName),
-      processId ? decodeURIComponent(processId) : undefined
+      processId ? decodeURIComponent(processId) : undefined,
+      processName ? decodeURIComponent(processName) : undefined
     );
     return res.json({ success: true, data });
   })

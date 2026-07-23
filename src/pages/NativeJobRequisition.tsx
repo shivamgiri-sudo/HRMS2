@@ -595,7 +595,10 @@ export default function NativeJobRequisition() {
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Headcount</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Priority</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Candidates</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Hiring Deadline</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Interviewed</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Selected</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Rejected</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Age</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
@@ -625,10 +628,12 @@ export default function NativeJobRequisition() {
                           {req.derived_status.replace(/_/g, ' ')}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-center text-sm">
-                        <span className="text-gray-700">{req.total_candidates}</span>
-                        {req.selected_candidates > 0 && <span className="ml-1 text-green-600">({req.selected_candidates} sel)</span>}
+                      <td className="px-4 py-3 text-center text-sm text-gray-500">
+                        {req.requisition_validity ? req.requisition_validity.slice(0, 10) : <span className="text-gray-300">—</span>}
                       </td>
+                      <td className="px-4 py-3 text-center text-sm font-medium text-gray-700">{(req as any).interviewed_candidates ?? 0}</td>
+                      <td className="px-4 py-3 text-center text-sm font-medium text-green-600">{req.selected_candidates ?? 0}</td>
+                      <td className="px-4 py-3 text-center text-sm font-medium text-red-500">{(req as any).rejected_candidates ?? 0}</td>
                       <td className="px-4 py-3 text-center text-sm text-gray-500">{req.aging_days}d</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">

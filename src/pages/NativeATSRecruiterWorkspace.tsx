@@ -445,12 +445,17 @@ export default function NativeATSRecruiterWorkspace() {
       return;
     }
     setLoadingBatches(true);
+    // If branchProcesses loaded, selectedProcessId is a UUID — use processId param
+    // If fallback to config.processOptions, selectedProcessId is a name string — use processName param
+    const isUuid = /^[0-9a-f-]{36}$/i.test(selectedProcessId);
+    const queryParam = isUuid
+      ? `processId=${encodeURIComponent(selectedProcessId)}`
+      : `processName=${encodeURIComponent(selectedProcessId)}`;
     hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(
-      `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?processId=${encodeURIComponent(selectedProcessId)}`
+      `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?${queryParam}`
     ).then(res => {
       const batches = res.data || [];
       setOpenBatches(batches);
-      // Auto-select when exactly one open batch exists for this process
       if (batches.length === 1) {
         setSelectedRequisitionId(batches[0].id);
       }

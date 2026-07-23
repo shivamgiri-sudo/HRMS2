@@ -115,7 +115,9 @@ export const jobRequisitionService = {
     );
     const total = Number(countRows[0]?.total ?? 0);
 
-    const [rows] = await db.execute<RowDataPacket[]>(
+    // Use db.query() here — db.execute() (prepared statements) crashes mysql2 when a derived
+    // subquery contains SUM(CASE WHEN...). LIMIT/OFFSET are safe integer-interpolated.
+    const [rows] = await db.query<RowDataPacket[]>(
       `SELECT
         jr.*,
         (jr.requested_headcount - jr.fulfilled_headcount) AS open_positions,
@@ -128,7 +130,9 @@ export const jobRequisitionService = {
           ELSE jr.approval_status
         END AS derived_status,
         COALESCE(cand.total_candidates, 0) AS total_candidates,
+        COALESCE(cand.interviewed_candidates, 0) AS interviewed_candidates,
         COALESCE(cand.selected_candidates, 0) AS selected_candidates,
+        COALESCE(cand.rejected_candidates, 0) AS rejected_candidates,
         COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates
        FROM job_requisition jr
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
@@ -136,7 +140,9 @@ export const jobRequisitionService = {
          SELECT
            requisition_id,
            COUNT(*) AS total_candidates,
+           COUNT(*) AS interviewed_candidates,
            SUM(CASE WHEN outcome = 'selected' THEN 1 ELSE 0 END) AS selected_candidates,
+           SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected_candidates,
            SUM(CASE WHEN outcome = 'in_progress' THEN 1 ELSE 0 END) AS pipeline_candidates
          FROM job_requisition_candidate
          GROUP BY requisition_id
@@ -145,8 +151,8 @@ export const jobRequisitionService = {
        ORDER BY
          CASE jr.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
          jr.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+       LIMIT ${limit} OFFSET ${offset}`,
+      params
     );
 
     return {
@@ -175,7 +181,9 @@ export const jobRequisitionService = {
           ELSE jr.approval_status
         END AS derived_status,
         COALESCE(cand.total_candidates, 0) AS total_candidates,
+        COALESCE(cand.interviewed_candidates, 0) AS interviewed_candidates,
         COALESCE(cand.selected_candidates, 0) AS selected_candidates,
+        COALESCE(cand.rejected_candidates, 0) AS rejected_candidates,
         COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates
        FROM job_requisition jr
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
@@ -183,7 +191,9 @@ export const jobRequisitionService = {
          SELECT
            requisition_id,
            COUNT(*) AS total_candidates,
+           COUNT(*) AS interviewed_candidates,
            SUM(CASE WHEN outcome = 'selected' THEN 1 ELSE 0 END) AS selected_candidates,
+           SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected_candidates,
            SUM(CASE WHEN outcome = 'in_progress' THEN 1 ELSE 0 END) AS pipeline_candidates
          FROM job_requisition_candidate
          GROUP BY requisition_id
@@ -853,12 +863,16 @@ export const jobRequisitionService = {
   /**
    * Get open requisitions for a branch (for recruiter selection)
    */
-  async getOpenRequisitionsForBranch(branchName: string, processId?: string): Promise<JobRequisitionSummary[]> {
+  async getOpenRequisitionsForBranch(branchName: string, processId?: string, processName?: string): Promise<JobRequisitionSummary[]> {
     const params: unknown[] = [branchName];
     let processClause = '';
     if (processId) {
       processClause = 'AND jr.process_id = ?';
       params.push(processId);
+    } else if (processName) {
+      // Fallback: match by name when ID not available (e.g. recruiter workspace using config options)
+      processClause = 'AND jr.process_name = ?';
+      params.push(processName);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
