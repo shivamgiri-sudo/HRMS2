@@ -252,18 +252,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const loginGeo = await new Promise<{ latitude: number | null; longitude: number | null }>((resolve) => {
-        if (!navigator?.geolocation) return resolve({ latitude: null, longitude: null });
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-          () => resolve({ latitude: null, longitude: null }),
-          { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false }
-        );
-      });
+      // PRIVACY: Removed geolocation collection - backend doesn't use it for security
+      // and collecting it without clear purpose violates data minimization principle
       const { ok, payload } = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, password, login_lat: loginGeo.latitude, login_lng: loginGeo.longitude }),
+        body: JSON.stringify({ identifier, password }),
       });
       if (!ok) {
         return { error: new Error(payload?.error || payload?.message || 'Authentication failed') };

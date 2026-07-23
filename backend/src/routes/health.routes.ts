@@ -86,6 +86,34 @@ healthRouter.get("/", async (_req, res) => {
   });
 });
 
+/**
+ * Liveness probe - process-only check for Kubernetes.
+ * Returns 200 if the process is alive; no DB or external dependencies.
+ */
+healthRouter.get("/live", (_req, res) => {
+  return res.status(200).json({
+    status: "alive",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Readiness probe - full dependency check.
+ * Returns 200 if the service can accept traffic; 503 if not ready.
+ */
+healthRouter.get("/ready", async (_req, res) => {
+  const dbStatus = await getDatabaseStatus();
+  const migrations = getMigrationHealth();
+  const ready = dbStatus === "ok" && migrations.status !== "failed";
+
+  return res.status(ready ? 200 : 503).json({
+    status: ready ? "ready" : "not_ready",
+    db: dbStatus,
+    migrations: migrations.status,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
   const migrations = getMigrationHealth();
