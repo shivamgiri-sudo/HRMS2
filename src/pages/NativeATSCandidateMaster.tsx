@@ -770,6 +770,7 @@ export default function NativeATSCandidateMaster() {
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<EnrichedCandidate[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [selected, setSelected] = useState<EnrichedCandidate | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -780,6 +781,8 @@ export default function NativeATSCandidateMaster() {
   const [error, setError] = useState("");
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const loadConfig = async () => {
     try {
@@ -793,42 +796,64 @@ export default function NativeATSCandidateMaster() {
     } catch { /* non-critical */ }
   };
 
+  const mapCandidate = (c: any): EnrichedCandidate => ({
+    id: c.candidateId ?? c.id,
+    candidate_code: c.candidateCode ?? c.candidate_code,
+    q_token: c.qToken ?? c.q_token ?? c.candidate_code,
+    full_name: c.fullName ?? c.full_name,
+    mobile: c.mobile,
+    email: c.email ?? undefined,
+    branch_name: c.branch ?? c.applied_for_branch ?? c.branch_name ?? undefined,
+    role_applied: c.process ?? c.applied_for_process ?? undefined,
+    recruiter_name: c.recruiter_name ?? c.recruiter_assigned_name ?? undefined,
+    status: c.status ?? c.current_stage ?? "Applied",
+    walkin_end_stage: c.walkin_end_stage ?? c.current_stage ?? undefined,
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+    skilltest_typing: c.skilltest_typing ?? null,
+    skilltest_ai: c.skilltest_ai ?? null,
+    skilltest_result: c.skilltest_result ?? null,
+    assessment_percentage: c.assessment_percentage ?? null,
+    typing_net_wpm: c.typing_net_wpm ?? null,
+    assignment: undefined,
+    logs: [],
+  });
+
   const loadData = async () => {
     setLoading(true);
     setError("");
+    setCurrentPage(1);
     try {
       const endpoint = isRecruiter
         ? "/api/ats/recruiter/my-candidates"
-        : "/api/ats/candidates?limit=500&page=1&sourcingChannel=Walk-In";
+        : "/api/ats/candidates?limit=500&page=1";
       const res = await hrmsApi.get<{ success: boolean; data: any[]; total?: number }>(endpoint);
       const raw: any[] = res.data ?? [];
-      const enriched: EnrichedCandidate[] = raw.map((c: any): EnrichedCandidate => ({
-        id: c.candidateId ?? c.id,
-        candidate_code: c.candidateCode ?? c.candidate_code,
-        q_token: c.qToken ?? c.q_token ?? c.candidate_code,
-        full_name: c.fullName ?? c.full_name,
-        mobile: c.mobile,
-        email: c.email ?? undefined,
-        branch_name: c.branch ?? c.applied_for_branch ?? c.branch_name ?? undefined,
-        role_applied: c.process ?? c.applied_for_process ?? undefined,
-        recruiter_name: c.recruiter_name ?? c.recruiter_assigned_name ?? undefined,
-        status: c.status ?? c.current_stage ?? "Applied",
-        walkin_end_stage: c.walkin_end_stage ?? c.current_stage ?? undefined,
-        created_at: c.created_at,
-        updated_at: c.updated_at,
-        skilltest_typing: c.skilltest_typing ?? null,
-        skilltest_ai: c.skilltest_ai ?? null,
-        skilltest_result: c.skilltest_result ?? null,
-        assessment_percentage: c.assessment_percentage ?? null,
-        typing_net_wpm: c.typing_net_wpm ?? null,
-        assignment: undefined,
-        logs: [],
-      }));
-      setRows(enriched);
+      setRows(raw.map(mapCandidate));
+      setTotalCount(res.total ?? raw.length);
     } catch (err: any) {
       setError(err?.message || "Unable to load candidates");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (loadingMore || rows.length >= totalCount) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = currentPage + 1;
+      const res = await hrmsApi.get<{ success: boolean; data: any[]; total?: number }>(
+        `/api/ats/candidates?limit=500&page=${nextPage}`
+      );
+      const raw: any[] = res.data ?? [];
+      if (raw.length > 0) {
+        setRows(prev => [...prev, ...raw.map(mapCandidate)]);
+        setCurrentPage(nextPage);
+      }
+    } catch { /* ignore */ }
+    finally {
+      setLoadingMore(false);
     }
   };
 
@@ -1082,8 +1107,19 @@ export default function NativeATSCandidateMaster() {
             )}
           </div>
           {filtered.length > 0 && (
-            <div className="border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400">
-              Showing {filtered.length} of {rows.length} candidates
+            <div className="border-t border-slate-100 px-4 py-2 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                Showing {filtered.length} of {rows.length} loaded{totalCount > rows.length ? ` (${totalCount} total in database)` : ""}
+              </span>
+              {!isRecruiter && rows.length < totalCount && (
+                <button
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 disabled:text-slate-400"
+                >
+                  {loadingMore ? "Loading…" : `Load More (${totalCount - rows.length} remaining)`}
+                </button>
+              )}
             </div>
           )}
         </div>
