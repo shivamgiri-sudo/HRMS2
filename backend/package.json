@@ -8,6 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc --noEmitOnError false",
     "start": "node dist/src/server.js",
+    "migrate": "tsx src/scripts/migrate.ts",
+    "migrate:status": "tsx src/scripts/migrate.ts --status",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
