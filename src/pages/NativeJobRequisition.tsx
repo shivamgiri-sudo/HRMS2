@@ -547,12 +547,8 @@ export default function NativeJobRequisition() {
     setFunnelLoading(true);
     setJoinedEmployees([]);
     try {
-      const [funnelRes, batchesRes] = await Promise.all([
-        hrmsApi.get<{ success: boolean; data: RequisitionFunnel }>(`/api/job-requisition/${req.id}/funnel`),
-        hrmsApi.get<{ success: boolean; data: LmsBatch[] }>(`/api/job-requisition/batches/available?branch=${encodeURIComponent(req.branch_name)}`),
-      ]);
+      const funnelRes = await hrmsApi.get<{ success: boolean; data: RequisitionFunnel }>(`/api/job-requisition/${req.id}/funnel`);
       setFunnelData(funnelRes.data);
-      setAvailableBatches(batchesRes.data || []);
     } catch (err: any) {
       console.error('Failed to load funnel data:', err);
     } finally {
@@ -1429,31 +1425,10 @@ export default function NativeJobRequisition() {
                         </button>
                       </div>
                     ) : (
-                      <div>
-                        <p className="text-sm text-amber-700 mb-3">No batch assigned. Select a planned batch from LMS:</p>
-                        {availableBatches.length > 0 ? (
-                          <div className="space-y-2 max-h-48 overflow-y-auto">
-                            {availableBatches.map((batch) => (
-                              <div
-                                key={batch.batch_no}
-                                className="flex items-center justify-between p-2 bg-white rounded border hover:border-amber-400 cursor-pointer"
-                                onClick={() => handleAssignBatch(batch.batch_no, batch.batch_name, batch.start_date)}
-                              >
-                                <div>
-                                  <div className="font-medium text-gray-800">{batch.batch_name}</div>
-                                  <div className="text-xs text-gray-500">
-                                    {batch.batch_no} · {batch.batch_status} · {batch.current_trainees}/{batch.expected_trainees} trainees
-                                    {batch.start_date && ` · Starts: ${formatISTDate(batch.start_date)}`}
-                                  </div>
-                                </div>
-                                <button className="px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded hover:bg-amber-200">Assign</button>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-500 italic">No planned batches available for this branch.</p>
-                        )}
-                      </div>
+                      <BatchAssignInline
+                        onAssign={(batchNo, batchName, startDate) => handleAssignBatch(batchNo, batchName, startDate)}
+                        disabled={batchAssigning}
+                      />
                     )}
                   </div>
                 )}
@@ -1619,4 +1594,58 @@ function FunnelStep({ label, count, color }: { label: string; count: number; col
 
 function FunnelArrow() {
   return <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />;
+}
+
+function BatchAssignInline({ onAssign, disabled }: {
+  onAssign: (batchNo: string, batchName: string, startDate: string | null) => void;
+  disabled: boolean;
+}) {
+  const [batchNo, setBatchNo] = React.useState('');
+  const [batchName, setBatchName] = React.useState('');
+  const [startDate, setStartDate] = React.useState('');
+
+  const handleSave = () => {
+    if (!batchNo.trim()) return;
+    onAssign(batchNo.trim(), batchName.trim() || batchNo.trim(), startDate || null);
+    setBatchNo(''); setBatchName(''); setStartDate('');
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-amber-700">No batch assigned. Enter the planned batch details:</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs font-medium text-amber-800 mb-1">Batch No. *</label>
+          <input
+            type="text" value={batchNo} onChange={e => setBatchNo(e.target.value)}
+            placeholder="e.g. B-2026-08"
+            className="w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-amber-800 mb-1">Batch Name</label>
+          <input
+            type="text" value={batchName} onChange={e => setBatchName(e.target.value)}
+            placeholder="Optional display name"
+            className="w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-amber-800 mb-1">Training Start Date</label>
+          <input
+            type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
+            className="w-full px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+        <div className="flex items-end">
+          <button
+            onClick={handleSave} disabled={!batchNo.trim() || disabled}
+            className="w-full px-3 py-1.5 text-sm bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50"
+          >
+            {disabled ? 'Saving…' : 'Assign Batch'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
