@@ -1,6 +1,7 @@
 import compression from "compression";
 import cors from "cors";
 import express from "express";
+import fs from "fs";
 import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
@@ -245,9 +246,26 @@ app.use(globalLimiter);
 
 const uploadsPath = path.resolve(process.cwd(), "uploads");
 
-// Only employee-photos are intentionally public (avatar display, no PII risk).
-// Every other subfolder — tax-documents, onboarding, payslips, expense-receipts,
-// bank proofs, NOC files, etc. — must go through the authenticated /api/files/ endpoint.
+// Public: employee avatar photos served via /api/ so nginx proxy covers all devices.
+// Filename is always {employeeId}.ext — basename-sanitised, no traversal risk.
+const employeePhotosDir = path.join(uploadsPath, "employee-photos");
+fs.mkdirSync(employeePhotosDir, { recursive: true });
+
+app.get("/api/files/employee-photos/:filename", (req, res) => {
+  const filename = path.basename(String(req.params.filename ?? ""));
+  const ext = path.extname(filename).toLowerCase();
+  if (![".jpg", ".jpeg", ".png", ".webp"].includes(ext)) {
+    return res.status(400).json({ success: false, error: "Invalid file type" });
+  }
+  const filePath = path.join(employeePhotosDir, filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, error: "Not found" });
+  }
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+  return res.sendFile(filePath);
+});
+
+// Legacy /uploads/employee-photos/* — keep working for old URLs already in browser cache
 const UPLOADS_PUBLIC_ALLOWLIST = new Set(["/employee-photos/"]);
 app.use("/uploads", (req, res, _next) => {
   const isAllowed = [...UPLOADS_PUBLIC_ALLOWLIST].some(prefix => req.path.startsWith(prefix));

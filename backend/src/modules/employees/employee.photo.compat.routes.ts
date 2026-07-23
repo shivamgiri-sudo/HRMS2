@@ -80,7 +80,7 @@ async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Mu
     fs.renameSync(uploadedFile.path, finalPath);
   }
 
-  const fileUrl = `/uploads/employee-photos/${finalName}`;
+  const fileUrl = `/api/files/employee-photos/${finalName}`;
   const [result] = await db.execute(
     `UPDATE employees
         SET avatar_url = ?, photo_url = ?, updated_at = COALESCE(updated_at, NOW())
