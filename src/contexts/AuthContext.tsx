@@ -96,9 +96,23 @@ async function tryRefresh(): Promise<HrmsUser | null> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: raw }),
     });
-    if (!ok) return null;
+    if (!ok) {
+      // Check for security-related errors that require logout
+      if (payload?.logoutRequired || payload?.code === 'TOKEN_REUSED' || payload?.code === 'PASSWORD_CHANGED') {
+        localStorage.removeItem('hrms_access_token');
+        localStorage.removeItem('hrms_refresh_token');
+        localStorage.removeItem('hrms_must_change_password');
+        localStorage.removeItem('hrms_2fa_required');
+        localStorage.removeItem('hrms_2fa_verified');
+      }
+      return null;
+    }
     const { data } = payload ?? {};
     localStorage.setItem('hrms_access_token', data.accessToken);
+    // SECURITY: Store the rotated refresh token (token rotation is now enforced)
+    if (data.refreshToken) {
+      localStorage.setItem('hrms_refresh_token', data.refreshToken);
+    }
     return decodeJwtUser(data.accessToken);
   } catch {
     return null;
@@ -269,12 +283,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: new Error(payload?.error || payload?.message || 'Authentication failed') };
       }
       const { accessToken, refreshToken, user: authUser } = payload?.data ?? {};
-      if (!accessToken || !refreshToken || !authUser?.id) {
+      // SECURITY: refreshToken may be null when 2FA is required (token only issued after 2FA)
+      if (!accessToken || !authUser?.id) {
         return { error: new Error('Login response was incomplete. Please try again.') };
       }
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
-      localStorage.setItem('hrms_refresh_token', refreshToken);
+      // Only store refresh token if provided (not provided when 2FA is required)
+      if (refreshToken) {
+        localStorage.setItem('hrms_refresh_token', refreshToken);
+      } else {
+        localStorage.removeItem('hrms_refresh_token');
+      }
       const forceChange = authUser.mustChangePassword === true;
       const requiresTwoFactor = authUser.twoFactorRequired === true;
       const verifiedTwoFactor = authUser.twoFactorVerified === true;
@@ -401,10 +421,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!ok) return { error: new Error(payload?.error || payload?.message || 'Verification failed') };
 
-      // Backend returns a full accessToken after successful 2FA.
-      // Replace the pre_auth token in localStorage so subsequent API calls work.
+      // Backend returns full session tokens (access + refresh) after successful 2FA.
+      // SECURITY: The refresh token is ONLY issued after 2FA verification.
       if (payload?.accessToken) {
         localStorage.setItem('hrms_access_token', payload.accessToken);
+      }
+      if (payload?.refreshToken) {
+        localStorage.setItem('hrms_refresh_token', payload.refreshToken);
       }
 
       localStorage.setItem('hrms_2fa_required', 'true');
