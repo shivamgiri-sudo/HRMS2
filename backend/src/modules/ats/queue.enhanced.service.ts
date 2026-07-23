@@ -529,7 +529,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
   const branchCondition = branch
     ? `AND COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,'')) = ?`
     : '';
-  const params: unknown[] = [targetDate];
+  const params: unknown[] = [targetDate, targetDate];
   if (branch) params.push(branch);
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -548,11 +548,19 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       scores.assessment_percentage,
       scores.typing_net_wpm,
       scores.typing_accuracy,
-      COALESCE(isub.submitted_at, c.created_at)                                             AS arrived_at
+      COALESCE(
+        MIN(COALESCE(qt.arrival_time, qt.created_at)),
+        MIN(aca_today.created_at)
+      )                                                                                     AS arrived_at
     FROM ats_candidate c
-    LEFT JOIN ats_interview_submission isub ON isub.candidate_id = c.id
-    LEFT JOIN process_master pm            ON pm.id = c.applied_for_process
-    LEFT JOIN branch_master bm             ON bm.id = c.applied_for_branch
+    LEFT JOIN ats_queue_token qt
+           ON qt.candidate_id = c.id
+          AND DATE(COALESCE(qt.arrival_time, qt.created_at)) = ?
+    LEFT JOIN ats_candidate_assessment aca_today
+           ON aca_today.candidate_id = c.id
+          AND DATE(aca_today.created_at) = ?
+    LEFT JOIN process_master pm  ON pm.id = c.applied_for_process
+    LEFT JOIN branch_master bm   ON bm.id = c.applied_for_branch
     LEFT JOIN (
       SELECT aca.candidate_id,
              MAX(aca.percentage)           AS assessment_percentage,
@@ -563,16 +571,25 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       GROUP BY aca.candidate_id
     ) scores ON scores.candidate_id = c.id
     WHERE (
+      qt.id IS NOT NULL OR aca_today.id IS NOT NULL
+    )
+    AND (
       c.current_stage IN (
         'Operations Interview', "Round 2- Op's",
         'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test',
-        'Applied', 'New', 'Screening', 'Written Test', 'Hold'
+        'Applied', 'New', 'Screening', 'Written Test', 'Hold', 'Arrived'
       )
       OR (c.current_stage IN ('Rejected', 'Selected', 'Offered') AND c.final_decision IS NOT NULL)
     )
-    AND DATE(COALESCE(isub.submitted_at, c.created_at)) = ?
     ${branchCondition}
-    ORDER BY COALESCE(isub.submitted_at, c.created_at) ASC`,
+    GROUP BY
+      c.id, c.candidate_code, c.full_name, c.current_stage, c.role_applied,
+      c.applied_for_process, c.round1_result, c.skilltest_result, c.round2_result,
+      c.final_decision, c.walkin_end_stage, c.recruiter_assigned_name,
+      c.second_round_interviewer_name_snapshot,
+      scores.assessment_percentage, scores.typing_net_wpm, scores.typing_accuracy,
+      pm.process_name, bm.branch_name
+    ORDER BY arrived_at ASC`,
     params
   );
 
