@@ -9,6 +9,8 @@ vi.mock("@/integrations/utils/fetchWithTimeout", () => ({
 }));
 
 import { getLocationFromIP } from "@/integrations/apis/ipGeocode.api";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 describe("IP geolocation fallback", () => {
   beforeEach(() => {
@@ -40,5 +42,13 @@ describe("IP geolocation fallback", () => {
 
     fetchWithTimeoutMock.mockRejectedValueOnce(new Error("provider unavailable"));
     await expect(getLocationFromIP()).resolves.toBeNull();
+  });
+
+  it("does not call the cross-origin provider from the login greeting", () => {
+    const greeting = readFileSync(
+      resolve(process.cwd(), "src/components/integrations/LoginSmartGreeting.tsx"),
+      "utf8",
+    );
+    expect(greeting).not.toContain("getLocationFromIP");
   });
 });

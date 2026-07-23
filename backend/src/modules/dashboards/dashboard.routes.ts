@@ -73,6 +73,12 @@ async function requestedScope(req: AuthenticatedRequest) {
   return { user, context, scope };
 }
 
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
 // Specific routes must be registered before /:dashboardCode/* routes.
 router.get("/employee/summary", requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD"), h(async (req: AuthenticatedRequest, res: any) => {
   const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
@@ -199,6 +205,59 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       generatedAt: new Date().toISOString(),
     },
   });
+}));
+
+router.get("/:dashboardCode/export", h(async (req: AuthenticatedRequest, res: any) => {
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const definition = getDashboardDefinition(dashboardCode)!;
+  if (!definition.permissions.export) {
+    throw Object.assign(new Error("Dashboard export is not permitted"), {
+      statusCode: 403,
+      errorCode: "DASHBOARD_EXPORT_FORBIDDEN",
+    });
+  }
+
+  const { scope } = await requestedScope(req);
+  const generatedAt = new Date();
+  const metrics = await executeDashboardMetrics(dashboardCode, scope, generatedAt);
+  const header = [
+    "dashboard_code",
+    "metric_code",
+    "value",
+    "unit",
+    "status",
+    "available",
+    "numerator",
+    "denominator",
+    "period_start",
+    "period_end",
+    "timezone",
+    "as_of",
+  ];
+  const rows = Object.values(metrics).map((metric) => [
+    dashboardCode,
+    metric.code,
+    metric.value,
+    metric.unit,
+    metric.status,
+    metric.available,
+    metric.numerator,
+    metric.denominator,
+    metric.periodStart,
+    metric.periodEnd,
+    metric.timezone,
+    metric.asOf,
+  ]);
+  const csv = [header, ...rows]
+    .map((row) => row.map(csvCell).join(","))
+    .join("\r\n");
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${dashboardCode.toLowerCase()}-${generatedAt.toISOString().slice(0, 10)}.csv"`,
+  );
+  return res.status(200).send(`\uFEFF${csv}`);
 }));
 
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {

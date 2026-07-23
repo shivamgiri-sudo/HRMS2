@@ -71,4 +71,15 @@ describe("dashboard access registry", () => {
     expect(routes).toContain('requireFixedDashboard("PAYROLL_HR_DASHBOARD")');
     expect(routes).toContain('throw dashboardAccessError(`Not entitled to ${definition.code}`, 403)');
   });
+
+  it("enforces the registry export permission on the dashboard export endpoint", () => {
+    const routes = readFileSync(
+      resolve(process.cwd(), "src/modules/dashboards/dashboard.routes.ts"),
+      "utf8",
+    );
+
+    expect(routes).toContain('router.get("/:dashboardCode/export"');
+    expect(routes).toContain("definition.permissions.export");
+    expect(DASHBOARD_ACCESS_REGISTRY.EMPLOYEE_SELF_DASHBOARD.permissions.export).toBe(false);
+  });
 });

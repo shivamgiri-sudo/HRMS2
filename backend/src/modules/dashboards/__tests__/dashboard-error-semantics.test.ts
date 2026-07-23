@@ -10,6 +10,10 @@ const drilldowns = readFileSync(
   resolve(process.cwd(), "src/modules/dashboards/dashboard-drilldown.service.ts"),
   "utf8",
 );
+const errorHandler = readFileSync(
+  resolve(process.cwd(), "src/middleware/errorHandler.ts"),
+  "utf8",
+);
 
 describe("dashboard source error semantics", () => {
   it("does not return an empty employee summary when employee mapping is missing", () => {
@@ -39,5 +43,9 @@ describe("dashboard source error semantics", () => {
     expect(drilldowns).not.toContain("records: [], note: `Query error:");
     expect(drilldowns).not.toContain(".catch(() => [[]]");
     expect(drilldowns).toContain('errorCode: "SOURCE_UNAVAILABLE"');
+  });
+
+  it("preserves dashboard error codes in the shared error envelope", () => {
+    expect(errorHandler).toContain("operationalError.errorCode");
   });
 });

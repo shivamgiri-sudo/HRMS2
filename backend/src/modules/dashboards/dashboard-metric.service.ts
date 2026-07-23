@@ -124,6 +124,11 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
 export async function getOnboardingMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const { sql: otpScopeSql, params: otpScopeParams } = buildScopeWhere(
+      scope,
+      "b.branch_id",
+      "b.process_id",
+    );
 
     const [bridgeRows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -137,17 +142,21 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     );
 
     const [otpRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS otp_verified FROM candidate_onboarding_profile WHERE otp_verified = 1`
+      `SELECT COUNT(DISTINCT cop.id) AS otp_verified
+         FROM candidate_onboarding_profile cop
+         JOIN ats_onboarding_bridge b ON b.candidate_id = cop.candidate_id
+        WHERE cop.otp_verified = 1 AND ${otpScopeSql}`,
+      otpScopeParams,
     );
 
     const r = bridgeRows[0] as any;
     const submitted = Number(r?.submitted ?? 0);
     const pending = Number(r?.pending ?? 0);
     const stuck = Number(r?.stuck ?? 0);
-    const otpPending = Number((otpRows[0] as any)?.otp_verified ?? 0);
+    const otpVerified = Number((otpRows[0] as any)?.otp_verified ?? 0);
 
     const status: MetricResult["status"] = stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
-    return wrapEnriched("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck }, status, true, scope.branchIds[0], scope.processIds[0]);
+    return wrapEnriched("ONBOARDING", submitted + pending, { submitted, pending, otpVerified, stuck }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("ONBOARDING");
   }

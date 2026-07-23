@@ -304,11 +304,12 @@ describe("role dashboard live-data contracts", () => {
 
   it("filters dashboard quick actions through current page and role permissions", () => {
     const dashboardUi = read("src/pages/dashboards/ReferenceDashboardUI.tsx");
+    const linkAccess = read("src/pages/dashboards/dashboardLinkAccess.ts");
 
-    expect(dashboardUi).toContain("useUserRole()");
-    expect(dashboardUi).toContain("disabledPageCodes");
-    expect(dashboardUi).toContain("page?.can_view");
-    expect(dashboardUi).toContain("if (!allowed) return null");
+    expect(dashboardUi).toContain("useDashboardLinkAccess()");
+    expect(linkAccess).toContain("disabledPageCodes");
+    expect(linkAccess).toContain("page.can_view");
+    expect(linkAccess).toContain("roles.has(\"super_admin\")");
   });
 
   it("keeps WFM planning, availability, and adherence metrics independent", () => {

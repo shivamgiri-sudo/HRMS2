@@ -214,18 +214,30 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
   return payload as T;
 }
 
-async function requestBlob(path: string): Promise<Blob> {
+async function requestBlob(path: string, timeoutMs = 30000): Promise<Blob> {
   const headers = getAuthHeader();
   const normalizedPath = normalizeRequestPath(path);
-  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
-    method: "GET",
-    headers: { ...headers },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+      method: "GET",
+      headers: { ...headers },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    return res.blob();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Download timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.blob();
 }
 
 export const hrmsApi = {

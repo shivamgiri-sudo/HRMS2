@@ -47,7 +47,7 @@ same engine.
 | Empty state | Role layouts contain per-panel empty/unavailable rendering | Correct but unverified visually in this PR |
 | Error state | Reference engine retains and displays per-source failures | Correct and verified by source |
 | Refresh | Manual refresh of active queries; query-specific stale times of 30–60 seconds | Correct and verified by source |
-| Export | Registry declares entitlement, but unified API export enforcement is not yet implemented | Placeholder |
+| Export | Aggregate canonical-metric CSV endpoint enforces dashboard entitlement and the registry export flag; employee self-export remains disabled | Correct but unverified against staging data |
 | Drill-down | Generic metric drill-down route exists and is entitlement-protected | Correct but unverified against live data |
 | Sensitive data | Categories are declared per dashboard in the registry | Correct but field-level masking audit remains |
 
@@ -63,7 +63,7 @@ attendance expressions use IST (`Asia/Kolkata`, UTC+05:30).
 | Required HC | Planned HC, else configured workforce mandate; never active-HC fallback | Today | `wfm_slot_requirement`, `workforce_mandate` | Branch/process; unavailable for team/self when no employee-linked plan exists | Generic metric drill-down | Correct but unverified against live data |
 | Available HC | Distinct employees in active attendance sessions / n/a | Today IST | `wfm_attendance_session`, `employees` | Canonical employee/team/branch/process scope | Generic metric drill-down | Correct but unverified against live data |
 | Attendance rate | Processed-present employees / processed expected-to-work employees; live biometric count is separate metadata | Today IST | `attendance_daily_record`; live count separately from `wfm_attendance_session` | Canonical employee/team/branch/process scope | Generic metric drill-down | Correct but unverified against live data |
-| Onboarding | Submitted + pending bridge rows / n/a | Current | `ats_onboarding_bridge`, `candidate_onboarding_profile` | Branch/process | Generic metric drill-down | Contract mismatch: OTP subquery is not scoped |
+| Onboarding | Submitted + pending bridge rows / n/a; OTP-verified count joined through the same bridge population | Current | `ats_onboarding_bridge`, `candidate_onboarding_profile` | Branch/process | Generic metric drill-down | Correct but unverified against staging data |
 | Payroll readiness | Employees with bank and PAN / active employees | Current | `employees` | Canonical employee/team/branch/process scope | Generic metric drill-down | Correct but unverified against live data |
 | Incentive queue | Pending upload batches / n/a | Current | `incentive_upload_batch` | Branch/process | Generic metric drill-down | Correct but unverified against live data |
 | TAT | Open task instances / n/a | Current | `task_tat_instance` | Branch/process | Generic metric drill-down | Correct but unverified against live data |
@@ -100,8 +100,8 @@ still open and must remain non-production-ready:
 
 - reconciliation of the canonical Zod metric response against staging data;
 - reconciliation of role-specific metric selections against business owners;
-- complete payroll-run scoping and reconciliation;
+- payroll-run reconciliation against read-only staging data;
 - direct audit-record quality calculation and event-based recruiter funnel;
-- `RoleDashboardV3` retirement;
-- permission-filtered exports and all quick actions;
-- twelve-dashboard visual, accessibility, broken-link, performance, and UAT evidence.
+- remaining non-shared inline links that are not represented in the canonical navigation catalogue;
+- twelve-role negative RBAC validation with dedicated role accounts;
+- accessibility, empty/error/partial-state, query-performance, data-reconciliation, and UAT evidence.

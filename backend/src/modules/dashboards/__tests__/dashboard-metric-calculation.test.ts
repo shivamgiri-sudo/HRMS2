@@ -14,7 +14,10 @@ vi.mock("../dashboard-target.service.js", () => ({
   }),
 }));
 
-import { getAttendanceMetrics } from "../dashboard-metric.service.js";
+import {
+  getAttendanceMetrics,
+  getOnboardingMetrics,
+} from "../dashboard-metric.service.js";
 
 const scope: DashboardScope = {
   level: "BRANCH_ALL",
@@ -51,5 +54,22 @@ describe("dashboard metric calculations", () => {
 
     expect(metric.value).toBeNull();
     expect(metric.status).toBe("unknown");
+  });
+
+  it("scopes onboarding OTP counts through the onboarding bridge", async () => {
+    execute
+      .mockResolvedValueOnce([[
+        { total: 3, submitted: 1, pending: 2, stuck: 0 },
+      ]])
+      .mockResolvedValueOnce([[{ otp_verified: 1 }]]);
+
+    const metric = await getOnboardingMetrics(scope);
+
+    const otpCall = execute.mock.calls[1];
+    expect(otpCall[0]).toContain("JOIN ats_onboarding_bridge b");
+    expect(otpCall[0]).toContain("b.branch_id IN (?)");
+    expect(otpCall[1]).toEqual(["branch-1"]);
+    expect(metric.detail.otpVerified).toBe(1);
+    expect(metric.detail).not.toHaveProperty("otpPending");
   });
 });

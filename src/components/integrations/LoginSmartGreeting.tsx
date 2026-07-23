@@ -4,7 +4,6 @@ import { useSmartGreeting } from "@/integrations/hooks/useSmartGreeting";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { defaultBranchLocation } from "@/integrations/apis/weather.api";
 import { reverseGeocode } from "@/integrations/apis/reverseGeocode.api";
-import { getLocationFromIP } from "@/integrations/apis/ipGeocode.api";
 import type { BranchLocation } from "@/integrations/types/integrations.types";
 
 interface LoginSmartGreetingProps {
@@ -34,11 +33,6 @@ export function LoginSmartGreeting({ employeeName }: LoginSmartGreetingProps) {
       if (latitude !== null && longitude !== null) {
         const cityName = await reverseGeocode(latitude, longitude);
         setLocation({ label: cityName ?? "Your Location", latitude, longitude });
-      } else {
-        const ipLocation = await getLocationFromIP();
-        if (ipLocation !== null) {
-          setLocation(ipLocation);
-        }
       }
     });
   }, []);

@@ -49,6 +49,7 @@ import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { cn } from "@/lib/utils";
 import type { RoleDashboardVariant } from "../roleDashboardAccess";
+import { useDashboardLinkAccess } from "../dashboardLinkAccess";
 import "./reference-dashboard-shell.css";
 import "./reference-dashboard-shell-fixes.css";
 
@@ -238,14 +239,15 @@ function UnifiedSidebar({
   role: string;
   avatarUrl?: string;
 }) {
+  const canOpen = useDashboardLinkAccess();
   const groups = useMemo<NavigationGroup[]>(() => {
-    const result: NavigationGroup[] = [{ label: "MAIN", items: NAV_BY_VARIANT[variant] }];
+    const result: NavigationGroup[] = [{ label: "MAIN", items: NAV_BY_VARIANT[variant].filter((item) => canOpen(item.href)) }];
     if (["hr", "ceo", "payroll", "super_admin"].includes(variant)) {
-      result.push({ label: "ADMIN", items: ADMIN_ITEMS });
+      result.push({ label: "ADMIN", items: ADMIN_ITEMS.filter((item) => canOpen(item.href)) });
     }
-    result.push({ label: "SUPPORT", items: SUPPORT_ITEMS });
-    return result;
-  }, [variant]);
+    result.push({ label: "SUPPORT", items: SUPPORT_ITEMS.filter((item) => canOpen(item.href)) });
+    return result.filter((group) => group.items.length > 0);
+  }, [canOpen, variant]);
 
   return (
     <div className="reference-corporate-sidebar-inner">

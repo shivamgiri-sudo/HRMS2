@@ -27,13 +27,17 @@ export function errorHandler(
   }
 
   if (error instanceof Error) {
-    const operationalError = error as Error & { statusCode?: number; code?: string };
+    const operationalError = error as Error & {
+      statusCode?: number;
+      code?: string;
+      errorCode?: string;
+    };
     const statusCode = operationalError.statusCode;
     // 4xx errors are operational (bad request, unauthorized, etc.) — safe to surface message
     if (statusCode && statusCode >= 400 && statusCode < 500) {
       return res.status(statusCode).json({
         success: false,
-        errorCode: operationalError.code ?? null,
+        errorCode: operationalError.errorCode ?? operationalError.code ?? null,
         message: error.message
       });
     }

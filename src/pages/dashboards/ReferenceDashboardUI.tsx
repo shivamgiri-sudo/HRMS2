@@ -22,10 +22,8 @@ import {
 } from "recharts";
 
 import { Skeleton } from "@/components/ui/skeleton";
-import { navGroups } from "@/components/layout/navConfig";
-import type { NavItem } from "@/components/layout/SidebarNav";
-import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
+import { useDashboardLinkAccess } from "./dashboardLinkAccess";
 import type { Tone } from "./reference-dashboard-model";
 import { formatValue } from "./reference-dashboard-model";
 
@@ -156,14 +154,16 @@ export function UpdatedControl({
 }
 
 export function ReferenceMetricCard({ metric, loading = false }: { metric: ReferenceMetric; loading?: boolean }) {
+  const canOpen = useDashboardLinkAccess();
+  const permittedHref = metric.href && canOpen(metric.href) ? metric.href : undefined;
   const tone = TONE[metric.tone ?? "blue"];
   const Icon = metric.icon;
   const body = (
     <div
       className={cn("reference-metric-card", tone.border)}
-      role={metric.href ? "link" : "group"}
+      role={permittedHref ? "link" : "group"}
       aria-label={`${metric.label}: ${formatValue(metric.value, metric.valueSuffix ?? "")}`}
-      tabIndex={metric.href ? -1 : 0}
+      tabIndex={permittedHref ? -1 : 0}
     >
       {loading ? (
         <>
@@ -198,8 +198,8 @@ export function ReferenceMetricCard({ metric, loading = false }: { metric: Refer
       )}
     </div>
   );
-  return metric.href ? (
-    <Link to={metric.href} className="block h-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]/30">
+  return permittedHref ? (
+    <Link to={permittedHref} className="block h-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]/30">
       {body}
     </Link>
   ) : body;
@@ -411,6 +411,8 @@ export function ReferenceListRow({
   tone?: Tone;
   href?: string;
 }) {
+  const canOpen = useDashboardLinkAccess();
+  const permittedHref = href && canOpen(href) ? href : undefined;
   const body = (
     <div className="reference-list-row">
       <div className="flex min-w-0 items-center gap-3">
@@ -426,11 +428,11 @@ export function ReferenceListRow({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {value !== undefined ? <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", TONE[tone].soft, TONE[tone].value)}>{formatValue(value)}</span> : null}
-        {href ? <ArrowRight className="h-3.5 w-3.5 text-[#94a3b8]" aria-hidden="true" /> : null}
+        {permittedHref ? <ArrowRight className="h-3.5 w-3.5 text-[#94a3b8]" aria-hidden="true" /> : null}
       </div>
     </div>
   );
-  return href ? <Link to={href} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]/30">{body}</Link> : body;
+  return permittedHref ? <Link to={permittedHref} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]/30">{body}</Link> : body;
 }
 
 export function ReferenceQuickLink({
@@ -446,31 +448,8 @@ export function ReferenceQuickLink({
   href: string;
   tone?: Tone;
 }) {
-  const { data: roleData, isLoading } = useUserRole();
-  const targetPath = href.split("?")[0];
-  const findItem = (items: NavItem[]): NavItem | undefined => {
-    for (const item of items) {
-      if (item.href.split("?")[0] === targetPath) return item;
-      const child = item.children ? findItem(item.children) : undefined;
-      if (child) return child;
-    }
-    return undefined;
-  };
-  const navItem = navGroups.flatMap((group) => group.items)
-    .map((item) => item.href.split("?")[0] === targetPath ? item : findItem(item.children ?? []))
-    .find(Boolean);
-  const page = navItem?.pageCode
-    ? roleData?.pages.find((permission) => permission.page_code === navItem.pageCode)
-    : undefined;
-  const allowed = !isLoading && Boolean(roleData) && Boolean(navItem) && (
-    navItem!.public === true
-    || (navItem!.pageCode
-      ? page?.can_view === true && !roleData!.disabledPageCodes.includes(navItem!.pageCode)
-      : navItem!.roles
-        ? navItem!.roles.some((role) => roleData!.roleKeys.includes(role))
-        : true)
-  );
-  if (!allowed) return null;
+  const canOpen = useDashboardLinkAccess();
+  if (!canOpen(href)) return null;
 
   return (
     <Link to={href} className="reference-quick-link" aria-label={title}>

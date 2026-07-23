@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ShieldX } from "lucide-react";
+import { Download, ShieldX } from "lucide-react";
 
 import { ScopedFilterBar } from "@/components/dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -163,6 +163,8 @@ const EMPTY_EMPLOYEE: EmployeeDashboardData = {
 };
 
 export default function ReferenceRoleDashboard({ variant, subheader }: { variant: RoleDashboardVariant; subheader?: React.ReactNode }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const { data: roleData, isLoading: roleLoading } = useUserRole();
   const [branchId, setBranchId] = useState("");
   const [processId, setProcessId] = useState("");
@@ -451,6 +453,31 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const employeeSourceErrors = employeeData.sourceErrors ?? [];
   const networkErrorCount = activeQueryResults.filter((query) => query.isError).length;
   const refreshAll = () => { for (const query of activeQueryResults) void query.refetch(); };
+  const dashboardCode = DASHBOARD_CODE[variant];
+  const exportAllowed = DASHBOARD_ACCESS_REGISTRY[dashboardCode].permissions.export;
+  const exportDashboard = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const query = new URLSearchParams();
+      if (branchId) query.set("branchId", branchId);
+      if (processId) query.set("processId", processId);
+      const suffix = query.size ? `?${query.toString()}` : "";
+      const blob = await hrmsApi.getBlob(`/api/dashboards/${dashboardCode}/export${suffix}`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${dashboardCode.toLowerCase()}-${getIstDate()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "Dashboard export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const errorMessage = useMemo(() => {
     const parts: string[] = [];
@@ -500,6 +527,21 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   return (
     <DashboardLayout subheader={subheader}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
+        {exportAllowed ? (
+          <div className="mb-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void exportDashboard()}
+              disabled={exporting}
+              className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#cbd5e1] bg-white px-3 py-2 text-xs font-semibold text-[#1d2b45] shadow-sm hover:border-[#0b63e5] hover:text-[#0b63e5] disabled:cursor-wait disabled:opacity-60"
+              aria-label="Export dashboard metrics as CSV"
+            >
+              <Download className="h-4 w-4" aria-hidden="true" />
+              {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+          </div>
+        ) : null}
+        {exportError ? <div className="mb-4"><ReferenceError message={exportError} /></div> : null}
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
