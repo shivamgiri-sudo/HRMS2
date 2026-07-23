@@ -111,6 +111,7 @@ export const navGroups: NavGroup[] = [
         label: "ATS",          href: "/ats/command-center", icon: ic(Briefcase), pageCode: "ATS_DASHBOARD", description: "Recruitment",
         children: [
           { label: "ATS Command",       href: "/ats/command-center",           icon: ic(Briefcase),    pageCode: "ATS_DASHBOARD",         description: "ATS" },
+          { label: "Job Requisitions",  href: "/recruitment/job-requisition",  icon: ic(ClipboardList),pageCode: "JOB_REQUISITION",       roles: ["super_admin","hr","recruitment_hr","branch_head","operations_manager","process_manager","management"], description: "Hiring demand & requisitions" },
           { label: "Candidate Master",  href: "/ats/candidate-master",         icon: ic(Users),        pageCode: "ATS_CANDIDATE_MASTER",  description: "Candidate DB" },
           { label: "Walk-in Queue",     href: "/ats/walkin-queue",             icon: ic(Users),        pageCode: "ATS_WALKIN_QUEUE",     description: "Queue" },
           { label: "Ops Round",         href: "/ats/walkin-queue",             icon: ic(UsersRound),   pageCode: "ATS_WALKIN_QUEUE",     roles: ["operations_manager"],    description: "Candidates pending ops round interview" },
