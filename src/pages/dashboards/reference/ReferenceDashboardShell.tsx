@@ -280,7 +280,7 @@ function UnifiedSidebar({
           </Avatar>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[12px] font-bold text-white">{name}</p>
-            <p className="truncate text-[10px] text-[#a8c0df]">{role}</p>
+            <p className="truncate text-xs text-[#a8c0df]">{role}</p>
           </div>
           <ChevronDown className="h-4 w-4 shrink-0 text-[#a8c0df]" />
         </Link>
@@ -305,11 +305,11 @@ function UnifiedTopbar({ onMenu, name, role, avatarUrl }: { onMenu: () => void; 
         <div className="reference-topbar-profile">
           <Avatar className="h-8 w-8">
             <AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
-            <AvatarFallback className="bg-[#eaf1fb] text-[10px] font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback>
+            <AvatarFallback className="bg-[#eaf1fb] text-xs font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback>
           </Avatar>
           <div className="hidden min-w-0 sm:block">
-            <p className="max-w-[130px] truncate text-[11px] font-bold text-[#13213b]">{name}</p>
-            <p className="text-[9px] text-[#71809a]">{role}</p>
+            <p className="max-w-[130px] truncate text-xs font-bold text-[#13213b]">{name}</p>
+            <p className="text-xs text-[#71809a]">{role}</p>
           </div>
           <ChevronDown className="hidden h-4 w-4 text-[#61708a] sm:block" />
         </div>

@@ -13,6 +13,7 @@ function teamScope(): DashboardScope {
     level: "TEAM_ONLY",
     branchIds: [],
     processIds: [],
+    employeeIds: ["employee-1"],
     userId: "tl-user",
     role: "team_leader",
   };
@@ -33,8 +34,8 @@ describe("performanceIntelligenceRepository", () => {
 
     expect(allowed).toBe(true);
     expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining("reporting_manager_id"),
-      ["employee-1", "tl-user", "tl-user"],
+      expect.stringContaining("e.id IN (?)"),
+      ["employee-1", "employee-1"],
     );
   });
 
@@ -58,7 +59,6 @@ describe("performanceIntelligenceRepository", () => {
     expect(sql).toContain("e.id IN (?)");
     expect(sql).not.toContain("employee-1");
     expect(params).toEqual(expect.arrayContaining([
-      "tl-user",
       "2026-07-01",
       "2026-07-18",
       "employee-1",

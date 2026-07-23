@@ -1,5 +1,6 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { normalizeDashboardRole } from "./dashboardAccessRegistry.js";
 
 /**
  * Role priority is shared by authentication and dashboard scope resolution.
@@ -65,7 +66,7 @@ const ROLE_PRIORITY: Readonly<Record<string, number>> = {
 };
 
 function normalizeRole(value: unknown): string {
-  return String(value ?? "").trim().toLowerCase();
+  return normalizeDashboardRole(value);
 }
 
 function uniqueRoles(values: unknown[]): string[] {

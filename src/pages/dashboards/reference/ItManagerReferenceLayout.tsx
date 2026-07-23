@@ -24,25 +24,26 @@ import {
 
 export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardData }) {
   const m = data.metrics;
-  const it = (data as any).itProvisioning as Record<string, unknown> ?? {};
+  const it = data.itProvisioning ?? {};
+  const sourceAvailable = data.itProvisioningAvailable !== false;
 
   // Counters from /api/provisioning/it/stats — fallback to 0 when endpoint not yet live
-  const pendingTotal = asNumber(it.pending_total ?? m.onb?.value) ?? 0;
-  const pendingDomain = asNumber(it.pending_domain) ?? 0;
-  const pendingEmail = asNumber(it.pending_email) ?? 0;
-  const pendingAsset = asNumber(it.pending_asset ?? m.assets?.value) ?? 0;
-  const pendingBiometric = asNumber(it.pending_biometric) ?? 0;
-  const completedToday = asNumber(it.completed_today) ?? 0;
+  const pendingTotal = sourceAvailable ? asNumber(it.pending_total ?? m.onb?.value) : null;
+  const pendingDomain = sourceAvailable ? asNumber(it.pending_domain) : null;
+  const pendingEmail = sourceAvailable ? asNumber(it.pending_email) : null;
+  const pendingAsset = sourceAvailable ? asNumber(it.pending_asset ?? m.assets?.value) : null;
+  const pendingBiometric = sourceAvailable ? asNumber(it.pending_biometric) : null;
+  const completedToday = sourceAvailable ? asNumber(it.completed_today) : null;
 
   const pendingJoiners = arrayAt(it, "pending_joiners").slice(0, 8);
   const recentCompleted = arrayAt(it, "recent_completed").slice(0, 5);
 
   const taskBreakdown = [
-    { label: "Domain / Login", value: pendingDomain, color: "#3b82f6" },
-    { label: "Email Setup", value: pendingEmail, color: "#8b5cf6" },
-    { label: "Asset Assignment", value: pendingAsset, color: "#f59e0b" },
-    { label: "Biometric Enroll", value: pendingBiometric, color: "#06b6d4" },
-  ].filter((t) => t.value > 0);
+    { label: "Domain / Login", value: pendingDomain ?? -1, color: "#3b82f6" },
+    { label: "Email Setup", value: pendingEmail ?? -1, color: "#8b5cf6" },
+    { label: "Asset Assignment", value: pendingAsset ?? -1, color: "#f59e0b" },
+    { label: "Biometric Enroll", value: pendingBiometric ?? -1, color: "#06b6d4" },
+  ].filter((t) => sourceAvailable && t.value > 0);
   const maxTask = Math.max(...taskBreakdown.map((t) => t.value), 1);
 
   return (
@@ -62,28 +63,28 @@ export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardDat
             value: pendingTotal,
             helper: "new joiners awaiting IT setup",
             icon: Clock,
-            tone: pendingTotal > 10 ? "red" : pendingTotal > 5 ? "amber" : "green",
+            tone: pendingTotal === null ? "slate" : pendingTotal > 10 ? "red" : pendingTotal > 5 ? "amber" : "green",
           },
           {
             label: "Assets Pending",
             value: pendingAsset,
             helper: "unassigned to new joiners",
             icon: Package,
-            tone: "amber",
+            tone: pendingAsset === null ? "slate" : "amber",
           },
           {
             label: "Biometric Pending",
             value: pendingBiometric,
             helper: "enrolment not done",
             icon: ShieldCheck,
-            tone: pendingBiometric > 0 ? "amber" : "green",
+            tone: pendingBiometric === null ? "slate" : pendingBiometric > 0 ? "amber" : "green",
           },
           {
             label: "Completed Today",
             value: completedToday,
             helper: "provisioning tasks closed",
             icon: CheckCircle2,
-            tone: "green",
+            tone: completedToday === null ? "slate" : "green",
           },
         ]}
       />
@@ -109,7 +110,9 @@ export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardDat
               })}
             </div>
           ) : (
-            <p className="py-6 text-center text-sm text-[#a0aec0]">No pending tasks</p>
+            <p className="py-6 text-center text-sm text-[#a0aec0]">
+              {sourceAvailable ? "No pending provisioning tasks" : "Provisioning source unavailable"}
+            </p>
           )}
         </ReferencePanel>
 
@@ -129,7 +132,9 @@ export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardDat
                 badgeTone="amber"
               />
             )) : (
-              <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">All new joiners provisioned</p>
+              <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">
+                {sourceAvailable ? "No pending provisioning tasks" : "Provisioning source unavailable"}
+              </p>
             )}
           </div>
         </ReferencePanel>

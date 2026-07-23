@@ -24,6 +24,93 @@ function titleCase(value: unknown): string {
     .join(" ");
 }
 
+export function deduplicateQualityRows(rows: JsonRecord[]): JsonRecord[] {
+  const seen = new Set<string>();
+  return rows.filter((row, index) => {
+    const stableId = row.id
+      ?? row.audit_id
+      ?? row.defect_id
+      ?? row.employee_id
+      ?? row.agent_id
+      ?? row.agent_code
+      ?? row.category
+      ?? row.defect_type;
+    const key = stableId === null || stableId === undefined || stableId === ""
+      ? `row-${index}`
+      : String(stableId);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export interface RecruitmentFunnelStage {
+  label: string;
+  value: number;
+  color: string;
+}
+
+export function buildRecruitmentFunnel(payload: unknown): RecruitmentFunnelStage[] {
+  const record = asRecord(payload);
+  const byStage = asRecord(record.by_stage);
+  const firstCount = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = asNumber(byStage[key] ?? record[key]);
+      if (value !== null) return value;
+    }
+    return 0;
+  };
+
+  return [
+    { label: "Applied", value: firstCount("applied", "total_candidates", "total_applications"), color: "#3b82f6" },
+    { label: "Screened", value: firstCount("screened", "shortlisted", "Shortlisted"), color: "#6366f1" },
+    { label: "HR Round", value: firstCount("hr_round", "hr interview", "hr_interview"), color: "#8b5cf6" },
+    { label: "Skill Test", value: firstCount("skill_test", "assessment", "test"), color: "#a855f7" },
+    { label: "Operations Round", value: firstCount("operations_round", "ops_round"), color: "#06b6d4" },
+    { label: "Client Round", value: firstCount("client_round", "client_interview"), color: "#0891b2" },
+    { label: "Selected", value: firstCount("selected", "Selected", "selected_candidates"), color: "#f59e0b" },
+    { label: "Offered", value: firstCount("offered", "offer_extended", "offers_extended", "offers_today"), color: "#f97316" },
+    { label: "Offer Accepted", value: firstCount("offer_accepted", "accepted"), color: "#84cc16" },
+    { label: "Joined", value: firstCount("joined", "converted", "onboarded", "Onboarded"), color: "#22c55e" },
+    { label: "Rejected", value: firstCount("rejected"), color: "#ef4444" },
+    { label: "Dropped", value: firstCount("dropped", "drop_off"), color: "#dc2626" },
+    { label: "No-show", value: firstCount("no_show", "noshow"), color: "#991b1b" },
+  ];
+}
+
+export function normalizeItProvisioningQueue(payload: unknown, today: string): JsonRecord {
+  const envelope = asRecord(payload);
+  const rows = asArray(envelope.data ?? payload);
+  const pending = rows.filter((row) => ["pending", "pending_unassigned"].includes(String(row.status ?? "").toLowerCase()));
+  const completed = rows.filter((row) => ["actioned", "confirmed"].includes(String(row.status ?? "").toLowerCase()));
+  const taskCount = (patterns: string[]) => pending.filter((row) => {
+    const task = String(row.task_code ?? "").toLowerCase();
+    return patterns.some((pattern) => task.includes(pattern));
+  }).length;
+  const pendingEmployees = new Set(
+    pending.map((row) => row.employee_id).filter((id) => id !== null && id !== undefined).map(String),
+  );
+
+  return {
+    pending_total: pendingEmployees.size,
+    pending_domain: taskCount(["domain", "login"]),
+    pending_email: taskCount(["email"]),
+    pending_asset: taskCount(["asset"]),
+    pending_biometric: taskCount(["biometric"]),
+    pending_id_card: taskCount(["id_card", "idcard"]),
+    overdue: pending.filter((row) => {
+      const due = String(row.sla_due_at ?? "").slice(0, 10);
+      return Boolean(due) && due < today;
+    }).length,
+    completed_today: completed.filter((row) =>
+      String(row.actioned_at ?? row.updated_at ?? "").slice(0, 10) === today
+    ).length,
+    pending_joiners: pending,
+    recent_completed: completed.slice(0, 5),
+    source_total: asNumber(envelope.total),
+  };
+}
+
 export function normalizeQualityDashboardData(
   summaryPayload: unknown,
   trendPayload: unknown,
@@ -33,24 +120,19 @@ export function normalizeQualityDashboardData(
   const summary = asRecord(summaryEnvelope.summary ?? summaryEnvelope.data ?? summaryEnvelope);
   const totalCalls = asNumber(summary.total_calls);
   const auditedCalls = asNumber(summary.audited_calls ?? summary.total_audits);
+  const failedAudits = asNumber(summary.failed_audits ?? summary.failed_count);
   const parameterFails = asArray(summaryEnvelope.parameter_fails);
-  const failRates = parameterFails
-    .map((row) => asNumber(row.fail_rate))
-    .filter((value): value is number => value !== null);
-  const summaryFailRates = Object.entries(summary)
-    .filter(([key]) => key.startsWith("fail_rate_"))
-    .map(([, value]) => asNumber(value))
-    .filter((value): value is number => value !== null);
-  const rates = failRates.length > 0 ? failRates : summaryFailRates;
-  const failRate = rates.length > 0
-    ? Math.round((rates.reduce((sum, value) => sum + value, 0) / rates.length) * 10) / 10
-    : asNumber(summary.fail_rate ?? summary.failure_rate);
+  const failRate = failedAudits !== null && auditedCalls !== null && auditedCalls > 0
+    ? Math.round((failedAudits / auditedCalls) * 1000) / 10
+    : asNumber(summary.weighted_fail_rate ?? summary.fail_rate ?? summary.failure_rate);
 
   const trendEnvelope = asRecord(trendPayload);
-  const scoreTrend = asArray(trendEnvelope.trend ?? trendEnvelope.data).map((row) => ({
-    label: String(row.date ?? row.period ?? row.label ?? ""),
-    value: asNumber(row.avg_score ?? row.score ?? row.value) ?? 0,
-  }));
+  const scoreTrend = asArray(trendEnvelope.trend ?? trendEnvelope.data)
+    .map((row) => ({
+      label: String(row.date ?? row.period ?? row.label ?? ""),
+      value: asNumber(row.avg_score ?? row.score ?? row.value),
+    }))
+    .filter((point): point is { label: string; value: number } => point.value !== null);
 
   const agentsEnvelope = asRecord(agentsPayload);
   const bottomAgents = asArray(agentsEnvelope.agents ?? agentsEnvelope.data)
@@ -67,6 +149,8 @@ export function normalizeQualityDashboardData(
     avg_score: asNumber(summary.avg_quality_score ?? summary.avg_score ?? summary.average_score),
     total_audits: auditedCalls,
     fail_rate: failRate,
+    passed_audits: asNumber(summary.passed_audits ?? summary.passed_count),
+    failed_audits: failedAudits,
     pending_audits: totalCalls !== null && auditedCalls !== null
       ? Math.max(totalCalls - auditedCalls, 0)
       : asNumber(summary.pending_audits ?? summary.queue_size),

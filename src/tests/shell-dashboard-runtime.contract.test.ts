@@ -17,12 +17,9 @@ describe("shared shell and dashboard runtime contracts", () => {
 
   it("reads Company Feed API bodies directly from hrmsApi", () => {
     const hookSource = read("src/hooks/useCompanyFeed.ts");
-    const dashboardSource = read("src/pages/dashboards/RoleDashboardV3.tsx");
 
     expect(hookSource).not.toContain("const body = res.data");
     expect(hookSource).toContain("const body = res;");
-    expect(dashboardSource).toContain("feedQuery.data?.posts");
-    expect(dashboardSource).not.toContain("feedQuery.data?.data ?? []");
 
     const feedPageSource = read("src/pages/NativeCompanyFeed.tsx");
     expect(feedPageSource).toContain('to="/engagement/company-feed/create"');

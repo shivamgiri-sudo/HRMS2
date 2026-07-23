@@ -39,21 +39,23 @@ import { QualityReferenceLayout } from "./reference/QualityReferenceLayout";
 import { OperationsReferenceLayout } from "./reference/OperationsReferenceLayout";
 import { RecruiterReferenceLayout } from "./reference/RecruiterReferenceLayout";
 import { ItManagerReferenceLayout } from "./reference/ItManagerReferenceLayout";
+import { DASHBOARD_ACCESS_REGISTRY } from "../../../backend/src/shared/dashboardAccessRegistry";
+import { dashboardSummarySchema } from "../../../backend/src/shared/dashboardMetricContract";
 import "./role-dashboard-reference.css";
 
 const DASHBOARD_CODE: Record<RoleDashboardVariant, string> = {
-  employee: "EMPLOYEE_SELF_DASHBOARD",
-  wfm: "WFM_DASHBOARD",
-  wfm_attendance: "WFM_DASHBOARD",
-  hr: "HR_DASHBOARD",
-  ceo: "CEO_DASHBOARD",
-  payroll: "PAYROLL_HR_DASHBOARD",
-  manager: "MANAGEMENT_DASHBOARD",
-  super_admin: "CEO_DASHBOARD",
-  quality: "MANAGEMENT_DASHBOARD",
-  operations: "MANAGEMENT_DASHBOARD",
-  recruiter: "MANAGEMENT_DASHBOARD",
-  it_manager: "IT_MANAGER_DASHBOARD",
+  employee: DASHBOARD_ACCESS_REGISTRY.EMPLOYEE_SELF_DASHBOARD.code,
+  wfm: DASHBOARD_ACCESS_REGISTRY.WFM_DASHBOARD.code,
+  wfm_attendance: DASHBOARD_ACCESS_REGISTRY.WFM_ATTENDANCE_DASHBOARD.code,
+  hr: DASHBOARD_ACCESS_REGISTRY.HR_DASHBOARD.code,
+  ceo: DASHBOARD_ACCESS_REGISTRY.CEO_DASHBOARD.code,
+  payroll: DASHBOARD_ACCESS_REGISTRY.PAYROLL_HR_DASHBOARD.code,
+  manager: DASHBOARD_ACCESS_REGISTRY.MANAGEMENT_DASHBOARD.code,
+  super_admin: DASHBOARD_ACCESS_REGISTRY.SUPER_ADMIN_DASHBOARD.code,
+  quality: DASHBOARD_ACCESS_REGISTRY.QUALITY_DASHBOARD.code,
+  operations: DASHBOARD_ACCESS_REGISTRY.OPERATIONS_DASHBOARD.code,
+  recruiter: DASHBOARD_ACCESS_REGISTRY.RECRUITER_DASHBOARD.code,
+  it_manager: DASHBOARD_ACCESS_REGISTRY.IT_MANAGER_DASHBOARD.code,
 };
 
 function unwrap(value: unknown): unknown {
@@ -68,15 +70,24 @@ function getIstDate(): string {
 type OptionalPayload = {
   value: unknown;
   error: string | null;
+  asOf: string | null;
 };
 
 async function optionalGet(path: string, label: string): Promise<OptionalPayload> {
   try {
-    return { value: unwrap(await hrmsApi.get<unknown>(path)), error: null };
+    const response = await hrmsApi.get<unknown>(path);
+    const envelope = asRecord(response);
+    const value = unwrap(response);
+    const record = asRecord(value);
+    const asOf = record.asOf ?? record.as_of ?? record.generatedAt ?? record.generated_at
+      ?? record.updatedAt ?? record.updated_at ?? record.synced_at
+      ?? envelope.asOf ?? envelope.generatedAt;
+    return { value, error: null, asOf: asOf == null ? null : String(asOf) };
   } catch (error) {
     return {
       value: null,
       error: `${label}: ${error instanceof Error ? error.message : "request failed"}`,
+      asOf: null,
     };
   }
 }
@@ -89,13 +100,13 @@ function employeeAttendanceFallback(summaryPayload: unknown): JsonRecord {
   if (Object.keys(detail).length === 0 && attendanceMetric.value === undefined) return {};
 
   return {
-    presentDays: asNumber(detail.present) ?? 0,
-    halfDays: asNumber(detail.halfDay ?? detail.half_day) ?? 0,
-    absentDays: asNumber(detail.absent) ?? 0,
-    lateDays: asNumber(detail.late) ?? 0,
-    missedPunch: asNumber(detail.missedPunch ?? detail.missed_punch) ?? 0,
-    totalWorkingDays: asNumber(detail.totalWorkingDays ?? detail.total_working_days) ?? 0,
-    attendancePct: asNumber(attendanceMetric.value ?? detail.attendanceRate ?? detail.attendance_pct) ?? 0,
+    presentDays: asNumber(detail.present),
+    halfDays: asNumber(detail.halfDay ?? detail.half_day),
+    absentDays: asNumber(detail.absent),
+    lateDays: asNumber(detail.late),
+    missedPunch: asNumber(detail.missedPunch ?? detail.missed_punch),
+    totalWorkingDays: asNumber(detail.totalWorkingDays ?? detail.total_working_days),
+    attendancePct: asNumber(attendanceMetric.value ?? detail.attendanceRate ?? detail.attendance_pct),
   };
 }
 
@@ -107,7 +118,7 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
     optionalGet("/api/ats/my-onboarding-status", "Onboarding"),
     employeeId
       ? optionalGet(`/api/lms/learner-progress/${employeeId}`, "Learning progress")
-      : Promise.resolve({ value: null, error: "Learning progress: employee mapping unavailable" }),
+      : Promise.resolve({ value: null, error: "Learning progress: employee mapping unavailable", asOf: null }),
     optionalGet("/api/engagement/me", "Engagement"),
   ]);
 
@@ -131,6 +142,13 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
     lms: asRecord(lms.value),
     engagement: asRecord(engagement.value),
     sourceErrors: errors,
+    sourceFreshness: {
+      attendance: attendance.asOf ?? attendanceSummary.asOf,
+      leave: leave.asOf,
+      onboarding: onboarding.asOf,
+      lms: lms.asOf,
+      engagement: engagement.asOf,
+    },
   };
 }
 
@@ -141,12 +159,14 @@ const EMPTY_EMPLOYEE: EmployeeDashboardData = {
   lms: {},
   engagement: {},
   sourceErrors: [],
+  sourceFreshness: {},
 };
 
 export default function ReferenceRoleDashboard({ variant, subheader }: { variant: RoleDashboardVariant; subheader?: React.ReactNode }) {
   const { data: roleData, isLoading: roleLoading } = useUserRole();
   const [branchId, setBranchId] = useState("");
   const [processId, setProcessId] = useState("");
+  const [selectedPayrollRunId, setSelectedPayrollRunId] = useState("");
 
   const roleKeys = roleData?.roleKeys ?? [];
   const accessGranted = canAccessRoleDashboard(variant, roleKeys);
@@ -161,7 +181,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
 
   const summaryQuery = useQuery({
     queryKey: ["reference-dashboard-summary", code, branchId, processId],
-    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/dashboards/${code}/summary${params}`))) as DashboardSummary,
+    queryFn: async () => dashboardSummarySchema.parse(
+      unwrap(await hrmsApi.get<unknown>(`/api/dashboards/${code}/summary${params}`)),
+    ),
     enabled: accessGranted && variant !== "employee",
     staleTime: 30_000,
     retry: 1,
@@ -220,10 +242,23 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  const payrollRunsQuery = useQuery({
+    queryKey: ["reference-dashboard-payroll-runs"],
+    queryFn: async () => {
+      const response = asRecord(await hrmsApi.get<unknown>("/api/payroll/runs?limit=50"));
+      return asArray(response.data);
+    },
+    enabled: accessGranted && variant === "payroll",
+    staleTime: 60_000,
+    retry: 1,
+  });
+
   const payrollQuery = useQuery({
-    queryKey: ["reference-dashboard-payroll"],
-    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>("/api/dashboards/PAYROLL_HR_DASHBOARD/operational-summary"))),
-    enabled: accessGranted && ["payroll", "super_admin"].includes(variant),
+    queryKey: ["reference-dashboard-payroll", selectedPayrollRunId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/dashboards/PAYROLL_HR_DASHBOARD/operational-summary?runId=${selectedPayrollRunId}`,
+    ))),
+    enabled: accessGranted && variant === "payroll" && Boolean(selectedPayrollRunId),
     staleTime: 60_000,
     retry: 1,
   });
@@ -238,16 +273,10 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
 
   const devicesQuery = useQuery({
     queryKey: ["reference-dashboard-devices", branchId],
-    queryFn: async () => {
-      const status = asRecord(unwrap(await hrmsApi.get<unknown>("/api/integrations/cosec/sync-status")));
-      return {
-        devices: [{
-          id: "cosec-integration",
-          name: "COSEC Integration",
-          status: status.status ?? "unknown",
-        }],
-      };
-    },
+    queryFn: async () => ({
+      integrationStatus: asRecord(unwrap(await hrmsApi.get<unknown>("/api/integrations/cosec/sync-status"))),
+      devices: [],
+    }),
     enabled: accessGranted && ["wfm", "wfm_attendance"].includes(variant),
     staleTime: 30_000,
     retry: 1,
@@ -284,7 +313,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
 
   const itProvisioningQuery = useQuery({
     queryKey: ["reference-dashboard-it-provisioning", branchId, processId],
-    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/provisioning/it/stats${params}`))),
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/it-provisioning/stats?assigned_role=it${branchId ? `&branch_id=${branchId}` : ""}${processId ? `&process_id=${processId}` : ""}`,
+    ))),
     enabled: accessGranted && variant === "it_manager",
     staleTime: 30_000,
     retry: 1,
@@ -323,8 +354,8 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
-  const summary = (summaryQuery.data ?? {}) as DashboardSummary;
-  const metrics = summary.metrics ?? {};
+  const summary = summaryQuery.data;
+  const metrics = summary?.metrics ?? {};
   const employeeData = employeeQuery.data ?? EMPTY_EMPLOYEE;
   const activeQueryResults = accessGranted ? [
     ...(variant !== "employee" ? [summaryQuery] : []),
@@ -334,7 +365,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(variant === "super_admin" ? [systemQuery] : []),
     ...(["ceo", "manager", "super_admin", "operations", "quality"].includes(variant) ? [workforceQuery] : []),
     ...(["ceo", "payroll", "super_admin"].includes(variant) ? [pnlQuery] : []),
-    ...(["payroll", "super_admin"].includes(variant) ? [payrollQuery] : []),
+    ...(variant === "payroll" ? [payrollRunsQuery, payrollQuery] : []),
     ...(["wfm", "wfm_attendance", "manager", "operations"].includes(variant) ? [biometricQuery] : []),
     ...(["wfm", "wfm_attendance"].includes(variant) ? [devicesQuery] : []),
     ...(["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant) ? [pulseQuery] : []),
@@ -390,9 +421,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   // Show skeleton only until the primary query resolves; secondary cards render progressively.
   const primaryLoading = roleLoading || (variant !== "employee" ? summaryQuery.isLoading : employeeQuery.isLoading);
 
-  const data: ReferenceDashboardData & { itProvisioning?: Record<string, unknown> } = {
+  const data: ReferenceDashboardData = {
     variant,
-    summary,
+    summary: summary ?? {} as DashboardSummary,
     metrics,
     employee: employeeData,
     ats,
@@ -400,16 +431,20 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     workforce: workforceQuery.data ?? {},
     pnl: pnlQuery.data ?? {},
     payroll: payrollQuery.data ?? {},
+    payrollRuns: payrollRunsQuery.data ?? [],
+    selectedPayrollRunId,
+    onPayrollRunChange: setSelectedPayrollRunId,
     biometric: biometricQuery.data ?? {},
     devices: devicesQuery.data ?? {},
     opsPulse: pulseQuery.data ?? {},
     managerLeaves: managerLeavesQuery.data ?? [],
     quality: mergedQuality,
     orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
-    itProvisioning: itProvisioningQuery.data,
+    itProvisioning: itProvisioningQuery.data ?? {},
+    itProvisioningAvailable: !itProvisioningQuery.isError,
     loading: primaryLoading,
     refreshing: activeQueryResults.some((query) => query.isFetching),
-    generatedAt: summary.generatedAt,
+    generatedAt: summary?.generatedAt,
   };
 
   const unavailableMetrics = unavailableMetricCodes(metrics);

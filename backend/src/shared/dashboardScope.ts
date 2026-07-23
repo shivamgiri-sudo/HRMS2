@@ -14,6 +14,7 @@ export type DashboardScope = {
   level: ScopeLevel;
   branchIds: string[];
   processIds: string[];
+  employeeIds: string[];
   userId: string;
   role: string;
 };
@@ -46,11 +47,26 @@ const BRANCH_ALL_ROLES = new Set([
 ]);
 
 const PROCESS_OR_TEAM_ROLES = new Set([
-  "process_manager", "manager", "assistant_manager", "team_leader", "team_lead", "tl",
-  "wfm", "wfm_spoc", "rta", "process_hr", "qa_manager", "quality_analyst",
+  "process_manager",
+  "wfm", "wfm_spoc", "rta", "process_hr", "qa_manager", "quality_analyst", "quality_lead",
+  "qa", "operations_manager", "recruiter",
+]);
+
+const TEAM_ROLES = new Set([
+  "manager", "assistant_manager", "team_leader", "team_lead", "tl",
 ]);
 
 const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
+
+export class DashboardScopeConfigurationError extends Error {
+  readonly statusCode = 409;
+  readonly code = "DASHBOARD_SCOPE_NOT_CONFIGURED";
+
+  constructor(role: string, scopeType: string) {
+    super(`No active ${scopeType} scope is configured for role ${role}`);
+    this.name = "DashboardScopeConfigurationError";
+  }
+}
 
 function unique(values: unknown[]): string[] {
   return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean)));
@@ -109,12 +125,32 @@ async function branchesForProcesses(processIds: readonly string[]): Promise<stri
   return unique(rows.map((row) => row.branch_id));
 }
 
+async function resolveTeamEmployeeIds(managerEmployeeId: string): Promise<string[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `WITH RECURSIVE reporting_tree AS (
+       SELECT id
+         FROM employees
+        WHERE (reporting_manager_id = ? OR manager_id = ?)
+          AND active_status = 1
+       UNION ALL
+       SELECT child.id
+         FROM employees child
+         JOIN reporting_tree parent
+           ON child.reporting_manager_id = parent.id OR child.manager_id = parent.id
+        WHERE child.active_status = 1
+     )
+     SELECT DISTINCT id FROM reporting_tree`,
+    [managerEmployeeId, managerEmployeeId],
+  );
+  return unique(rows.map((row) => row.id));
+}
+
 export async function resolveDashboardScope(userId: string, _role: string): Promise<DashboardScope> {
   const context = await getUserRoleContext(userId);
   const effectiveRole = context.primaryRole;
 
   if (ORG_ALL_ROLES.has(effectiveRole)) {
-    return { level: "ORG_ALL", branchIds: [], processIds: [], userId, role: effectiveRole };
+    return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
   }
 
   const [assignments, employee] = await Promise.all([
@@ -129,7 +165,7 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
   // receiving company-wide data just because an admin created a broad assignment row.
   const hasAllScope = assignments.some((row) => String(row.scope_type ?? "").toLowerCase() === "all");
   if (hasAllScope && ORG_ALL_ROLES.has(effectiveRole) && !SELF_ONLY_ROLES.has(effectiveRole)) {
-    return { level: "ORG_ALL", branchIds: [], processIds: [], userId, role: effectiveRole };
+    return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
   }
 
   const processIds = unique([
@@ -143,33 +179,41 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
     ...employee.branchIds,
     ...derivedBranchIds,
   ]);
-  const hasManagerScope = assignments.some((row) => Boolean(row.manager_employee_id));
-
   if (BRANCH_ALL_ROLES.has(effectiveRole)) {
     if (branchIds.length > 0) {
-      return { level: "BRANCH_ALL", branchIds, processIds: [], userId, role: effectiveRole };
+      return { level: "BRANCH_ALL", branchIds, processIds: [], employeeIds: [], userId, role: effectiveRole };
     }
-    console.warn(`[dashboardScope] ${effectiveRole} has no active branch assignment; using self-only scope`);
-    return { level: "SELF_ONLY", branchIds: employee.branchIds, processIds: employee.processIds, userId, role: effectiveRole };
+    throw new DashboardScopeConfigurationError(effectiveRole, "branch");
   }
 
   if (PROCESS_OR_TEAM_ROLES.has(effectiveRole)) {
     if (processIds.length > 0) {
-      return { level: "PROCESS_ALL", branchIds, processIds, userId, role: effectiveRole };
+      return { level: "PROCESS_ALL", branchIds, processIds, employeeIds: [], userId, role: effectiveRole };
     }
-    if (branchIds.length > 0) {
-      return { level: "BRANCH_ALL", branchIds, processIds: [], userId, role: effectiveRole };
+    throw new DashboardScopeConfigurationError(effectiveRole, "process");
+  }
+
+  if (TEAM_ROLES.has(effectiveRole)) {
+    if (!employee.employeeId) {
+      throw new DashboardScopeConfigurationError(effectiveRole, "reporting hierarchy");
     }
-    if (hasManagerScope || employee.employeeId) {
-      return { level: "TEAM_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
-    }
-    return { level: "SELF_ONLY", branchIds: [], processIds: [], userId, role: effectiveRole };
+    const employeeIds = await resolveTeamEmployeeIds(employee.employeeId);
+    return { level: "TEAM_ONLY", branchIds: [], processIds: [], employeeIds, userId, role: effectiveRole };
+  }
+
+  if (SELF_ONLY_ROLES.has(effectiveRole) && !employee.employeeId) {
+    throw new DashboardScopeConfigurationError(effectiveRole, "employee mapping");
+  }
+
+  if (!employee.employeeId) {
+    throw new DashboardScopeConfigurationError(effectiveRole, "employee mapping");
   }
 
   return {
     level: "SELF_ONLY",
     branchIds: employee.branchIds,
     processIds: employee.processIds,
+    employeeIds: unique([employee.employeeId]),
     userId,
     role: effectiveRole,
   };
@@ -292,15 +336,32 @@ export function buildScopeWhere(
 
 export function buildScopeWhereEmployees(scope: DashboardScope, alias = "e"): { sql: string; params: string[] } {
   if (scope.level === "ORG_ALL") return { sql: "1=1", params: [] };
-  if (scope.level === "SELF_ONLY") return { sql: `${alias}.user_id = ?`, params: [scope.userId] };
-  if (scope.level === "TEAM_ONLY") {
+  if (scope.level === "SELF_ONLY" || scope.level === "TEAM_ONLY") {
+    const employeeIds = scope.employeeIds ?? [];
+    if (employeeIds.length === 0) return { sql: "1=0", params: [] };
     return {
-      sql: `(${alias}.reporting_manager_id IN (SELECT id FROM employees WHERE user_id = ?)
-             OR ${alias}.manager_id IN (SELECT id FROM employees WHERE user_id = ?))`,
-      params: [scope.userId, scope.userId],
+      sql: `${alias}.id IN (${employeeIds.map(() => "?").join(",")})`,
+      params: [...employeeIds],
     };
   }
   return buildScopeWhere(scope, `${alias}.branch_id`, `${alias}.process_id`);
+}
+
+export function buildEmployeeLinkedScopeWhere(
+  scope: DashboardScope,
+  employeeCol: string,
+  branchCol = "branch_id",
+  processCol = "process_id",
+): { sql: string; params: string[] } {
+  if (scope.level === "SELF_ONLY" || scope.level === "TEAM_ONLY") {
+    const employeeIds = scope.employeeIds ?? [];
+    if (employeeIds.length === 0) return { sql: "1=0", params: [] };
+    return {
+      sql: `${employeeCol} IN (${employeeIds.map(() => "?").join(",")})`,
+      params: [...employeeIds],
+    };
+  }
+  return buildScopeWhere(scope, branchCol, processCol);
 }
 
 export function scopeToSqlWhere(scope: DashboardScope, tableAlias = "e"): { sql: string; params: any[] } {

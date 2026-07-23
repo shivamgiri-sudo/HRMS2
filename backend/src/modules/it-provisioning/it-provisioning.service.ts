@@ -544,6 +544,8 @@ export async function listProvisioningRequests(filters: {
   assignedRole?: string;
   assignedUserId?: string;
   branchId?: string;
+  branchIds?: string[];
+  processIds?: string[];
   status?: string;
   requestType?: string;
   taskCode?: string;
@@ -575,6 +577,14 @@ export async function listProvisioningRequests(filters: {
     conds.push('e.branch_id = ?');
     params.push(filters.branchId);
   }
+  if (filters.branchIds?.length) {
+    conds.push(`e.branch_id IN (${filters.branchIds.map(() => '?').join(',')})`);
+    params.push(...filters.branchIds);
+  }
+  if (filters.processIds?.length) {
+    conds.push(`e.process_id IN (${filters.processIds.map(() => '?').join(',')})`);
+    params.push(...filters.processIds);
+  }
 
   const where = conds.join(' AND ');
 
@@ -601,6 +611,74 @@ export async function listProvisioningRequests(filters: {
   );
 
   return { data: rows as any[], total: (cnt as any[])[0]?.total ?? 0 };
+}
+
+export async function getProvisioningStats(filters: {
+  assignedRole?: string;
+  branchIds?: string[];
+  processIds?: string[];
+}): Promise<Record<string, unknown>> {
+  const conds = ["1=1"];
+  const params: unknown[] = [];
+  if (filters.assignedRole === "it") {
+    conds.push("ipr.assigned_role IN ('it', 'branch_it')");
+  } else if (filters.assignedRole) {
+    conds.push("ipr.assigned_role = ?");
+    params.push(filters.assignedRole);
+  }
+  if (filters.branchIds?.length) {
+    conds.push(`e.branch_id IN (${filters.branchIds.map(() => "?").join(",")})`);
+    params.push(...filters.branchIds);
+  }
+  if (filters.processIds?.length) {
+    conds.push(`e.process_id IN (${filters.processIds.map(() => "?").join(",")})`);
+    params.push(...filters.processIds);
+  }
+  const where = conds.join(" AND ");
+
+  const [summaryRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(DISTINCT CASE WHEN ipr.status IN ('pending','pending_unassigned') THEN ipr.employee_id END) AS pending_total,
+       SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND LOWER(ipr.task_code) REGEXP 'domain|login' THEN 1 ELSE 0 END) AS pending_domain,
+       SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND LOWER(ipr.task_code) LIKE '%email%' THEN 1 ELSE 0 END) AS pending_email,
+       SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND LOWER(ipr.task_code) LIKE '%asset%' THEN 1 ELSE 0 END) AS pending_asset,
+       SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND LOWER(ipr.task_code) LIKE '%biometric%' THEN 1 ELSE 0 END) AS pending_biometric,
+       SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND LOWER(ipr.task_code) REGEXP 'id_card|idcard' THEN 1 ELSE 0 END) AS pending_id_card,
+       SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND ipr.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue,
+       SUM(CASE WHEN ipr.status IN ('actioned','confirmed')
+                 AND DATE(CONVERT_TZ(COALESCE(ipr.actioned_at, ipr.updated_at), '+00:00', '+05:30'))
+                     = DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
+                THEN 1 ELSE 0 END) AS completed_today
+     FROM it_provisioning_request ipr
+     JOIN employees e ON e.id = ipr.employee_id
+     WHERE ${where}`,
+    params,
+  );
+  const [pendingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ipr.id, ipr.employee_id, ipr.task_code, ipr.status, ipr.sla_due_at,
+            e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS employee_name,
+            e.branch_id, e.process_id
+       FROM it_provisioning_request ipr
+       JOIN employees e ON e.id = ipr.employee_id
+      WHERE ${where} AND ipr.status IN ('pending','pending_unassigned')
+      ORDER BY ipr.sla_due_at ASC, ipr.created_at ASC
+      LIMIT 20`,
+    params,
+  );
+
+  const summary = (summaryRows as any[])[0] ?? {};
+  return {
+    pending_total: Number(summary.pending_total ?? 0),
+    pending_domain: Number(summary.pending_domain ?? 0),
+    pending_email: Number(summary.pending_email ?? 0),
+    pending_asset: Number(summary.pending_asset ?? 0),
+    pending_biometric: Number(summary.pending_biometric ?? 0),
+    pending_id_card: Number(summary.pending_id_card ?? 0),
+    overdue: Number(summary.overdue ?? 0),
+    completed_today: Number(summary.completed_today ?? 0),
+    pending_joiners: pendingRows,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function getProvisioningRequest(requestId: string): Promise<any> {

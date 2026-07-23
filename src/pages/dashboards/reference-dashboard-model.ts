@@ -1,32 +1,14 @@
 import type { RoleDashboardVariant } from "./roleDashboardAccess";
+import type {
+  DashboardMetric,
+  DashboardSummaryContract,
+} from "../../../backend/src/shared/dashboardMetricContract";
 
 export type JsonRecord = Record<string, unknown>;
 export type Tone = "blue" | "green" | "amber" | "red" | "violet" | "slate";
 
-export interface MetricResult {
-  value?: number | null;
-  previousValue?: number | null;
-  variancePct?: number | null;
-  target?: number | null;
-  status?: "ok" | "warn" | "critical" | "unknown";
-  trend?: "up" | "down" | "stable" | null;
-  detail?: Record<string, number | null | undefined>;
-  available?: boolean;
-  errorCode?: string | null;
-}
-
-export interface DashboardSummary {
-  dashboardCode?: string;
-  generatedAt?: string;
-  workItems?: { pending_count?: number; overdue_count?: number };
-  metrics?: Record<string, MetricResult>;
-  scope?: {
-    level?: string;
-    branchIds?: string[];
-    processIds?: string[];
-    role?: string;
-  };
-}
+export type MetricResult = DashboardMetric;
+export type DashboardSummary = DashboardSummaryContract;
 
 export interface EmployeeDashboardData {
   attendance: JsonRecord;
@@ -35,6 +17,7 @@ export interface EmployeeDashboardData {
   lms: JsonRecord;
   engagement: JsonRecord;
   sourceErrors?: string[];
+  sourceFreshness?: Record<string, string | null>;
 }
 
 export interface ReferenceDashboardData {
@@ -47,12 +30,17 @@ export interface ReferenceDashboardData {
   workforce: JsonRecord;
   pnl: JsonRecord;
   payroll: JsonRecord;
+  payrollRuns?: JsonRecord[];
+  selectedPayrollRunId?: string;
+  onPayrollRunChange?: (runId: string) => void;
   biometric: JsonRecord;
   devices: JsonRecord;
   opsPulse: JsonRecord;
   managerLeaves: JsonRecord[];
   quality: JsonRecord;
   orgKpi: JsonRecord;
+  itProvisioning?: JsonRecord;
+  itProvisioningAvailable?: boolean;
   loading: boolean;
   refreshing: boolean;
   generatedAt?: string;
@@ -146,4 +134,22 @@ export function formatCurrency(value: number | null): string {
 export function statusCount(rows: JsonRecord[], status: string): number {
   const normalized = status.toLowerCase();
   return rows.filter((row) => String(row.status ?? "").toLowerCase() === normalized).length;
+}
+
+export function countEmployeesOnLeaveOnDate(rows: JsonRecord[], date: string): number {
+  const employeeIds = new Set<string>();
+
+  for (const row of rows) {
+    if (String(row.status ?? "").toLowerCase() !== "approved") continue;
+    const start = String(row.start_date ?? row.from_date ?? row.leave_date ?? "").slice(0, 10);
+    const end = String(row.end_date ?? row.to_date ?? row.leave_date ?? "").slice(0, 10);
+    if (!start || !end || date < start || date > end) continue;
+
+    const employeeId = row.employee_id ?? row.employeeId;
+    if (employeeId !== null && employeeId !== undefined && employeeId !== "") {
+      employeeIds.add(String(employeeId));
+    }
+  }
+
+  return employeeIds.size;
 }

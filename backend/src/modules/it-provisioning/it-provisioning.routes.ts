@@ -9,6 +9,8 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { hasRole } from '../../shared/accessGuard.js';
+import { narrowDashboardScope, resolveDashboardScope } from '../../shared/dashboardScope.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
 import { db } from '../../db/mysql.js';
 import {
   listProvisioningRequests,
@@ -16,6 +18,7 @@ import {
   actionProvisioningRequest,
   waiveProvisioningRequest,
   confirmAndLockRequest,
+  getProvisioningStats,
   OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
 import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
@@ -240,6 +243,31 @@ async function changeAppointmentStatus(
 
 // ── GET /api/it-provisioning/requests ─────────────────────────────────────────
 // Functional teams default to their own queue; admin/hr/super_admin can inspect all.
+router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+  const filters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
+    assignedRole: isAdmin ? String(req.query.assigned_role ?? 'it') : 'it',
+  };
+
+  if (isAdmin) {
+    if (req.query.branch_id) filters.branchIds = [String(req.query.branch_id)];
+    if (req.query.process_id) filters.processIds = [String(req.query.process_id)];
+  } else {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    const scoped = await narrowDashboardScope(
+      baseScope,
+      String(req.query.branch_id ?? ''),
+      String(req.query.process_id ?? ''),
+    );
+    filters.branchIds = scoped.branchIds;
+    filters.processIds = scoped.processIds;
+  }
+
+  return res.json({ success: true, data: await getProvisioningStats(filters) });
+}));
+
 router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
@@ -261,7 +289,15 @@ router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: Authen
     else if (isWFM) filters.assignedRole = 'wfm';
     else if (isBranchAdmin) filters.assignedRole = 'admin';
 
-    if (req.query.branch_id) filters.branchId = req.query.branch_id as string;
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    const scoped = await narrowDashboardScope(
+      baseScope,
+      String(req.query.branch_id ?? ''),
+      String(req.query.process_id ?? ''),
+    );
+    filters.branchIds = scoped.branchIds;
+    filters.processIds = scoped.processIds;
   } else {
     if (req.query.branch_id)      filters.branchId     = req.query.branch_id as string;
     if (req.query.assigned_role)  filters.assignedRole = req.query.assigned_role as string;

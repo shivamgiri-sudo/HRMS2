@@ -64,7 +64,7 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
       totalCount: (rows as any[]).reduce((a, r: any) => a + Number(r.count), 0),
     };
   } catch (err: any) {
-    return { metricCode: "HEADCOUNT", records: [], note: `Query error: ${err?.message}` };
+    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
   }
 }
 
@@ -97,7 +97,7 @@ async function drillOnboardingPending(scope: DashboardScope): Promise<DrilldownR
        ORDER BY b.created_at ASC
        LIMIT 10`,
       scopeParams
-    ).catch(() => [[]] as any);
+    );
 
     return {
       metricCode: "ONBOARDING_PENDING",
@@ -115,7 +115,7 @@ async function drillOnboardingPending(scope: DashboardScope): Promise<DrilldownR
       })),
     };
   } catch (err: any) {
-    return { metricCode: "ONBOARDING_PENDING", records: [], note: `Query error: ${err?.message}` };
+    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
   }
 }
 
@@ -152,7 +152,7 @@ async function drillTatBreached(scope: DashboardScope): Promise<DrilldownResult>
       totalCount: rows.length,
     };
   } catch (err: any) {
-    return { metricCode: "TAT_BREACHED", records: [], note: `Query error: ${err?.message}` };
+    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
   }
 }
 
@@ -191,7 +191,7 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
       totalCount: rows.length,
     };
   } catch (err: any) {
-    return { metricCode: "NAME_MISMATCH", records: [], note: `Query error: ${err?.message}` };
+    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
   }
 }
 
@@ -231,7 +231,7 @@ async function drillIncentivePending(scope: DashboardScope): Promise<DrilldownRe
       totalCount: rows.length,
     };
   } catch (err: any) {
-    return { metricCode: "INCENTIVE_PENDING", records: [], note: `Query error: ${err?.message}` };
+    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
   }
 }
 
@@ -268,6 +268,6 @@ async function drillResignationPending(scope: DashboardScope): Promise<Drilldown
       totalCount: rows.length,
     };
   } catch (err: any) {
-    return { metricCode: "RESIGNATION_PENDING", records: [], note: `Query error: ${err?.message}` };
+    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
   }
 }

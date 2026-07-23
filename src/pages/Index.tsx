@@ -5,7 +5,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRole } from "@/hooks/useUserRole";
 import ReferenceRoleDashboard from "./dashboards/ReferenceRoleDashboard";
-import RoleDashboardV3 from "./dashboards/RoleDashboardV3";
 import {
   canAccessRoleDashboard,
   resolveRoleDashboardVariant,
@@ -84,13 +83,6 @@ export default function Index() {
       })}
     </div>
   ) : undefined;
-
-  // Employee tab uses the richer V3 layout (production-equivalent)
-  if (current === "employee") {
-    return (
-      <RoleDashboardV3 variant="employee" subheader={tabBar} />
-    );
-  }
 
   return <ReferenceRoleDashboard key={current} variant={current} subheader={tabBar} />;
 }

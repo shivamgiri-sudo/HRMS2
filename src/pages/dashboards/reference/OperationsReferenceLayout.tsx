@@ -33,7 +33,8 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
   // Field names from /api/bi/daily-operations-pulse: total_calls, avg_aht_seconds, agents_logged_in, login_adherence_pct
   const o = opsPulse as Record<string, unknown>;
   const totalVolume = asNumber(o.total_calls ?? o.total_volume ?? o.calls_handled ?? metricValue(m, "calls"));
-  const slaAdherence = asNumber(o.login_adherence_pct ?? o.sla_pct ?? o.sla_adherence ?? metricValue(m, "sla"));
+  const loginAdherence = asNumber(o.login_adherence_pct);
+  const loginAdherenceTarget = asNumber(o.login_adherence_target_pct ?? o.login_adherence_target);
   const avgHandleTime = asNumber(o.avg_aht_seconds ?? o.avg_handle_time ?? o.aht ?? metricValue(m, "aht"));
   const activeHeadcount = asNumber(o.agents_logged_in ?? o.agents_scheduled ?? metricDetail(m, "hc", "active") ?? metricValue(m, "hc"));
 
@@ -75,11 +76,12 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
           },
           {
             label: "Login Adherence",
-            value: slaAdherence !== null ? `${slaAdherence.toFixed(1)}%` : null,
-            helper: "agents logged in vs scheduled",
+            value: loginAdherence !== null ? `${loginAdherence.toFixed(1)}%` : null,
+            helper: loginAdherenceTarget === null ? "agents logged in vs scheduled" : `target ${loginAdherenceTarget}%`,
             icon: Target,
-            tone: slaAdherence !== null && slaAdherence >= 90 ? "green" : slaAdherence !== null && slaAdherence >= 75 ? "amber" : "red",
-            trend: m.sla?.variancePct,
+            tone: loginAdherence === null || loginAdherenceTarget === null
+              ? "slate"
+              : loginAdherence >= loginAdherenceTarget ? "green" : "red",
           },
           {
             label: "Avg Handle Time",
@@ -103,7 +105,15 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
           {volumeTrend.length > 0 ? (
             <ReferenceLineChart data={volumeTrend} color="#3b82f6" height={160} />
           ) : shrinkageRows.length > 0 ? (
-            <ReferenceLineChart data={shrinkageRows} color="#f59e0b" height={160} />
+            <div className="divide-y divide-[#edf1f6]">
+              {shrinkageRows.map((row) => (
+                <ReferenceListRow
+                  key={row.label}
+                  left={row.label}
+                  right={formatValue(row.value, "%")}
+                />
+              ))}
+            </div>
           ) : topProcess ? (
             <div className="flex flex-col gap-1 py-4 text-sm">
               <p className="font-semibold text-[#0b1f44]">Top Process: {String(topProcess.name ?? "")}</p>
@@ -118,7 +128,7 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
           title="Intervention Flags"
           action={
             interventionFlags.length > 0 ? (
-              <span className="rounded-full bg-[#ef4444] px-2 py-0.5 text-[9px] font-bold text-white">
+              <span className="rounded-full bg-[#ef4444] px-2 py-0.5 text-xs font-bold text-white">
                 {formatValue(interventionFlags.length)}
               </span>
             ) : null

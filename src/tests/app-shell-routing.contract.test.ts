@@ -85,7 +85,6 @@ describe("application shell routing contracts", () => {
     const shellRequiredRoutes = [
       "/ats/name-consistency",
       "/ats/reconciliation",
-      "/ats/bgv-enhanced",
       "/wfm/mismatch-queue",
       "/attendance/billing-config",
       "/my-kpi",
@@ -99,6 +98,10 @@ describe("application shell routing contracts", () => {
       expect(routeIndex).toBeGreaterThanOrEqual(0);
       expect(routeSource.slice(routeIndex, routeIndex + 600)).toContain("<DashboardLayout>");
     }
+
+    expect(routeSource).toContain(
+      'path="/ats/bgv-enhanced" element={<Navigate to="/ats/bgv" replace />}',
+    );
   });
 
   it("does not use empty values in vendor Select items", () => {
@@ -195,10 +198,8 @@ describe("application shell routing contracts", () => {
 
   it("keeps sales performance out of shared role dashboards", () => {
     const referenceDashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
-    const roleDashboard = read("src/pages/dashboards/RoleDashboardV3.tsx");
 
     expect(referenceDashboard).not.toContain("RoleSalesPerformancePanel");
-    expect(roleDashboard).not.toContain("RoleSalesPerformancePanel");
   });
 
   it("uses the available new-joiner metric for the onboarding employee card", () => {

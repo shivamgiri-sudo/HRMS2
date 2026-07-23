@@ -1,3 +1,9 @@
+import {
+  DASHBOARD_ACCESS_REGISTRY,
+  canAccessDashboard,
+  normalizeDashboardRole,
+} from "../../../backend/src/shared/dashboardAccessRegistry";
+
 export type RoleDashboardVariant =
   | "employee"
   | "wfm"
@@ -12,40 +18,17 @@ export type RoleDashboardVariant =
   | "recruiter"
   | "it_manager";
 
-export const ROLE_VARIANT_MAP: Readonly<Record<RoleDashboardVariant, readonly string[]>> = {
-  super_admin: ["super_admin", "admin"],
-  ceo: ["ceo", "coo"],
-  hr: ["hr", "hr_admin", "branch_hr", "ho_hr"],
-  wfm: ["wfm", "ho_wfm", "wfm_spoc", "rta", "ho_rta"],
-  wfm_attendance: ["wfm", "ho_wfm", "wfm_spoc", "rta", "ho_rta", "admin", "super_admin"],
-  payroll: [
-    "payroll",
-    "payroll_hr",
-    "payroll_head",
-    "payroll_branch",
-    "payroll_admin",
-    "finance",
-    "finance_head",
-    "accounts_head",
-    "branch_finance",
-    "ho_payroll",
-  ],
-  manager: [
-    "manager",
-    "process_manager",
-    "assistant_manager",
-    "branch_head",
-    "branch_manager",
-    "team_leader",
-    "team_lead",
-    "tl",
-  ],
-  employee: ["employee", "agent", "trainee"],
-  quality: ["qa", "quality_analyst", "quality_lead", "qa_analyst", "qa_lead"],
-  operations: ["operations_manager", "ops_manager", "floor_manager", "process_lead"],
-  recruiter: ["recruiter", "recruitment_hr", "talent_acquisition", "ta_lead"],
-  it_manager: ["it", "branch_it", "it_admin"],
-};
+const DASHBOARD_BY_VARIANT = Object.fromEntries(
+  Object.values(DASHBOARD_ACCESS_REGISTRY).map((item) => [item.variant, item]),
+) as Record<RoleDashboardVariant, (typeof DASHBOARD_ACCESS_REGISTRY)[keyof typeof DASHBOARD_ACCESS_REGISTRY]>;
+
+export const ROLE_VARIANT_MAP: Readonly<Record<RoleDashboardVariant, readonly string[]>> =
+  Object.fromEntries(
+    Object.entries(DASHBOARD_BY_VARIANT).map(([variant, item]) => [
+      variant,
+      item.allowedRoleKeys,
+    ]),
+  ) as Record<RoleDashboardVariant, readonly string[]>;
 
 const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
   "super_admin",
@@ -63,7 +46,7 @@ const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
 ];
 
 export function resolveRoleDashboardVariant(roleKeys: readonly string[]): RoleDashboardVariant {
-  const normalized = new Set(roleKeys.map((role) => String(role).trim().toLowerCase()));
+  const normalized = new Set(roleKeys.map(normalizeDashboardRole));
   for (const variant of RESOLUTION_PRIORITY) {
     if (ROLE_VARIANT_MAP[variant].some((role) => normalized.has(role))) return variant;
   }
@@ -75,6 +58,6 @@ export function canAccessRoleDashboard(
   roleKeys: readonly string[],
 ): boolean {
   const normalized = new Set(roleKeys.map((role) => String(role).trim().toLowerCase()));
-  if (normalized.has("super_admin")) return true;
-  return ROLE_VARIANT_MAP[variant].some((role) => normalized.has(role));
+  const dashboard = DASHBOARD_BY_VARIANT[variant];
+  return dashboard ? canAccessDashboard(dashboard.code, [...normalized]) : false;
 }

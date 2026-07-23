@@ -82,7 +82,7 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
       />
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.05fr_1fr]">
-        <ReferencePanel title="Live Attendance Status">
+        <ReferencePanel title="Processed Attendance Status">
           <ReferenceDonut
             compact
             centerValue={attendanceRate === null ? null : `${attendanceRate}%`}
@@ -96,14 +96,14 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
               { name: "Not Marked", value: notMarked ?? 0 },
             ]}
           />
-          <p className="mt-2 text-[9px] text-[#71809a]">Last updated from finalized attendance records</p>
+          <p className="mt-2 text-xs text-[#71809a]">Last updated from finalized attendance records</p>
         </ReferencePanel>
 
-        <ReferencePanel title="Late Arrivals Trend" action={<span className="text-[10px] text-[#61708a]">Today</span>}>
+        <ReferencePanel title="Late Arrivals Trend" action={<span className="text-xs text-[#61708a]">Today</span>}>
           <ReferenceLineChart data={trendRows} height={170} />
         </ReferencePanel>
 
-        <ReferencePanel title="Regularization Requests Summary" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/attendance-regularization">View All</a>}>
+        <ReferencePanel title="Regularization Requests Summary" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/attendance-regularization">View All</a>}>
           <div className="grid grid-cols-4 gap-2">
             {[
               ["Pending", asNumber(regularization.pending), "amber"],
@@ -113,7 +113,7 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-lg border border-[#e3e9f2] p-3 text-center">
                 <p className="text-[19px] font-extrabold text-[#0b1f44]">{formatValue(value)}</p>
-                <p className="mt-1 text-[9px] text-[#71809a]">{label}</p>
+                <p className="mt-1 text-xs text-[#71809a]">{label}</p>
               </div>
             ))}
           </div>
@@ -126,17 +126,17 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr_1fr]">
-        <ReferencePanel title="Biometric Device Status" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/wfm/cosec-monitoring">View All</a>} bodyClassName="p-0">
+        <ReferencePanel title="Biometric Device Status" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/wfm/cosec-monitoring">View All</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             {deviceRows.length ? deviceRows.slice(0, 6).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={Fingerprint} title={String(row.name ?? row.device_name ?? `Device ${index + 1}`)} value={String(row.status ?? "Unknown")} tone={["online", "success", "completed"].includes(String(row.status).toLowerCase()) ? "green" : "red"} />
-            )) : <div className="px-4 py-10 text-center text-[10px] text-[#94a3b8]">Device status is unavailable</div>}
+            )) : <div className="px-4 py-10 text-center text-xs text-[#94a3b8]">Device status is unavailable</div>}
           </div>
         </ReferencePanel>
 
-        <ReferencePanel title="Shift Summary" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/reports">View Full Report</a>} bodyClassName="p-0">
+        <ReferencePanel title="Shift Summary" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/reports">View Full Report</a>} bodyClassName="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-[9px]">
+            <table className="w-full min-w-[560px] text-left text-xs">
               <thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-4 py-2">Shift</th><th>Total Emp.</th><th>Present</th><th>Absent</th><th>Late</th><th>Coverage</th></tr></thead>
               <tbody className="divide-y divide-[#edf1f6]">
                 {shiftRows.length ? shiftRows.slice(0, 6).map((row, index) => (
@@ -164,16 +164,16 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
               ["Missed Out", asNumber(data.biometric.missed_out)],
               ["Multiple Punch", asNumber(data.biometric.multiple_punch)],
               ["Invalid Punch", asNumber(data.biometric.invalid_punch)],
-            ].map(([label, value]) => <div key={String(label)} className="px-3 py-3 text-center"><p className="text-[18px] font-extrabold text-[#0b1f44]">{formatValue(value)}</p><p className="mt-1 text-[8px] text-[#71809a]">{label}</p></div>)}
+            ].map(([label, value]) => <div key={String(label)} className="px-3 py-3 text-center"><p className="text-[18px] font-extrabold text-[#0b1f44]">{formatValue(value)}</p><p className="mt-1 text-xs text-[#71809a]">{label}</p></div>)}
           </div>
           <div className="max-h-[128px] divide-y divide-[#edf1f6] overflow-y-auto">
             {exceptionRows.slice(0, 3).map((row, index) => <ReferenceListRow key={String(row.id ?? index)} title={String(row.employee_name ?? row.name ?? "Employee")} subtitle={String(row.exception_type ?? row.type ?? "Punch exception")} value={String(row.status ?? "Pending")} tone="amber" />)}
-            {!exceptionRows.length ? <div className="px-4 py-4 text-[10px] text-[#71809a]">Open exceptions: {formatValue(missingPunch)}</div> : null}
+            {!exceptionRows.length ? <div className="px-4 py-4 text-xs text-[#71809a]">Open exceptions: {formatValue(missingPunch)}</div> : null}
           </div>
         </ReferencePanel>
 
         <ReferencePanel title="Overtime Snapshot">
-          <div className="grid grid-cols-2 gap-3"><div><p className="text-[9px] text-[#71809a]">Employees</p><p className="mt-1 text-[22px] font-extrabold text-[#0b1f44]">{formatValue(overtimeEmployees)}</p></div><div><p className="text-[9px] text-[#71809a]">OT Hours</p><p className="mt-1 text-[22px] font-extrabold text-[#0b1f44]">{formatValue(overtimeHours)}</p></div></div>
+          <div className="grid grid-cols-2 gap-3"><div><p className="text-xs text-[#71809a]">Employees</p><p className="mt-1 text-[22px] font-extrabold text-[#0b1f44]">{formatValue(overtimeEmployees)}</p></div><div><p className="text-xs text-[#71809a]">OT Hours</p><p className="mt-1 text-[22px] font-extrabold text-[#0b1f44]">{formatValue(overtimeHours)}</p></div></div>
         </ReferencePanel>
 
         <ReferencePanel title="Attendance Compliance">
@@ -185,7 +185,7 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
           </div>
         </ReferencePanel>
 
-        <ReferencePanel title="Today's Alerts" action={<a className="text-[9px] font-semibold text-[#0b63e5]" href="/work-inbox">View All</a>} bodyClassName="p-0">
+        <ReferencePanel title="Today's Alerts" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/work-inbox">View All</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             {alertRows.length ? alertRows.slice(0, 5).map((row, index) => <ReferenceListRow key={String(row.id ?? index)} icon={ShieldAlert} title={String(row.title ?? row.label ?? "Attendance alert")} value={row.count ?? row.value} tone={String(row.severity ?? "").toLowerCase().includes("high") ? "red" : "amber"} href={String(row.action_url ?? "/work-inbox")} />) : (
               <>
