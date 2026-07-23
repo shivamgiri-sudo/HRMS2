@@ -42,3 +42,13 @@ export const lmsDb = {
     return getLmsPool().query<T>(sql, params as ExecuteParams);
   },
 };
+
+/**
+ * Close the LMS connection pool for graceful shutdown.
+ */
+export async function closeLmsPool(): Promise<void> {
+  if (_lmsPool) {
+    await _lmsPool.end();
+    _lmsPool = null;
+  }
+}

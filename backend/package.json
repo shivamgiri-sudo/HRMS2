@@ -8,6 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/src/server.js",
+    "workers": "node dist/src/workers/all-workers.js",
+    "workers:dev": "tsx src/workers/all-workers.ts",
     "migrate": "tsx src/scripts/migrate.ts",
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "typecheck": "tsc --noEmit",

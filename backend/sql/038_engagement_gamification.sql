@@ -11,82 +11,78 @@
 --    the CREATE TABLE IF NOT EXISTS and INSERTs below always succeed.
 -- =====================================================
 
-CREATE TABLE IF NOT EXISTS gamification_badge_master (
-    badge_id CHAR(36) PRIMARY KEY,
-    badge_name VARCHAR(100) NOT NULL,
-    badge_description TEXT,
-    badge_icon VARCHAR(255),
-    badge_category ENUM('performance', 'activity', 'tenure', 'social') NOT NULL,
-    points_value INT NOT NULL DEFAULT 0,
-    criteria_json JSON COMMENT 'Badge earning criteria',
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_badge_name (badge_name),
-    INDEX idx_category (badge_category),
-    INDEX idx_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 0a. Rename id -> badge_id (only when id exists and badge_id does not)
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @has_old = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='id');
 SET @has_new = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='badge_id');
-SET @sql = IF(@has_old>0 AND @has_new=0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN id badge_id CHAR(36) NOT NULL', 'SELECT ''gbm badge_id ok'' AS n');
+SET @sql = IF(@tbl>0 AND @has_old>0 AND @has_new=0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN id badge_id CHAR(36) NOT NULL', 'SELECT ''gbm badge_id ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0b. Rename category -> badge_category as VARCHAR (no ENUM truncation on old values)
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='category');
-SET @sql = IF(@col>0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN category badge_category VARCHAR(50) NOT NULL', 'SELECT ''gbm badge_category rename ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN category badge_category VARCHAR(50) NOT NULL', 'SELECT ''gbm badge_category rename ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0c. Normalise old category values not in the canonical ENUM
 --     043_demo_data used: teamwork, attendance, learning
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='badge_category');
-SET @sql = IF(@col>0, 'UPDATE gamification_badge_master SET badge_category = CASE badge_category WHEN ''teamwork'' THEN ''social'' WHEN ''attendance'' THEN ''activity'' WHEN ''learning'' THEN ''activity'' ELSE badge_category END WHERE badge_category NOT IN (''performance'',''activity'',''tenure'',''social'')', 'SELECT ''gbm category data ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'UPDATE gamification_badge_master SET badge_category = CASE badge_category WHEN ''teamwork'' THEN ''social'' WHEN ''attendance'' THEN ''activity'' WHEN ''learning'' THEN ''activity'' ELSE badge_category END WHERE badge_category NOT IN (''performance'',''activity'',''tenure'',''social'')', 'SELECT ''gbm category data ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0d. Tighten badge_category to ENUM now that all values are valid
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='badge_category' AND DATA_TYPE='varchar');
-SET @sql = IF(@col>0, 'ALTER TABLE gamification_badge_master MODIFY COLUMN badge_category ENUM(''performance'',''activity'',''tenure'',''social'') NOT NULL', 'SELECT ''gbm badge_category enum ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'ALTER TABLE gamification_badge_master MODIFY COLUMN badge_category ENUM(''performance'',''activity'',''tenure'',''social'') NOT NULL', 'SELECT ''gbm badge_category enum ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0e. Rename point_value -> points_value
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='point_value');
-SET @sql = IF(@col>0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN point_value points_value INT NOT NULL DEFAULT 0', 'SELECT ''gbm points_value ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN point_value points_value INT NOT NULL DEFAULT 0', 'SELECT ''gbm points_value ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0f. Rename active_status -> is_active
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='active_status');
-SET @sql = IF(@col>0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN active_status is_active TINYINT(1) NOT NULL DEFAULT 1', 'SELECT ''gbm is_active ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'ALTER TABLE gamification_badge_master CHANGE COLUMN active_status is_active TINYINT(1) NOT NULL DEFAULT 1', 'SELECT ''gbm is_active ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0g. Drop badge_code (not in canonical schema)
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='badge_code');
-SET @sql = IF(@col>0, 'ALTER TABLE gamification_badge_master DROP COLUMN badge_code', 'SELECT ''gbm badge_code absent ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'ALTER TABLE gamification_badge_master DROP COLUMN badge_code', 'SELECT ''gbm badge_code absent ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0h. Add badge_icon if missing
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='badge_icon');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN badge_icon VARCHAR(255) NULL', 'SELECT ''gbm badge_icon ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN badge_icon VARCHAR(255) NULL', 'SELECT ''gbm badge_icon ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0i. Add criteria_json if missing
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='criteria_json');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN criteria_json JSON NULL COMMENT ''Badge earning criteria''', 'SELECT ''gbm criteria_json ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN criteria_json JSON NULL COMMENT ''Badge earning criteria''', 'SELECT ''gbm criteria_json ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0j. Add is_active if still missing (tables that never had active_status either)
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='is_active');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1', 'SELECT ''gbm is_active present ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1', 'SELECT ''gbm is_active present ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0k. Add created_at if missing
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='created_at');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'SELECT ''gbm created_at ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'SELECT ''gbm created_at ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0l. Add updated_at if missing
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='gamification_badge_master' AND COLUMN_NAME='updated_at');
-SET @sql = IF(@col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP', 'SELECT ''gbm updated_at ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col=0, 'ALTER TABLE gamification_badge_master ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP', 'SELECT ''gbm updated_at ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- =====================================================
@@ -94,36 +90,23 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 --     043_demo_data used: id (not earned_id), earned_date (not earned_at)
 -- =====================================================
 
-CREATE TABLE IF NOT EXISTS employee_badge_earned (
-    earned_id CHAR(36) PRIMARY KEY,
-    employee_id VARCHAR(36) NOT NULL,
-    badge_id CHAR(36) NOT NULL,
-    earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    reason TEXT COMMENT 'Why badge was awarded',
-    awarded_by VARCHAR(36) COMMENT 'Admin/system that awarded',
-    metadata_json JSON COMMENT 'Additional context',
-    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
-    FOREIGN KEY (badge_id) REFERENCES gamification_badge_master(badge_id) ON DELETE CASCADE,
-    UNIQUE KEY uq_employee_badge (employee_id, badge_id),
-    INDEX idx_employee (employee_id),
-    INDEX idx_badge (badge_id),
-    INDEX idx_earned_at (earned_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 0B-a. Rename id -> earned_id
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned');
 SET @has_old = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned' AND COLUMN_NAME='id');
 SET @has_new = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned' AND COLUMN_NAME='earned_id');
-SET @sql = IF(@has_old>0 AND @has_new=0, 'ALTER TABLE employee_badge_earned CHANGE COLUMN id earned_id CHAR(36) NOT NULL', 'SELECT ''ebe earned_id ok'' AS n');
+SET @sql = IF(@tbl>0 AND @has_old>0 AND @has_new=0, 'ALTER TABLE employee_badge_earned CHANGE COLUMN id earned_id CHAR(36) NOT NULL', 'SELECT ''ebe earned_id ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0B-b. Rename earned_date -> earned_at
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned' AND COLUMN_NAME='earned_date');
-SET @sql = IF(@col>0, 'ALTER TABLE employee_badge_earned CHANGE COLUMN earned_date earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'SELECT ''ebe earned_at ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col>0, 'ALTER TABLE employee_badge_earned CHANGE COLUMN earned_date earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'SELECT ''ebe earned_at ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 0B-c. Add metadata_json if missing
+SET @tbl = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned');
 SET @col = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='employee_badge_earned' AND COLUMN_NAME='metadata_json');
-SET @sql = IF(@col=0, 'ALTER TABLE employee_badge_earned ADD COLUMN metadata_json JSON NULL COMMENT ''Additional context''', 'SELECT ''ebe metadata_json ok'' AS n');
+SET @sql = IF(@tbl>0 AND @col=0, 'ALTER TABLE employee_badge_earned ADD COLUMN metadata_json JSON NULL COMMENT ''Additional context''', 'SELECT ''ebe metadata_json ok'' AS n');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- =====================================================
@@ -436,7 +419,7 @@ INSERT IGNORE INTO survey_master (survey_id, survey_title, survey_description, s
 
 -- Survey 1 Questions
 INSERT IGNORE INTO survey_question
-  (question_id, survey_id, question_text, question_type, question_order, is_required, options_json)
+  (id, survey_id, question_text, question_type, display_order, is_required, options_json)
 VALUES
   (UUID(), @survey1_id, 'How satisfied are you with your current role?', 'scale', 1, TRUE, '{"min":1,"max":5,"labels":{"1":"Very Dissatisfied","5":"Very Satisfied"}}'),
   (UUID(), @survey1_id, 'Do you feel valued as a team member?', 'rating', 2, TRUE, '{"min":1,"max":5,"labels":{"1":"Not at all","5":"Absolutely"}}'),
@@ -454,7 +437,7 @@ INSERT IGNORE INTO survey_master (survey_id, survey_title, survey_description, s
 
 -- Survey 2 Questions
 INSERT IGNORE INTO survey_question
-  (question_id, survey_id, question_text, question_type, question_order, is_required, options_json)
+  (id, survey_id, question_text, question_type, display_order, is_required, options_json)
 VALUES
   (UUID(), @survey2_id, 'How effective is communication within your team?', 'scale', 1, TRUE, '{"min":1,"max":5,"labels":{"1":"Very Poor","5":"Excellent"}}'),
   (UUID(), @survey2_id, 'What communication tools do you use most?', 'multiple_choice', 2, TRUE, '["Email", "Slack", "Teams", "Phone", "In-person", "Other"]'),

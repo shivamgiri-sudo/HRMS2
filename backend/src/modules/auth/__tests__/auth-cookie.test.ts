@@ -121,14 +121,17 @@ describe("Auth Cookie Security", () => {
       expect(result).toBe("cookie-token");
     });
 
-    it("should read from body as fallback (legacy)", () => {
+    it("should NOT read from body when legacy transport is disabled (default)", () => {
+      // By default, AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT is false
+      // Body tokens should be ignored for security
       const mockReq: Partial<Request> = {
         cookies: {},
         body: { refreshToken: "body-token" },
       };
 
       const result = getRefreshTokenFromRequest(mockReq as Request);
-      expect(result).toBe("body-token");
+      // With legacy transport disabled, body tokens are ignored
+      expect(result).toBeNull();
     });
 
     it("should return null when no token present", () => {
@@ -141,24 +144,27 @@ describe("Auth Cookie Security", () => {
       expect(result).toBeNull();
     });
 
-    it("should handle missing cookies object", () => {
+    it("should return null when token only in body and legacy disabled", () => {
+      // Legacy transport is disabled by default
       const mockReq: Partial<Request> = {
         body: { refreshToken: "body-token" },
       };
 
       const result = getRefreshTokenFromRequest(mockReq as Request);
-      expect(result).toBe("body-token");
+      expect(result).toBeNull();
     });
   });
 
   describe("isLegacyRefreshTokenTransport", () => {
-    it("should return true when token is only in body", () => {
+    it("should return false when legacy transport is disabled (default)", () => {
+      // With AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT=false (default),
+      // isLegacyRefreshTokenTransport always returns false
       const mockReq: Partial<Request> = {
         cookies: {},
         body: { refreshToken: "body-token" },
       };
 
-      expect(isLegacyRefreshTokenTransport(mockReq as Request)).toBe(true);
+      expect(isLegacyRefreshTokenTransport(mockReq as Request)).toBe(false);
     });
 
     it("should return false when token is in cookie", () => {

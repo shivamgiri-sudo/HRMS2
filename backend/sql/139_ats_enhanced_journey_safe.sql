@@ -142,19 +142,12 @@ CREATE TABLE IF NOT EXISTS module_access_control (
 );
 
 -- Grant super admin access to MAS47814
-INSERT INTO module_access_control (id, employee_id, module_code, module_name, access_granted, granted_by, granted_at)
-SELECT UUID(), e.id, grant_set.module_code, grant_set.module_name, 1, NULL, NOW()
-FROM employees e
-JOIN (
-  SELECT 'ATS_DASHBOARD' AS module_code, 'ATS Dashboard' AS module_name
-  UNION ALL SELECT 'PAYROLL_HR_VALIDATION', 'Payroll HR Validation'
-  UNION ALL SELECT 'RECRUITER_PORTAL', 'Recruiter Portal'
-  UNION ALL SELECT 'COMMAND_CENTRE', 'Command Centre'
-) grant_set
-WHERE e.employee_code = 'MAS47814'
-ON DUPLICATE KEY UPDATE
-  access_granted = VALUES(access_granted),
-  granted_at = VALUES(granted_at);
+INSERT INTO module_access_control (module_name, employee_code, has_access, granted_by, remarks) VALUES
+('ATS_DASHBOARD', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('PAYROLL_HR_VALIDATION', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('RECRUITER_PORTAL', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access'),
+('COMMAND_CENTRE', 'MAS47814', TRUE, 'SYSTEM', 'Super admin full access')
+ON DUPLICATE KEY UPDATE has_access=TRUE;
 
 -- ── 6. Create recruiter_assignment_log table ──────────────────────────────────
 CREATE TABLE IF NOT EXISTS ats_recruiter_assignment_log (

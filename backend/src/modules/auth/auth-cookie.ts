@@ -22,28 +22,32 @@ function isSecureContext(): boolean {
 }
 
 /**
- * Get the cookie domain from environment or derive from frontend URL
+ * Get the cookie domain from explicit configuration only.
+ *
+ * SECURITY: Do NOT derive domain from FRONTEND_URL.
+ * - Host-only cookies (no domain) are the most secure default
+ * - Only set domain when explicitly needed for subdomain sharing
+ * - COOKIE_DOMAIN must be validated as a proper domain (no paths, no ports)
  */
 function getCookieDomain(): string | undefined {
-  // Explicit domain override
-  if (process.env.COOKIE_DOMAIN) {
-    return process.env.COOKIE_DOMAIN;
+  const explicitDomain = process.env.COOKIE_DOMAIN;
+
+  if (!explicitDomain) {
+    // No domain set = host-only cookie (most secure default)
+    // Cookie will only be sent to the exact host that set it
+    return undefined;
   }
 
-  // In production, extract domain from FRONTEND_URL if set
-  if (env.NODE_ENV === "production" && env.FRONTEND_URL) {
-    try {
-      const url = new URL(env.FRONTEND_URL);
-      // Return domain without leading dot for most browsers
-      return url.hostname;
-    } catch {
-      // Invalid URL, don't set domain
-      return undefined;
-    }
+  // Validate the domain format
+  // Must be a valid domain without protocol, path, or port
+  const domainPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+  if (!domainPattern.test(explicitDomain)) {
+    console.error(`[auth-cookie] Invalid COOKIE_DOMAIN format: ${explicitDomain}`);
+    console.error("[auth-cookie] COOKIE_DOMAIN must be a valid domain (e.g., 'example.com' or '.example.com')");
+    return undefined;
   }
 
-  // Development: don't set domain (allows localhost)
-  return undefined;
+  return explicitDomain;
 }
 
 export interface RefreshTokenCookieOptions {
@@ -97,10 +101,22 @@ export function clearRefreshTokenCookie(res: Response): void {
 }
 
 /**
- * Extract refresh token from httpOnly cookie.
- * Falls back to request body for backward compatibility during transition.
+ * LEGACY TRANSPORT CONTROL
  *
- * SECURITY: After transition period, remove body fallback to enforce cookie-only.
+ * By default, refresh tokens MUST be sent via httpOnly cookies.
+ * Legacy body/header transport is DISABLED by default for security.
+ *
+ * Set AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT=true to enable legacy transport
+ * during migration period only. This should be removed once all clients
+ * have migrated to cookie-based refresh.
+ */
+const ALLOW_LEGACY_TRANSPORT = process.env.AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT === "true";
+
+/**
+ * Extract refresh token from httpOnly cookie.
+ *
+ * Legacy body transport is DISABLED by default.
+ * Set AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT=true to enable during migration.
  */
 export function getRefreshTokenFromRequest(req: Request): string | null {
   // Primary: httpOnly cookie (secure)
@@ -109,12 +125,13 @@ export function getRefreshTokenFromRequest(req: Request): string | null {
     return cookieToken;
   }
 
-  // Fallback: request body (legacy - to be removed after transition)
-  // TODO: Remove this fallback after all clients migrate to cookie-based refresh
-  const bodyToken = req.body?.refreshToken;
-  if (bodyToken && typeof bodyToken === "string") {
-    console.warn("[auth-cookie] Legacy refresh token in body - client should migrate to cookies");
-    return bodyToken;
+  // Legacy fallback: request body (DISABLED by default)
+  if (ALLOW_LEGACY_TRANSPORT) {
+    const bodyToken = req.body?.refreshToken;
+    if (bodyToken && typeof bodyToken === "string") {
+      console.warn("[auth-cookie] LEGACY: refresh token in body - migrate to cookies");
+      return bodyToken;
+    }
   }
 
   return null;
@@ -122,9 +139,13 @@ export function getRefreshTokenFromRequest(req: Request): string | null {
 
 /**
  * Check if refresh token is using legacy body transport.
- * Used for migration metrics and enforcement.
+ * Returns false if legacy transport is disabled.
  */
 export function isLegacyRefreshTokenTransport(req: Request): boolean {
+  if (!ALLOW_LEGACY_TRANSPORT) {
+    return false;
+  }
+
   const hasBodyToken = req.body?.refreshToken && typeof req.body.refreshToken === "string";
   const hasCookieToken = req.cookies?.[REFRESH_TOKEN_COOKIE_NAME] && typeof req.cookies[REFRESH_TOKEN_COOKIE_NAME] === "string";
 

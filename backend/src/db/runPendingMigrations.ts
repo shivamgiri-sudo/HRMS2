@@ -401,6 +401,57 @@ export type MigrationHealth = {
   completedAt: string | null;
 };
 
+/**
+ * Schema verification state machine.
+ * Used by health endpoints to determine if the API is ready to serve traffic.
+ *
+ * States:
+ * - unverified: Schema has not been checked yet (initial state)
+ * - verifying: Schema verification is in progress
+ * - verified: Schema matches expected version, API is ready
+ * - incompatible: Pending migrations exist, API should not serve traffic
+ * - error: Verification failed due to database or other errors
+ */
+export type SchemaVerificationState =
+  | "unverified"
+  | "verifying"
+  | "verified"
+  | "incompatible"
+  | "error";
+
+export interface SchemaVerificationResult {
+  state: SchemaVerificationState;
+  appliedCount: number;
+  pendingCount: number;
+  pendingFiles: string[];
+  error?: string;
+  verifiedAt: string | null;
+}
+
+let schemaVerificationState: SchemaVerificationResult = {
+  state: "unverified",
+  appliedCount: 0,
+  pendingCount: 0,
+  pendingFiles: [],
+  verifiedAt: null,
+};
+
+/**
+ * Get current schema verification state.
+ * Used by /health/ready to determine API readiness.
+ */
+export function getSchemaVerificationState(): SchemaVerificationResult {
+  return { ...schemaVerificationState, pendingFiles: [...schemaVerificationState.pendingFiles] };
+}
+
+/**
+ * Check if schema is verified and ready for traffic.
+ * Returns true only when state is "verified".
+ */
+export function isSchemaReady(): boolean {
+  return schemaVerificationState.state === "verified";
+}
+
 let migrationHealth: MigrationHealth = {
   status: "not_started",
   applied: [],
@@ -907,35 +958,40 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
         const durationMs = endTime.getTime() - startTime.getTime();
         const message = error instanceof Error ? error.message : String(error);
 
-        if (isIdempotentMigrationError(error)) {
-          // Record as applied even for idempotent errors (table/column already exists)
-          const conn2 = await mysql.createConnection(connConfig);
-          try {
-            await conn2.query(
-              `INSERT IGNORE INTO schema_migrations
-               (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-              [file, currentChecksum, environment, startTime, endTime, durationMs, executor]
-            );
-          } finally {
-            await conn2.end();
-          }
-          migrationHealth.skipped.push(file);
-          console.log(`[migration] already applied/idempotent: ${file}`);
+        // GOVERNANCE: Never mark a migration as success=1 on ANY error.
+        // Even "idempotent" errors (duplicate table/column) indicate incomplete state:
+        // - The migration might have partially executed before hitting the duplicate
+        // - Another migration might have created the object with different schema
+        // - Re-running should be explicit, not automatic
+        //
+        // To re-apply a migration after fixing the issue:
+        // 1. DELETE FROM schema_migrations WHERE filename = '<file>' AND success = 0;
+        // 2. Fix the underlying issue (drop duplicate object, or update migration)
+        // 3. Re-run npm run migrate
+
+        const isIdempotent = isIdempotentMigrationError(error);
+        const errorType = isIdempotent ? "IDEMPOTENT_CONFLICT" : "HARD_FAILURE";
+
+        // Record failed migration attempt (never success=1 on error)
+        const conn2 = await mysql.createConnection(connConfig);
+        try {
+          await conn2.query(
+            `INSERT INTO schema_migrations
+             (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success, error_message)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+             ON DUPLICATE KEY UPDATE success = 0, error_message = VALUES(error_message), end_time = VALUES(end_time)`,
+            [file, currentChecksum, environment, startTime, endTime, durationMs, executor, `[${errorType}] ${message}`]
+          );
+        } finally {
+          await conn2.end();
+        }
+
+        if (isIdempotent) {
+          // Idempotent errors are still failures that need investigation
+          migrationHealth.failed.push({ filename: file, error: `[${errorType}] ${message}` });
+          console.warn(`[migration] IDEMPOTENT CONFLICT: ${file} — ${message}`);
+          console.warn(`[migration] This may indicate partial application or schema drift. Investigate before retrying.`);
         } else {
-          // Record failed migration attempt
-          const conn2 = await mysql.createConnection(connConfig);
-          try {
-            await conn2.query(
-              `INSERT INTO schema_migrations
-               (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success, error_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-               ON DUPLICATE KEY UPDATE success = 0, error_message = VALUES(error_message), end_time = VALUES(end_time)`,
-              [file, currentChecksum, environment, startTime, endTime, durationMs, executor, message]
-            );
-          } finally {
-            await conn2.end();
-          }
           migrationHealth.failed.push({ filename: file, error: message });
           console.error(`[migration] FAILED: ${file} — ${message}`);
         }
@@ -969,7 +1025,13 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
 
 /**
  * Verify schema is at expected version (called at API startup instead of running migrations).
- * Returns true if schema is valid, false if migrations are needed.
+ * Updates the shared schemaVerificationState and returns the result.
+ *
+ * State transitions:
+ * - unverified -> verifying (when called)
+ * - verifying -> verified (when schema matches)
+ * - verifying -> incompatible (when pending migrations exist)
+ * - verifying -> error (when database error occurs)
  */
 export async function verifySchemaVersion(): Promise<{
   valid: boolean;
@@ -977,6 +1039,15 @@ export async function verifySchemaVersion(): Promise<{
   pendingCount: number;
   pendingFiles: string[];
 }> {
+  // Set state to verifying
+  schemaVerificationState = {
+    state: "verifying",
+    appliedCount: 0,
+    pendingCount: 0,
+    pendingFiles: [],
+    verifiedAt: null,
+  };
+
   const connConfig = {
     host: env.DB_HOST,
     port: env.DB_PORT,
@@ -985,8 +1056,10 @@ export async function verifySchemaVersion(): Promise<{
     database: env.DB_NAME,
   };
 
-  const conn = await mysql.createConnection(connConfig);
+  let conn: mysql.Connection | null = null;
   try {
+    conn = await mysql.createConnection(connConfig);
+
     // Check if schema_migrations table exists
     const [tables] = await conn.query<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM information_schema.tables
@@ -994,6 +1067,14 @@ export async function verifySchemaVersion(): Promise<{
       [env.DB_NAME]
     );
     if ((tables[0] as { count: number }).count === 0) {
+      // No migrations table = incompatible (fresh database)
+      schemaVerificationState = {
+        state: "incompatible",
+        appliedCount: 0,
+        pendingCount: MIGRATION_MANIFEST.length,
+        pendingFiles: MIGRATION_MANIFEST.slice(0, 10),
+        verifiedAt: new Date().toISOString(),
+      };
       return { valid: false, appliedCount: 0, pendingCount: MIGRATION_MANIFEST.length, pendingFiles: MIGRATION_MANIFEST };
     }
 
@@ -1005,14 +1086,38 @@ export async function verifySchemaVersion(): Promise<{
 
     // Calculate pending
     const pendingFiles = MIGRATION_MANIFEST.filter((f) => !appliedSet.has(f));
+    const isValid = pendingFiles.length === 0;
+
+    // Update shared state
+    schemaVerificationState = {
+      state: isValid ? "verified" : "incompatible",
+      appliedCount: appliedSet.size,
+      pendingCount: pendingFiles.length,
+      pendingFiles: pendingFiles.slice(0, 10),
+      verifiedAt: new Date().toISOString(),
+    };
 
     return {
-      valid: pendingFiles.length === 0,
+      valid: isValid,
       appliedCount: appliedSet.size,
       pendingCount: pendingFiles.length,
       pendingFiles: pendingFiles.slice(0, 10), // Return first 10 pending
     };
+  } catch (error: unknown) {
+    // Database error during verification
+    const message = error instanceof Error ? error.message : String(error);
+    schemaVerificationState = {
+      state: "error",
+      appliedCount: 0,
+      pendingCount: 0,
+      pendingFiles: [],
+      error: message,
+      verifiedAt: new Date().toISOString(),
+    };
+    throw error;
   } finally {
-    await conn.end();
+    if (conn) {
+      await conn.end();
+    }
   }
 }

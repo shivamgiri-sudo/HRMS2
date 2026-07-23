@@ -4,7 +4,14 @@ import { redactSensitive, redactObject, safeStringify } from "../logRedaction.js
 describe("Log Redaction", () => {
   describe("redactSensitive", () => {
     it("should redact JWT tokens", () => {
-      const input = "Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+      // Dynamically construct a fake JWT-shaped string to avoid GitGuardian false positives
+      // This is NOT a real JWT - it's just base64-encoded test data with the JWT structure
+      const header = Buffer.from('{"alg":"none","typ":"TEST"}').toString("base64url");
+      const payload = Buffer.from('{"sub":"test-fixture","iat":0}').toString("base64url");
+      const signature = Buffer.from("fake-signature-for-testing").toString("base64url");
+      const fakeJwt = `${header}.${payload}.${signature}`;
+
+      const input = `Token: ${fakeJwt}`;
       const result = redactSensitive(input);
       expect(result).toBe("Token: [REDACTED_JWT]");
     });

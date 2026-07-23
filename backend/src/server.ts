@@ -2,6 +2,12 @@ import type { Server } from "http";
 import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { db } from "./db/mysql.js";
+import { closeLmsPool } from "./db/lms-mysql.js";
+import { closeNcosecPool } from "./db/ncosecDb.js";
+import { closeDialerPool } from "./db/dialerDb.js";
+import { closeBillPool } from "./db/billDb.js";
+import { closeLegacyPool } from "./db/legacyDb.js";
+import { closeShivamgiriPool } from "./db/shivamgiriDb.js";
 import { runFinanceSchemaHardeningMigrations } from "./db/runFinanceSchemaHardeningMigrations.js";
 import { runFinanceSupplementalMigrations } from "./db/runFinanceSupplementalMigrations.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
@@ -37,16 +43,39 @@ import { clearAllTimers } from "./workers/worker-utils.js";
 // WORKER GOVERNANCE: When WORKERS_PROCESS=external, ALL workers run in separate process
 const WORKERS_EXTERNAL = process.env.WORKERS_PROCESS === "external";
 
+// PRODUCTION SAFETY: Prevent inline workers in production
+// Production API MUST run with WORKERS_PROCESS=external and ENABLE_SCHEDULERS=false
+if (env.NODE_ENV === "production") {
+  if (!WORKERS_EXTERNAL) {
+    console.error("[FATAL] Production API must use WORKERS_PROCESS=external");
+    console.error("[FATAL] Set WORKERS_PROCESS=external and run workers separately with 'npm run workers'");
+    process.exit(1);
+  }
+  if (process.env.ENABLE_SCHEDULERS === "true") {
+    console.error("[FATAL] Production API must not start schedulers inline");
+    console.error("[FATAL] Set ENABLE_SCHEDULERS=false - workers run in separate process");
+    process.exit(1);
+  }
+}
+
 // Track HTTP server for graceful shutdown
 let httpServer: Server | null = null;
 let isShuttingDown = false;
 
 // Graceful shutdown timeout (wait for active requests)
 const SHUTDOWN_TIMEOUT_MS = 30000;
+let forceExitTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Graceful shutdown handler.
- * Stops accepting new requests, drains active connections, and cleans up resources.
+ * Awaits all cleanup before exiting. Only calls process.exit(0) on success.
+ *
+ * Cleanup order:
+ * 1. Stop accepting new HTTP requests
+ * 2. Drain active HTTP connections
+ * 3. Stop all schedulers and workers
+ * 4. Close all database connections
+ * 5. Exit cleanly
  */
 async function gracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) {
@@ -57,54 +86,70 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   console.log(`[shutdown] Received ${signal}, starting graceful shutdown...`);
 
-  // Stop accepting new requests
-  if (httpServer) {
-    httpServer.close((err) => {
-      if (err) {
-        console.error("[shutdown] Error closing HTTP server:", err);
-      } else {
-        console.log("[shutdown] HTTP server closed");
-      }
-    });
-  }
-
-  // Stop all schedulers and workers
-  console.log("[shutdown] Stopping schedulers and workers...");
-
-  try {
-    // Stop workers with exported stop functions
-    stopIntegrationScheduler();
-    stopPayrollNightlyRecalcWorker();
-
-    // Clear all registered timers
-    clearAllTimers();
-
-    // Stop legacy sync worker
-    legacySyncWorker.stop();
-
-    console.log("[shutdown] Schedulers and workers stopped");
-  } catch (error) {
-    console.error("[shutdown] Error stopping workers:", error);
-  }
-
-  // Close database pool
-  try {
-    console.log("[shutdown] Closing database connections...");
-    await db.end();
-    console.log("[shutdown] Database connections closed");
-  } catch (error) {
-    console.error("[shutdown] Error closing database:", error);
-  }
-
-  console.log("[shutdown] Graceful shutdown complete");
-
-  // Force exit after timeout if connections don't drain
-  setTimeout(() => {
-    console.error("[shutdown] Forced exit after timeout");
+  // Start force-exit timer at shutdown initiation
+  forceExitTimer = setTimeout(() => {
+    console.error("[shutdown] Forced exit after timeout - cleanup did not complete");
     process.exit(1);
-  }, SHUTDOWN_TIMEOUT_MS).unref();
+  }, SHUTDOWN_TIMEOUT_MS);
 
-  process.exit(0);
+  try {
+    // 1. Stop accepting new HTTP requests and drain connections
+    if (httpServer) {
+      await new Promise<void>((resolve) => {
+        httpServer!.close((err) => {
+          if (err) {
+            console.error("[shutdown] Error closing HTTP server:", err);
+          } else {
+            console.log("[shutdown] HTTP server closed, connections drained");
+          }
+          resolve();
+        });
+      });
+    }
+
+    // 2. Stop all schedulers and workers
+    console.log("[shutdown] Stopping schedulers and workers...");
+    try {
+      stopIntegrationScheduler();
+      stopPayrollNightlyRecalcWorker();
+      clearAllTimers();
+      legacySyncWorker.stop();
+      console.log("[shutdown] Schedulers and workers stopped");
+    } catch (error) {
+      console.error("[shutdown] Error stopping workers:", error);
+    }
+
+    // 3. Close all database connections in parallel
+    console.log("[shutdown] Closing database connections...");
+    const dbCloseResults = await Promise.allSettled([
+      db.end().then(() => console.log("[shutdown] Primary MySQL pool closed")),
+      closeLmsPool().then(() => console.log("[shutdown] LMS MySQL pool closed")),
+      closeNcosecPool().then(() => console.log("[shutdown] NCOSEC MSSQL pool closed")),
+      closeDialerPool().then(() => console.log("[shutdown] Dialer MySQL pool closed")),
+      closeBillPool().then(() => console.log("[shutdown] Bill MySQL pool closed")),
+      closeLegacyPool().then(() => console.log("[shutdown] Legacy MySQL pool closed")),
+      closeShivamgiriPool().then(() => console.log("[shutdown] Shivamgiri MySQL pool closed")),
+    ]);
+
+    // Log any db close failures
+    for (const result of dbCloseResults) {
+      if (result.status === "rejected") {
+        console.error("[shutdown] Database close error:", result.reason);
+      }
+    }
+
+    // Clear the force-exit timer since we completed successfully
+    if (forceExitTimer) {
+      clearTimeout(forceExitTimer);
+      forceExitTimer = null;
+    }
+
+    console.log("[shutdown] Graceful shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    console.error("[shutdown] Fatal error during shutdown:", error);
+    // Force exit timer will handle this case
+  }
 }
 
 // Register shutdown handlers
