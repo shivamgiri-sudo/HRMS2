@@ -36,6 +36,9 @@ interface JobRequisition {
   requisition_type: string;
   approval_status: ApprovalStatus;
   target_joining_date: string | null;
+  requisition_validity: string | null;
+  handover_status?: 'not_ready' | 'ready' | 'handed_over';
+  handover_at?: string | null;
   requested_by_name: string | null;
   owner_recruiter_name: string | null;
   aging_days: number;
@@ -45,6 +48,7 @@ interface JobRequisition {
   pipeline_candidates: number;
   created_at: string;
   business_justification: string | null;
+  process_id?: string | null;
 }
 
 interface DashboardMetrics {
@@ -136,6 +140,7 @@ const emptyForm = {
   department_name: '',
   branch_name: '',
   process_name: '',
+  process_id: '',
   requested_headcount: 1,
   employment_type: 'full_time' as EmploymentType,
   salary_min: '',
@@ -149,6 +154,7 @@ const emptyForm = {
   job_description: '',
   planned_batch_no: '',
   training_start_date: '',
+  requisition_validity: '',
 };
 
 // ── Main Component ─────────────────────────────────────────────────────────────
@@ -183,7 +189,7 @@ export default function NativeJobRequisition() {
 
   // Inline confirmation state
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'submit' | 'approve' | 'reject';
+    type: 'submit' | 'approve' | 'reject' | 'handover';
     id: string;
     code: string;
   } | null>(null);
@@ -319,6 +325,8 @@ export default function NativeJobRequisition() {
         experience_max_years: formData.experience_max_years ? Number(formData.experience_max_years) : null,
         planned_batch_no: formData.planned_batch_no || null,
         training_start_date: formData.training_start_date || null,
+        requisition_validity: formData.requisition_validity || null,
+        process_id: formData.process_id || null,
       };
 
       if (editingRequisition) {
@@ -353,6 +361,8 @@ export default function NativeJobRequisition() {
           return;
         }
         await hrmsApi.post(`/api/job-requisition/${id}/reject`, { reason: confirmInput.trim() });
+      } else if (type === 'handover') {
+        await hrmsApi.post(`/api/job-requisition/${id}/handover`, { notes: confirmInput || null });
       }
       setConfirmAction(null);
       setConfirmInput('');
@@ -425,6 +435,7 @@ export default function NativeJobRequisition() {
       department_name: req.department_name || '',
       branch_name: req.branch_name,
       process_name: req.process_name || '',
+      process_id: req.process_id || '',
       requested_headcount: req.requested_headcount,
       employment_type: req.employment_type,
       salary_min: req.salary_min?.toString() || '',
@@ -436,8 +447,9 @@ export default function NativeJobRequisition() {
       business_justification: req.business_justification || '',
       skills_required: '',
       job_description: '',
-      planned_batch_no: '',
-      training_start_date: '',
+      planned_batch_no: req.planned_batch_no || '',
+      training_start_date: req.training_start_date ? req.training_start_date.substring(0, 10) : '',
+      requisition_validity: req.requisition_validity ? req.requisition_validity.substring(0, 10) : '',
     });
     setFormError('');
     setShowModal(true);
@@ -627,6 +639,13 @@ export default function NativeJobRequisition() {
                         <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[req.derived_status] || STATUS_COLORS[req.approval_status]}`}>
                           {req.derived_status.replace(/_/g, ' ')}
                         </span>
+                        {(req as any).handover_status === 'handed_over' && (
+                          <div className="mt-1">
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-teal-100 text-teal-800">
+                              Handed Over
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center text-sm text-gray-500">
                         {req.requisition_validity ? req.requisition_validity.slice(0, 10) : <span className="text-gray-300">—</span>}
@@ -669,6 +688,16 @@ export default function NativeJobRequisition() {
                               </button>
                             </>
                           )}
+                          {req.approval_status === 'approved' &&
+                           req.fulfilled_headcount >= req.requested_headcount &&
+                           (req as any).handover_status !== 'handed_over' && (
+                            <button
+                              onClick={() => setConfirmAction({ type: 'handover', id: req.id, code: req.requisition_code })}
+                              className="p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded" title="Mark as Handed Over"
+                            >
+                              <Send className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -681,22 +710,27 @@ export default function NativeJobRequisition() {
                               {confirmAction.type === 'submit' && `Submit ${confirmAction.code} for approval?`}
                               {confirmAction.type === 'approve' && `Approve ${confirmAction.code}?`}
                               {confirmAction.type === 'reject' && `Reject ${confirmAction.code}?`}
+                              {confirmAction.type === 'handover' && `Mark ${confirmAction.code} as handed over to operations?`}
                             </span>
-                            {(confirmAction.type === 'approve' || confirmAction.type === 'reject') && (
+                            {(confirmAction.type === 'approve' || confirmAction.type === 'reject' || confirmAction.type === 'handover') && (
                               <input
                                 autoFocus
                                 type="text"
                                 value={confirmInput}
                                 onChange={e => setConfirmInput(e.target.value)}
-                                placeholder={confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' : 'Remarks (optional)'}
+                                placeholder={
+                                  confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' :
+                                  confirmAction.type === 'handover' ? 'Handover notes (optional)' :
+                                  'Remarks (optional)'
+                                }
                                 className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400"
                               />
                             )}
                             <button
                               onClick={handleConfirmAction}
-                              className={`px-3 py-1.5 text-sm text-white rounded ${confirmAction.type === 'reject' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
+                              className={`px-3 py-1.5 text-sm text-white rounded ${confirmAction.type === 'reject' ? 'bg-red-600 hover:bg-red-700' : confirmAction.type === 'handover' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-green-600 hover:bg-green-700'}`}
                             >
-                              {confirmAction.type === 'submit' ? 'Yes, Submit' : confirmAction.type === 'approve' ? 'Confirm Approve' : 'Confirm Reject'}
+                              {confirmAction.type === 'submit' ? 'Yes, Submit' : confirmAction.type === 'approve' ? 'Confirm Approve' : confirmAction.type === 'handover' ? 'Confirm Handover' : 'Confirm Reject'}
                             </button>
                             <button onClick={() => { setConfirmAction(null); setConfirmInput(''); }} className="px-3 py-1.5 text-sm text-gray-600 border rounded hover:bg-gray-100">
                               Cancel
@@ -769,7 +803,14 @@ export default function NativeJobRequisition() {
                     </label>
                     <select
                       value={formData.process_name}
-                      onChange={(e) => field('process_name', e.target.value)}
+                      onChange={(e) => {
+                        const selectedProcess = formProcesses.find(p => p.process_name === e.target.value);
+                        setFormData(prev => ({
+                          ...prev,
+                          process_name: e.target.value,
+                          process_id: selectedProcess?.id || '',
+                        }));
+                      }}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                       disabled={loadingFormProcesses}
                     >
@@ -897,6 +938,15 @@ export default function NativeJobRequisition() {
                         type="date"
                         value={formData.training_start_date}
                         onChange={(e) => field('training_start_date', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Hiring Deadline</label>
+                      <input
+                        type="date"
+                        value={formData.requisition_validity}
+                        onChange={(e) => field('requisition_validity', e.target.value)}
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                       />
                     </div>

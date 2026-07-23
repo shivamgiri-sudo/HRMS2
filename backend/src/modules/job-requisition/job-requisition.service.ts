@@ -866,7 +866,11 @@ export const jobRequisitionService = {
   async getOpenRequisitionsForBranch(branchName: string, processId?: string, processName?: string): Promise<JobRequisitionSummary[]> {
     const params: unknown[] = [branchName];
     let processClause = '';
-    if (processId) {
+    if (processId && processName) {
+      // Match by UUID OR by name for legacy records where process_id was not saved
+      processClause = 'AND (jr.process_id = ? OR (jr.process_id IS NULL AND jr.process_name = ?))';
+      params.push(processId, processName);
+    } else if (processId) {
       processClause = 'AND jr.process_id = ?';
       params.push(processId);
     } else if (processName) {
@@ -1063,6 +1067,63 @@ export const jobRequisitionService = {
     } catch (err) {
       console.warn("[JobRequisition] Failed to fetch LMS batches:", err);
       return [];
+    }
+  },
+
+  /**
+   * Mark a requisition as batch-handed-over to operations
+   */
+  async markHandover(
+    id: string,
+    actorId: string,
+    actorName: string | null,
+    notes?: string
+  ): Promise<void> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT approval_status, requested_headcount, fulfilled_headcount, handover_status, branch_name, process_name, requisition_code
+       FROM job_requisition WHERE id = ? AND active_status = 1`,
+      [id]
+    );
+    if (!rows[0]) {
+      throw Object.assign(new Error("Requisition not found"), { status: 404 });
+    }
+    const req = rows[0];
+    if (req.approval_status !== "approved") {
+      throw Object.assign(new Error("Only approved requisitions can be handed over"), { status: 422 });
+    }
+    if (Number(req.fulfilled_headcount) < Number(req.requested_headcount)) {
+      throw Object.assign(new Error("Headcount not fully fulfilled — cannot mark as handed over"), { status: 422 });
+    }
+    if (req.handover_status === "handed_over") {
+      throw Object.assign(new Error("Requisition already handed over"), { status: 422 });
+    }
+
+    await db.execute(
+      `UPDATE job_requisition
+       SET handover_status = 'handed_over', handover_at = NOW(), handover_by = ?, handover_notes = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [actorId, notes ?? null, id]
+    );
+
+    // Notify HR admin and ops manager roles via inbox
+    try {
+      const [recipients] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM users WHERE role IN ('super_admin', 'hr', 'operations_manager') AND active_status = 1`,
+        []
+      );
+      for (const r of recipients as RowDataPacket[]) {
+        await inboxService.createItem({
+          user_id: r.id as string,
+          type: "requisition_handover",
+          title: `Batch Handed Over: ${req.requisition_code as string}`,
+          description: `${req.requisition_code as string} (${(req.process_name as string) ?? (req.branch_name as string)}) has been handed over to operations by ${actorName ?? actorId}. ${notes ? `Note: ${notes}` : ""}`.trim(),
+          entity_type: "job_requisition",
+          entity_id: id,
+          priority: "normal",
+        });
+      }
+    } catch (e) {
+      console.warn("[JobRequisition markHandover] inbox notification failed:", e instanceof Error ? e.message : e);
     }
   },
 };

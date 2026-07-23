@@ -368,6 +368,7 @@ export default function NativeATSRecruiterWorkspace() {
   const [selected, setSelected] = useState<CandidateRow | null>(null);
   const [assessmentSummary, setAssessmentSummary] = useState<AssessmentSummary | null>(null);
   const [assessmentLoading, setAssessmentLoading] = useState(false);
+  const [assessmentAutoFilled, setAssessmentAutoFilled] = useState(false);
   const [interviewers, setInterviewers] = useState<Array<{ id: string; name: string; branch_name?: string | null; designation_name?: string | null }>>([]);
   const [interviewerSearch, setInterviewerSearch] = useState("");
   const [interviewerDropOpen, setInterviewerDropOpen] = useState(false);
@@ -445,12 +446,17 @@ export default function NativeATSRecruiterWorkspace() {
       return;
     }
     setLoadingBatches(true);
-    // If branchProcesses loaded, selectedProcessId is a UUID — use processId param
-    // If fallback to config.processOptions, selectedProcessId is a name string — use processName param
+    // If branchProcesses loaded, selectedProcessId is a UUID — send both processId and processName
+    // so the backend can match records that have NULL process_id via name fallback.
+    // If fallback to config.processOptions, selectedProcessId is a name string — use processName only.
     const isUuid = /^[0-9a-f-]{36}$/i.test(selectedProcessId);
-    const queryParam = isUuid
-      ? `processId=${encodeURIComponent(selectedProcessId)}`
-      : `processName=${encodeURIComponent(selectedProcessId)}`;
+    let queryParam: string;
+    if (isUuid) {
+      const processOpt = branchProcesses.find(p => p.id === selectedProcessId);
+      queryParam = `processId=${encodeURIComponent(selectedProcessId)}${processOpt ? `&processName=${encodeURIComponent(processOpt.process_name)}` : ''}`;
+    } else {
+      queryParam = `processName=${encodeURIComponent(selectedProcessId)}`;
+    }
     hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(
       `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?${queryParam}`
     ).then(res => {
@@ -652,12 +658,33 @@ export default function NativeATSRecruiterWorkspace() {
   const openFormDirect = (c: CandidateRow, resubmit = false, h?: HistoryRow, isSubstitute = false) => {
     setSelected(c);
     setAssessmentSummary(null);
+    setAssessmentAutoFilled(false);
     setAssessmentLoading(true);
     void hrmsApi
       .get<{ success: boolean; data: AssessmentSummary | null }>(
         `/api/ats-ext/assessment-admin/candidates/${encodeURIComponent(c.candidateId)}/summary`,
       )
-      .then((response) => setAssessmentSummary(response.data ?? null))
+      .then((response) => {
+        const summary = response.data ?? null;
+        setAssessmentSummary(summary);
+        if (summary && (summary.status === "completed" || summary.percentage != null || summary.typing != null)) {
+          setForm((prev) => {
+            const typingVal = summary.typing?.netWpm != null
+              ? String(Number(summary.typing.netWpm).toFixed(1))
+              : "";
+            const aiVal = summary.percentage != null
+              ? String(Number(summary.percentage).toFixed(1))
+              : "";
+            const didFill = (!prev.skillTypingScore && !!typingVal) || (!prev.skillAiScore && !!aiVal);
+            if (didFill) setAssessmentAutoFilled(true);
+            return {
+              ...prev,
+              skillTypingScore: prev.skillTypingScore || typingVal,
+              skillAiScore:     prev.skillAiScore     || aiVal,
+            };
+          });
+        }
+      })
       .catch(() => setAssessmentSummary(null))
       .finally(() => setAssessmentLoading(false));
     setSubstituteMode(isSubstitute);
@@ -668,6 +695,8 @@ export default function NativeATSRecruiterWorkspace() {
       stageName: h?.walkin_end_stage || c.stage || "Arrival",
       finalDecision: resubmit ? "" : h?.final_decision || "",
       round1Result: h?.round1_result || "",
+      skillTypingScore: h?.skilltest_typing != null ? String(h.skilltest_typing) : "",
+      skillAiScore:     h?.skilltest_ai     != null ? String(h.skilltest_ai)     : "",
       skillResult: h?.skilltest_result || "",
       round2Result: h?.round2_result || "",
       round3Result: h?.round3_result || "",
@@ -1519,7 +1548,14 @@ export default function NativeATSRecruiterWorkspace() {
               {/* Skill Test */}
               {effectiveRank >= 2 && (
                 <div className="form-section sec-purple">
-                  <div className="sec-title" style={{ color: "#7c3aed" }}>Skill Test</div>
+                  <div className="sec-title" style={{ color: "#7c3aed" }}>
+                    Skill Test
+                    {assessmentAutoFilled && (
+                      <span style={{ fontSize: 11, fontWeight: 500, color: "#7c3aed", marginLeft: 8, opacity: 0.7 }}>
+                        ↑ pre-filled from assessment
+                      </span>
+                    )}
+                  </div>
                   <div className="rw-grid rw-3">
                     {field("Typing Score", "skillTypingScore", "input")}
                     {field("AI Score", "skillAiScore", "input")}

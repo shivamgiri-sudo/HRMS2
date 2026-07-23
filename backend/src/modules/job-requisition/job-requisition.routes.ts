@@ -394,6 +394,26 @@ jobRequisitionRouter.get(
   })
 );
 
+// ─── Mark Batch as Handed Over to Operations ─────────────────────────────────
+jobRequisitionRouter.post(
+  "/:id/handover",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const { notes } = req.body;
+    const userId = req.authUser?.id;
+    const userName = req.authUser?.email ?? null;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "User not authenticated" });
+    }
+
+    await jobRequisitionService.markHandover(id, userId, userName, notes);
+    return res.json({ success: true, message: "Requisition marked as handed over" });
+  })
+);
+
 // ─── Update Planned Batch ────────────────────────────────────────────────────
 jobRequisitionRouter.patch(
   "/:id/batch",

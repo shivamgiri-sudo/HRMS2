@@ -1202,7 +1202,7 @@ export async function submitInterviewUpdate(
 
     await conn.commit();
 
-    // Auto-link candidate to the selected requisition/batch (fire-and-forget)
+    // Auto-link candidate to the selected requisition/batch, then record outcome (fire-and-forget)
     if (input.requisitionId) {
       jobRequisitionService.linkCandidate(
         input.requisitionId,
@@ -1210,8 +1210,19 @@ export async function submitInterviewUpdate(
         actorUserId ?? 'system',
         'candidate_applied',
         'auto-linked at interview feedback submission'
-      ).catch((e: unknown) => {
-        console.warn('[recruiter-submission auto-link]', e instanceof Error ? e.message : e);
+      ).then(() => {
+        // Update outcome so fulfilled_headcount increments for selected candidates
+        if (finalDecision === 'Selected' || finalDecision === 'Rejected') {
+          const outcome = finalDecision === 'Selected' ? 'selected' : 'rejected';
+          return jobRequisitionService.updateCandidateOutcome(
+            input.requisitionId!,
+            candidate.id,
+            outcome as 'selected' | 'rejected',
+            `${finalDecision} at interview feedback`
+          );
+        }
+      }).catch((e: unknown) => {
+        console.warn('[recruiter-submission auto-link/outcome]', e instanceof Error ? e.message : e);
       });
     }
 
