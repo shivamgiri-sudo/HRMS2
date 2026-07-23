@@ -1236,7 +1236,7 @@ export const jobRequisitionService = {
          e.full_name,
          e.employee_code,
          e.date_of_joining,
-         ob.bridge_status,
+         ob.status AS bridge_status,
          c.id            AS candidate_id,
          c.full_name     AS candidate_name,
          (lm.id IS NOT NULL) AS lms_enrolled

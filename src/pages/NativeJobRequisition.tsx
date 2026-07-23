@@ -547,19 +547,21 @@ export default function NativeJobRequisition() {
     setFunnelLoading(true);
     setJoinedEmployees([]);
     try {
-      const [funnelRes, batchesRes, joinedRes] = await Promise.all([
+      const [funnelRes, batchesRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: RequisitionFunnel }>(`/api/job-requisition/${req.id}/funnel`),
         hrmsApi.get<{ success: boolean; data: LmsBatch[] }>(`/api/job-requisition/batches/available?branch=${encodeURIComponent(req.branch_name)}`),
-        hrmsApi.get<{ success: boolean; data: JoinedEmployee[] }>(`/api/job-requisition/${req.id}/joined-employees`),
       ]);
       setFunnelData(funnelRes.data);
       setAvailableBatches(batchesRes.data || []);
-      setJoinedEmployees(joinedRes.data || []);
     } catch (err: any) {
-      console.error('Failed to load detail data:', err);
+      console.error('Failed to load funnel data:', err);
     } finally {
       setFunnelLoading(false);
     }
+    // Load joined employees independently so a failure doesn't block the funnel
+    hrmsApi.get<{ success: boolean; data: JoinedEmployee[] }>(`/api/job-requisition/${req.id}/joined-employees`)
+      .then(res => setJoinedEmployees(res.data || []))
+      .catch(() => setJoinedEmployees([]));
   };
 
   const handleAssignBatch = async (batchNo: string, batchName: string, startDate: string | null) => {
