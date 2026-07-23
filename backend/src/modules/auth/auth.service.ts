@@ -136,7 +136,7 @@ interface OtpMatchRow extends RowDataPacket {
 
 export interface AuthTokens {
   accessToken: string;
-  refreshToken: string;
+  refreshToken: string | null; // null when 2FA is required but not yet completed
   user: {
     id: string;
     email: string;
@@ -318,6 +318,68 @@ export const authService = {
         [user.id]
       );
 
+      const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
+
+      // Fetch both org_settings in one query to avoid two sequential round-trips
+      const [orgSettingRows] = await db.execute<OrgSettingRow[]>(
+        `SELECT setting_key, setting_value FROM org_settings
+          WHERE setting_key IN ('single_device_session_mode', 'two_factor_enabled')`
+      ).catch(() => [[] as OrgSettingRow[]] as unknown as [OrgSettingRow[], unknown[]]);
+      const orgMap: Record<string, string> = {};
+      for (const r of orgSettingRows) orgMap[r.setting_key] = r.setting_value ?? '';
+
+      // Check global 2FA toggle BEFORE creating any tokens
+      const tfaEnabled = orgMap['two_factor_enabled'] !== 'false';
+      const twoFactorRequired = tfaEnabled && !mustChangePassword;
+
+      // SECURITY FIX: If 2FA is required, do NOT create refresh token yet.
+      // Create a pre_auth_challenge instead. The refresh token is only created
+      // after successful 2FA verification in exchangePreAuthToken().
+      if (twoFactorRequired) {
+        // Create pre_auth_challenge record for secure 2FA flow
+        const challengeId = crypto.randomUUID();
+        await db.execute(
+          `INSERT INTO pre_auth_challenge (id, user_id, challenge_type, expires_at, ip_address, user_agent)
+           VALUES (?, ?, '2fa', DATE_ADD(NOW(), INTERVAL 10 MINUTE), ?, ?)`,
+          [challengeId, user.id, req?.ip ?? null, req?.headers['user-agent'] ?? null]
+        );
+
+        // Issue a scoped pre_auth token — NOT a full access token.
+        // This token ONLY allows calling /api/auth/2fa/* endpoints.
+        // The full accessToken AND refreshToken are only issued after 2FA verification.
+        const preAuthToken = jwt.sign(
+          { sub: user.id, email: user.email, scope: 'pre_auth', challengeId },
+          JWT_SECRET,
+          { expiresIn: PRE_AUTH_EXPIRES_IN }
+        );
+
+        // Log password verification (but NOT login success - 2FA not complete)
+        if (req) {
+          writeSecurityEvent({
+            event_type: 'PASSWORD_VERIFIED',
+            severity: 'info',
+            actor_user_id: user.id,
+            title: `Password verified, 2FA required: ${user.email}`,
+            ip_address: req.ip ?? null,
+          });
+        }
+
+        return {
+          accessToken: preAuthToken,
+          refreshToken: null, // SECURITY: No refresh token until 2FA completes
+          user: {
+            id: user.id,
+            email: user.email,
+            isBlocked: user.is_blocked === 1,
+            mustChangePassword,
+            isReadOnly: Boolean((user as any).is_read_only),
+            twoFactorRequired: true,
+            twoFactorVerified: false,
+          },
+        };
+      }
+
+      // 2FA not required - proceed with full authentication
       const primaryRole = await getUserPrimaryRole(user.id);
       const accessToken = jwt.sign(
         { sub: user.id, email: user.email, is_read_only: Boolean((user as any).is_read_only), role: primaryRole },
@@ -325,12 +387,21 @@ export const authService = {
         { expiresIn: JWT_EXPIRES_IN }
       );
 
+      // Get password_changed_at for token family tracking
+      const [pwRows] = await db.execute<RowDataPacket[]>(
+        'SELECT password_changed_at FROM auth_user WHERE id = ? LIMIT 1',
+        [user.id]
+      ).catch(() => [[]] as [RowDataPacket[]]);
+      const passwordChangedAt = pwRows[0]?.password_changed_at ?? null;
+
       const rawRefresh = crypto.randomBytes(48).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(rawRefresh).digest('hex');
+      const tokenFamilyId = crypto.randomUUID();
 
       await db.execute<ResultSetHeader>(
-        'INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
-        [user.id, tokenHash, REFRESH_EXPIRES_DAYS]
+        `INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at, token_family_id, password_changed_at_snapshot)
+         VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
+        [user.id, tokenHash, REFRESH_EXPIRES_DAYS, tokenFamilyId, passwordChangedAt]
       );
 
       // Create device session record if request object available
@@ -359,16 +430,6 @@ export const authService = {
           console.error('[auth] Failed to create device session:', error);
         }
       }
-
-      const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
-
-      // Fetch both org_settings in one query to avoid two sequential round-trips
-      const [orgSettingRows] = await db.execute<OrgSettingRow[]>(
-        `SELECT setting_key, setting_value FROM org_settings
-          WHERE setting_key IN ('single_device_session_mode', 'two_factor_enabled')`
-      ).catch(() => [[] as OrgSettingRow[]] as unknown as [OrgSettingRow[], unknown[]]);
-      const orgMap: Record<string, string> = {};
-      for (const r of orgSettingRows) orgMap[r.setting_key] = r.setting_value ?? '';
 
       // Check single device session mode - if enabled, revoke all other sessions
       try {
@@ -452,34 +513,6 @@ export const authService = {
         }).catch(() => {});
       }
 
-      // Check global 2FA toggle — reuse orgMap fetched above
-      const tfaEnabled = orgMap['two_factor_enabled'] !== 'false';
-      const twoFactorRequired = tfaEnabled && !mustChangePassword;
-
-      if (twoFactorRequired) {
-        // Issue a scoped pre_auth token — NOT a full access token.
-        // This token ONLY allows calling /api/auth/2fa/* endpoints.
-        // The full accessToken is only issued after verifyTwoFactorChallenge().
-        const preAuthToken = jwt.sign(
-          { sub: user.id, email: user.email, scope: 'pre_auth' },
-          JWT_SECRET,
-          { expiresIn: PRE_AUTH_EXPIRES_IN }
-        );
-        return {
-          accessToken: preAuthToken,
-          refreshToken: rawRefresh,
-          user: {
-            id: user.id,
-            email: user.email,
-            isBlocked: user.is_blocked === 1,
-            mustChangePassword,
-            isReadOnly: Boolean((user as any).is_read_only),
-            twoFactorRequired: true,
-            twoFactorVerified: false,
-          },
-        };
-      }
-
       return {
         accessToken,
         refreshToken: rawRefresh,
@@ -520,23 +553,87 @@ export const authService = {
     }
   },
 
-  async refreshAccess(rawRefreshToken: string): Promise<{ accessToken: string }> {
+  async refreshAccess(rawRefreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
     const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
-    const [rows] = await db.execute<RefreshRow[]>(
-      `SELECT rt.user_id, au.email FROM auth_refresh_token rt
+
+    // Extended query to check token rotation, user status, employee status, and password change
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT rt.id AS token_id, rt.user_id, rt.token_family_id, rt.rotated_at, rt.password_changed_at_snapshot,
+              au.email, au.is_blocked, au.password_changed_at AS current_password_changed_at, au.session_version,
+              COALESCE(e.status, 'active') AS employee_status
+         FROM auth_refresh_token rt
          JOIN auth_user au ON au.id = rt.user_id
-        WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW() LIMIT 1`,
+         LEFT JOIN employees e ON e.user_id = au.id
+        WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW()
+        LIMIT 1`,
       [tokenHash]
     );
-    if (!rows[0]) throw new Error('Invalid or expired refresh token');
+    const token = rows[0];
+    if (!token) {
+      throw Object.assign(new Error('Invalid or expired refresh token'), { code: 'TOKEN_INVALID' });
+    }
 
-    const primaryRole = await getUserPrimaryRole(rows[0].user_id);
+    // SECURITY: Check if this token was already rotated (reuse detection)
+    if (token.rotated_at) {
+      // Token reuse detected! This is a potential theft scenario.
+      // Revoke the entire token family to protect the user.
+      await db.execute(
+        'UPDATE auth_refresh_token SET revoked = 1 WHERE token_family_id = ?',
+        [token.token_family_id]
+      );
+      await writeSecurityEvent({
+        event_type: 'TOKEN_REUSE_DETECTED',
+        severity: 'critical',
+        actor_user_id: token.user_id,
+        title: `Refresh token reuse detected for user ${token.email}`,
+        description: 'Entire token family revoked due to potential token theft',
+      });
+      throw Object.assign(new Error('Token has already been used. All sessions revoked for security.'), { code: 'TOKEN_REUSED' });
+    }
+
+    // Check if user is blocked
+    if (token.is_blocked) {
+      throw Object.assign(new Error('Account is blocked'), { code: 'USER_BLOCKED' });
+    }
+
+    // Check if employee is inactive
+    if (token.employee_status === 'inactive' || token.employee_status === 'separated') {
+      throw Object.assign(new Error('Employee account is inactive'), { code: 'EMPLOYEE_INACTIVE' });
+    }
+
+    // Check if password changed since token was issued
+    if (token.password_changed_at_snapshot && token.current_password_changed_at) {
+      const snapshotTime = new Date(token.password_changed_at_snapshot).getTime();
+      const currentTime = new Date(token.current_password_changed_at).getTime();
+      if (currentTime > snapshotTime) {
+        // Password changed after token was issued - revoke this token
+        await db.execute('UPDATE auth_refresh_token SET revoked = 1 WHERE id = ?', [token.token_id]);
+        throw Object.assign(new Error('Session expired due to password change'), { code: 'PASSWORD_CHANGED' });
+      }
+    }
+
+    // TOKEN ROTATION: Mark old token as rotated (not revoked - for reuse detection)
+    await db.execute(
+      'UPDATE auth_refresh_token SET rotated_at = NOW() WHERE id = ?',
+      [token.token_id]
+    );
+
+    // Create new rotated token in the same family
+    const newRawRefresh = crypto.randomBytes(48).toString('hex');
+    const newTokenHash = crypto.createHash('sha256').update(newRawRefresh).digest('hex');
+    await db.execute(
+      `INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at, token_family_id, previous_token_hash, password_changed_at_snapshot)
+       VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?)`,
+      [token.user_id, newTokenHash, REFRESH_EXPIRES_DAYS, token.token_family_id, tokenHash, token.current_password_changed_at]
+    );
+
+    const primaryRole = await getUserPrimaryRole(token.user_id);
     const accessToken = jwt.sign(
-      { sub: rows[0].user_id, email: rows[0].email, role: primaryRole },
+      { sub: token.user_id, email: token.email, role: primaryRole },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
-    return { accessToken };
+    return { accessToken, refreshToken: newRawRefresh };
   },
 
   async logout(rawRefreshToken: string, req?: Request): Promise<void> {
@@ -586,34 +683,115 @@ export const authService = {
     }
   },
 
-  // Called after verifyTwoFactorChallenge() succeeds — trades pre_auth token for full access token.
-  async exchangePreAuthToken(preAuthToken: string): Promise<{ accessToken: string }> {
-    let payload: { sub: string; email: string; scope?: string };
+  // Called after verifyTwoFactorChallenge() succeeds — trades pre_auth token for full session (access + refresh tokens).
+  // SECURITY: This is the ONLY place where a refresh token is created after 2FA verification.
+  async exchangePreAuthToken(preAuthToken: string, req?: Request): Promise<{ accessToken: string; refreshToken: string }> {
+    let payload: { sub: string; email: string; scope?: string; challengeId?: string };
     try {
-      payload = jwt.verify(preAuthToken, JWT_SECRET) as { sub: string; email: string; scope?: string };
+      payload = jwt.verify(preAuthToken, JWT_SECRET) as { sub: string; email: string; scope?: string; challengeId?: string };
     } catch {
       throw Object.assign(new Error('Invalid or expired pre-auth token'), { statusCode: 401 });
     }
     if (payload.scope !== 'pre_auth') {
       throw Object.assign(new Error('Token is not a pre-auth token'), { statusCode: 400 });
     }
+
+    // Verify the pre_auth_challenge hasn't been consumed yet (single-use)
+    if (payload.challengeId) {
+      const [challengeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, consumed_at FROM pre_auth_challenge
+         WHERE id = ? AND user_id = ? AND expires_at > NOW()`,
+        [payload.challengeId, payload.sub]
+      );
+      if (!challengeRows.length) {
+        throw Object.assign(new Error('Pre-auth challenge not found or expired'), { statusCode: 401 });
+      }
+      if (challengeRows[0].consumed_at) {
+        throw Object.assign(new Error('Pre-auth challenge already consumed'), { statusCode: 401 });
+      }
+    }
+
     // Confirm 2FA challenge is in verified state for this user
-    const [rows] = await db.execute<OnboardingTokenRow[]>(
+    const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM auth_two_factor_challenge
         WHERE user_id = ? AND status = 'verified'
           AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
         ORDER BY verified_at DESC LIMIT 1`,
       [payload.sub]
     );
-    if (!(rows as RowDataPacket[]).length) {
+    if (!rows.length) {
       throw Object.assign(new Error('2FA not verified or verification expired'), { statusCode: 401 });
     }
+
+    // Mark pre_auth_challenge as consumed (single-use)
+    if (payload.challengeId) {
+      await db.execute(
+        'UPDATE pre_auth_challenge SET consumed_at = NOW() WHERE id = ?',
+        [payload.challengeId]
+      );
+    }
+
+    // Get user details and password_changed_at for token family
+    const [userRows] = await db.execute<RowDataPacket[]>(
+      'SELECT email, password_changed_at FROM auth_user WHERE id = ? LIMIT 1',
+      [payload.sub]
+    );
+    const passwordChangedAt = userRows[0]?.password_changed_at ?? null;
+
+    // NOW create the refresh token (only after 2FA is verified)
+    const rawRefresh = crypto.randomBytes(48).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawRefresh).digest('hex');
+    const tokenFamilyId = crypto.randomUUID();
+
+    await db.execute<ResultSetHeader>(
+      `INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at, token_family_id, password_changed_at_snapshot)
+       VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
+      [payload.sub, tokenHash, REFRESH_EXPIRES_DAYS, tokenFamilyId, passwordChangedAt]
+    );
+
+    // Create device session record
+    if (req) {
+      const deviceName = parseUserAgent(req.headers['user-agent']);
+      const deviceFingerprint = generateDeviceFingerprint(req);
+      try {
+        await db.execute(
+          `INSERT INTO user_device_sessions
+             (user_id, refresh_token_hash, device_fingerprint, device_name, ip_address, user_agent, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))`,
+          [payload.sub, tokenHash, deviceFingerprint, deviceName, req.ip || null, req.headers['user-agent'] || null, REFRESH_EXPIRES_DAYS]
+        );
+      } catch (error) {
+        console.error('[auth] Failed to create device session after 2FA:', error);
+      }
+    }
+
+    // Log successful 2FA completion and full login
+    writeSecurityEvent({
+      event_type: 'LOGIN_SUCCESS',
+      severity: 'info',
+      actor_user_id: payload.sub,
+      title: `2FA completed, full login: ${payload.email}`,
+      ip_address: req?.ip ?? null,
+    });
+    if (req) {
+      logSensitiveAction({
+        actor_user_id: payload.sub,
+        action_type: 'LOGIN_SUCCESS',
+        module_key: 'AUTH',
+        entity_type: 'auth_user',
+        entity_id: payload.sub,
+        change_summary: { email: payload.email, twoFactorCompleted: true },
+        req,
+      }).catch(() => {});
+    }
+
+    const primaryRole = await getUserPrimaryRole(payload.sub);
     const accessToken = jwt.sign(
-      { sub: payload.sub, email: payload.email },
+      { sub: payload.sub, email: payload.email, role: primaryRole },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
-    return { accessToken };
+    return { accessToken, refreshToken: rawRefresh };
   },
 
   verifyAccessToken(token: string): { id: string; email: string; scope?: string } | null {
@@ -794,8 +972,8 @@ export const authService = {
       // Table not yet migrated — allow one-time OTP without rate-limit until 303 is applied
     }
 
-    // Generate 6-digit OTP
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    // Generate 6-digit OTP using cryptographically secure random
+    const otp = String(crypto.randomInt(100000, 1000000));
     const otpHash = crypto
       .createHmac('sha256', OTP_HMAC_SECRET)
       .update(`${otp}:${userId}:${phoneOrEmail}`)
