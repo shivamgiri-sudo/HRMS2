@@ -389,6 +389,7 @@ export default function NativeATSRecruiterWorkspace() {
   const [subCandidate, setSubCandidate] = useState<CandidateRow | null>(null);
   const [subReason, setSubReason] = useState("");
   const [substituteMode, setSubstituteMode] = useState(false);
+  const [capturedSubReason, setCapturedSubReason] = useState("");
 
   // Reassign modal state
   const [reassignCandidate, setReassignCandidate] = useState<CandidateRow | null>(null);
@@ -663,7 +664,7 @@ export default function NativeATSRecruiterWorkspace() {
     };
   }, [screen, tab]);
 
-  const openFormDirect = (c: CandidateRow, resubmit = false, h?: HistoryRow, isSubstitute = false) => {
+  const openFormDirect = (c: CandidateRow, resubmit = false, h?: HistoryRow, isSubstitute = false, substituteReason?: string) => {
     setSelected(c);
     setAssessmentSummary(null);
     setAssessmentAutoFilled(false);
@@ -696,6 +697,7 @@ export default function NativeATSRecruiterWorkspace() {
       .catch(() => setAssessmentSummary(null))
       .finally(() => setAssessmentLoading(false));
     setSubstituteMode(isSubstitute);
+    setCapturedSubReason(isSubstitute && substituteReason ? substituteReason : "");
     const asBool = (value: unknown) => value === 1 || value === "1" || value === true || value === "true" || value === "yes";
     setForm({
       ...EMPTY_FORM,
@@ -840,7 +842,7 @@ export default function NativeATSRecruiterWorkspace() {
         otDetails: form.otDetails || null,
         performanceIncentives: form.performanceIncentives || null,
         substituteFlag: substituteMode ? true : undefined,
-        substituteReason: substituteMode ? subReason : undefined,
+        substituteReason: substituteMode ? capturedSubReason : undefined,
         ...(selectedRequisitionId ? { requisitionId: selectedRequisitionId } : {}),
       });
       setMsg("Update submitted successfully.");
@@ -848,6 +850,7 @@ export default function NativeATSRecruiterWorkspace() {
       setOpenBatches([]);
       setSelectedRequisitionId("");
       setSelectedProcessId("");
+      setCapturedSubReason("");
       await refresh();
     } catch (err: any) {
       setMsg(err?.response?.data?.message || err.message || "Unable to submit update");
@@ -1392,6 +1395,7 @@ export default function NativeATSRecruiterWorkspace() {
                   setSelectedProcessId("");
                   setAssessmentSummary(null);
                   setAssessmentLoading(false);
+                  setCapturedSubReason("");
                 }}
                 style={{ width: "auto", padding: "8px 16px" }}
               >
@@ -1761,8 +1765,9 @@ export default function NativeATSRecruiterWorkspace() {
                 disabled={!subReason.trim()}
                 onClick={() => {
                   const c = subCandidate;
+                  const reason = subReason.trim();
                   setSubCandidate(null);
-                  openFormDirect(c, false, undefined, true);
+                  openFormDirect(c, false, undefined, true, reason);
                 }}
               >
                 Proceed as Substitute
