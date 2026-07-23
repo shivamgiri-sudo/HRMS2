@@ -99,13 +99,16 @@ jobs:
         run: npm --prefix backend ci
 
       - name: Run security tests
+        working-directory: backend
         run: >-
-          npm --prefix backend exec -- vitest run
+          npx vitest run --config vitest.config.ts
           src/modules/auth/__tests__/auth-security.test.ts
+          src/modules/auth/__tests__/auth-cookie.test.ts
           src/modules/files/__tests__/document-vault-security.test.ts
           src/db/__tests__/migration-governance.test.ts
           src/db/__tests__/connection-reliability.test.ts
           src/workers/__tests__/worker-safety.test.ts
+          src/shared/__tests__/log-redaction.test.ts
 
   finance-validation:
     name: Finance API and schema contract
