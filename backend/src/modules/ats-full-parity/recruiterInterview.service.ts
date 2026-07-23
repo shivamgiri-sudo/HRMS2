@@ -711,6 +711,8 @@ export async function submitInterviewUpdate(
     otDetails: String(raw.otDetails || raw["OT Details"] || "").trim() || undefined,
     performanceIncentives: String(raw.performanceIncentives || raw["Performance Incentives"] || "").trim() || undefined,
     requisitionId: String(raw.requisitionId || "").trim() || undefined,
+    substituteFlag: raw.substituteFlag === true || raw.substituteFlag === "true" || raw.substitute_flag === true || raw.substitute_flag === "true" || false,
+    substituteReason: String(raw.substituteReason || raw.substitute_reason || "").trim() || undefined,
   };
 
   if (!input.candidateId && !input.qToken) err("CandidateID or QToken required", 400);
@@ -1181,13 +1183,14 @@ export async function submitInterviewUpdate(
     if (input.substituteFlag && input.substituteReason && actorUserId) {
       await conn.execute(
         `INSERT INTO ats_sensitive_action_log
-           (id, actor_user_id, action_type, entity_type, entity_id, action_details, created_at)
-         VALUES (?, ?, 'SUBSTITUTE_INTERVIEW_SUBMISSION', 'ats_interview_submission', ?, CAST(? AS JSON), NOW())`,
+           (id, actor_user_id, action_type, target_entity, target_id, action_details, created_at)
+         VALUES (?, ?, 'admin_override', 'ats_interview_submission', ?, CAST(? AS JSON), NOW())`,
         [
           randomUUID(),
           actorUserId,
           submissionId,
           JSON.stringify({
+            action: 'SUBSTITUTE_INTERVIEW_SUBMISSION',
             candidate_id: candidate.id,
             candidate_code: candidate.candidate_code,
             original_recruiter_name: candidate.recruiter_assigned_name,

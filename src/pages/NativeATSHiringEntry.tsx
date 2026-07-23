@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -31,8 +31,10 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
-// ApexCharts lazy-loaded — only used in Analytics tab
-const ReactApexChart = lazy(() => import("react-apexcharts"));
+// react-apexcharts is CJS — its default export may be wrapped in a namespace object
+import _ReactApexChartImport from "react-apexcharts";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ReactApexChart = (_ReactApexChartImport as any).default ?? _ReactApexChartImport;
 type ApexOptions = import("apexcharts").ApexChartOptions;
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
