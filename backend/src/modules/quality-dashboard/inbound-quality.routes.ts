@@ -54,44 +54,14 @@ router.get("/raw-data",              h(async (req, res) => {
 }));
 
 // ── CLAP VOC Quotes (verbatim customer voice, 2026-07-17+) ───────────────────
-router.get("/clap-voc-quotes", h(async (req, res) => {
-  try {
-    res.json({ data: await svc.getClapVocQuotes(parseFilters(req.query as Record<string, unknown>)) });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[inbound-quality/clap-voc-quotes]", msg);
-    res.json({ data: [], _error: msg });
-  }
-}));
-router.get("/clap-product-voc-summary", h(async (req, res) => {
-  try {
-    res.json({ data: await svc.getClapProductVocSummary(parseFilters(req.query as Record<string, unknown>)) });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[inbound-quality/clap-product-voc-summary]", msg);
-    res.json({ data: [], _error: msg });
-  }
-}));
+router.get("/clap-voc-quotes",         h(async (req, res) => res.json({ data: await svc.getClapVocQuotes(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clap-product-voc-summary",h(async (req, res) => res.json({ data: await svc.getClapProductVocSummary(parseFilters(req.query as Record<string, unknown>)) })));
 router.get("/clap-product-voc-quotes", h(async (req, res) => {
-  try {
-    const f = parseFilters(req.query as Record<string, unknown>);
-    const branch = (req.query.branch as string | undefined) as ("customer" | "logistic" | "agent" | "product") | undefined;
-    res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch }) });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[inbound-quality/clap-product-voc-quotes]", msg);
-    res.json({ data: [], _error: msg });
-  }
+  const f = parseFilters(req.query as Record<string, unknown>);
+  const branch = (req.query.branch as string | undefined) as ("customer" | "logistic" | "agent" | "product") | undefined;
+  res.json({ data: await svc.getClapProductVocQuotes({ ...f, branch }) });
 }));
-router.get("/clap-intelligence", h(async (req, res) => {
-  try {
-    res.json({ data: await svc.getClapIntelligence(parseFilters(req.query as Record<string, unknown>)) });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[inbound-quality/clap-intelligence]", msg);
-    res.json({ data: null, _error: msg });
-  }
-}));
+router.get("/clap-intelligence",       h(async (req, res) => res.json({ data: await svc.getClapIntelligence(parseFilters(req.query as Record<string, unknown>)) })));
 
 // ── Agent master management (super_admin / qa only) ────────────────────────
 router.get("/agent-master",          h(async (_req, res) => res.json({ data: await svc.getAgentMaster() })));

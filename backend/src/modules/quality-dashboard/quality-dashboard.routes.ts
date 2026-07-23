@@ -168,11 +168,11 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
         COUNT(DISTINCT User) as unique_agents,
         COUNT(DISTINCT ClientId) as unique_clients,
         SUM(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 ELSE 0 END) as fraud_flags,
-        ROUND(100 - (AVG(call_answered_within_5_seconds) * 100), 1) as fail_rate_call_open,
-        ROUND(100 - (AVG(professionalism_maintained) * 100), 1) as fail_rate_professionalism,
-        ROUND(100 - (AVG(active_listening) * 100), 1) as fail_rate_active_listening,
-        ROUND(100 - (AVG(proper_call_closure) * 100), 1) as fail_rate_call_closure,
-        ROUND(100 - (AVG(correct_and_complete_information) * 100), 1) as fail_rate_accuracy
+        ROUND(100 - (AVG(COALESCE(call_answered_within_5_seconds,0)) * 100), 1) as fail_rate_call_open,
+        ROUND(100 - (AVG(COALESCE(professionalism_maintained,0)) * 100), 1) as fail_rate_professionalism,
+        ROUND(100 - (AVG(COALESCE(active_listening,0)) * 100), 1) as fail_rate_active_listening,
+        ROUND(100 - (AVG(COALESCE(proper_call_closure,0)) * 100), 1) as fail_rate_call_closure,
+        ROUND(100 - (AVG(COALESCE(correct_and_complete_information,0)) * 100), 1) as fail_rate_accuracy
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?${clientCond}${scopeCond}
     `, params);
@@ -519,7 +519,6 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
     const [rejection] = await pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
-        SUM(CASE WHEN Offered='1' OR Offered=1 THEN 1 ELSE 0 END) as total_offered,
         SUM(CASE WHEN NotInterestedBucketReason IS NOT NULL AND NotInterestedBucketReason NOT IN ('','null','None') THEN 1 ELSE 0 END) as not_interested,
         SUM(CASE WHEN CustomerObjectionCategory IS NOT NULL AND CustomerObjectionCategory NOT IN ('','null','None') THEN 1 ELSE 0 END) as objection_raised,
         SUM(CASE WHEN AfterListeningOfferRejected='1' OR AfterListeningOfferRejected=1 THEN 1 ELSE 0 END) as rejected_after_offer,

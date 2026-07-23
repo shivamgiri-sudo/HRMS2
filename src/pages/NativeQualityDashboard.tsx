@@ -865,45 +865,36 @@ export default function NativeQualityDashboard() {
           const sf = funnelQ.data?.sales_funnel;
           const rf = funnelQ.data?.rejection_funnel;
           const reasons = funnelQ.data?.top_rejection_reasons ?? [];
+          const sfTotal = sf?.total_calls || 1;
+          const rfTotal = rf?.total_calls || 1;
 
-          if (!sf || sf.total_calls === 0) {
-            return (
-              <div className="py-10 text-center text-slate-400 text-sm font-semibold">
-                No sales funnel data available for the selected date range.
-              </div>
-            );
-          }
-
-          const sfTotal = safeNumber(sf.total_calls) || 1;
-          // Rejection rates are meaningful relative to calls where an offer was made
-          const rfBase = safeNumber((rf as any)?.total_offered) || safeNumber(sf.offer_made) || sfTotal;
-
-          const salesStages = [
-            { label: "Total Calls",       count: safeNumber(sf.total_calls),       pct: 100,                                                           tw: "bg-indigo-500" },
-            { label: "Opening Done",      count: safeNumber(sf.opening_done),      pct: Math.min(safeNumber((sf.opening_done / sfTotal) * 100), 100),   tw: "bg-blue-500" },
-            { label: "Offer Made",        count: safeNumber(sf.offer_made),        pct: Math.min(safeNumber((sf.offer_made / sfTotal) * 100), 100),     tw: "bg-cyan-500" },
-            { label: "Objection Handled", count: safeNumber(sf.objection_handled), pct: Math.min(safeNumber((sf.objection_handled / sfTotal) * 100), 100), tw: "bg-teal-500" },
-            { label: "Sale Done",         count: safeNumber(sf.sale_done),         pct: Math.min(safeNumber((sf.sale_done / sfTotal) * 100), 100),      tw: "bg-emerald-500" },
-          ];
-
-          const rejectStages = rf ? [
-            { label: "Not Interested",    count: safeNumber(rf.not_interested),    pct: Math.min(safeNumber((rf.not_interested / rfBase) * 100), 100),    tw: "bg-orange-400" },
-            { label: "Objection Raised",  count: safeNumber(rf.objection_raised),  pct: Math.min(safeNumber((rf.objection_raised / rfBase) * 100), 100),  tw: "bg-amber-500" },
-            { label: "Offering Rejected", count: safeNumber(rf.offering_rejected), pct: Math.min(safeNumber((rf.offering_rejected / rfBase) * 100), 100), tw: "bg-red-400" },
-            { label: "Opening Rejected",  count: safeNumber(rf.opening_rejected),  pct: Math.min(safeNumber((rf.opening_rejected / rfBase) * 100), 100),  tw: "bg-red-600" },
+          const salesStages = sf ? [
+            { label: "Total Calls",       count: sf.total_calls,       pct: 100,                                      tw: "bg-indigo-500" },
+            { label: "Opening Done",      count: sf.opening_done,      pct: (sf.opening_done / sfTotal) * 100,        tw: "bg-blue-500" },
+            { label: "Offer Made",        count: sf.offer_made,        pct: (sf.offer_made / sfTotal) * 100,          tw: "bg-cyan-500" },
+            { label: "Objection Handled", count: sf.objection_handled, pct: (sf.objection_handled / sfTotal) * 100,   tw: "bg-teal-500" },
+            { label: "Sale Done",         count: sf.sale_done,         pct: (sf.sale_done / sfTotal) * 100,           tw: "bg-emerald-500" },
           ] : [];
 
-          const renderFunnel = (stages: { label: string; count: number; pct: number; tw: string }[]) => (
+          const rejectStages = rf ? [
+            { label: "Total Calls",      count: rf.total_calls,      pct: 100,                                        tw: "bg-slate-400" },
+            { label: "Not Interested",   count: rf.not_interested,   pct: (rf.not_interested / rfTotal) * 100,        tw: "bg-orange-400" },
+            { label: "Objection Raised", count: rf.objection_raised, pct: (rf.objection_raised / rfTotal) * 100,      tw: "bg-amber-500" },
+            { label: "Offering Rejected",count: rf.offering_rejected,pct: (rf.offering_rejected / rfTotal) * 100,     tw: "bg-red-400" },
+            { label: "Opening Rejected", count: rf.opening_rejected, pct: (rf.opening_rejected / rfTotal) * 100,      tw: "bg-red-600" },
+          ] : [];
+
+          const renderFunnel = (stages: typeof salesStages) => (
             <div className="space-y-1.5">
               {stages.map((stage, i) => (
                 <div key={stage.label}>
                   <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
                     <span>{stage.label}</span>
-                    <span className="text-slate-400">{safeNumber(stage.count).toLocaleString()} · {safeNumber(stage.pct).toFixed(1)}%</span>
+                    <span className="text-slate-400">{stage.count.toLocaleString()} · {stage.pct.toFixed(1)}%</span>
                   </div>
                   <div className="flex h-8 items-center">
                     <div className={`h-full rounded-md transition-all duration-700 ${stage.tw}`}
-                      style={{ width: `${Math.max(safeNumber(stage.pct), 2)}%`, minWidth: "2%" }} />
+                      style={{ width: `${Math.max(stage.pct, 2)}%`, minWidth: "2%" }} />
                   </div>
                   {i < stages.length - 1 && <div className="flex justify-start pl-1 py-0.5 text-xs text-slate-200">▼</div>}
                 </div>
@@ -920,7 +911,6 @@ export default function NativeQualityDashboard() {
                 </div>
                 <div>
                   <h3 className="mb-4 text-xs font-black uppercase tracking-widest text-red-700">Rejection Transition Funnel</h3>
-                  <p className="mb-3 text-xs text-slate-400">% of calls where offer was made ({safeNumber((rf as any)?.total_offered || sf.offer_made).toLocaleString()} calls)</p>
                   {renderFunnel(rejectStages)}
                 </div>
               </div>
@@ -1208,9 +1198,6 @@ export default function NativeQualityDashboard() {
         </div>
         <p className="text-xs text-purple-600">Customer · Logistics · Agent · Product — verbatim feedback captured during inbound quality audits</p>
       </div>
-
-      {clapIntelQ.isError && <ErrBanner msg="CLAP intelligence unavailable — VOC columns may not yet exist in the audit DB for this date range" />}
-      {clapVocQ.isError && <ErrBanner msg="VOC quotes unavailable — check audit DB connectivity" />}
 
       {/* Intelligence strip */}
       {clapIntelQ.isLoading ? <Spinner /> : clapIntelQ.data?.summary && (() => {
