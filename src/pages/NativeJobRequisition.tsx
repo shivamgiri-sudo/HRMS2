@@ -144,7 +144,6 @@ const emptyForm = {
   experience_max_years: '',
   priority: 'normal' as RequisitionPriority,
   requisition_type: 'new_position',
-  target_joining_date: '',
   business_justification: '',
   skills_required: '',
   job_description: '',
@@ -253,7 +252,7 @@ export default function NativeJobRequisition() {
       const res = await hrmsApi.get<{ success: boolean; data: JobRequisition[] }>(
         `/api/job-requisition?${params.toString()}`
       );
-      setRequisitions(res.data);
+      setRequisitions(Array.isArray(res.data) ? res.data : []);
     } catch (err: any) {
       console.error('Failed to load requisitions:', err);
     }
@@ -264,7 +263,21 @@ export default function NativeJobRequisition() {
       const res = await hrmsApi.get<{ success: boolean; data: DashboardMetrics }>(
         '/api/job-requisition/dashboard'
       );
-      setMetrics(res.data);
+      if (res.data) {
+        // MySQL returns ROUND/AVG as strings — coerce to numbers
+        const m = res.data as any;
+        setMetrics({
+          ...m,
+          total_requisitions: Number(m.total_requisitions ?? 0),
+          open_requisitions: Number(m.open_requisitions ?? 0),
+          pending_approval: Number(m.pending_approval ?? 0),
+          approved_active: Number(m.approved_active ?? 0),
+          total_open_positions: Number(m.total_open_positions ?? 0),
+          total_fulfilled: Number(m.total_fulfilled ?? 0),
+          fill_rate_percent: Number(m.fill_rate_percent ?? 0),
+          avg_time_to_fill_days: Number(m.avg_time_to_fill_days ?? 0),
+        });
+      }
     } catch (err: any) {
       console.error('Failed to load metrics:', err);
     }
@@ -304,7 +317,6 @@ export default function NativeJobRequisition() {
         salary_max: formData.salary_max ? Number(formData.salary_max) : null,
         experience_min_years: formData.experience_min_years ? Number(formData.experience_min_years) : null,
         experience_max_years: formData.experience_max_years ? Number(formData.experience_max_years) : null,
-        target_joining_date: formData.target_joining_date || null,
         planned_batch_no: formData.planned_batch_no || null,
         training_start_date: formData.training_start_date || null,
       };
@@ -421,7 +433,6 @@ export default function NativeJobRequisition() {
       experience_max_years: '',
       priority: req.priority,
       requisition_type: req.requisition_type,
-      target_joining_date: req.target_joining_date || '',
       business_justification: req.business_justification || '',
       skills_required: '',
       job_description: '',
@@ -857,16 +868,6 @@ export default function NativeJobRequisition() {
                     </select>
                   </div>
 
-                  {/* Target Joining Date */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Joining Date</label>
-                    <input
-                      type="date"
-                      value={formData.target_joining_date}
-                      onChange={(e) => field('target_joining_date', e.target.value)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
                 </div>
 
                 {/* Batch Number Section */}

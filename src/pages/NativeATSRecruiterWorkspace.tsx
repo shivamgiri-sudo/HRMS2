@@ -448,7 +448,12 @@ export default function NativeATSRecruiterWorkspace() {
     hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(
       `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?processId=${encodeURIComponent(selectedProcessId)}`
     ).then(res => {
-      setOpenBatches(res.data || []);
+      const batches = res.data || [];
+      setOpenBatches(batches);
+      // Auto-select when exactly one open batch exists for this process
+      if (batches.length === 1) {
+        setSelectedRequisitionId(batches[0].id);
+      }
     }).catch(() => {
       setOpenBatches([]);
     }).finally(() => {
@@ -1482,7 +1487,6 @@ export default function NativeATSRecruiterWorkspace() {
                         <option key={b.id} value={b.id}>
                           {b.requisition_code}
                           {b.planned_batch_no ? ` | Batch ${b.planned_batch_no}` : ""}
-                          {b.planned_batch_name ? ` — ${b.planned_batch_name}` : ""}
                           {` | ${b.open_positions} open`}
                           {b.target_joining_date ? ` | Joining ${b.target_joining_date.slice(0, 10)}` : ""}
                         </option>
