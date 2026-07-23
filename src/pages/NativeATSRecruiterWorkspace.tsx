@@ -407,6 +407,7 @@ export default function NativeATSRecruiterWorkspace() {
     planned_batch_name: string | null;
     open_positions: number;
     target_joining_date: string | null;
+    requisition_validity: string | null;
   };
   type ProcessOption = { id: string; process_name: string; process_code: string };
   const [branchProcesses, setBranchProcesses] = useState<ProcessOption[]>([]);
@@ -461,6 +462,13 @@ export default function NativeATSRecruiterWorkspace() {
       `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?${queryParam}`
     ).then(res => {
       const batches = res.data || [];
+      // Sort by deadline urgency: overdue first, then by deadline ascending, nulls last
+      batches.sort((a, b) => {
+        if (!a.requisition_validity && !b.requisition_validity) return 0;
+        if (!a.requisition_validity) return 1;
+        if (!b.requisition_validity) return -1;
+        return new Date(a.requisition_validity).getTime() - new Date(b.requisition_validity).getTime();
+      });
       setOpenBatches(batches);
       if (batches.length === 1) {
         setSelectedRequisitionId(batches[0].id);
@@ -1517,14 +1525,20 @@ export default function NativeATSRecruiterWorkspace() {
                       style={{ width: "100%", maxWidth: 480, padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, background: "#fff" }}
                     >
                       <option value="">— Select Batch / Hiring Drive —</option>
-                      {openBatches.map(b => (
-                        <option key={b.id} value={b.id}>
-                          {b.requisition_code}
-                          {b.planned_batch_no ? ` | Batch ${b.planned_batch_no}` : ""}
-                          {` | ${b.open_positions} open`}
-                          {b.target_joining_date ? ` | Joining ${b.target_joining_date.slice(0, 10)}` : ""}
-                        </option>
-                      ))}
+                      {openBatches.map(b => {
+                        const deadline = b.requisition_validity ? new Date(b.requisition_validity) : null;
+                        const today = new Date(); today.setHours(0,0,0,0);
+                        const daysLeft = deadline ? Math.ceil((deadline.getTime() - today.getTime()) / 86400000) : null;
+                        const urgency = daysLeft !== null && daysLeft <= 0 ? '⚠️ OVERDUE' : daysLeft !== null && daysLeft <= 3 ? '🔴 URGENT' : daysLeft !== null && daysLeft <= 7 ? '🟡' : '';
+                        return (
+                          <option key={b.id} value={b.id}>
+                            {urgency ? `${urgency} ` : ''}{b.requisition_code}
+                            {b.requisition_validity ? ` | Deadline ${b.requisition_validity.slice(0, 10)}` : ''}
+                            {b.planned_batch_no ? ` | Batch ${b.planned_batch_no}` : ""}
+                            {` | ${b.open_positions} open`}
+                          </option>
+                        );
+                      })}
                     </select>
                     <p style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>
                       Open hiring drives for this process at {selected?.branch || "this branch"}. Required before submitting.
