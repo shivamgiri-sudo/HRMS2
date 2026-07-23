@@ -900,7 +900,7 @@ export default function NativeJobRequisition() {
                               <Download className="w-4 h-4" />
                             </button>
                           )}
-                          {currentUserRole === 'super_admin' && req.approval_status !== 'approved' && (
+                          {currentUserRole === 'super_admin' && (
                             <button
                               onClick={() => setConfirmAction({ type: 'delete', id: req.id, code: req.requisition_code })}
                               className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded" title="Delete Requisition"

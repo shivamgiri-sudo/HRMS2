@@ -1343,17 +1343,14 @@ export const jobRequisitionService = {
   },
 
   /**
-   * Soft-delete a requisition (super_admin only; approved requisitions cannot be deleted)
+   * Soft-delete a requisition (super_admin only — can delete any status)
    */
   async deleteRequisition(id: string): Promise<void> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT approval_status FROM job_requisition WHERE id = ? AND active_status = 1`,
+      `SELECT id FROM job_requisition WHERE id = ? AND active_status = 1`,
       [id]
     );
     if (!rows[0]) throw Object.assign(new Error("Requisition not found"), { status: 404 });
-    if (rows[0].approval_status === "approved") {
-      throw Object.assign(new Error("Cannot delete an approved requisition — close it first"), { status: 422 });
-    }
     await db.execute(
       `UPDATE job_requisition SET active_status = 0, updated_at = NOW() WHERE id = ?`,
       [id]
