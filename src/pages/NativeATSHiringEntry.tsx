@@ -420,34 +420,32 @@ export default function NativeATSHiringEntry() {
   // Build query string from active filter state and fetch from server
   const fetchEntries = useCallback(async (page = 1, append = false) => {
     const qs = new URLSearchParams({ limit: "50", page: String(page) });
-    if (filterFrom)     qs.set("fromDate",        filterFrom);
-    if (filterTo)       qs.set("toDate",           filterTo);
-    if (filterOutcome)  qs.set("recruiterRemarks", filterOutcome);
-    if (filterBranch)   qs.set("branch",           filterBranch);
-    if (filterProcess)  qs.set("process",          filterProcess);
-    if (filterSource)   qs.set("hiringSource",     filterSource);
-    if (filterWpGroup)  qs.set("wpGroup",          filterWpGroup);
-    if (entrySearch)    qs.set("search",           entrySearch);
+    if (filterFrom)      qs.set("fromDate",        filterFrom);
+    if (filterTo)        qs.set("toDate",           filterTo);
+    if (filterOutcome)   qs.set("recruiterRemarks", filterOutcome);
+    if (filterRecruiter) qs.set("recruiter",        filterRecruiter);
+    if (filterBranch)    qs.set("branch",           filterBranch);
+    if (filterProcess)   qs.set("process",          filterProcess);
+    if (filterSource)    qs.set("hiringSource",     filterSource);
+    if (filterWpGroup)   qs.set("wpGroup",          filterWpGroup);
+    if (entrySearch)     qs.set("search",           entrySearch);
     try {
       const res = await hrmsApi.get<HiringListResponse>(`/api/ats/recruiter/hiring-activity?${qs.toString()}`);
       if (append) setRows((prev) => [...prev, ...(res.data ?? [])]);
       else { setRows(res.data ?? []); setRowsPage(1); }
       setRowsTotal(res.total ?? 0);
     } catch (_e) { /* non-critical */ }
-  }, [filterFrom, filterTo, filterOutcome, filterBranch, filterProcess, filterSource, filterWpGroup, entrySearch]);
+  }, [filterFrom, filterTo, filterOutcome, filterRecruiter, filterBranch, filterProcess, filterSource, filterWpGroup, entrySearch]);
 
   const loadPageData = async () => {
     setLoading(true);
     setLoadError("");
     try {
-      const [bootstrapRes, rowsRes] = await Promise.all([
-        hrmsApi.get<BootstrapApiResponse>("/api/ats/recruiter/hiring-activity/bootstrap"),
-        hrmsApi.get<HiringListResponse>("/api/ats/recruiter/hiring-activity?limit=50&page=1"),
-      ]);
+      const bootstrapRes = await hrmsApi.get<BootstrapApiResponse>("/api/ats/recruiter/hiring-activity/bootstrap");
       setBootstrap(bootstrapRes.data);
-      setRows(rowsRes.data ?? []);
-      setRowsTotal(rowsRes.total ?? 0);
-      setRowsPage(1);
+      // rows + rowsTotal are populated exclusively by fetchEntries (via the filter useEffect
+      // that fires on mount). This avoids a race where loadPageData overwrites the filtered
+      // rowsTotal with the unfiltered count.
 
       const savedContext = loadSessionContext();
       if (savedContext) {
@@ -507,6 +505,7 @@ export default function NativeATSHiringEntry() {
       }
     } catch (err: unknown) {
       console.error("[Analytics] Load failed:", err);
+      analyticsLoadedRef.current = false; // allow retry on next tab click
       setAnalytics(null);
       toast.error((err as { message?: string })?.message ?? "Failed to load analytics data");
     } finally {
@@ -610,14 +609,8 @@ export default function NativeATSHiringEntry() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrap, loading, sessionLocked]);
 
-  // rows is now server-filtered; local recruiter filter still applied client-side
-  // (recruiter_name_snapshot filter is not wired to the API — kept as a local pass)
-  const filteredRows = useMemo(() => {
-    if (!filterRecruiter) return rows;
-    return rows.filter((r) =>
-      String(r.recruiter_name_snapshot ?? "").toLowerCase().includes(filterRecruiter.toLowerCase())
-    );
-  }, [rows, filterRecruiter]);
+  // All filters are server-side — rows is already the filtered result set
+  const filteredRows = rows;
 
   const sourceOptions = bootstrap?.options.sourceOptions ?? [];
   const processOptions = bootstrap?.options.processOptions ?? [];
@@ -2034,7 +2027,7 @@ export default function NativeATSHiringEntry() {
                   </table>
                 </div>
 
-                {rows.length < rowsTotal && !entrySearch && !filterOutcome && !filterFrom && !filterTo && (
+                {rows.length < rowsTotal && (
                   <div className="border-t border-slate-100 p-4">
                     <button
                       type="button"
