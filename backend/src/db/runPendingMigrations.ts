@@ -1,9 +1,16 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
+import os from "os";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { env } from "../config/env.js";
+
+// Migration governance configuration
+const MIGRATION_LOCK_TIMEOUT_SECONDS = 60;
+const MIGRATION_STRICT_MODE = process.env.MIGRATION_STRICT_MODE === "true";
+const STOP_ON_FIRST_FAILURE = process.env.MIGRATION_STOP_ON_FAILURE !== "false"; // default true
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +29,7 @@ const SQL_DIR = resolveSqlDir();
 // Non-b duplicates (020, 021, 022) are excluded — only b-variants are sourced.
 // Duplicate numeric prefixes (010/010, 012/012, 198/198, 204/204, 271/271) are intentional —
 // tracking is by full filename in schema_migrations, so each file runs independently.
-const MIGRATION_MANIFEST: string[] = [
+export const MIGRATION_MANIFEST: string[] = [
   "001_core_org.sql",
   "002_employees.sql",
   "003_access_control.sql",
@@ -366,6 +373,10 @@ const MIGRATION_MANIFEST: string[] = [
   "523_job_requisition.sql",                    // Job requisition master + candidate linking tables
   "524_job_requisition_batch_link.sql",         // Planned batch columns on job_requisition
   "528_job_requisition_handover.sql",           // Handover workflow columns on job_requisition
+  "530_auth_session_security_hardening.sql",    // Pre-auth challenge table, token family columns, auth invitation
+  "531_document_vault_security_hardening.sql",  // Document vault authorization hardening, magic-byte validation
+  "532_migration_governance_hardening.sql",     // Migration advisory lock, checksum tracking, governance audit
+  "533_worker_distributed_safety.sql",          // Worker job run tracking, distributed lock support
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   ];
 
@@ -418,6 +429,68 @@ function isIdempotentMigrationError(error: unknown): boolean {
     msg.includes("duplicate key") ||
     msg.includes("can't drop")
   );
+}
+
+/**
+ * Compute SHA-256 hash of file content for checksum tracking.
+ */
+function computeFileChecksum(filePath: string): string {
+  const content = fs.readFileSync(filePath);
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Acquire MySQL advisory lock for migration exclusivity.
+ * Only one process can hold 'hrms_migration_lock' at a time.
+ * Returns true if lock acquired, false if timeout.
+ */
+async function acquireMigrationLock(conn: mysql.Connection): Promise<boolean> {
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT GET_LOCK('hrms_migration_lock', ?) AS acquired`,
+      [MIGRATION_LOCK_TIMEOUT_SECONDS]
+    );
+    const acquired = (rows[0] as { acquired: number | null })?.acquired === 1;
+    if (acquired) {
+      console.log(`[migration] advisory lock acquired by ${os.hostname()} (pid: ${process.pid})`);
+    }
+    return acquired;
+  } catch (error) {
+    console.error("[migration] failed to acquire advisory lock:", error);
+    return false;
+  }
+}
+
+/**
+ * Release MySQL advisory lock after migrations complete.
+ */
+async function releaseMigrationLock(conn: mysql.Connection): Promise<void> {
+  try {
+    await conn.query(`SELECT RELEASE_LOCK('hrms_migration_lock')`);
+    console.log("[migration] advisory lock released");
+  } catch (error) {
+    console.error("[migration] failed to release advisory lock:", error);
+  }
+}
+
+/**
+ * Check if a previously applied migration has a different checksum.
+ * Returns null if no checksum recorded, the stored checksum otherwise.
+ */
+async function getStoredChecksum(
+  conn: mysql.Connection,
+  filename: string
+): Promise<string | null> {
+  try {
+    const [rows] = await conn.query<RowDataPacket[]>(
+      `SELECT checksum_sha256 FROM schema_migrations WHERE filename = ?`,
+      [filename]
+    );
+    if (rows.length === 0) return null;
+    return (rows[0] as { checksum_sha256: string | null }).checksum_sha256;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -635,10 +708,17 @@ async function runFileOnConnection(
 
 /**
  * Runs pending SQL migrations in manifest order and records a health summary.
+ *
+ * GOVERNANCE FEATURES:
+ * - MySQL advisory lock prevents concurrent migrations across instances
+ * - Checksum tracking detects modified migration files
+ * - MIGRATION_STRICT_MODE=true: missing files block execution (not skip)
+ * - STOP_ON_FIRST_FAILURE (default true): halts chain after first hard error
+ * - Each migration records start_time, end_time, duration_ms, checksum, executor
+ *
  * - Uses MIGRATION_MANIFEST (derived from 000_run_all.sql) instead of directory scan.
  * - Each migration file runs on a dedicated single connection (for session variable support).
  * - Safe SQL splitter avoids false splits on semicolons inside string literals.
- * - Skips non-b duplicate variants (020, 021, 022) which are excluded from manifest.
  * - Runs 043_demo_data.sql only when SEED_DEMO_DATA=true.
  * - Production startup is blocked when any migration fails.
  */
@@ -666,6 +746,9 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
     multipleStatements: false,
   };
 
+  // Connection for advisory lock (kept open throughout migration run)
+  let lockConn: mysql.Connection | null = null;
+
   try {
     await ensureDatabaseExists(
       env.DB_HOST,
@@ -675,28 +758,64 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
       env.DB_NAME
     );
 
-    // Ensure schema_migrations tracking table exists
+    // Ensure schema_migrations tracking table exists with governance columns
     {
       const conn = await mysql.createConnection(connConfig);
       try {
         await conn.query(`
           CREATE TABLE IF NOT EXISTS schema_migrations (
-            filename   VARCHAR(255) NOT NULL PRIMARY KEY,
-            applied_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+            filename        VARCHAR(255) NOT NULL PRIMARY KEY,
+            applied_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            checksum_sha256 VARCHAR(64)  NULL,
+            environment     VARCHAR(50)  NULL,
+            start_time      DATETIME     NULL,
+            end_time        DATETIME     NULL,
+            duration_ms     INT          NULL,
+            executor        VARCHAR(255) NULL,
+            success         TINYINT(1)   NOT NULL DEFAULT 1,
+            error_message   TEXT         NULL
           )
         `);
+        // Add governance columns if missing (for existing tables)
+        await conn.query(`
+          ALTER TABLE schema_migrations
+          ADD COLUMN IF NOT EXISTS checksum_sha256 VARCHAR(64) NULL,
+          ADD COLUMN IF NOT EXISTS environment VARCHAR(50) NULL,
+          ADD COLUMN IF NOT EXISTS start_time DATETIME NULL,
+          ADD COLUMN IF NOT EXISTS end_time DATETIME NULL,
+          ADD COLUMN IF NOT EXISTS duration_ms INT NULL,
+          ADD COLUMN IF NOT EXISTS executor VARCHAR(255) NULL,
+          ADD COLUMN IF NOT EXISTS success TINYINT(1) NOT NULL DEFAULT 1,
+          ADD COLUMN IF NOT EXISTS error_message TEXT NULL
+        `).catch(() => {
+          // MariaDB/older MySQL may not support ADD COLUMN IF NOT EXISTS
+        });
       } finally {
         await conn.end();
       }
     }
 
-    // Read the set of already-applied migrations
-    const appliedSet = new Set<string>();
+    // GOVERNANCE: Acquire advisory lock before running any migrations
+    lockConn = await mysql.createConnection(connConfig);
+    const lockAcquired = await acquireMigrationLock(lockConn);
+    if (!lockAcquired) {
+      throw new Error(
+        `Could not acquire migration lock within ${MIGRATION_LOCK_TIMEOUT_SECONDS}s. ` +
+        `Another migration may be running. Use SKIP_MIGRATIONS=true to bypass.`
+      );
+    }
+
+    // Read the set of already-applied migrations with checksums
+    const appliedMap = new Map<string, string | null>(); // filename -> checksum
     {
       const conn = await mysql.createConnection(connConfig);
       try {
-        const [rows] = await conn.query<RowDataPacket[]>("SELECT filename FROM schema_migrations");
-        for (const row of rows as RowDataPacket[]) appliedSet.add(String(row.filename));
+        const [rows] = await conn.query<RowDataPacket[]>(
+          "SELECT filename, checksum_sha256 FROM schema_migrations WHERE success = 1"
+        );
+        for (const row of rows as RowDataPacket[]) {
+          appliedMap.set(String(row.filename), row.checksum_sha256 ?? null);
+        }
       } finally {
         await conn.end();
       }
@@ -709,36 +828,82 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
       files.splice(idx + 1, 0, "043_demo_data.sql");
     }
 
+    const executor = `${os.hostname()}:${process.pid}`;
+    const environment = env.NODE_ENV || "development";
+
     for (const file of files) {
+      // GOVERNANCE: Stop if we've already hit a failure and STOP_ON_FIRST_FAILURE is enabled
+      if (STOP_ON_FIRST_FAILURE && migrationHealth.failed.length > 0) {
+        console.warn(`[migration] stopping due to previous failure (STOP_ON_FIRST_FAILURE=true)`);
+        break;
+      }
+
       const filePath = path.join(SQL_DIR, file);
+
+      // GOVERNANCE: In strict mode, missing files are fatal
       if (!fs.existsSync(filePath)) {
+        if (MIGRATION_STRICT_MODE) {
+          const message = `Missing migration file: ${file} (MIGRATION_STRICT_MODE=true)`;
+          migrationHealth.failed.push({ filename: file, error: message });
+          console.error(`[migration] FATAL: ${message}`);
+          break;
+        }
         console.warn(`[migration] skipping missing file: ${file}`);
         migrationHealth.skipped.push(file);
         continue;
       }
 
-      if (appliedSet.has(file)) {
+      // Compute checksum for this file
+      const currentChecksum = computeFileChecksum(filePath);
+
+      // GOVERNANCE: Check for modified migrations
+      if (appliedMap.has(file)) {
+        const storedChecksum = appliedMap.get(file);
+        if (storedChecksum && storedChecksum !== currentChecksum) {
+          if (MIGRATION_STRICT_MODE) {
+            const message = `Checksum mismatch for ${file}: stored=${storedChecksum.slice(0,8)}... current=${currentChecksum.slice(0,8)}... (MIGRATION_STRICT_MODE=true)`;
+            migrationHealth.failed.push({ filename: file, error: message });
+            console.error(`[migration] FATAL: ${message}`);
+            break;
+          }
+          console.warn(`[migration] checksum mismatch for already-applied ${file} (stored checksum differs from current file)`);
+        }
         migrationHealth.skipped.push(file);
         continue;
       }
 
       // Each file gets its own dedicated connection for session-variable isolation
+      const startTime = new Date();
       const conn = await mysql.createConnection(connConfig);
       try {
         await runFileOnConnection(conn, filePath);
 
-        // Record as applied using a separate query on the same connection
-        await conn.query("INSERT INTO schema_migrations (filename) VALUES (?)", [file]);
+        const endTime = new Date();
+        const durationMs = endTime.getTime() - startTime.getTime();
+
+        // Record as applied with governance metadata
+        await conn.query(
+          `INSERT INTO schema_migrations
+           (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+          [file, currentChecksum, environment, startTime, endTime, durationMs, executor]
+        );
         migrationHealth.applied.push(file);
-        console.log(`[migration] applied: ${file}`);
+        console.log(`[migration] applied: ${file} (${durationMs}ms)`);
       } catch (error: unknown) {
+        const endTime = new Date();
+        const durationMs = endTime.getTime() - startTime.getTime();
+        const message = error instanceof Error ? error.message : String(error);
+
         if (isIdempotentMigrationError(error)) {
           // Record as applied even for idempotent errors (table/column already exists)
           const conn2 = await mysql.createConnection(connConfig);
           try {
             await conn2.query(
-              "INSERT IGNORE INTO schema_migrations (filename) VALUES (?)",
-              [file]
+              `INSERT IGNORE INTO schema_migrations
+               (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+              [file, currentChecksum, environment, startTime, endTime, durationMs, executor]
             );
           } finally {
             await conn2.end();
@@ -746,7 +911,19 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
           migrationHealth.skipped.push(file);
           console.log(`[migration] already applied/idempotent: ${file}`);
         } else {
-          const message = error instanceof Error ? error.message : String(error);
+          // Record failed migration attempt
+          const conn2 = await mysql.createConnection(connConfig);
+          try {
+            await conn2.query(
+              `INSERT INTO schema_migrations
+               (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success, error_message)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+               ON DUPLICATE KEY UPDATE success = 0, error_message = VALUES(error_message), end_time = VALUES(end_time)`,
+              [file, currentChecksum, environment, startTime, endTime, durationMs, executor, message]
+            );
+          } finally {
+            await conn2.end();
+          }
           migrationHealth.failed.push({ filename: file, error: message });
           console.error(`[migration] FAILED: ${file} — ${message}`);
         }
@@ -759,6 +936,12 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
       filename: "migration-runner",
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    // GOVERNANCE: Always release advisory lock
+    if (lockConn) {
+      await releaseMigrationLock(lockConn);
+      await lockConn.end();
+    }
   }
 
   migrationHealth.completedAt = new Date().toISOString();
@@ -770,4 +953,54 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
   }
 
   return getMigrationHealth();
+}
+
+/**
+ * Verify schema is at expected version (called at API startup instead of running migrations).
+ * Returns true if schema is valid, false if migrations are needed.
+ */
+export async function verifySchemaVersion(): Promise<{
+  valid: boolean;
+  appliedCount: number;
+  pendingCount: number;
+  pendingFiles: string[];
+}> {
+  const connConfig = {
+    host: env.DB_HOST,
+    port: env.DB_PORT,
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    database: env.DB_NAME,
+  };
+
+  const conn = await mysql.createConnection(connConfig);
+  try {
+    // Check if schema_migrations table exists
+    const [tables] = await conn.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM information_schema.tables
+       WHERE table_schema = ? AND table_name = 'schema_migrations'`,
+      [env.DB_NAME]
+    );
+    if ((tables[0] as { count: number }).count === 0) {
+      return { valid: false, appliedCount: 0, pendingCount: MIGRATION_MANIFEST.length, pendingFiles: MIGRATION_MANIFEST };
+    }
+
+    // Get applied migrations
+    const [rows] = await conn.query<RowDataPacket[]>(
+      "SELECT filename FROM schema_migrations WHERE success = 1"
+    );
+    const appliedSet = new Set((rows as RowDataPacket[]).map((r) => String(r.filename)));
+
+    // Calculate pending
+    const pendingFiles = MIGRATION_MANIFEST.filter((f) => !appliedSet.has(f));
+
+    return {
+      valid: pendingFiles.length === 0,
+      appliedCount: appliedSet.size,
+      pendingCount: pendingFiles.length,
+      pendingFiles: pendingFiles.slice(0, 10), // Return first 10 pending
+    };
+  } finally {
+    await conn.end();
+  }
 }

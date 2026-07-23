@@ -73,7 +73,15 @@ export function requireRole(...allowedRoles: string[]) {
       (req as AuthenticatedRequest & { userRoles: RoleKey[] }).userRoles = userRoles;
       return next();
     } catch (err) {
-      return next(err);
+      // SECURITY: Fail-closed on any error (including DB errors).
+      // Do NOT propagate the error to the error handler — that could expose info.
+      // Instead, deny access with 503 and log the error for investigation.
+      console.error("[requireRole] Authorization check failed - denying access:", err instanceof Error ? err.message : String(err));
+      return res.status(503).json({
+        success: false,
+        message: "Authorization service temporarily unavailable. Please try again.",
+        code: "AUTH_SERVICE_UNAVAILABLE",
+      });
     }
   };
 }

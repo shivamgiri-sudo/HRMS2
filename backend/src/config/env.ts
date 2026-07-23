@@ -12,9 +12,10 @@ const envCandidates = [
 ];
 
 const loadedEnvPaths = new Set<string>();
+const preserveRuntimeEnv = process.env.HRMS_PRESERVE_RUNTIME_ENV === "true";
 for (const envPath of envCandidates) {
   if (!fs.existsSync(envPath) || loadedEnvPaths.has(envPath)) continue;
-  dotenv.config({ path: envPath, override: true });
+  dotenv.config({ path: envPath, override: !preserveRuntimeEnv });
   loadedEnvPaths.add(envPath);
 }
 
