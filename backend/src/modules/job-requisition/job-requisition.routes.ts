@@ -129,6 +129,32 @@ jobRequisitionRouter.get(
   })
 );
 
+// ─── Aggregate Funnel Across All Requisitions ────────────────────────────────
+jobRequisitionRouter.get(
+  "/aggregate-funnel",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const branch_name = req.query.branch_name as string | undefined;
+    const approval_status = req.query.approval_status as string | undefined;
+    const data = await jobRequisitionService.getAggregateFunnel({ branch_name, approval_status });
+    return res.json({ success: true, data });
+  })
+);
+
+// ─── Handover Recipient Options ───────────────────────────────────────────────
+jobRequisitionRouter.get(
+  "/handover-recipients",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await jobRequisitionService.getHandoverRecipientOptions([
+      "operations_manager", "trainer", "branch_head", "process_manager",
+    ]);
+    return res.json({ success: true, data });
+  })
+);
+
 // ─── Get Single Requisition ──────────────────────────────────────────────────
 jobRequisitionRouter.get(
   "/:id",
@@ -390,32 +416,6 @@ jobRequisitionRouter.get(
     if (!data) {
       return res.status(404).json({ success: false, message: "Requisition not found" });
     }
-    return res.json({ success: true, data });
-  })
-);
-
-// ─── Aggregate Funnel Across All Requisitions ────────────────────────────────
-jobRequisitionRouter.get(
-  "/aggregate-funnel",
-  requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const branch_name = req.query.branch_name as string | undefined;
-    const approval_status = req.query.approval_status as string | undefined;
-    const data = await jobRequisitionService.getAggregateFunnel({ branch_name, approval_status });
-    return res.json({ success: true, data });
-  })
-);
-
-// ─── Handover Recipient Options ───────────────────────────────────────────────
-jobRequisitionRouter.get(
-  "/handover-recipients",
-  requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await jobRequisitionService.getHandoverRecipientOptions([
-      "operations_manager", "trainer", "branch_head", "process_manager",
-    ]);
     return res.json({ success: true, data });
   })
 );
