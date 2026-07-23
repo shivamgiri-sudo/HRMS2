@@ -2,9 +2,28 @@ import { Route } from "react-router-dom";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import {
+  DASHBOARD_ACCESS_REGISTRY,
+  type DashboardCode,
+} from "../../../backend/src/shared/dashboardAccessRegistry";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
+
+const DashboardRouteGate = ({
+  code,
+  children,
+}: {
+  code: DashboardCode;
+  children: React.ReactNode;
+}) => {
+  const definition = DASHBOARD_ACCESS_REGISTRY[code];
+  return (
+    <ProtectedRoute dashboardCode={code}>
+      <Gate pageCode={definition.pageCode}>{children}</Gate>
+    </ProtectedRoute>
+  );
+};
 
 const Index                    = lazy(() => import("@/pages/Index"));
 const CeoDashboard             = lazy(() => import("@/pages/dashboards/CeoDashboard"));
@@ -25,18 +44,18 @@ export const dashboardRouteElements = (
       <Route path="/dashboard"          element={<ProtectedRoute><Index /></ProtectedRoute>} />
 
       {/* Role dashboards */}
-      <Route path="/ceo/dashboard"      element={<ProtectedRoute><Gate pageCode="CEO_DASHBOARD"><CeoDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/payroll-hr/dashboard" element={<ProtectedRoute><Gate pageCode="PAYROLL_HR_DASHBOARD"><PayrollHrDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/dashboard"      element={<ProtectedRoute><Gate pageCode="WFM_DASHBOARD"><WfmDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/hr/dashboard"       element={<ProtectedRoute><Gate pageCode="HR_DASHBOARD"><HrDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/manager/dashboard"  element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><ManagerDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/my-dashboard"       element={<ProtectedRoute><Gate pageCode="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/ceo/dashboard"      element={<DashboardRouteGate code="CEO_DASHBOARD"><CeoDashboard /></DashboardRouteGate>} />
+      <Route path="/payroll-hr/dashboard" element={<DashboardRouteGate code="PAYROLL_HR_DASHBOARD"><PayrollHrDashboard /></DashboardRouteGate>} />
+      <Route path="/wfm/dashboard"      element={<DashboardRouteGate code="WFM_DASHBOARD"><WfmDashboard /></DashboardRouteGate>} />
+      <Route path="/hr/dashboard"       element={<DashboardRouteGate code="HR_DASHBOARD"><HrDashboard /></DashboardRouteGate>} />
+      <Route path="/manager/dashboard"  element={<DashboardRouteGate code="MANAGEMENT_DASHBOARD"><ManagerDashboard /></DashboardRouteGate>} />
+      <Route path="/my-dashboard"       element={<DashboardRouteGate code="EMPLOYEE_SELF_DASHBOARD"><EmployeeSelfDashboard /></DashboardRouteGate>} />
 
       {/* New role-specific dashboards (from reference layouts) */}
-      <Route path="/quality-dashboard"      element={<ProtectedRoute roles={["qa","quality_analyst","super_admin","admin","ceo","manager","process_manager","branch_head","operations_manager"]}><QualityDashboardRole /></ProtectedRoute>} />
-      <Route path="/operations-dashboard"   element={<ProtectedRoute roles={["operations_manager","admin","super_admin","ceo","manager","process_manager","branch_head"]}><OperationsDashboardRole /></ProtectedRoute>} />
-      <Route path="/recruiter-dashboard"    element={<ProtectedRoute roles={["recruiter","hr","admin","super_admin","manager"]}><RecruiterDashboard /></ProtectedRoute>} />
-      <Route path="/wfm-attendance"         element={<ProtectedRoute roles={["wfm","admin","super_admin","hr","manager","operations_manager"]}><WfmAttendanceDashboard /></ProtectedRoute>} />
-      <Route path="/it/dashboard"           element={<ProtectedRoute roles={["it","branch_it","it_admin","admin","super_admin"]}><ItManagerDashboard /></ProtectedRoute>} />
+      <Route path="/quality-dashboard"      element={<DashboardRouteGate code="QUALITY_DASHBOARD"><QualityDashboardRole /></DashboardRouteGate>} />
+      <Route path="/operations-dashboard"   element={<DashboardRouteGate code="OPERATIONS_DASHBOARD"><OperationsDashboardRole /></DashboardRouteGate>} />
+      <Route path="/recruiter-dashboard"    element={<DashboardRouteGate code="RECRUITER_DASHBOARD"><RecruiterDashboard /></DashboardRouteGate>} />
+      <Route path="/wfm-attendance"         element={<DashboardRouteGate code="WFM_ATTENDANCE_DASHBOARD"><WfmAttendanceDashboard /></DashboardRouteGate>} />
+      <Route path="/it/dashboard"           element={<DashboardRouteGate code="IT_MANAGER_DASHBOARD"><ItManagerDashboard /></DashboardRouteGate>} />
   </>
 );

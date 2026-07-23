@@ -504,6 +504,7 @@ export const managementService = {
       },
       modules,
       activities: activityRows[0],
+      generatedAt: new Date().toISOString(),
     };
   },
 

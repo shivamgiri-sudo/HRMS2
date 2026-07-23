@@ -18,7 +18,7 @@ import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPane
 
 export function HrReferenceLayout({ data }: { data: ReferenceDashboardData }) {
   const m = data.metrics;
-  const selected = asNumber(data.ats.selected_candidates ?? data.ats.selectedCandidates ?? data.ats.total_selected ?? data.ats.total);
+  const selected = asNumber(data.ats.selected_candidates ?? data.ats.selectedCandidates ?? data.ats.total_selected);
   const submitted = metricDetail(m, "onb", "submitted");
   const pending = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
   const stuck = metricDetail(m, "onb", "stuck");
@@ -38,8 +38,8 @@ export function HrReferenceLayout({ data }: { data: ReferenceDashboardData }) {
       <ReferenceHeader title="HR Dashboard" subtitle="Recruitment, onboarding, BGV and exit management" badge="HR View" />
 
       <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
-        { label: "Selected Candidates", value: selected, helper: "Vs Last 30 Days", icon: UserCheck, tone: "blue", trend: variance(selected, previousSelected), href: "/ats/dashboard" },
-        { label: "Onboarding Submitted", value: submitted, helper: "Vs Last 30 Days", icon: FileCheck2, tone: "green", trend: variance(submitted, previousSubmitted), href: "/onboarding" },
+        { label: "Selected Candidates", value: selected, helper: previousSelected === null ? "Current reporting window" : "Vs Last 30 Days", icon: UserCheck, tone: "blue", trend: variance(selected, previousSelected), href: "/ats/dashboard" },
+        { label: "Onboarding Submitted", value: submitted, helper: previousSubmitted === null ? "Current reporting window" : "Vs Last 30 Days", icon: FileCheck2, tone: "green", trend: variance(submitted, previousSubmitted), href: "/onboarding" },
         { label: "Onboarding Pending", value: pending, helper: "Awaiting completion or review", icon: Hourglass, tone: "amber", href: "/onboarding" },
         { label: "Onboarding Stuck", value: stuck, helper: "Requires intervention", icon: TriangleAlert, tone: "red", href: "/onboarding" },
         { label: "BGV Pending", value: bgv, helper: "Verification cases open", icon: ShieldCheck, tone: "red", href: "/ats/bgv" },
@@ -54,7 +54,7 @@ export function HrReferenceLayout({ data }: { data: ReferenceDashboardData }) {
 
       <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
         <ReferenceAIBrief
-          title="HR Operations AI Briefing"
+          title="Automated HR Operations Summary"
           intro="Here's a summary of recruitment and onboarding operations based on live data."
           actionHref="/reports"
           actionLabel="View Detailed HR Report"

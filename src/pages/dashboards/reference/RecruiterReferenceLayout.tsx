@@ -16,9 +16,9 @@ import {
   ReferenceListRow,
   ReferenceMetricGrid,
   ReferencePanel,
-  ReferenceDonut,
   ReferenceQuickLink,
 } from "../ReferenceDashboardUI";
+import { buildRecruitmentFunnel } from "../dashboard-data-contracts";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import {
   arrayAt,
@@ -38,29 +38,18 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
 
   const totalApplications = asNumber(a.total_candidates ?? a.total_applications ?? metricValue(m, "ats"));
   const walkins = asNumber(a.walkins_today ?? byStage["walk_in"] ?? byStage["Walk In"] ?? byStage["walkin"] ?? a.total_walkins);
-  const offers = asNumber(
-    ((byStage["selected"] ?? 0) + (byStage["Selected"] ?? 0) +
-    (byStage["Shortlisted"] ?? 0) + (byStage["shortlisted"] ?? 0)) ||
-    (a.selected_candidates ?? a.offers_extended)
-  );
+  const offers = asNumber(byStage["offered"] ?? byStage["offer_extended"] ?? a.offers_extended ?? a.offers_today);
   const joined = asNumber(
     ((byStage["converted"] ?? 0) + (byStage["Onboarded"] ?? 0) + (byStage["onboarded"] ?? 0)) ||
     (a.joined ?? a.converted)
   );
 
-  const funnelStages = [
-    { label: "Applied", value: asNumber(a.total_candidates ?? totalApplications) ?? 0, color: "#3b82f6" },
-    { label: "Screened", value: asNumber(byStage["shortlisted"] ?? byStage["Shortlisted"] ?? byStage["screened"]) ?? 0, color: "#8b5cf6" },
-    { label: "Interviewed", value: asNumber(byStage["interview"] ?? byStage["Interview"] ?? byStage["interviewed"]) ?? 0, color: "#06b6d4" },
-    { label: "Offered / Selected", value: offers ?? 0, color: "#f59e0b" },
-    { label: "Joined", value: joined ?? 0, color: "#22c55e" },
-  ].filter((s) => s.value > 0);
+  const funnelStages = buildRecruitmentFunnel(a);
 
-  // open_positions from stats is a count; build display rows from by_stage breakdown
-  const openCount = asNumber(a.open_positions) ?? 0;
-  const openPositions = openCount > 0
-    ? [{ role: "Open Positions", openings: openCount, process: "Active Pipeline" }]
-    : arrayAt(ats, "open_positions").concat(arrayAt(ats, "open_requisitions")).slice(0, 6);
+  const openCount = asNumber(a.open_positions);
+  const openPositions = arrayAt(ats, "open_requisitions")
+    .concat(Array.isArray(a.open_positions) ? arrayAt(ats, "open_positions") : [])
+    .slice(0, 6);
 
   const recentCandidates = arrayAt(ats, "recent_candidates").concat(arrayAt(ats, "pipeline")).slice(0, 6);
 
@@ -110,10 +99,10 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
         <ReferencePanel title="Hiring Funnel" bodyClassName="p-4">
-          {funnelStages.length > 0 ? (
+          {totalApplications !== null ? (
             <div className="space-y-3">
               {funnelStages.map((stage) => {
-                const maxVal = funnelStages[0]?.value ?? 1;
+                const maxVal = Math.max(funnelStages[0]?.value ?? 0, 1);
                 const pct = maxVal > 0 ? Math.round((stage.value / maxVal) * 100) : 0;
                 return (
                   <div key={stage.label} className="flex items-center gap-3">
@@ -130,18 +119,13 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
               })}
             </div>
           ) : (
-            <ReferenceDonut
-              data={[
-                { label: "Open", value: 1, color: "#e2e8f0" },
-              ]}
-              size={120}
-            />
+            <p className="py-8 text-center text-sm text-[#a0aec0]">Recruitment funnel source unavailable</p>
           )}
         </ReferencePanel>
 
         <ReferencePanel
           title="Open Positions"
-          action={<span className="text-xs text-[#61708a]">{formatValue(openPositions.length)} roles</span>}
+          action={<span className="text-xs text-[#61708a]">{formatValue(openCount ?? openPositions.length)} roles</span>}
           bodyClassName="p-0"
         >
           <div className="divide-y divide-[#edf1f6]">
@@ -155,7 +139,9 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
                 badgeTone={String(row.urgency ?? "").toLowerCase() === "urgent" ? "red" : "amber"}
               />
             )) : (
-              <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">No open positions</p>
+              <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">
+                {openCount === 0 ? "No open positions" : "Requisition details unavailable"}
+              </p>
             )}
           </div>
         </ReferencePanel>

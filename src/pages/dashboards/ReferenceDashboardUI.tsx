@@ -22,6 +22,9 @@ import {
 } from "recharts";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { navGroups } from "@/components/layout/navConfig";
+import type { NavItem } from "@/components/layout/SidebarNav";
+import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 import type { Tone } from "./reference-dashboard-model";
 import { formatValue } from "./reference-dashboard-model";
@@ -109,7 +112,7 @@ export function ReferenceHeader({
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.025em] text-[#081a3a]">{title}</h1>
           {badge ? (
-            <span className="rounded-md border border-[#bcd4fb] bg-[#edf4ff] px-2 py-0.5 text-[11px] font-semibold text-[#0b63e5]">
+            <span className="rounded-md border border-[#bcd4fb] bg-[#edf4ff] px-2 py-0.5 text-xs font-semibold text-[#0b63e5]">
               {badge}
             </span>
           ) : null}
@@ -143,7 +146,7 @@ export function UpdatedControl({
     <button
       type="button"
       onClick={onRefresh}
-      className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-[11px] font-medium text-[#61708a] hover:bg-[#f4f7fb] hover:text-[#0b63e5]"
+      className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-xs font-medium text-[#61708a] hover:bg-[#f4f7fb] hover:text-[#0b63e5]"
       aria-label="Refresh dashboard data"
     >
       <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} aria-hidden="true" />
@@ -180,7 +183,7 @@ export function ReferenceMetricCard({ metric, loading = false }: { metric: Refer
             <div className="flex items-start justify-between gap-2">
               <p className="truncate text-[12px] font-semibold text-[#1d2b45]">{metric.label}</p>
               {metric.trend !== null && metric.trend !== undefined ? (
-                <span className={cn("inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold", metric.trend >= 0 ? "text-[#16a34a]" : "text-[#ef4444]")}>
+                <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs font-semibold", metric.trend >= 0 ? "text-[#16a34a]" : "text-[#ef4444]")}>
                   {metric.trend >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
                   {Math.abs(metric.trend).toFixed(1)}%
                 </span>
@@ -189,7 +192,7 @@ export function ReferenceMetricCard({ metric, loading = false }: { metric: Refer
             <p className={cn("mt-1 text-[25px] font-extrabold leading-none tracking-[-0.02em]", tone.value)}>
               {formatValue(metric.value, metric.valueSuffix ?? "")}
             </p>
-            {metric.helper ? <p className="mt-2 truncate text-[10px] text-[#71809a]">{metric.helper}</p> : null}
+            {metric.helper ? <p className="mt-2 truncate text-xs text-[#71809a]">{metric.helper}</p> : null}
           </div>
         </>
       )}
@@ -277,10 +280,10 @@ export function ReferenceActionStrip({
           const content = (
             <div className={cn("rounded-lg border px-3 py-2.5", cls)}>
               <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-[11px] font-bold text-[#1d2b45]">{item.label}</p>
-                <span className="rounded-full bg-current/10 px-2 py-0.5 text-[10px] font-extrabold">{formatValue(item.value)}</span>
+                <p className="truncate text-xs font-bold text-[#1d2b45]">{item.label}</p>
+                <span className="rounded-full bg-current/10 px-2 py-0.5 text-xs font-extrabold">{formatValue(item.value)}</span>
               </div>
-              <p className="mt-1 truncate text-[9px] text-[#71809a]">{item.detail}</p>
+              <p className="mt-1 truncate text-xs text-[#71809a]">{item.detail}</p>
             </div>
           );
           return item.href ? <Link key={item.label} to={item.href}>{content}</Link> : <div key={item.label}>{content}</div>;
@@ -316,16 +319,16 @@ export function ReferenceDonut({
             </PieChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex h-full items-center justify-center text-[11px] text-[#94a3b8]">No data</div>
+          <div className="flex h-full items-center justify-center text-xs text-[#94a3b8]">No data</div>
         )}
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-[22px] font-extrabold leading-none text-[#0b1f44]">{formatValue(centerValue ?? total)}</span>
-          <span className="mt-1 text-[9px] font-medium text-[#71809a]">{centerLabel}</span>
+          <span className="mt-1 text-xs font-medium text-[#71809a]">{centerLabel}</span>
         </div>
       </div>
       <div className="space-y-2">
         {clean.map((item, index) => (
-          <div key={item.name} className="flex items-center justify-between gap-3 text-[11px]">
+          <div key={item.name} className="flex items-center justify-between gap-3 text-xs">
             <span className="flex min-w-0 items-center gap-2 text-[#61708a]">
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: REFERENCE_CHART_COLORS[index % REFERENCE_CHART_COLORS.length] }} />
               <span className="truncate">{item.name}</span>
@@ -349,7 +352,7 @@ export function ReferenceLineChart({
   xKey?: string;
   height?: number;
 }) {
-  if (!data.length) return <div className="flex h-44 items-center justify-center text-[11px] text-[#94a3b8]">Historical data is unavailable</div>;
+  if (!data.length) return <div className="flex h-44 items-center justify-center text-xs text-[#94a3b8]">Historical data is unavailable</div>;
   return (
     <div style={{ height }} aria-label="Trend chart">
       <ResponsiveContainer width="100%" height="100%">
@@ -382,7 +385,7 @@ export function ReferenceProgress({
   const width = max > 0 ? Math.min(100, (safe / max) * 100) : 0;
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px]">
+      <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
         <span className="font-medium text-[#61708a]">{label}</span>
         <span className={cn("font-bold", TONE[tone].value)}>{formatValue(value, suffix)}</span>
       </div>
@@ -417,12 +420,12 @@ export function ReferenceListRow({
           </span>
         ) : null}
         <div className="min-w-0">
-          <p className="truncate text-[11px] font-semibold text-[#1d2b45]">{title}</p>
-          {subtitle ? <p className="mt-0.5 truncate text-[9px] text-[#71809a]">{subtitle}</p> : null}
+          <p className="truncate text-xs font-semibold text-[#1d2b45]">{title}</p>
+          {subtitle ? <p className="mt-0.5 truncate text-xs text-[#71809a]">{subtitle}</p> : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {value !== undefined ? <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", TONE[tone].soft, TONE[tone].value)}>{formatValue(value)}</span> : null}
+        {value !== undefined ? <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", TONE[tone].soft, TONE[tone].value)}>{formatValue(value)}</span> : null}
         {href ? <ArrowRight className="h-3.5 w-3.5 text-[#94a3b8]" aria-hidden="true" /> : null}
       </div>
     </div>
@@ -443,14 +446,40 @@ export function ReferenceQuickLink({
   href: string;
   tone?: Tone;
 }) {
+  const { data: roleData, isLoading } = useUserRole();
+  const targetPath = href.split("?")[0];
+  const findItem = (items: NavItem[]): NavItem | undefined => {
+    for (const item of items) {
+      if (item.href.split("?")[0] === targetPath) return item;
+      const child = item.children ? findItem(item.children) : undefined;
+      if (child) return child;
+    }
+    return undefined;
+  };
+  const navItem = navGroups.flatMap((group) => group.items)
+    .map((item) => item.href.split("?")[0] === targetPath ? item : findItem(item.children ?? []))
+    .find(Boolean);
+  const page = navItem?.pageCode
+    ? roleData?.pages.find((permission) => permission.page_code === navItem.pageCode)
+    : undefined;
+  const allowed = !isLoading && Boolean(roleData) && Boolean(navItem) && (
+    navItem!.public === true
+    || (navItem!.pageCode
+      ? page?.can_view === true && !roleData!.disabledPageCodes.includes(navItem!.pageCode)
+      : navItem!.roles
+        ? navItem!.roles.some((role) => roleData!.roleKeys.includes(role))
+        : true)
+  );
+  if (!allowed) return null;
+
   return (
     <Link to={href} className="reference-quick-link" aria-label={title}>
       <span className={cn("flex h-10 w-10 items-center justify-center rounded-lg", TONE[tone].icon)}>
         <Icon className="h-5 w-5" aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[11px] font-semibold leading-tight text-[#1d2b45]">{title}</span>
-        {subtitle ? <span className="mt-0.5 block text-[9px] leading-tight text-[#71809a]">{subtitle}</span> : null}
+        <span className="block truncate text-xs font-semibold leading-tight text-[#1d2b45]">{title}</span>
+        {subtitle ? <span className="mt-0.5 block text-xs leading-tight text-[#71809a]">{subtitle}</span> : null}
       </span>
       <ArrowRight className="h-4 w-4 shrink-0 text-[#94a3b8]" aria-hidden="true" />
     </Link>
@@ -459,10 +488,10 @@ export function ReferenceQuickLink({
 
 export function ReferenceError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-[#ffdadd] bg-[#fff7f7] px-4 py-3 text-[11px] text-[#b91c1c]" role="alert">
+    <div className="flex items-center gap-3 rounded-lg border border-[#ffdadd] bg-[#fff7f7] px-4 py-3 text-xs text-[#b91c1c]" role="alert">
       <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="flex-1">{message}</span>
-      <button type="button" onClick={onRetry} className="rounded-md border border-[#fecaca] bg-white px-3 py-1.5 text-[10px] font-semibold hover:bg-[#fff0f1]">Retry</button>
+      <button type="button" onClick={onRetry} className="rounded-md border border-[#fecaca] bg-white px-3 py-1.5 text-xs font-semibold hover:bg-[#fff0f1]">Retry</button>
     </div>
   );
 }
@@ -471,7 +500,7 @@ export function ReferenceEmpty({ text = "No data available" }: { text?: string }
   return (
     <div className="flex min-h-28 flex-col items-center justify-center text-center text-[#94a3b8]">
       <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-      <p className="mt-2 text-[10px]">{text}</p>
+      <p className="mt-2 text-xs">{text}</p>
     </div>
   );
 }

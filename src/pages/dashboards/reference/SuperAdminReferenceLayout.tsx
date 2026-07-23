@@ -61,7 +61,6 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
   const leaveTotal = leaveRows.reduce((sum, row) => sum + (asNumber(row.count ?? row.value) ?? 0), 0);
   const leaveApproved = leaveRows.reduce((sum, row) => String(row.status ?? "").toLowerCase().includes("approved") ? sum + (asNumber(row.count ?? row.value) ?? 0) : sum, 0);
   const leavePending = leaveRows.reduce((sum, row) => String(row.status ?? "").toLowerCase().includes("pending") ? sum + (asNumber(row.count ?? row.value) ?? 0) : sum, 0);
-  const pendingQueues = (read(data.payroll, "pendingQueues") ?? {}) as Record<string, unknown>;
 
   return (
     <div className="reference-dashboard-page">
@@ -74,7 +73,7 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
         { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red" },
         { label: "Total Branches", value: branches, helper: "Active", icon: Building2, tone: "green" },
         { label: "Open Positions", value: openPositions, helper: "Across departments", icon: Network, tone: "blue" },
-        { label: "System Uptime", value: uptime, helper: "Excellent", icon: Activity, tone: "green" },
+        { label: "System Uptime", value: uptime, helper: uptime === "—" ? "Source unavailable" : "Reported by system health", icon: Activity, tone: uptime === "—" ? "slate" : "green" },
       ]} />
 
       <div className="grid gap-4 xl:grid-cols-[0.82fr_0.78fr_0.78fr_1.22fr]">
@@ -86,36 +85,36 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
           ]} />
         </ReferencePanel>
 
-        <ReferencePanel title="Leave Overview (This Month)" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/leaves">View all</a>}>
+        <ReferencePanel title="Leave Overview (This Month)" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/leaves">View all</a>}>
           <div className="grid grid-cols-3 gap-3">
-            <div><p className="text-[9px] text-[#71809a]">Total Leaves</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveTotal || null)}</p></div>
-            <div><p className="text-[9px] text-[#71809a]">Approved</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveApproved || null)}</p></div>
-            <div><p className="text-[9px] text-[#71809a]">Pending</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leavePending || null)}</p></div>
+            <div><p className="text-xs text-[#71809a]">Total Leaves</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveTotal || null)}</p></div>
+            <div><p className="text-xs text-[#71809a]">Approved</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveApproved || null)}</p></div>
+            <div><p className="text-xs text-[#71809a]">Pending</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leavePending || null)}</p></div>
           </div>
           <div className="mt-5 rounded-lg bg-[#f4f8ff] p-4"><ReferenceProgress label="Leave Balance Usage" value={asNumber(data.workforce.leave_balance_usage_pct)} max={100} suffix="%" tone="blue" /></div>
         </ReferencePanel>
 
-        <ReferencePanel title="Recent Joiners" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/employees">View all</a>} bodyClassName="p-0">
+        <ReferencePanel title="Recent Joiners" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/employees">View all</a>} bodyClassName="p-0">
           <div className="max-h-[230px] divide-y divide-[#edf1f6] overflow-y-auto">
             {recentJoiners.length ? recentJoiners.slice(0, 6).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={UserPlus} title={String(row.employee_name ?? row.full_name ?? row.name ?? `New Joiner ${index + 1}`)} subtitle={String(row.designation_name ?? row.designation ?? "Employee")} value={String(row.joining_date ?? row.date ?? "—")} tone="blue" />
-            )) : <div className="px-4 py-12 text-center text-[10px] text-[#94a3b8]">Recent joiners are unavailable</div>}
+            )) : <div className="px-4 py-12 text-center text-xs text-[#94a3b8]">Recent joiners are unavailable</div>}
           </div>
         </ReferencePanel>
 
-        <ReferencePanel title="Employee Trend (This Year)" action={<span className="text-[10px] text-[#61708a]">This Year</span>}><ReferenceLineChart data={movement} height={190} /></ReferencePanel>
+        <ReferencePanel title="Employee Trend (This Year)" action={<span className="text-xs text-[#61708a]">This Year</span>}><ReferenceLineChart data={movement} height={190} /></ReferencePanel>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.9fr_1.05fr]">
-        <ReferencePanel title="Branch / Process Snapshot" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/reports">View all</a>} bodyClassName="p-0">
+        <ReferencePanel title="Branch / Process Snapshot" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/reports">View all</a>} bodyClassName="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left text-[9px]"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-4 py-2">Branch / Process</th><th>Employees</th><th>Present %</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">
+            <table className="w-full min-w-[520px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-4 py-2">Branch / Process</th><th>Employees</th><th>Present %</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">
               {branchRows.length ? branchRows.slice(0, 8).map((row, index) => { const pct = asNumber(row.present_pct ?? row.attendance_pct); return <tr key={String(row.id ?? index)}><td className="px-4 py-2.5 font-medium text-[#1d2b45]">{String(row.branch_name ?? row.process_name ?? row.name ?? `Scope ${index + 1}`)}</td><td>{formatValue(row.employee_count ?? row.employees)}</td><td>{formatValue(pct, "%")}</td><td className={pct !== null && pct >= 70 ? "font-semibold text-[#16a34a]" : "font-semibold text-[#f97316]"}>{pct !== null && pct >= 70 ? "Healthy" : "Warning"}</td></tr>; }) : <tr><td colSpan={4} className="px-4 py-10 text-center text-[#94a3b8]">Branch snapshot is unavailable</td></tr>}
             </tbody></table>
           </div>
         </ReferencePanel>
 
-        <ReferencePanel title="Approval Queue" action={<span className="rounded-full bg-[#edf4ff] px-2 py-0.5 text-[9px] font-bold text-[#0b63e5]">{formatValue(pending)} Pending</span>} bodyClassName="p-0">
+        <ReferencePanel title="Approval Queue" action={<span className="rounded-full bg-[#edf4ff] px-2 py-0.5 text-xs font-bold text-[#0b63e5]">{formatValue(pending)} Pending</span>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             <ReferenceListRow icon={CalendarDays} title="Leave Requests" value={asNumber(data.workforce.pending_leave_requests)} tone="green" href="/leaves" />
             <ReferenceListRow icon={FileCheck2} title="Timesheet Approvals" value={asNumber(data.workforce.pending_timesheets)} tone="blue" href="/work-inbox" />
@@ -139,25 +138,25 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_0.9fr_1.2fr]">
-        <ReferencePanel title="System Alerts" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/audit-log">View all</a>} bodyClassName="p-0">
+        <ReferencePanel title="System Alerts" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/audit-log">View all</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             <ReferenceListRow icon={TriangleAlert} title="High number of absences" subtitle="Review attendance exceptions" value={absent} tone="red" href="/attendance" />
-            <ReferenceListRow icon={TriangleAlert} title="Payroll pending" subtitle="Review current payroll cycle" value={asNumber(pendingQueues.total)} tone="amber" href="/payroll" />
+            <ReferenceListRow icon={TriangleAlert} title="Payroll status" subtitle="Select a payroll run for operational status" value="—" tone="slate" href="/payroll" />
             <ReferenceListRow icon={ShieldCheck} title="2FA not enabled" subtitle="Improve account security" value={asNumber(systemMetrics.usersWithout2fa)} tone="amber" href="/settings/access-control" />
             <ReferenceListRow icon={Database} title="System backup" subtitle="Latest backup status" value={String(data.system.backup_status ?? "—")} tone="blue" />
           </div>
         </ReferencePanel>
 
-        <ReferencePanel title="Compliance Alerts" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/compliance/statutory">View all</a>} bodyClassName="p-0">
+        <ReferencePanel title="Compliance Alerts" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/compliance/statutory">View all</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             <ReferenceListRow icon={TriangleAlert} title="Documents expired" value={asNumber(data.workforce.expired_documents)} tone="red" href="/compliance/statutory" />
             <ReferenceListRow icon={TriangleAlert} title="Policies pending acknowledgement" value={asNumber(data.workforce.pending_policy_acknowledgements)} tone="amber" href="/compliance/statutory" />
-            <ReferenceListRow icon={CalendarDays} title="Statutory filing due" value={arrayAt(data.payroll, "statutoryFiling").length} tone="amber" href="/payroll/statutory-filing" />
+            <ReferenceListRow icon={CalendarDays} title="Statutory filing due" subtitle="Run-linked source unavailable" value="—" tone="slate" href="/payroll/statutory-filing" />
             <ReferenceListRow icon={Activity} title="Annual appraisal cycle" value={data.workforce.appraisal_completion_pct} tone="blue" href="/performance" />
           </div>
         </ReferencePanel>
 
-        <ReferencePanel title="Recent Activity" action={<a className="text-[10px] font-semibold text-[#0b63e5]" href="/audit-log">View all</a>} bodyClassName="p-0">
+        <ReferencePanel title="Recent Activity" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/audit-log">View all</a>} bodyClassName="p-0">
           <div className="max-h-[270px] divide-y divide-[#edf1f6] overflow-y-auto">
             {activities.length ? activities.slice(0, 8).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={BellRing} title={String(row.user ?? row.user_name ?? row.actor ?? "System")} subtitle={String(row.action ?? row.description ?? "System activity")} value={String(row.timestamp ?? row.created_at ?? "—")} tone={String(row.status ?? "").toLowerCase().includes("error") ? "red" : "blue"} />

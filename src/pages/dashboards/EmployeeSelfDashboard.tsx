@@ -1,5 +1,5 @@
-import RoleDashboardV3 from "./RoleDashboardV3";
+import ReferenceRoleDashboard from "./ReferenceRoleDashboard";
 
 export default function EmployeeSelfDashboard() {
-  return <RoleDashboardV3 variant="employee" />;
+  return <ReferenceRoleDashboard variant="employee" />;
 }

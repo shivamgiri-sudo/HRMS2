@@ -1,6 +1,11 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { type DashboardScope, buildScopeWhere } from "../../shared/dashboardScope.js";
+import {
+  type DashboardScope,
+  buildEmployeeLinkedScopeWhere,
+  buildScopeWhere,
+  buildScopeWhereEmployees,
+} from "../../shared/dashboardScope.js";
 import { enrichMetric, type MetricEnrichment } from "./dashboard-target.service.js";
 import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
 
@@ -67,9 +72,9 @@ function nullResult(metricCode: string): MetricResult {
 // ─── Headcount ────────────────────────────────────────────────────────────────
 export async function getHeadcountMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS active FROM employees WHERE employment_status = 'active' AND ${scopeSql}`,
+      `SELECT COUNT(*) AS active FROM employees e WHERE e.employment_status = 'active' AND ${scopeSql}`,
       scopeParams
     );
     const active = Number((rows[0] as any)?.active ?? 0);
@@ -86,7 +91,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
          WHERE wm.active_status = 1 AND ${reqScopeSql})
        ) AS required_hc`,
       [...reqScopeParams, ...reqScopeParams]
-    ).catch(() => [[{ required_hc: null }]] as any);
+    );
 
     // Available HC: employees clocked in/active today (IST)
     const { sql: availScopeSql, params: availScopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
@@ -98,12 +103,13 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
          AND s.current_status IN ('Rostered', 'Active', 'Login')
          AND ${availScopeSql}`,
       availScopeParams
-    ).catch(() => [[{ available_hc: null }]] as any);
+    );
 
     // Use scheduled/mandated HC, fall back to active headcount as baseline
-    const required = reqRows[0] != null
-      ? (Number((reqRows[0] as any).required_hc ?? 0) || active || null)
-      : (active || null);
+    const requiredRaw = (reqRows[0] as any)?.required_hc;
+    const required = requiredRaw === null || requiredRaw === undefined
+      ? null
+      : Number(requiredRaw);
     const available = availRows[0] != null ? Number((availRows[0] as any).available_hc ?? 0) : null;
     const short = required != null && available != null ? required - available : null;
 
@@ -128,11 +134,11 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
        FROM ats_onboarding_bridge
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ total: 0, submitted: 0, pending: 0, stuck: 0 }]] as any);
+    );
 
     const [otpRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS otp_verified FROM candidate_onboarding_profile WHERE otp_verified = 1`
-    ).catch(() => [[{ otp_verified: 0 }]] as any);
+    );
 
     const r = bridgeRows[0] as any;
     const submitted = Number(r?.submitted ?? 0);
@@ -150,7 +156,12 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
 // ─── Attendance ───────────────────────────────────────────────────────────────
 export async function getAttendanceMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const { sql: scopeSql, params: scopeParams } = buildEmployeeLinkedScopeWhere(
+      scope,
+      "employee_id",
+      "branch_id",
+      "process_id",
+    );
 
     // Use live WFM attendance sessions for real-time present count
     const [liveRows] = await db.execute<RowDataPacket[]>(
@@ -159,9 +170,9 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
        JOIN employees e ON e.id = s.employee_id
        WHERE DATE(s.session_date) = ${IST_DATE_EXPR}
          AND s.current_status IN ('Logged In', 'Active', 'Login', 'Rostered')
-         AND ${buildScopeWhere(scope, "e.branch_id", "e.process_id").sql}`,
-      buildScopeWhere(scope, "e.branch_id", "e.process_id").params
-    ).catch(() => [[{ live_present: 0 }]] as any);
+         AND ${buildScopeWhereEmployees(scope, "e").sql}`,
+      buildScopeWhereEmployees(scope, "e").params
+    );
 
     // Get processed attendance records for detailed breakdown
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -174,7 +185,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
        FROM attendance_daily_record
        WHERE record_date = ${IST_DATE_EXPR} AND ${scopeSql}`,
       scopeParams
-    ).catch(() => [[null]] as any);
+    );
 
     // Get employees expected to work today (rostered, excluding leave/week-off)
     const [expectedRows] = await db.execute<RowDataPacket[]>(
@@ -184,12 +195,13 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
          AND attendance_status NOT IN ('on_leave', 'leave', 'week_off', 'holiday')
          AND ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ expected_to_work: 0 }]] as any);
+    );
 
     const livePresent = Number((liveRows[0] as any)?.live_present ?? 0);
     const expectedToWork = Number((expectedRows[0] as any)?.expected_to_work ?? 0);
 
-    // Prefer live data, fall back to processed data
+    // Live and processed attendance are intentionally kept separate. The rate
+    // uses only processed attendance numerator and denominator.
     const r = rows[0] as any;
     const processedPresent = Number(r?.present ?? 0);
     const absent = Number(r?.absent ?? 0);
@@ -198,7 +210,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const totalRecords = Number(r?.total ?? 0);
 
     // Use live present count if available, otherwise use processed
-    const present = livePresent > 0 ? livePresent : processedPresent;
+    const present = processedPresent;
     // Denominator: employees expected to work (from attendance records, excluding leave/week-off)
     // Fall back to total records if expected query returns 0
     const denominator = expectedToWork > 0 ? expectedToWork : (totalRecords > 0 ? totalRecords : 0);
@@ -207,7 +219,15 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
 
-    return wrapEnriched("ATTENDANCE", attendanceRate, { present, absent, late, missedPunch, expectedToWork: denominator, attendanceRate }, status, true, scope.branchIds[0], scope.processIds[0]);
+    return wrapEnriched("ATTENDANCE", attendanceRate, {
+      present,
+      livePresent,
+      absent,
+      late,
+      missedPunch,
+      expectedToWork: denominator,
+      attendanceRate,
+    }, status, true, scope.branchIds[0], scope.processIds[0]);
   } catch {
     return nullResult("ATTENDANCE");
   }
@@ -216,7 +236,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
 // ─── Payroll Readiness ────────────────────────────────────────────────────────
 export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -228,8 +248,8 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
                (bank_account_number IS NOT NULL AND bank_account_number != '') AND
                (pan_number IS NOT NULL AND pan_number != '')
              THEN 1 ELSE 0 END) AS readyCount
-       FROM employees
-       WHERE employment_status = 'active' AND ${scopeSql}`,
+       FROM employees e
+       WHERE e.employment_status = 'active' AND ${scopeSql}`,
       scopeParams
     );
 
@@ -247,7 +267,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     return wrapEnriched(
       "PAYROLL_READINESS",
       readyCount,
-      { readyCount, blockerCount, missingBank, missingPan, missingUan },
+      { total, readyCount, blockerCount, missingBank, missingPan, missingUan },
       status, true, scope.branchIds[0], scope.processIds[0]
     );
   } catch {
@@ -269,7 +289,7 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
        FROM incentive_upload_batch
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ pendingBatches: 0, pendingAmount: 0, approvedAmount: 0, rejectedBatches: 0 }]] as any);
+    );
 
     const r = rows[0] as any;
     const pendingBatches = Number(r.pendingBatches ?? 0);
@@ -306,7 +326,7 @@ export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult
        FROM task_tat_instance
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ open_count: 0, overdue: 0, breached: 0, avgAgeHours: null }]] as any);
+    );
 
     const r = rows[0] as any;
     const open = Number(r.open_count ?? 0);
@@ -337,7 +357,7 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
        FROM exit_request
        WHERE exit_status NOT IN ('completed','cancelled') AND ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ totalActive: 0, pendingDiscussion: 0, accepted: 0, withdrawn: 0 }]] as any);
+    );
 
     const r = rows[0] as any;
     const totalActive = Number(r.totalActive ?? 0);
@@ -376,7 +396,7 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
        LEFT JOIN employees e ON e.user_id = dcw.requester_id
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ total: 0, pending: 0, approved: 0, rejected: 0, holdsActive: 0, overdue: 0 }]] as any);
+    );
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
@@ -424,7 +444,7 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
        LEFT JOIN employees e ON e.id = alr.employee_id
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ total: 0, pending: 0, candidatePending: 0, companyPending: 0, overrideRequested: 0, completed: 0 }]] as any);
+    );
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
@@ -468,7 +488,7 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
        LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = bgv.candidate_id
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[null]] as any);
+    );
 
     if (!rows[0]) {
       // Fallback: derive from ats_onboarding_bridge with scope
@@ -481,7 +501,7 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
          FROM ats_onboarding_bridge b
          WHERE ${scopeSql}`,
         scopeParams
-      ).catch(() => [[{ pending: 0, cleared: 0, flagged: 0, breached: 0 }]] as any);
+      );
 
       const rb = bridgeRows[0] as any;
       return wrapEnriched("BGV", Number(rb?.pending ?? 0), {
@@ -522,7 +542,7 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
        LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = nm.candidate_id
        WHERE ${scopeSql}`,
       scopeParams
-    ).catch(() => [[{ mismatch: 0, partial: 0, pending: 0, blocking: 0 }]] as any);
+    );
 
     const r = rows[0] as any;
     const mismatch = Number(r.mismatch ?? 0);
@@ -556,7 +576,7 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
        WHERE c.action_type = 'esign'
          AND ${scopeSql}`,
       scopeParams,
-    ).catch(() => [[{ total: 0, pending: 0, completed: 0, failed: 0, overdue: 0 }]] as any);
+    );
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);

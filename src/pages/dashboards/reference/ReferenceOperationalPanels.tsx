@@ -53,10 +53,10 @@ export function ReferenceAIBrief({
   return (
     <ReferencePanel
       title={title}
-      action={<span className="inline-flex items-center gap-1 rounded-md border border-[#dfd4ff] bg-[#f3efff] px-2 py-1 text-[9px] font-bold text-[#7c3aed]"><Sparkles className="h-3 w-3" />AI</span>}
+      action={<span className="inline-flex items-center gap-1 rounded-md border border-[#dfd4ff] bg-[#f3efff] px-2 py-1 text-xs font-bold text-[#7c3aed]"><Sparkles className="h-3 w-3" />AI</span>}
       bodyClassName="p-0"
     >
-      {intro ? <p className="border-b border-[#edf1f6] px-4 py-3 text-[10px] leading-5 text-[#61708a]">{intro}</p> : null}
+      {intro ? <p className="border-b border-[#edf1f6] px-4 py-3 text-xs leading-5 text-[#61708a]">{intro}</p> : null}
       <div className="divide-y divide-[#edf1f6]">
         {items.map((item, index) => {
           const Icon = item.icon ?? Sparkles;
@@ -66,16 +66,16 @@ export function ReferenceAIBrief({
               <span className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", TONE_CLASS[tone])}><Icon className="h-4 w-4" /></span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
-                  <p className="text-[11px] font-bold text-[#1d2b45]">{item.label}</p>
-                  {item.value !== undefined ? <span className="shrink-0 text-[11px] font-extrabold text-[#0b1f44]">{formatValue(item.value)}</span> : null}
+                  <p className="text-xs font-bold text-[#1d2b45]">{item.label}</p>
+                  {item.value !== undefined ? <span className="shrink-0 text-xs font-extrabold text-[#0b1f44]">{formatValue(item.value)}</span> : null}
                 </div>
-                <p className="mt-1 text-[9px] leading-4 text-[#71809a]">{item.text}</p>
+                <p className="mt-1 text-xs leading-4 text-[#71809a]">{item.text}</p>
               </div>
             </div>
           );
         })}
       </div>
-      <div className="border-t border-[#edf1f6] px-4 py-2.5 text-center"><Link to={actionHref} className="text-[10px] font-semibold text-[#0b63e5]">{actionLabel} →</Link></div>
+      <div className="border-t border-[#edf1f6] px-4 py-2.5 text-center"><Link to={actionHref} className="text-xs font-semibold text-[#0b63e5]">{actionLabel} →</Link></div>
     </ReferencePanel>
   );
 }
@@ -131,9 +131,9 @@ export function ReferenceWorkInbox({ maxItems = 5, title = "Work Inbox" }: { max
   const items = (query.data ?? []).slice(0, maxItems) as InboxItem[];
 
   return (
-    <ReferencePanel title={title} action={<Link to="/work-inbox" className="text-[10px] font-semibold text-[#0b63e5]">View All</Link>} bodyClassName="p-0">
-      {query.isLoading ? <div className="px-4 py-10 text-center text-[10px] text-[#94a3b8]">Loading work inbox…</div> : null}
-      {query.isError ? <div className="mx-4 my-4 flex items-center gap-2 rounded-lg border border-[#ffdadd] bg-[#fff7f7] p-3 text-[10px] text-[#b91c1c]"><TriangleAlert className="h-4 w-4" />Unable to load work inbox</div> : null}
+    <ReferencePanel title={title} action={<Link to="/work-inbox" className="text-xs font-semibold text-[#0b63e5]">View All</Link>} bodyClassName="p-0">
+      {query.isLoading ? <div className="px-4 py-10 text-center text-xs text-[#94a3b8]">Loading work inbox…</div> : null}
+      {query.isError ? <div className="mx-4 my-4 flex items-center gap-2 rounded-lg border border-[#ffdadd] bg-[#fff7f7] p-3 text-xs text-[#b91c1c]"><TriangleAlert className="h-4 w-4" />Unable to load work inbox</div> : null}
       {!query.isLoading && !query.isError && items.length === 0 ? <ReferenceEmpty text="Your inbox is clear" /> : null}
       {items.length > 0 ? (
         <div className="divide-y divide-[#edf1f6]">
@@ -145,8 +145,8 @@ export function ReferenceWorkInbox({ maxItems = 5, title = "Work Inbox" }: { max
             return (
               <Link key={String(item.id ?? index)} to={href} className="flex min-h-[58px] items-center gap-3 px-4 py-3 hover:bg-[#fafcff]">
                 <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", TONE_CLASS[tone])}><Icon className="h-4 w-4" /></span>
-                <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-[#1d2b45]">{String(item.title ?? "Work item")}</p><p className="mt-0.5 truncate text-[9px] text-[#71809a]">{String(item.description ?? moduleCode)}</p></div>
-                <div className="shrink-0 text-right"><span className={cn("inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-[9px] font-bold", TONE_CLASS[tone])}>{String(item.priority ?? "Open")}</span><p className="mt-1 text-[8px] text-[#94a3b8]">{timeAgo(item.due_date ?? item.dueDate)}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-[#1d2b45]">{String(item.title ?? "Work item")}</p><p className="mt-0.5 truncate text-xs text-[#71809a]">{String(item.description ?? moduleCode)}</p></div>
+                <div className="shrink-0 text-right"><span className={cn("inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold", TONE_CLASS[tone])}>{String(item.priority ?? "Open")}</span><p className="mt-1 text-xs text-[#94a3b8]">{timeAgo(item.due_date ?? item.dueDate)}</p></div>
               </Link>
             );
           })}

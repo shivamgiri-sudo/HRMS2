@@ -5,14 +5,20 @@ import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { Loader2, ShieldX, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  canAccessDashboard,
+  type DashboardCode,
+} from "../../../backend/src/shared/dashboardAccessRegistry";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
   /** When provided, the user must have at least one of these role keys. */
   roles?: string[];
+  /** Canonical role-dashboard entitlement. Takes precedence over a local role list. */
+  dashboardCode?: DashboardCode;
 }
 
-export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRouteProps) {
   const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
@@ -65,8 +71,10 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   }
 
   // Role-restricted route: user must have one of the required roles
-  if (roles && roles.length > 0) {
-    const hasRequiredRole = roleKeys.includes("super_admin") || roles.some((r) => roleKeys.includes(r));
+  if (dashboardCode || (roles && roles.length > 0)) {
+    const hasRequiredRole = dashboardCode
+      ? canAccessDashboard(dashboardCode, roleKeys)
+      : roleKeys.includes("super_admin") || roles!.some((r) => roleKeys.includes(r));
     if (!hasRequiredRole) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-background p-4">

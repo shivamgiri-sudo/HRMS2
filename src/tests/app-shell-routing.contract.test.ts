@@ -195,10 +195,8 @@ describe("application shell routing contracts", () => {
 
   it("keeps sales performance out of shared role dashboards", () => {
     const referenceDashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
-    const roleDashboard = read("src/pages/dashboards/RoleDashboardV3.tsx");
 
     expect(referenceDashboard).not.toContain("RoleSalesPerformancePanel");
-    expect(roleDashboard).not.toContain("RoleSalesPerformancePanel");
   });
 
   it("uses the available new-joiner metric for the onboarding employee card", () => {

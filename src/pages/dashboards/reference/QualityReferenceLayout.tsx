@@ -18,6 +18,7 @@ import {
   ReferenceLineChart,
   ReferenceQuickLink,
 } from "../ReferenceDashboardUI";
+import { deduplicateQualityRows } from "../dashboard-data-contracts";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import {
   arrayAt,
@@ -35,19 +36,21 @@ export function QualityReferenceLayout({ data }: { data: ReferenceDashboardData 
   const failRate = asNumber(quality.fail_rate ?? quality.failure_rate);
   const pendingAudits = asNumber(quality.pending_audits ?? quality.queue_size);
 
-  const defectRows = arrayAt(quality, "defects").concat(arrayAt(quality, "defect_categories"));
+  const defectRows = deduplicateQualityRows(
+    arrayAt(quality, "defects").concat(arrayAt(quality, "defect_categories")),
+  );
   const trendRows = arrayAt(quality, "score_trend").map((row) => ({
     label: String(row.period ?? row.label ?? ""),
     value: Number(row.avg_score ?? row.score ?? row.value ?? 0),
   }));
 
-  const agentRows = arrayAt(quality, "bottom_agents")
-    .concat(arrayAt(quality, "low_performers"))
-    .slice(0, 5);
+  const agentRows = deduplicateQualityRows(
+    arrayAt(quality, "bottom_agents").concat(arrayAt(quality, "low_performers")),
+  ).slice(0, 5);
 
   const donutData = [
-    { label: "Pass", value: auditsDone && failRate !== null ? Math.round(auditsDone * (1 - failRate / 100)) : 0, color: "#22c55e" },
-    { label: "Fail", value: auditsDone && failRate !== null ? Math.round(auditsDone * (failRate / 100)) : 0, color: "#ef4444" },
+    { label: "Pass", value: asNumber(quality.passed_audits ?? quality.passed_count), color: "#22c55e" },
+    { label: "Fail", value: asNumber(quality.failed_audits ?? quality.failed_count), color: "#ef4444" },
   ];
 
   return (
@@ -107,7 +110,9 @@ export function QualityReferenceLayout({ data }: { data: ReferenceDashboardData 
         </ReferencePanel>
 
         <ReferencePanel title="Pass vs Fail Split" bodyClassName="p-4">
-          <ReferenceDonut data={donutData} size={160} />
+          {donutData.every((item) => item.value === null)
+            ? <p className="py-8 text-center text-sm text-[#a0aec0]">Direct pass/fail counts unavailable</p>
+            : <ReferenceDonut data={donutData.map((item) => ({ ...item, value: item.value ?? 0 }))} size={160} />}
         </ReferencePanel>
       </div>
 

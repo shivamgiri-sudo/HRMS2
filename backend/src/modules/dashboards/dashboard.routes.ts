@@ -9,25 +9,57 @@ import {
   resolveDashboardScope,
 } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
-import { getDrilldown } from "./dashboard-drilldown.service.js";
 import {
-  getAppointmentEsignMetrics,
-  getAttendanceMetrics,
-  getBgvMetrics,
-  getDpdpWithdrawalMetrics,
-  getHeadcountMetrics,
-  getIncentiveMetrics,
-  getJoiningDocEsignMetrics,
-  getNameMismatchMetrics,
-  getOnboardingMetrics,
-  getPayrollReadinessMetrics,
-  getResignationMetrics,
-  getTatMetrics,
-} from "./dashboard-metric.service.js";
+  canAccessDashboard,
+  getDashboardDefinition,
+  type DashboardCode,
+} from "../../shared/dashboardAccessRegistry.js";
+import { getDrilldown } from "./dashboard-drilldown.service.js";
+import { executeDashboardMetrics } from "./dashboard-definition.service.js";
+import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
+
+function dashboardAccessError(message: string, statusCode: number) {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+async function requireDashboardEntitlement(
+  req: AuthenticatedRequest,
+  dashboardCode: string,
+): Promise<void> {
+  const definition = getDashboardDefinition(dashboardCode);
+  if (!definition) {
+    throw dashboardAccessError("Dashboard not found", 404);
+  }
+  const context = await getUserRoleContext(req.authUser!.id);
+  if (!canAccessDashboard(definition.code, context.roleKeys)) {
+    throw dashboardAccessError(`Not entitled to ${definition.code}`, 403);
+  }
+  req.params.dashboardCode = definition.code;
+}
+
+router.param("dashboardCode", (req, _res, next, dashboardCode) => {
+  requireDashboardEntitlement(req as AuthenticatedRequest, dashboardCode)
+    .then(() => next())
+    .catch(next);
+});
+
+router.get("/access-registry", h(async (req: AuthenticatedRequest, res: any) => {
+  const context = await getUserRoleContext(req.authUser!.id);
+  const { DASHBOARD_ACCESS_REGISTRY } = await import("../../shared/dashboardAccessRegistry.js");
+  const dashboards = Object.values(DASHBOARD_ACCESS_REGISTRY)
+    .filter((item) => canAccessDashboard(item.code, context.roleKeys))
+    .map(({ allowedRoleKeys: _allowedRoleKeys, ...item }) => item);
+  return res.json({ success: true, data: { dashboards } });
+}));
+
+const requireFixedDashboard = (dashboardCode: DashboardCode) =>
+  (req: AuthenticatedRequest, _res: any, next: any) => {
+    requireDashboardEntitlement(req, dashboardCode).then(() => next()).catch(next);
+  };
 
 async function requestedScope(req: AuthenticatedRequest) {
   const user = req.authUser!;
@@ -41,29 +73,16 @@ async function requestedScope(req: AuthenticatedRequest) {
   return { user, context, scope };
 }
 
-async function metricBundle(scope: Awaited<ReturnType<typeof resolveDashboardScope>>) {
-  const [hc, onb, att, payroll, incentive, tat, resign, dpdp, appointmentEsign, bgv, nm, joiningDocEsign] = await Promise.all([
-    getHeadcountMetrics(scope),
-    getOnboardingMetrics(scope),
-    getAttendanceMetrics(scope),
-    getPayrollReadinessMetrics(scope),
-    getIncentiveMetrics(scope),
-    getTatMetrics(scope),
-    getResignationMetrics(scope),
-    getDpdpWithdrawalMetrics(scope),
-    getAppointmentEsignMetrics(scope),
-    getBgvMetrics(scope),
-    getNameMismatchMetrics(scope),
-    getJoiningDocEsignMetrics(scope),
-  ]);
-  return { hc, onb, att, payroll, incentive, tat, resign, dpdp, appointmentEsign, bgv, nm, joiningDocEsign };
-}
-
 // Specific routes must be registered before /:dashboardCode/* routes.
-router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) => {
+router.get("/employee/summary", requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD"), h(async (req: AuthenticatedRequest, res: any) => {
   const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
   const employee = await getEmployeeForUser(req.authUser!.id);
-  if (!employee) return res.json({ success: true, data: { metrics: {}, generatedAt: new Date().toISOString() } });
+  if (!employee) {
+    throw Object.assign(
+      new Error("Employee mapping is required for the self dashboard"),
+      { statusCode: 409, errorCode: "EMPLOYEE_MAPPING_UNAVAILABLE" },
+    );
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -86,7 +105,7 @@ router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) =>
        AND record_date >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m-01')
        AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
     [(employee as any).id],
-  ).catch(() => [[{}]] as any);
+  );
 
   const row = rows[0] as any;
   return res.json({
@@ -113,96 +132,41 @@ router.get("/employee/summary", h(async (req: AuthenticatedRequest, res: any) =>
   });
 }));
 
-router.get("/PAYROLL_HR_DASHBOARD/operational-summary", h(async (req: AuthenticatedRequest, res: any) => {
+router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("PAYROLL_HR_DASHBOARD"), h(async (req: AuthenticatedRequest, res: any) => {
   const { scope } = await requestedScope(req);
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const runId = String(req.query.runId ?? "").trim();
+  if (!runId) {
+    throw Object.assign(new Error("Select a payroll run"), {
+      statusCode: 400,
+      errorCode: "PAYROLL_RUN_REQUIRED",
+    });
+  }
 
   const currentRun = await db.execute<RowDataPacket[]>(
     `SELECT id, run_month, status, run_label, created_at, closed_at, attendance_snapshot_locked, tds_mode
        FROM salary_prep_run
-      WHERE run_month = ?
-      ORDER BY created_at DESC LIMIT 1`,
-    [currentMonth],
-  ).then(([rows]) => (rows as any[])[0] ?? null).catch(() => null);
+      WHERE id = ?`,
+    [runId],
+  ).then(([rows]) => (rows as any[])[0] ?? null);
+  if (!currentRun) {
+    throw Object.assign(new Error("Payroll run not found"), {
+      statusCode: 404,
+      errorCode: "PAYROLL_RUN_NOT_FOUND",
+    });
+  }
+  const currentMonth = String(currentRun.run_month);
 
-  const salaryBill = currentRun?.id ? await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT employee_id) AS emp_count,
-            COALESCE(SUM(gross_pay), SUM(gross_salary), SUM(gross_amount), 0) AS total_gross,
-            COALESCE(SUM(net_pay), SUM(net_salary), SUM(net_amount), 0) AS total_net,
-            COALESCE(SUM(total_deductions), 0) AS total_deductions
-       FROM salary_prep_line WHERE run_id = ?`,
-    [currentRun.id],
-  ).then(([rows]) => (rows as any[])[0] ?? null).catch(() => null) : null;
-
-  const count = async (sql: string, params: unknown[] = []) => db.execute<RowDataPacket[]>(sql, params)
-    .then(([rows]) => Number((rows as any[])[0]?.count ?? 0)).catch(() => 0);
-
-  const [salaryHoldCount, optOuts, bankChanges, chequeValidation, advances, fnfPending] = await Promise.all([
-    count("SELECT COUNT(*) AS count FROM employees WHERE active_status = 1 AND salary_hold = 1"),
-    count("SELECT COUNT(*) AS count FROM employee_statutory_override WHERE status = 'pending'"),
-    count("SELECT COUNT(*) AS count FROM employee_bank_change_request WHERE status = 'pending'"),
-    count("SELECT COUNT(*) AS count FROM cheque_validation_queue WHERE status = 'pending'"),
-    count("SELECT COUNT(*) AS count FROM salary_advance_log WHERE status = 'pending'"),
-    count("SELECT COUNT(*) AS count FROM full_final_settlement WHERE status IN ('pending','draft','in_progress')"),
-  ]);
-
-  const disbursement = await db.execute<RowDataPacket[]>(
-    `SELECT status, COUNT(*) AS count FROM payroll_disbursal WHERE pay_month = ? GROUP BY status`,
-    [currentMonth],
-  ).then(([rows]) => {
-    const result: Record<string, number> = { initiated: 0, in_progress: 0, completed: 0, failed: 0 };
-    for (const row of rows as any[]) result[String(row.status)] = Number(row.count ?? 0);
-    return result;
-  }).catch(() => ({ initiated: 0, in_progress: 0, completed: 0, failed: 0 }));
-
-  const branchReadinessScope = scope.level === "ORG_ALL" || scope.branchIds.length === 0
-    ? { sql: "1=1", params: [] as string[] }
-    : { sql: `r.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`, params: [...scope.branchIds] };
-  const branchReadiness = await db.execute<RowDataPacket[]>(
-    `SELECT r.branch_id, b.branch_name, r.readiness_score, r.readiness_status, r.employee_count, r.branch_head_signoff
-       FROM payroll_branch_readiness r
-       LEFT JOIN branch_master b ON b.id = r.branch_id
-      WHERE r.process_month = ? AND ${branchReadinessScope.sql}
-      ORDER BY r.readiness_score ASC`,
-    [currentMonth, ...branchReadinessScope.params],
-  ).then(([rows]) => rows as any[]).catch(() => []);
-
-  const momTrend = await db.execute<RowDataPacket[]>(
-    `SELECT spr.run_month,
-            COUNT(DISTINCT spl.employee_id) AS headcount,
+  const salaryScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+  const salaryBill = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT spl.employee_id) AS emp_count,
             COALESCE(SUM(spl.gross_pay), SUM(spl.gross_salary), SUM(spl.gross_amount), 0) AS total_gross,
-            COALESCE(SUM(spl.net_pay), SUM(spl.net_salary), SUM(spl.net_amount), 0) AS total_net
-       FROM salary_prep_run spr
-       JOIN salary_prep_line spl ON spl.run_id = spr.id
-      WHERE spr.run_month >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 6 MONTH), '%Y-%m')
-      GROUP BY spr.run_month
-      ORDER BY spr.run_month ASC`,
-  ).then(([rows]) => rows as any[]).catch(() => []);
-
-  const statutoryFiling = await db.execute<RowDataPacket[]>(
-    `SELECT filing_type, due_date, status, filed_date, amount
-       FROM statutory_filing_tracker
-      WHERE due_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        AND due_date <= DATE_ADD(CURDATE(), INTERVAL 60 DAY)
-      ORDER BY due_date ASC`,
-  ).then(([rows]) => rows as any[]).catch(() => []);
-
-  const loans = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS activeLoans,
-            COALESCE(SUM(outstanding_amount), 0) AS totalOutstanding,
-            SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) AS overdueLoans,
-            COALESCE(SUM(CASE WHEN status = 'overdue' THEN outstanding_amount ELSE 0 END), 0) AS overdueAmount
-       FROM employee_loan WHERE status IN ('active','overdue')`,
-  ).then(([rows]) => (rows as any[])[0] ?? {}).catch(() => ({}));
-
-  const reimbursements = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS pendingRequests,
-            COALESCE(SUM(amount), 0) AS totalPending,
-            SUM(CASE WHEN created_at < DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS overdueRequests,
-            ROUND(AVG(TIMESTAMPDIFF(DAY, created_at, NOW())), 1) AS avgTat
-       FROM reimbursement_claim WHERE status = 'pending'`,
-  ).then(([rows]) => (rows as any[])[0] ?? {}).catch(() => ({}));
+            COALESCE(SUM(spl.net_pay), SUM(spl.net_salary), SUM(spl.net_amount), 0) AS total_net,
+            COALESCE(SUM(spl.total_deductions), 0) AS total_deductions
+       FROM salary_prep_line spl
+       JOIN employees e ON e.id = spl.employee_id
+      WHERE spl.run_id = ? AND ${salaryScope.sql}`,
+    [currentRun.id, ...salaryScope.params],
+  ).then(([rows]) => (rows as any[])[0] ?? null);
 
   return res.json({
     success: true,
@@ -224,22 +188,21 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", h(async (req: Authentica
         totalNet: Number(salaryBill.total_net ?? 0),
         totalDeductions: Number(salaryBill.total_deductions ?? 0),
       } : null,
-      salaryHoldCount,
-      pendingQueues: { optOuts, bankChanges, chequeValidation, advances, total: optOuts + bankChanges + chequeValidation + advances },
-      fnfPending,
-      disbursement,
-      branchReadiness,
-      momTrend,
-      statutoryFiling,
-      loans,
-      reimbursements,
+      unavailableSources: {
+        pendingQueues: "Queue records are not linked to a payroll run",
+        disbursement: "Disbursement records are month-linked, not run-linked",
+        branchReadiness: "Readiness records are month-linked, not run-linked",
+        statutoryFiling: "Filing records are not linked to a payroll run",
+        loans: "Loan aggregates are not linked to a payroll run",
+        reimbursements: "Reimbursement aggregates are not linked to a payroll run",
+      },
       generatedAt: new Date().toISOString(),
     },
   });
 }));
 
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {
-  const { dashboardCode } = req.params;
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
   const { user, context, scope } = await requestedScope(req);
   const [workItems] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS pending_count,
@@ -247,23 +210,31 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
        FROM work_item
       WHERE (assigned_to_user_id = ? OR assigned_to_role = ?) AND status = 'pending'`,
     [user.id, context.primaryRole],
-  ).catch(() => [[{ pending_count: 0, overdue_count: 0 }]] as any);
+  );
 
-  return res.json({
-    success: true,
-    data: {
-      dashboardCode,
-      scope,
-      workItems: workItems[0] ?? { pending_count: 0, overdue_count: 0 },
-      metrics: await metricBundle(scope),
-      generatedAt: new Date().toISOString(),
-    },
+  const generatedAt = new Date();
+  const data = dashboardSummarySchema.parse({
+    dashboardCode,
+    scope,
+    workItems: workItems[0],
+    metrics: await executeDashboardMetrics(dashboardCode, scope, generatedAt),
+    generatedAt: generatedAt.toISOString(),
   });
+  return res.json({ success: true, data });
 }));
 
 router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, res: any) => {
   const { scope } = await requestedScope(req);
-  return res.json({ success: true, data: { dashboardCode: req.params.dashboardCode, metrics: await metricBundle(scope), generatedAt: new Date().toISOString() } });
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const generatedAt = new Date();
+  return res.json({
+    success: true,
+    data: {
+      dashboardCode,
+      metrics: await executeDashboardMetrics(dashboardCode, scope, generatedAt),
+      generatedAt: generatedAt.toISOString(),
+    },
+  });
 }));
 
 router.get("/:dashboardCode/metrics", h(async (req: AuthenticatedRequest, res: any) => {
@@ -275,7 +246,7 @@ router.get("/:dashboardCode/metrics", h(async (req: AuthenticatedRequest, res: a
       WHERE drmc.role_code = ? AND drmc.dashboard_code = ? AND dmc.is_active = 1 AND drmc.is_active = 1
       ORDER BY drmc.display_order`,
     [context.primaryRole, req.params.dashboardCode],
-  ).catch(() => [[]] as any);
+  );
   return res.json({ success: true, data: metrics });
 }));
 
@@ -287,7 +258,7 @@ router.get("/:dashboardCode/good-bad-insights", h(async (req: AuthenticatedReque
       WHERE (assigned_to_user_id = ? OR assigned_to_role = ?) AND status = 'pending'
       GROUP BY item_type, priority`,
     [req.authUser!.id, context.primaryRole],
-  ).catch(() => [[]] as any);
+  );
   const good = (rows as any[]).filter((row) => Number(row.overdue) === 0);
   const bad = (rows as any[]).filter((row) => Number(row.overdue) > 0);
   return res.json({ success: true, data: { good: { count: good.reduce((sum, row) => sum + Number(row.count), 0), items: good }, bad: { count: bad.reduce((sum, row) => sum + Number(row.count), 0), items: bad } } });
@@ -310,7 +281,7 @@ router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: Authenticat
         AND ${scoped.sql}
       ORDER BY snapshot_date ASC`,
     [req.params.dashboardCode, req.params.metricCode, context.primaryRole, ...scoped.params],
-  ).catch(() => [[]] as any);
+  );
   return res.json({ success: true, data: { metricCode: req.params.metricCode, dashboardCode: req.params.dashboardCode, points: rows, periodDays: 30 } });
 }));
 
@@ -326,7 +297,7 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
         AND ${scope.level === "ORG_ALL" ? "1=1" : branchScope.sql.replaceAll("pm.id", "NULL")}
       ORDER BY bm.branch_name`,
     scope.level === "ORG_ALL" ? [] : branchScope.params,
-  ).catch(() => [[]] as any);
+  );
 
   const [processes] = await db.execute<RowDataPacket[]>(
     `SELECT pm.id, pm.process_name AS name, MIN(e.branch_id) AS branchId
@@ -336,7 +307,7 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
       GROUP BY pm.id, pm.process_name
       ORDER BY pm.process_name`,
     processScope.params,
-  ).catch(() => [[]] as any);
+  );
 
   return res.json({ success: true, data: { branches, processes, scope: { level: scope.level } } });
 }));
@@ -352,7 +323,7 @@ router.get("/:dashboardCode/root-causes", h(async (req: AuthenticatedRequest, re
         AND ${scoped.sql}
       ORDER BY b.updated_at ASC LIMIT 3`,
     scoped.params,
-  ).catch(() => [[]] as any);
+  );
   return res.json({ success: true, data: { rootCauses: (onboarding as any[]).map((row) => ({ domain: "ONBOARDING", label: row.label, entityId: row.entityId, count: 1, severity: "warn", detail: row.detail })), generatedAt: new Date().toISOString() } });
 }));
 
@@ -370,7 +341,7 @@ router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRe
       GROUP BY assigned_to_role
       ORDER BY overdue DESC, pending DESC`,
     [req.authUser!.id, context.primaryRole],
-  ).catch(() => [[]] as any);
+  );
   return res.json({ success: true, data: { accountability: (rows as any[]).map((row) => ({ ...row, total: Number(row.total), pending: Number(row.pending), overdue: Number(row.overdue), completed: Number(row.completed), completionRate: Number(row.total) > 0 ? Math.round(Number(row.completed) / Number(row.total) * 100) : 0 })), generatedAt: new Date().toISOString() } });
 }));
 
