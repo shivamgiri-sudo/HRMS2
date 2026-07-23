@@ -15,7 +15,7 @@ import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,                   // 10 attempts per IP per window
+  max: 100,                  // 100 attempts per IP — multiple users share office NAT
   message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
   standardHeaders: true,
   legacyHeaders: false,
