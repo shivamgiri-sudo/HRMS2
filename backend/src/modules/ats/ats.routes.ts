@@ -460,6 +460,8 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
   const params: unknown[] = [userId];
 
   // ── KPI summary ────────────────────────────────────────────────────────────
+  // TAT = Turn Around Time (interview_started_at to submitted_at)
+  // SLA breach = TAT > 90 minutes
   const [[kpi]] = await db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT
       COUNT(*)                                                              AS total,
@@ -469,15 +471,26 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
       SUM(s.final_decision='No Show')                                       AS no_show,
       SUM(s.final_decision='Client Round - Pending')                        AS client_pending,
       ROUND(SUM(s.final_decision='Selected')*100.0/NULLIF(COUNT(*),0),1)   AS conversion_rate,
-      ROUND(AVG(TIMESTAMPDIFF(MINUTE,s.interview_started_at,s.submitted_at)),1) AS avg_interview_min,
-      ROUND(AVG(NULLIF(s.skilltest_typing,0)),1)                           AS avg_typing_wpm,
-      ROUND(AVG(NULLIF(s.skilltest_ai,0)),1)                               AS avg_ai_score
+      ROUND(AVG(TIMESTAMPDIFF(MINUTE,s.interview_started_at,s.submitted_at)),1) AS avg_tat_min,
+      SUM(CASE WHEN TIMESTAMPDIFF(MINUTE,s.interview_started_at,s.submitted_at) > 90 THEN 1 ELSE 0 END) AS sla_breach_count
     ${base}`,
     params
   );
 
-  // ── Hiring entries (from ats_recruiter_hiring_activity, linked via roster) ─
-  // Resolve roster id for hiring activity joins
+  // ── Hiring flow KPIs — compute from ats_interview_submission ─────────────────
+  // This shows: Total Interviewed → Walkins (arrived) → Selected → Joined
+  // We derive this from the same interview submission data for consistency
+  const [[hiringFlowRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT
+      COUNT(*)                                              AS total_entries,
+      COUNT(*)                                              AS walkin_count,
+      SUM(s.final_decision='Selected')                      AS selected_count,
+      0                                                     AS joined_count
+     ${base}`,
+    params
+  );
+
+  // Try to get joined count from ats_recruiter_hiring_activity if roster exists
   const [[rosterRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT r.id AS roster_id, r.recruiter_code
      FROM ats_recruiter_roster r
@@ -488,102 +501,118 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
   const rosterId = (rosterRow?.roster_id as string) ?? null;
   const recruiterCode = (rosterRow?.recruiter_code as string) ?? null;
 
-  let hiringKpi: Record<string, number> = {
-    total_entries: 0, walkin_flag: 0, final_selected: 0, joined: 0,
-  };
+  let joinedCount = 0;
   if (rosterId) {
-    const [[hRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT
-        COUNT(*)                           AS total_entries,
-        SUM(h.walkin_flag=1)               AS walkin_flag,
-        SUM(h.final_selection_flag=1)      AS final_selected,
-        SUM(h.joined_flag=1)               AS joined
+    const [[joinedRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT SUM(h.joined_flag=1) AS joined_count
        FROM ats_recruiter_hiring_activity h
        WHERE h.recruiter_id = ?
-         AND DATE(h.activity_date) >= ${dateStart}
-         AND (DATE(h.activity_date) = CURDATE() OR ? != 'FTD' OR DATE(h.activity_date) = CURDATE())`,
-      [rosterId, period]
+         AND DATE(h.activity_date) >= ${dateStart}`,
+      [rosterId]
     );
-    if (hRow) hiringKpi = hRow;
+    joinedCount = Number(joinedRow?.joined_count) || 0;
   }
 
-  // ── Stage funnel — CUMULATIVE (candidates who reached AT LEAST this stage) ─
-  // walkin_end_stage = the furthest stage reached. So a candidate in "Selection Discussion"
-  // also passed through all prior stages. We sum up all candidates at or beyond each stage.
-  const STAGE_ORDER_SQL = `FIELD(walkin_end_stage,
-    'Arrival','Round 1- HR Screening','Interview - Skill Test',
-    'Round 2- Op''s','Round 3- Client','Selection Discussion')`;
+  const hiringFlow = {
+    total_entries: Number(hiringFlowRow?.total_entries) || 0,
+    walkin_count: Number(hiringFlowRow?.walkin_count) || 0,
+    selected_count: Number(hiringFlowRow?.selected_count) || 0,
+    joined_count: joinedCount,
+  };
 
-  // Get stage-decision counts in one query, then compute cumulative in code
+  // ── Stage funnel — derive stage from round results ─────────────────────────────
+  // Stages: Arrival → HR Round → Skill Test → Ops Round → Client Round → Selection
+  //
+  // Logic to determine which stage a candidate was rejected/stopped at:
+  // - No Show at Arrival: final_decision='No Show' AND round1_result IS NULL
+  // - Rejected at HR Round: round1_result='Rejected'
+  // - Rejected at Skill Test: round1='Selected' AND (skilltest='Rejected' OR skilltest='No Show')
+  // - Rejected at Ops Round: round1='Selected' AND skilltest NOT rejected AND round2='Rejected'
+  // - Rejected at Client Round: round1='Selected' AND round2='Selected' AND round3='Rejected'
+  // - Selected: final_decision='Selected'
+
   const [stageRows] = await db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT
-      walkin_end_stage                       AS stage,
-      COUNT(*)                               AS cnt,
-      SUM(final_decision='Selected')         AS passed,
-      SUM(final_decision='Rejected')         AS rejected,
-      SUM(final_decision='Hold')             AS hold,
-      SUM(final_decision='No Show')          AS no_show,
-      SUM(final_decision='Client Round - Pending') AS pending
+      CASE
+        WHEN final_decision = 'No Show' AND (round1_result IS NULL OR round1_result = '') THEN 'Arrival'
+        WHEN round1_result = 'Rejected' THEN 'HR Round'
+        WHEN round1_result = 'Selected' AND (skilltest_result = 'Rejected' OR skilltest_result = 'No Show') THEN 'Skill Test'
+        WHEN round1_result = 'Selected' AND (skilltest_result IS NULL OR skilltest_result = '' OR skilltest_result = 'Selected') AND round2_result = 'Rejected' THEN 'Ops Round'
+        WHEN round1_result = 'Selected' AND round2_result = 'Selected' AND round3_result = 'Rejected' THEN 'Client Round'
+        WHEN final_decision = 'Selected' THEN 'Selection'
+        WHEN final_decision = 'Hold' OR final_decision = 'Client Round - Pending' THEN 'Pending'
+        ELSE 'Other'
+      END AS effective_stage,
+      final_decision,
+      COUNT(*) AS cnt
      ${base}
-     GROUP BY walkin_end_stage
-     ORDER BY ${STAGE_ORDER_SQL}`,
+     GROUP BY effective_stage, final_decision`,
     params
   );
 
-  // Build cumulative funnel: each stage = all candidates who reached >= this stage rank
-  const STAGES = [
-    'Arrival',
-    'Round 1- HR Screening',
-    'Interview - Skill Test',
-    "Round 2- Op's",
-    'Round 3- Client',
-    'Selection Discussion',
-  ];
-  const stageMap = new Map(stageRows.map((r) => [r.stage as string, r]));
+  // Aggregate by stage
+  const stageData: Record<string, { rejected: number; no_show: number; hold: number; pending: number; selected: number }> = {
+    'Arrival': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'HR Round': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Skill Test': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Ops Round': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Client Round': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Selection': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+  };
 
-  // Rank of each stage (1-based)
-  const stageRank = new Map(STAGES.map((s, i) => [s, i + 1]));
+  for (const row of stageRows) {
+    const stage = row.effective_stage as string;
+    const decision = row.final_decision as string;
+    const cnt = Number(row.cnt) || 0;
 
-  const funnel = STAGES.map((stageName) => {
-    const myRank = stageRank.get(stageName)!;
-    // Cumulative: sum all stages with rank >= myRank
-    let entered = 0, passedFinal = 0, rejectedTotal = 0, holdTotal = 0, noShowTotal = 0, pendingTotal = 0;
-    for (const [s, row] of stageMap) {
-      const r = stageRank.get(s) ?? 99;
-      if (r >= myRank) {
-        entered     += Number(row.cnt)      || 0;
-        passedFinal += Number(row.passed)   || 0;
-        rejectedTotal += Number(row.rejected) || 0;
-        holdTotal   += Number(row.hold)     || 0;
-        noShowTotal += Number(row.no_show)  || 0;
-        pendingTotal += Number(row.pending) || 0;
-      }
-    }
-    // "Passed this stage" = everyone who entered a later stage (rank > myRank)
-    let passedStage = 0;
-    if (myRank < STAGES.length) {
-      for (const [s, row] of stageMap) {
-        const r = stageRank.get(s) ?? 99;
-        if (r > myRank) passedStage += Number(row.cnt) || 0;
-      }
-    } else {
-      // Final stage: passed = selected
-      passedStage = passedFinal;
-    }
-    const completed = passedStage + rejectedTotal + noShowTotal;
-    const passRate  = completed > 0 ? Math.round((passedStage / completed) * 1000) / 10 : 0;
+    if (!stageData[stage]) continue;
+
+    if (decision === 'Rejected') stageData[stage].rejected += cnt;
+    else if (decision === 'No Show') stageData[stage].no_show += cnt;
+    else if (decision === 'Hold') stageData[stage].hold += cnt;
+    else if (decision === 'Client Round - Pending') stageData[stage].pending += cnt;
+    else if (decision === 'Selected') stageData[stage].selected += cnt;
+  }
+
+  // Build funnel: calculate entered/passed for each stage
+  const STAGES = ['Arrival', 'HR Round', 'Skill Test', 'Ops Round', 'Client Round', 'Selection'];
+  const totalCount = Number(kpi?.total) || 0;
+
+  // Calculate cumulative: entered at stage N = total - sum of all rejected/no_show at stages before N
+  let cumulativeDropped = 0;
+  const funnel = STAGES.map((stageName, idx) => {
+    const data = stageData[stageName];
+    const entered = totalCount - cumulativeDropped;
+    const rejected = data.rejected;
+    const no_show = data.no_show;
+    const hold = data.hold;
+    const pending = data.pending;
+    const selected = data.selected;
+
+    // Dropped at this stage = rejected + no_show at this stage
+    const droppedHere = rejected + no_show;
+
+    // Passed = entered - dropped at this stage (for final stage, passed = selected)
+    const passed = idx === STAGES.length - 1 ? selected : (entered - droppedHere);
+
+    // Pass rate
+    const passRate = entered > 0 ? Math.round((passed / entered) * 1000) / 10 : 0;
+
+    // Add to cumulative for next stage
+    cumulativeDropped += droppedHere;
+
     return {
       stage: stageName,
       entered,
-      passed: passedStage,
-      rejected: rejectedTotal,
-      hold: holdTotal,
-      no_show: noShowTotal,
-      pending: pendingTotal,
-      completed,
+      passed,
+      rejected,
+      hold,
+      no_show,
+      pending,
+      completed: passed + rejected + no_show,
       pass_rate: passRate,
     };
-  });
+  }).filter(row => row.entered > 0); // skip stages no candidate ever reached
 
   // ── Daily trend (all days in period, filled) ───────────────────────────────
   const [trend] = await db.execute<import("mysql2").RowDataPacket[]>(
@@ -643,7 +672,7 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
     success: true,
     period,
     profile: profile ?? null,
-    data: { kpi, hiringKpi, funnel, trend, byProcess, voc, bySource },
+    data: { kpi, hiringFlow, funnel, trend, byProcess, voc, bySource },
   });
 }));
 
