@@ -126,7 +126,7 @@ export default function NativeATSSourcingAnalysis() {
   // Resolve channel name for a source key
   const resolveChannelName = (key: string): string => {
     const match = channels.find(
-      (c) => c.id === key || c.name.toLowerCase() === key.toLowerCase()
+      (c) => c.id === key || c.name?.toLowerCase() === key.toLowerCase()
     );
     return match?.name ?? key.replace(/_/g, " ");
   };

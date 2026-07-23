@@ -452,14 +452,15 @@ async function sendTemplateEmail(code: string, candidateId: string | null, to: s
 }
 
 async function candidateSelect(where = "1=1", params: unknown[] = [], limit = 5000): Promise<CandidateRow[]> {
+  const safeLimit = Math.max(1, Math.floor(limit));
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.*,
             COALESCE(c.candidate_code, c.id) AS candidate_id
        FROM ats_candidate c
       WHERE ${where}
       ORDER BY COALESCE(c.created_date, c.created_at) DESC, c.created_at DESC
-      LIMIT ?`,
-    [...params, limit]
+      LIMIT ${safeLimit}`,
+    params
   );
   return rows.map(enrichCandidate);
 }
