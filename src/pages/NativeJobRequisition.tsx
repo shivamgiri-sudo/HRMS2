@@ -6,7 +6,7 @@ import {
   Users, Target, Clock, CheckCircle, XCircle, AlertCircle,
   Plus, Search, Filter, Building2, Briefcase, Calendar,
   ChevronDown, ChevronRight, Eye, Edit, Send, ThumbsUp, ThumbsDown,
-  GraduationCap, UserCheck, FileText, TrendingUp
+  GraduationCap, UserCheck, FileText, TrendingUp, X
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
@@ -105,6 +105,7 @@ interface LmsBatch {
 interface Branch { id: string; branch_name: string; }
 interface Process { id: string; process_name: string; }
 interface Designation { id: string; designation_name: string; }
+interface Department { id: string; dept_name: string; }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -130,6 +131,27 @@ const PRIORITY_COLORS: Record<RequisitionPriority, string> = {
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+const emptyForm = {
+  designation_name: '',
+  department_name: '',
+  branch_name: '',
+  process_name: '',
+  requested_headcount: 1,
+  employment_type: 'full_time' as EmploymentType,
+  salary_min: '',
+  salary_max: '',
+  experience_min_years: '',
+  experience_max_years: '',
+  priority: 'normal' as RequisitionPriority,
+  requisition_type: 'new_position',
+  target_joining_date: '',
+  business_justification: '',
+  skills_required: '',
+  job_description: '',
+  planned_batch_no: '',
+  training_start_date: '',
+};
+
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function NativeJobRequisition() {
@@ -146,30 +168,27 @@ export default function NativeJobRequisition() {
 
   // Masters
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [processes, setProcesses] = useState<Process[]>([]);
+  const [allProcesses, setAllProcesses] = useState<Process[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  // Branch-filtered processes for the create/edit form
+  const [formProcesses, setFormProcesses] = useState<Process[]>([]);
+  const [loadingFormProcesses, setLoadingFormProcesses] = useState(false);
 
   // Create/Edit modal
   const [showModal, setShowModal] = useState(false);
   const [editingRequisition, setEditingRequisition] = useState<JobRequisition | null>(null);
-  const [formData, setFormData] = useState({
-    designation_name: '',
-    department_name: '',
-    branch_name: '',
-    process_name: '',
-    requested_headcount: 1,
-    employment_type: 'full_time' as EmploymentType,
-    salary_min: '',
-    salary_max: '',
-    experience_min_years: '',
-    experience_max_years: '',
-    priority: 'normal' as RequisitionPriority,
-    requisition_type: 'new_position',
-    target_joining_date: '',
-    business_justification: '',
-    skills_required: '',
-    job_description: '',
-  });
+  const [formData, setFormData] = useState({ ...emptyForm });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  // Inline confirmation state
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'submit' | 'approve' | 'reject';
+    id: string;
+    code: string;
+  } | null>(null);
+  const [confirmInput, setConfirmInput] = useState('');
 
   // View detail and funnel
   const [selectedRequisition, setSelectedRequisition] = useState<JobRequisition | null>(null);
@@ -188,6 +207,24 @@ export default function NativeJobRequisition() {
   useEffect(() => {
     loadRequisitions();
   }, [searchTerm, statusFilter, priorityFilter, branchFilter]);
+
+  // When branch changes in form, load processes for that branch
+  useEffect(() => {
+    const branch = formData.branch_name;
+    if (!branch) {
+      setFormProcesses(allProcesses);
+      return;
+    }
+    setLoadingFormProcesses(true);
+    hrmsApi.get<{ success: boolean; data: Process[] }>(
+      `/api/job-requisition/processes-for-branch/${encodeURIComponent(branch)}`
+    )
+      .then(res => setFormProcesses(res.data || []))
+      .catch(() => setFormProcesses(allProcesses))
+      .finally(() => setLoadingFormProcesses(false));
+    // Clear selected process if it doesn't belong to new branch
+    setFormData(prev => ({ ...prev, process_name: '' }));
+  }, [formData.branch_name]);
 
   const loadInitialData = async () => {
     setLoading(true);
@@ -235,14 +272,17 @@ export default function NativeJobRequisition() {
 
   const loadMasters = async () => {
     try {
-      const [branchRes, processRes, designationRes] = await Promise.all([
+      const [branchRes, processRes, designationRes, deptRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: Branch[] }>('/api/org/branches'),
-        hrmsApi.get<{ success: boolean; data: Process[] }>('/api/processes'),
+        hrmsApi.get<{ success: boolean; data: Process[] }>('/api/org/processes'),
         hrmsApi.get<{ success: boolean; data: Designation[] }>('/api/org/designations'),
+        hrmsApi.get<{ success: boolean; data: Department[] }>('/api/org/departments'),
       ]);
       setBranches(branchRes.data || []);
-      setProcesses(processRes.data || []);
+      setAllProcesses(processRes.data || []);
+      setFormProcesses(processRes.data || []);
       setDesignations(designationRes.data || []);
+      setDepartments(deptRes.data || []);
     } catch (err) {
       console.error('Failed to load masters:', err);
     }
@@ -250,7 +290,13 @@ export default function NativeJobRequisition() {
 
   // ── Actions ────────────────────────────────────────────────────────────────────
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
+    setFormError('');
+    if (!formData.designation_name) { setFormError('Designation is required'); return; }
+    if (!formData.branch_name) { setFormError('Branch is required'); return; }
+    if (formData.requested_headcount < 1) { setFormError('Headcount must be at least 1'); return; }
+
+    setSaving(true);
     try {
       const payload = {
         ...formData,
@@ -259,6 +305,8 @@ export default function NativeJobRequisition() {
         experience_min_years: formData.experience_min_years ? Number(formData.experience_min_years) : null,
         experience_max_years: formData.experience_max_years ? Number(formData.experience_max_years) : null,
         target_joining_date: formData.target_joining_date || null,
+        planned_batch_no: formData.planned_batch_no || null,
+        training_start_date: formData.training_start_date || null,
       };
 
       if (editingRequisition) {
@@ -272,44 +320,34 @@ export default function NativeJobRequisition() {
       loadRequisitions();
       loadMetrics();
     } catch (err: any) {
-      alert(err.message || 'Failed to save requisition');
+      setFormError(err.message || 'Failed to save requisition');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleSubmitForApproval = async (id: string) => {
-    if (!confirm('Submit this requisition for approval?')) return;
-    try {
-      await hrmsApi.post(`/api/job-requisition/${id}/submit`);
-      loadRequisitions();
-      loadMetrics();
-    } catch (err: any) {
-      alert(err.message || 'Failed to submit');
-    }
-  };
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return;
+    const { type, id } = confirmAction;
 
-  const handleApprove = async (id: string) => {
-    const remarks = prompt('Enter approval remarks (optional):');
     try {
-      await hrmsApi.post(`/api/job-requisition/${id}/approve`, { remarks });
+      if (type === 'submit') {
+        await hrmsApi.post(`/api/job-requisition/${id}/submit`);
+      } else if (type === 'approve') {
+        await hrmsApi.post(`/api/job-requisition/${id}/approve`, { remarks: confirmInput || null });
+      } else if (type === 'reject') {
+        if (!confirmInput || confirmInput.trim().length < 5) {
+          alert('Rejection reason must be at least 5 characters');
+          return;
+        }
+        await hrmsApi.post(`/api/job-requisition/${id}/reject`, { reason: confirmInput.trim() });
+      }
+      setConfirmAction(null);
+      setConfirmInput('');
       loadRequisitions();
       loadMetrics();
     } catch (err: any) {
-      alert(err.message || 'Failed to approve');
-    }
-  };
-
-  const handleReject = async (id: string) => {
-    const reason = prompt('Enter rejection reason (required):');
-    if (!reason || reason.trim().length < 5) {
-      alert('Rejection reason must be at least 5 characters');
-      return;
-    }
-    try {
-      await hrmsApi.post(`/api/job-requisition/${id}/reject`, { reason });
-      loadRequisitions();
-      loadMetrics();
-    } catch (err: any) {
-      alert(err.message || 'Failed to reject');
+      alert(err.message || `Failed to ${type}`);
     }
   };
 
@@ -342,12 +380,7 @@ export default function NativeJobRequisition() {
         training_start_date: startDate,
       });
       if (funnelData) {
-        setFunnelData({
-          ...funnelData,
-          planned_batch_no: batchNo,
-          planned_batch_name: batchName,
-          training_start_date: startDate,
-        });
+        setFunnelData({ ...funnelData, planned_batch_no: batchNo, planned_batch_name: batchName, training_start_date: startDate });
       }
     } catch (err: any) {
       alert(err.message || 'Failed to assign batch');
@@ -358,21 +391,13 @@ export default function NativeJobRequisition() {
 
   const handleClearBatch = async () => {
     if (!selectedRequisition) return;
-    if (!confirm('Remove batch assignment from this requisition?')) return;
     setBatchAssigning(true);
     try {
       await hrmsApi.patch(`/api/job-requisition/${selectedRequisition.id}/batch`, {
-        batch_no: null,
-        batch_name: null,
-        training_start_date: null,
+        batch_no: null, batch_name: null, training_start_date: null,
       });
       if (funnelData) {
-        setFunnelData({
-          ...funnelData,
-          planned_batch_no: null,
-          planned_batch_name: null,
-          training_start_date: null,
-        });
+        setFunnelData({ ...funnelData, planned_batch_no: null, planned_batch_name: null, training_start_date: null });
       }
     } catch (err: any) {
       alert(err.message || 'Failed to clear batch');
@@ -400,7 +425,10 @@ export default function NativeJobRequisition() {
       business_justification: req.business_justification || '',
       skills_required: '',
       job_description: '',
+      planned_batch_no: '',
+      training_start_date: '',
     });
+    setFormError('');
     setShowModal(true);
   };
 
@@ -411,26 +439,14 @@ export default function NativeJobRequisition() {
   };
 
   const resetForm = () => {
-    setFormData({
-      designation_name: '',
-      department_name: '',
-      branch_name: '',
-      process_name: '',
-      requested_headcount: 1,
-      employment_type: 'full_time',
-      salary_min: '',
-      salary_max: '',
-      experience_min_years: '',
-      experience_max_years: '',
-      priority: 'normal',
-      requisition_type: 'new_position',
-      target_joining_date: '',
-      business_justification: '',
-      skills_required: '',
-      job_description: '',
-    });
+    setFormData({ ...emptyForm });
     setEditingRequisition(null);
+    setFormError('');
   };
+
+  const field = useCallback((key: keyof typeof emptyForm, value: string | number) => {
+    setFormData(prev => ({ ...prev, [key]: value }));
+  }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────────────
 
@@ -476,7 +492,7 @@ export default function NativeJobRequisition() {
         {/* Metrics Cards */}
         {metrics && (
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            <MetricCard icon={<Briefcase className="w-5 h-5" />} label="Total Requisitions" value={metrics.total_requisitions} color="blue" />
+            <MetricCard icon={<Briefcase className="w-5 h-5" />} label="Total" value={metrics.total_requisitions} color="blue" />
             <MetricCard icon={<Target className="w-5 h-5" />} label="Open Positions" value={metrics.total_open_positions} color="emerald" />
             <MetricCard icon={<Clock className="w-5 h-5" />} label="Pending Approval" value={metrics.pending_approval} color="amber" />
             <MetricCard icon={<CheckCircle className="w-5 h-5" />} label="Approved Active" value={metrics.approved_active} color="green" />
@@ -486,32 +502,36 @@ export default function NativeJobRequisition() {
         )}
 
         {/* Charts */}
-        {metrics && (
+        {metrics && (branchChartData.length > 0 || statusChartData.length > 0) && (
           <div className="grid md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-xl shadow-sm border p-4">
-              <h3 className="font-semibold text-gray-800 mb-4">Requisitions by Branch</h3>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={branchChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="requisitions" fill="#3b82f6" name="Requisitions" />
-                  <Bar dataKey="openPositions" fill="#10b981" name="Open Positions" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border p-4">
-              <h3 className="font-semibold text-gray-800 mb-4">Status Distribution</h3>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={statusChartData} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
-                    {statusChartData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            {branchChartData.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm border p-4">
+                <h3 className="font-semibold text-gray-800 mb-4">Requisitions by Branch</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={branchChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar dataKey="requisitions" fill="#3b82f6" name="Requisitions" />
+                    <Bar dataKey="openPositions" fill="#10b981" name="Open Positions" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {statusChartData.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm border p-4">
+                <h3 className="font-semibold text-gray-800 mb-4">Status Distribution</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={statusChartData} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
+                      {statusChartData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
         )}
 
@@ -530,11 +550,7 @@ export default function NativeJobRequisition() {
                 />
               </div>
             </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
               <option value="">All Status</option>
               <option value="draft">Draft</option>
               <option value="pending_approval">Pending Approval</option>
@@ -542,22 +558,14 @@ export default function NativeJobRequisition() {
               <option value="rejected">Rejected</option>
               <option value="closed">Closed</option>
             </select>
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
+            <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
               <option value="">All Priority</option>
               <option value="urgent">Urgent</option>
               <option value="high">High</option>
               <option value="normal">Normal</option>
               <option value="low">Low</option>
             </select>
-            <select
-              value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
-              className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
+            <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
               <option value="">All Branches</option>
               {branches.map(b => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}
             </select>
@@ -572,7 +580,7 @@ export default function NativeJobRequisition() {
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Position</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Branch</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Branch / Process</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Headcount</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Priority</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
@@ -583,90 +591,109 @@ export default function NativeJobRequisition() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {requisitions.map((req) => (
-                  <tr key={req.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-sm font-medium text-blue-600">{req.requisition_code}</td>
-                    <td className="px-4 py-3">
-                      <div className="text-sm font-medium text-gray-900">{req.designation_name}</div>
-                      <div className="text-xs text-gray-500">{req.process_name || req.department_name || '-'}</div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">{req.branch_name}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span className="text-sm font-medium text-gray-900">{req.fulfilled_headcount}/{req.requested_headcount}</span>
-                      {req.open_positions > 0 && (
-                        <span className="ml-1 text-xs text-orange-600">({req.open_positions} open)</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${PRIORITY_COLORS[req.priority]}`}>
-                        {req.priority}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[req.derived_status] || STATUS_COLORS[req.approval_status]}`}>
-                        {req.derived_status.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm">
-                      <span className="text-gray-700">{req.total_candidates}</span>
-                      {req.selected_candidates > 0 && (
-                        <span className="ml-1 text-green-600">({req.selected_candidates} selected)</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center text-sm text-gray-500">{req.aging_days}d</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openDetail(req)}
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
-                          title="View Details & Funnel"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        {req.approval_status === 'draft' && (
-                          <>
+                  <React.Fragment key={req.id}>
+                    <tr className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm font-medium text-blue-600">{req.requisition_code}</td>
+                      <td className="px-4 py-3">
+                        <div className="text-sm font-medium text-gray-900">{req.designation_name}</div>
+                        {req.department_name && <div className="text-xs text-gray-400">{req.department_name}</div>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="text-sm text-gray-700">{req.branch_name}</div>
+                        {req.process_name && <div className="text-xs text-gray-500">{req.process_name}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-sm font-medium text-gray-900">{req.fulfilled_headcount}/{req.requested_headcount}</span>
+                        {req.open_positions > 0 && <span className="ml-1 text-xs text-orange-600">({req.open_positions} open)</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${PRIORITY_COLORS[req.priority]}`}>{req.priority}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[req.derived_status] || STATUS_COLORS[req.approval_status]}`}>
+                          {req.derived_status.replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center text-sm">
+                        <span className="text-gray-700">{req.total_candidates}</span>
+                        {req.selected_candidates > 0 && <span className="ml-1 text-green-600">({req.selected_candidates} sel)</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center text-sm text-gray-500">{req.aging_days}d</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => openDetail(req)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title="View Details">
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          {req.approval_status === 'draft' && (
+                            <>
+                              <button onClick={() => openEdit(req)} className="p-1.5 text-gray-500 hover:text-amber-600 hover:bg-amber-50 rounded" title="Edit">
+                                <Edit className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setConfirmAction({ type: 'submit', id: req.id, code: req.requisition_code })}
+                                className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded" title="Submit for Approval"
+                              >
+                                <Send className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                          {req.approval_status === 'pending_approval' && (
+                            <>
+                              <button
+                                onClick={() => setConfirmAction({ type: 'approve', id: req.id, code: req.requisition_code })}
+                                className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded" title="Approve"
+                              >
+                                <ThumbsUp className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setConfirmAction({ type: 'reject', id: req.id, code: req.requisition_code })}
+                                className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded" title="Reject"
+                              >
+                                <ThumbsDown className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {/* Inline confirm row */}
+                    {confirmAction?.id === req.id && (
+                      <tr className="bg-yellow-50 border-l-4 border-yellow-400">
+                        <td colSpan={9} className="px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="text-sm font-medium text-yellow-800">
+                              {confirmAction.type === 'submit' && `Submit ${confirmAction.code} for approval?`}
+                              {confirmAction.type === 'approve' && `Approve ${confirmAction.code}?`}
+                              {confirmAction.type === 'reject' && `Reject ${confirmAction.code}?`}
+                            </span>
+                            {(confirmAction.type === 'approve' || confirmAction.type === 'reject') && (
+                              <input
+                                autoFocus
+                                type="text"
+                                value={confirmInput}
+                                onChange={e => setConfirmInput(e.target.value)}
+                                placeholder={confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' : 'Remarks (optional)'}
+                                className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400"
+                              />
+                            )}
                             <button
-                              onClick={() => openEdit(req)}
-                              className="p-1.5 text-gray-500 hover:text-amber-600 hover:bg-amber-50 rounded"
-                              title="Edit"
+                              onClick={handleConfirmAction}
+                              className={`px-3 py-1.5 text-sm text-white rounded ${confirmAction.type === 'reject' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
                             >
-                              <Edit className="w-4 h-4" />
+                              {confirmAction.type === 'submit' ? 'Yes, Submit' : confirmAction.type === 'approve' ? 'Confirm Approve' : 'Confirm Reject'}
                             </button>
-                            <button
-                              onClick={() => handleSubmitForApproval(req.id)}
-                              className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded"
-                              title="Submit for Approval"
-                            >
-                              <Send className="w-4 h-4" />
+                            <button onClick={() => { setConfirmAction(null); setConfirmInput(''); }} className="px-3 py-1.5 text-sm text-gray-600 border rounded hover:bg-gray-100">
+                              Cancel
                             </button>
-                          </>
-                        )}
-                        {req.approval_status === 'pending_approval' && (
-                          <>
-                            <button
-                              onClick={() => handleApprove(req.id)}
-                              className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded"
-                              title="Approve"
-                            >
-                              <ThumbsUp className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleReject(req.id)}
-                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
-                              title="Reject"
-                            >
-                              <ThumbsDown className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
                 {requisitions.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
-                      No requisitions found. Create one to get started.
-                    </td>
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">No requisitions found. Create one to get started.</td>
                   </tr>
                 )}
               </tbody>
@@ -678,70 +705,95 @@ export default function NativeJobRequisition() {
         {showModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="p-6 border-b">
+              <div className="p-6 border-b flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-gray-900">
                   {editingRequisition ? 'Edit Requisition' : 'New Job Requisition'}
                 </h2>
+                <button onClick={() => { setShowModal(false); resetForm(); }} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
               <div className="p-6 space-y-4">
+                {formError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{formError}</div>
+                )}
                 <div className="grid md:grid-cols-2 gap-4">
+                  {/* Designation — dropdown from DB */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Position/Designation *</label>
-                    <input
-                      type="text"
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Designation / Position *</label>
+                    <select
                       value={formData.designation_name}
-                      onChange={(e) => setFormData({ ...formData, designation_name: e.target.value })}
+                      onChange={(e) => field('designation_name', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="e.g., Customer Service Executive"
-                    />
+                    >
+                      <option value="">— Select Designation —</option>
+                      {designations.map(d => (
+                        <option key={d.id} value={d.designation_name}>{d.designation_name}</option>
+                      ))}
+                    </select>
                   </div>
+
+                  {/* Branch */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Branch *</label>
                     <select
                       value={formData.branch_name}
-                      onChange={(e) => setFormData({ ...formData, branch_name: e.target.value })}
+                      onChange={(e) => field('branch_name', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="">Select Branch</option>
+                      <option value="">— Select Branch —</option>
                       {branches.map(b => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}
                     </select>
                   </div>
+
+                  {/* Process — cascades on branch */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Process</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Process {loadingFormProcesses && <span className="text-xs text-gray-400 ml-1">loading…</span>}
+                    </label>
                     <select
                       value={formData.process_name}
-                      onChange={(e) => setFormData({ ...formData, process_name: e.target.value })}
+                      onChange={(e) => field('process_name', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      disabled={loadingFormProcesses}
                     >
-                      <option value="">Select Process</option>
-                      {processes.map(p => <option key={p.id} value={p.process_name}>{p.process_name}</option>)}
+                      <option value="">— Select Process —</option>
+                      {formProcesses.map(p => <option key={p.id} value={p.process_name}>{p.process_name}</option>)}
                     </select>
                   </div>
+
+                  {/* Department — dropdown from DB */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
-                    <input
-                      type="text"
+                    <select
                       value={formData.department_name}
-                      onChange={(e) => setFormData({ ...formData, department_name: e.target.value })}
+                      onChange={(e) => field('department_name', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="e.g., Operations"
-                    />
+                    >
+                      <option value="">— Select Department —</option>
+                      {departments.map(d => (
+                        <option key={d.id} value={d.dept_name}>{d.dept_name}</option>
+                      ))}
+                    </select>
                   </div>
+
+                  {/* Headcount */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Headcount Required *</label>
                     <input
-                      type="number"
-                      min="1"
+                      type="number" min="1"
                       value={formData.requested_headcount}
-                      onChange={(e) => setFormData({ ...formData, requested_headcount: Number(e.target.value) })}
+                      onChange={(e) => field('requested_headcount', Number(e.target.value))}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
+
+                  {/* Employment Type */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Employment Type</label>
                     <select
                       value={formData.employment_type}
-                      onChange={(e) => setFormData({ ...formData, employment_type: e.target.value as EmploymentType })}
+                      onChange={(e) => field('employment_type', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="full_time">Full Time</option>
@@ -751,31 +803,35 @@ export default function NativeJobRequisition() {
                       <option value="trainee">Trainee</option>
                     </select>
                   </div>
+
+                  {/* Salary Range */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Salary Range (Min)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Salary Min (Monthly CTC)</label>
                     <input
                       type="number"
                       value={formData.salary_min}
-                      onChange={(e) => setFormData({ ...formData, salary_min: e.target.value })}
+                      onChange={(e) => field('salary_min', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="Monthly CTC"
+                      placeholder="e.g. 15000"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Salary Range (Max)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Salary Max (Monthly CTC)</label>
                     <input
                       type="number"
                       value={formData.salary_max}
-                      onChange={(e) => setFormData({ ...formData, salary_max: e.target.value })}
+                      onChange={(e) => field('salary_max', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="Monthly CTC"
+                      placeholder="e.g. 20000"
                     />
                   </div>
+
+                  {/* Priority */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
                     <select
                       value={formData.priority}
-                      onChange={(e) => setFormData({ ...formData, priority: e.target.value as RequisitionPriority })}
+                      onChange={(e) => field('priority', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="low">Low</option>
@@ -784,11 +840,13 @@ export default function NativeJobRequisition() {
                       <option value="urgent">Urgent</option>
                     </select>
                   </div>
+
+                  {/* Requisition Type */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Requisition Type</label>
                     <select
                       value={formData.requisition_type}
-                      onChange={(e) => setFormData({ ...formData, requisition_type: e.target.value })}
+                      onChange={(e) => field('requisition_type', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="new_position">New Position</option>
@@ -798,21 +856,53 @@ export default function NativeJobRequisition() {
                       <option value="project_based">Project Based</option>
                     </select>
                   </div>
+
+                  {/* Target Joining Date */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Target Joining Date</label>
                     <input
                       type="date"
                       value={formData.target_joining_date}
-                      onChange={(e) => setFormData({ ...formData, target_joining_date: e.target.value })}
+                      onChange={(e) => field('target_joining_date', e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
+
+                {/* Batch Number Section */}
+                <div className="pt-2 border-t">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <GraduationCap className="w-4 h-4 text-amber-600" /> Training Batch (optional)
+                  </h3>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Batch No.</label>
+                      <input
+                        type="text"
+                        value={formData.planned_batch_no}
+                        onChange={(e) => field('planned_batch_no', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g. B-2026-07"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Training Start Date</label>
+                      <input
+                        type="date"
+                        value={formData.training_start_date}
+                        onChange={(e) => field('training_start_date', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Justification / Skills */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Business Justification</label>
                   <textarea
                     value={formData.business_justification}
-                    onChange={(e) => setFormData({ ...formData, business_justification: e.target.value })}
+                    onChange={(e) => field('business_justification', e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     rows={3}
                     placeholder="Why is this position needed?"
@@ -822,7 +912,7 @@ export default function NativeJobRequisition() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Skills Required</label>
                   <textarea
                     value={formData.skills_required}
-                    onChange={(e) => setFormData({ ...formData, skills_required: e.target.value })}
+                    onChange={(e) => field('skills_required', e.target.value)}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                     rows={2}
                     placeholder="List required skills..."
@@ -837,10 +927,11 @@ export default function NativeJobRequisition() {
                   Cancel
                 </button>
                 <button
-                  onClick={handleCreate}
-                  disabled={!formData.designation_name || !formData.branch_name || formData.requested_headcount < 1}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={handleSave}
+                  disabled={saving || !formData.designation_name || !formData.branch_name || formData.requested_headcount < 1}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
+                  {saving && <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full inline-block" />}
                   {editingRequisition ? 'Update' : 'Create Draft'}
                 </button>
               </div>
@@ -855,48 +946,50 @@ export default function NativeJobRequisition() {
               <div className="p-6 border-b flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-gray-900">{selectedRequisition.requisition_code}</h2>
-                  <p className="text-sm text-gray-500">{selectedRequisition.designation_name}</p>
+                  <p className="text-sm text-gray-500">{selectedRequisition.designation_name} · {selectedRequisition.branch_name}</p>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${STATUS_COLORS[selectedRequisition.derived_status]}`}>
-                  {selectedRequisition.derived_status}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${STATUS_COLORS[selectedRequisition.derived_status]}`}>
+                    {selectedRequisition.derived_status.replace(/_/g, ' ')}
+                  </span>
+                  <button onClick={() => setShowDetail(false)} className="text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
               <div className="p-6 space-y-6">
                 {/* Requisition Details */}
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="grid md:grid-cols-3 gap-4">
                   <DetailItem label="Branch" value={selectedRequisition.branch_name} />
-                  <DetailItem label="Process" value={selectedRequisition.process_name || '-'} />
+                  <DetailItem label="Process" value={selectedRequisition.process_name || '—'} />
+                  <DetailItem label="Department" value={selectedRequisition.department_name || '—'} />
                   <DetailItem label="Headcount" value={`${selectedRequisition.fulfilled_headcount}/${selectedRequisition.requested_headcount} (${selectedRequisition.open_positions} open)`} />
-                  <DetailItem label="Employment Type" value={selectedRequisition.employment_type.replace('_', ' ')} />
-                  <DetailItem label="Salary Range" value={selectedRequisition.salary_min && selectedRequisition.salary_max ? `₹${selectedRequisition.salary_min.toLocaleString()} - ₹${selectedRequisition.salary_max.toLocaleString()}` : '-'} />
+                  <DetailItem label="Employment Type" value={selectedRequisition.employment_type.replace(/_/g, ' ')} />
                   <DetailItem label="Priority" value={<span className={`px-2 py-0.5 rounded text-xs ${PRIORITY_COLORS[selectedRequisition.priority]}`}>{selectedRequisition.priority}</span>} />
+                  {selectedRequisition.salary_min && selectedRequisition.salary_max && (
+                    <DetailItem label="Salary Range" value={`₹${selectedRequisition.salary_min.toLocaleString()} – ₹${selectedRequisition.salary_max.toLocaleString()}`} />
+                  )}
+                  {selectedRequisition.target_joining_date && (
+                    <DetailItem label="Target Joining" value={formatISTDate(selectedRequisition.target_joining_date)} />
+                  )}
                 </div>
 
-                {/* Dates Section */}
+                {/* Key Dates */}
                 {funnelData && (
                   <div className="bg-gray-50 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
                       <Calendar className="w-4 h-4" /> Key Dates
                     </h3>
                     <div className="grid md:grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-500">Demand Raised:</span>
-                        <span className="ml-2 font-medium">{formatISTDate(funnelData.demand_raised_date)}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Approved:</span>
-                        <span className="ml-2 font-medium">{funnelData.demand_approved_date ? formatISTDate(funnelData.demand_approved_date) : 'Pending'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Target Joining:</span>
-                        <span className="ml-2 font-medium">{selectedRequisition.target_joining_date ? formatISTDate(selectedRequisition.target_joining_date) : '-'}</span>
-                      </div>
+                      <div><span className="text-gray-500">Demand Raised:</span> <span className="ml-2 font-medium">{formatISTDate(funnelData.demand_raised_date)}</span></div>
+                      <div><span className="text-gray-500">Approved:</span> <span className="ml-2 font-medium">{funnelData.demand_approved_date ? formatISTDate(funnelData.demand_approved_date) : 'Pending'}</span></div>
+                      <div><span className="text-gray-500">Target Joining:</span> <span className="ml-2 font-medium">{selectedRequisition.target_joining_date ? formatISTDate(selectedRequisition.target_joining_date) : '—'}</span></div>
                     </div>
                   </div>
                 )}
 
-                {/* Hiring Funnel Visualization */}
+                {/* Hiring Funnel */}
                 {funnelLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -919,10 +1012,10 @@ export default function NativeJobRequisition() {
                       <FunnelArrow />
                       <FunnelStep label="Joined" count={funnelData.funnel.joined_count} color="bg-green-600" />
                       <FunnelArrow />
-                      <FunnelStep label="LMS Enrolled" count={funnelData.funnel.lms_enrolled_count} color="bg-indigo-600" />
+                      <FunnelStep label="LMS" count={funnelData.funnel.lms_enrolled_count} color="bg-indigo-600" />
                     </div>
                     <div className="mt-4 text-center text-sm text-blue-800">
-                      Total linked candidates: <strong>{funnelData.funnel.total_linked}</strong>
+                      Total linked: <strong>{funnelData.funnel.total_linked}</strong>
                     </div>
                   </div>
                 ) : null}
@@ -938,21 +1031,17 @@ export default function NativeJobRequisition() {
                         <div>
                           <div className="font-medium text-amber-800">{funnelData.planned_batch_name || funnelData.planned_batch_no}</div>
                           <div className="text-sm text-amber-700">
-                            Batch: {funnelData.planned_batch_no}
-                            {funnelData.training_start_date && ` | Training starts: ${formatISTDate(funnelData.training_start_date)}`}
+                            Batch No: {funnelData.planned_batch_no}
+                            {funnelData.training_start_date && ` · Training starts: ${formatISTDate(funnelData.training_start_date)}`}
                           </div>
                         </div>
-                        <button
-                          onClick={handleClearBatch}
-                          disabled={batchAssigning}
-                          className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50"
-                        >
+                        <button onClick={handleClearBatch} disabled={batchAssigning} className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50">
                           Remove
                         </button>
                       </div>
                     ) : (
                       <div>
-                        <p className="text-sm text-amber-700 mb-3">No batch assigned. Select a planned batch for this requisition:</p>
+                        <p className="text-sm text-amber-700 mb-3">No batch assigned. Select a planned batch from LMS:</p>
                         {availableBatches.length > 0 ? (
                           <div className="space-y-2 max-h-48 overflow-y-auto">
                             {availableBatches.map((batch) => (
@@ -964,13 +1053,11 @@ export default function NativeJobRequisition() {
                                 <div>
                                   <div className="font-medium text-gray-800">{batch.batch_name}</div>
                                   <div className="text-xs text-gray-500">
-                                    {batch.batch_no} | {batch.batch_status} | {batch.current_trainees}/{batch.expected_trainees} trainees
-                                    {batch.start_date && ` | Starts: ${formatISTDate(batch.start_date)}`}
+                                    {batch.batch_no} · {batch.batch_status} · {batch.current_trainees}/{batch.expected_trainees} trainees
+                                    {batch.start_date && ` · Starts: ${formatISTDate(batch.start_date)}`}
                                   </div>
                                 </div>
-                                <button className="px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded hover:bg-amber-200">
-                                  Assign
-                                </button>
+                                <button className="px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded hover:bg-amber-200">Assign</button>
                               </div>
                             ))}
                           </div>
@@ -992,10 +1079,7 @@ export default function NativeJobRequisition() {
               </div>
 
               <div className="p-6 border-t bg-gray-50 flex justify-end">
-                <button
-                  onClick={() => setShowDetail(false)}
-                  className="px-4 py-2 text-gray-700 border rounded-lg hover:bg-gray-100"
-                >
+                <button onClick={() => setShowDetail(false)} className="px-4 py-2 text-gray-700 border rounded-lg hover:bg-gray-100">
                   Close
                 </button>
               </div>
@@ -1018,13 +1102,9 @@ function MetricCard({ icon, label, value, color }: { icon: React.ReactNode; labe
     purple: 'bg-purple-50 text-purple-600 border-purple-200',
     cyan: 'bg-cyan-50 text-cyan-600 border-cyan-200',
   };
-
   return (
     <div className={`rounded-xl border p-4 ${colorClasses[color]}`}>
-      <div className="flex items-center gap-2 mb-2">
-        {icon}
-        <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
-      </div>
+      <div className="flex items-center gap-2 mb-2">{icon}<span className="text-xs font-medium uppercase tracking-wide">{label}</span></div>
       <div className="text-2xl font-bold">{value}</div>
     </div>
   );
@@ -1042,16 +1122,12 @@ function DetailItem({ label, value }: { label: string; value: React.ReactNode })
 function FunnelStep({ label, count, color }: { label: string; count: number; color: string }) {
   return (
     <div className="flex flex-col items-center">
-      <div className={`${color} text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-lg`}>
-        {count}
-      </div>
+      <div className={`${color} text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-lg`}>{count}</div>
       <span className="text-xs text-gray-600 mt-1 whitespace-nowrap">{label}</span>
     </div>
   );
 }
 
 function FunnelArrow() {
-  return (
-    <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
-  );
+  return <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />;
 }
