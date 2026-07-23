@@ -417,18 +417,37 @@ export default function NativeATSHiringEntry() {
     setErrorMsg("");
   };
 
+  // Build query string from active filter state and fetch from server
+  const fetchEntries = useCallback(async (page = 1, append = false) => {
+    const qs = new URLSearchParams({ limit: "50", page: String(page) });
+    if (filterFrom)     qs.set("fromDate",        filterFrom);
+    if (filterTo)       qs.set("toDate",           filterTo);
+    if (filterOutcome)  qs.set("recruiterRemarks", filterOutcome);
+    if (filterBranch)   qs.set("branch",           filterBranch);
+    if (filterProcess)  qs.set("process",          filterProcess);
+    if (filterSource)   qs.set("hiringSource",     filterSource);
+    if (filterWpGroup)  qs.set("wpGroup",          filterWpGroup);
+    if (entrySearch)    qs.set("search",           entrySearch);
+    try {
+      const res = await hrmsApi.get<HiringListResponse>(`/api/ats/recruiter/hiring-activity?${qs.toString()}`);
+      if (append) setRows((prev) => [...prev, ...(res.data ?? [])]);
+      else { setRows(res.data ?? []); setRowsPage(1); }
+      setRowsTotal(res.total ?? 0);
+    } catch (_e) { /* non-critical */ }
+  }, [filterFrom, filterTo, filterOutcome, filterBranch, filterProcess, filterSource, filterWpGroup, entrySearch]);
+
   const loadPageData = async () => {
     setLoading(true);
     setLoadError("");
-    setRowsPage(1);
     try {
       const [bootstrapRes, rowsRes] = await Promise.all([
         hrmsApi.get<BootstrapApiResponse>("/api/ats/recruiter/hiring-activity/bootstrap"),
-        hrmsApi.get<HiringListResponse>("/api/ats/recruiter/hiring-activity?limit=25&page=1"),
+        hrmsApi.get<HiringListResponse>("/api/ats/recruiter/hiring-activity?limit=50&page=1"),
       ]);
       setBootstrap(bootstrapRes.data);
       setRows(rowsRes.data ?? []);
       setRowsTotal(rowsRes.total ?? 0);
+      setRowsPage(1);
 
       const savedContext = loadSessionContext();
       if (savedContext) {
@@ -452,12 +471,7 @@ export default function NativeATSHiringEntry() {
   };
 
   const reloadRowsAfterSave = async () => {
-    setRowsPage(1);
-    try {
-      const rowsRes = await hrmsApi.get<HiringListResponse>("/api/ats/recruiter/hiring-activity?limit=25&page=1");
-      setRows(rowsRes.data ?? []);
-      setRowsTotal(rowsRes.total ?? 0);
-    } catch (_e) { /* non-critical */ }
+    void fetchEntries(1, false);
     hrmsApi.get<HiringDashboardResponse>("/api/ats/recruiter/hiring-dashboard")
       .then((res) => { setDashboard(res.data ?? null); setDashboardFailed(false); })
       .catch(() => { setDashboardFailed(true); });
@@ -465,14 +479,10 @@ export default function NativeATSHiringEntry() {
 
   const loadMoreRows = async () => {
     setLoadingMore(true);
-    try {
-      const nextPage = rowsPage + 1;
-      const res = await hrmsApi.get<HiringListResponse>(`/api/ats/recruiter/hiring-activity?limit=25&page=${nextPage}`);
-      setRows((prev) => [...prev, ...(res.data ?? [])]);
-      setRowsPage(nextPage);
-    } catch (_e) { /* ignore */ } finally {
-      setLoadingMore(false);
-    }
+    const nextPage = rowsPage + 1;
+    await fetchEntries(nextPage, true);
+    setRowsPage(nextPage);
+    setLoadingMore(false);
   };
 
   const loadAnalytics = async () => {
@@ -585,6 +595,13 @@ export default function NativeATSHiringEntry() {
 
   useEffect(() => { void loadPageData(); }, []);
 
+  // Re-fetch from server whenever any filter changes (filters are now server-side)
+  useEffect(() => {
+    void fetchEntries(1, false);
+  // fetchEntries is memoized on all filter values — this fires on any filter change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchEntries]);
+
   useEffect(() => {
     if (bootstrap && !loading) {
       if (sessionLocked) safeTimeout(() => focusField("candidate_name"), 0);
@@ -593,41 +610,14 @@ export default function NativeATSHiringEntry() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrap, loading, sessionLocked]);
 
+  // rows is now server-filtered; local recruiter filter still applied client-side
+  // (recruiter_name_snapshot filter is not wired to the API — kept as a local pass)
   const filteredRows = useMemo(() => {
-    let result = rows;
-    const q = entrySearch.toLowerCase().trim();
-    if (q) {
-      result = result.filter((r) =>
-        [r.candidate_name, r.mobile, r.process_name, r.position_name, r.activity_date, r.recruiter_remarks, r.wp_group, r.recruiter_name_snapshot, r.branch_name, r.hiring_source]
-          .join(" ").toLowerCase().includes(q)
-      );
-    }
-    if (filterOutcome) {
-      result = result.filter((r) => String(r.recruiter_remarks ?? "").toLowerCase() === filterOutcome.toLowerCase());
-    }
-    if (filterRecruiter) {
-      result = result.filter((r) => String(r.recruiter_name_snapshot ?? "").toLowerCase().includes(filterRecruiter.toLowerCase()));
-    }
-    if (filterBranch) {
-      result = result.filter((r) => String(r.branch_name ?? "").toLowerCase().includes(filterBranch.toLowerCase()));
-    }
-    if (filterProcess) {
-      result = result.filter((r) => String(r.process_name ?? "").toLowerCase().includes(filterProcess.toLowerCase()));
-    }
-    if (filterSource) {
-      result = result.filter((r) => String(r.hiring_source ?? "").toLowerCase().includes(filterSource.toLowerCase()));
-    }
-    if (filterWpGroup) {
-      result = result.filter((r) => String(r.wp_group ?? "").toLowerCase().includes(filterWpGroup.toLowerCase()));
-    }
-    if (filterFrom) {
-      result = result.filter((r) => r.activity_date >= filterFrom);
-    }
-    if (filterTo) {
-      result = result.filter((r) => r.activity_date <= filterTo);
-    }
-    return result;
-  }, [rows, entrySearch, filterOutcome, filterRecruiter, filterBranch, filterProcess, filterSource, filterWpGroup, filterFrom, filterTo]);
+    if (!filterRecruiter) return rows;
+    return rows.filter((r) =>
+      String(r.recruiter_name_snapshot ?? "").toLowerCase().includes(filterRecruiter.toLowerCase())
+    );
+  }, [rows, filterRecruiter]);
 
   const sourceOptions = bootstrap?.options.sourceOptions ?? [];
   const processOptions = bootstrap?.options.processOptions ?? [];
@@ -639,13 +629,14 @@ export default function NativeATSHiringEntry() {
   const educationOptions = bootstrap?.options.educationOptions ?? [];
   const experienceOptions = bootstrap?.options.experienceOptions ?? [];
 
+  // Source filter dropdowns from bootstrap (full domain lists) rather than paginated rows
   const filterMeta = useMemo(() => ({
     recruiters: [...new Set(rows.map(r => String(r.recruiter_name_snapshot || "")).filter(Boolean))].sort(),
     branches:   [...new Set(rows.map(r => String(r.branch_name || "")).filter(Boolean))].sort(),
-    processes:  [...new Set(rows.map(r => String(r.process_name || "")).filter(Boolean))].sort(),
-    sources:    [...new Set(rows.map(r => String(r.hiring_source || "")).filter(Boolean))].sort(),
-    wpGroups:   [...new Set(rows.map(r => String(r.wp_group || "")).filter(Boolean))].sort(),
-  }), [rows]);
+    processes:  processOptions.map(String).filter(Boolean).sort(),
+    sources:    sourceOptions.map(String).filter(Boolean).sort(),
+    wpGroups:   wpGroupOptions.map(String).filter(Boolean).sort(),
+  }), [rows, processOptions, sourceOptions, wpGroupOptions]);
 
   const aggregatedTrend = useMemo(() => {
     if (!analytics?.trend?.length) return [];

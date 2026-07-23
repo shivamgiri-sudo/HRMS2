@@ -819,7 +819,7 @@ export async function getHiringActivityBootstrap(userId: string): Promise<Hiring
   };
 }
 
-function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
+function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: string | null) {
   const clauses: string[] = ["1=1"];
   const params: unknown[] = [];
   const add = (sql: string, value: unknown) => {
@@ -867,7 +867,11 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
   }
 
   if (scopedOnly) {
-    clauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
+    if (branch) {
+      clauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
+    } else {
+      clauses.push("(created_by = ? OR recruiter_id = ?)");
+    }
   }
 
   return { sql: clauses.join(" AND "), params };
@@ -875,10 +879,14 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean) {
 
 export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
-  const { sql, params } = buildFilterSql(filters, scopedOnly);
+  const branch = scopedOnly ? await getActorBranch(userId) : null;
+  const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
   if (scopedOnly) {
-    const branch = await getActorBranch(userId);
-    params.push(branch ?? "", userId, userId);
+    if (branch) {
+      params.push(branch, userId, userId);
+    } else {
+      params.push(userId, userId);
+    }
   }
 
   const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
@@ -1426,9 +1434,13 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
 
 async function getActorBranch(userId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(e.branch_display_name,''), bm.branch_name) AS branch_name
+    `SELECT COALESCE(
+       NULLIF(b.branch_name,''),
+       NULLIF(e.branch_display_name,''),
+       NULLIF(b.branch_code,'')
+     ) AS branch_name
        FROM employees e
-       LEFT JOIN branch_master bm ON bm.id = e.branch_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.user_id = ?
       LIMIT 1`,
     [userId]
@@ -1437,10 +1449,14 @@ async function getActorBranch(userId: string): Promise<string | null> {
 }
 
 async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean, userId?: string) {
-  const { sql, params } = buildFilterSql(filters, scopedOnly);
+  const branch = (scopedOnly && userId) ? await getActorBranch(userId) : null;
+  const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
   if (scopedOnly && userId) {
-    const branch = await getActorBranch(userId);
-    params.push(branch ?? "", userId, userId);
+    if (branch) {
+      params.push(branch, userId, userId);
+    } else {
+      params.push(userId, userId);
+    }
   }
   return { sql, params };
 }
@@ -1576,26 +1592,16 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   if (filters.gender)      { clauses.push("arha.gender = ?");                      params.push(filters.gender); }
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   if (scopedOnly) {
-    clauses.push("(arha.branch_name = ? OR arha.created_by = ? OR arha.recruiter_id = ?)");
-    params.push(branch ?? "", userId, userId);
+    if (branch) {
+      clauses.push("(arha.branch_name = ? OR arha.created_by = ? OR arha.recruiter_id = ?)");
+      params.push(branch, userId, userId);
+    } else {
+      clauses.push("(arha.created_by = ? OR arha.recruiter_id = ?)");
+      params.push(userId, userId);
+    }
   }
 
   const W = clauses.join(" AND ");
-
-  // ── Stage macros ──────────────────────────────────────────────────────────
-  //
-  // CONTACTED: recruiter actually spoke to the candidate.
-  //   Positive outcomes: Shortlisted, Rejected (any), Callback Requested,
-  //                      Not Interested (Candidate Declined), Selected, Joined,
-  //                      Interested - Will Visit, Hold, No Show, Walk-in Completed, Arrived
-  //   NOT contacted:     Not Contacted, No Response, Wrong Number, Invalid,
-  //                      Switched Off, Busy  (all variants)
-  //
-  // WALKED IN: ats_candidate.walkin_end_stage is non-empty (set only on physical walk-in)
-  //
-  // SELECTED: walkin_end_stage or final_decision shows selection/offer
-  //
-  // JOINED: exists in employees table matched by mobile or personal_email only
 
   // Use pre-computed flag columns — avoids expensive correlated subqueries on every row
   const IS_CONTACTED = `arha.contacted_flag = 1`;
@@ -1610,24 +1616,34 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   ];
   const followupParams: unknown[] = [];
   if (scopedOnly) {
-    followupClauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
-    followupParams.push(branch ?? "", userId, userId);
+    if (branch) {
+      followupClauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
+      followupParams.push(branch, userId, userId);
+    } else {
+      followupClauses.push("(created_by = ? OR recruiter_id = ?)");
+      followupParams.push(userId, userId);
+    }
   }
+
+  // Safe wrapper — one failing query must not kill the entire analytics response
+  const safe = async <T>(fn: () => Promise<[T, ...unknown[]]>, fallback: T): Promise<T> => {
+    try { return (await fn())[0]; } catch { return fallback; }
+  };
 
   // ── Fire all queries in parallel ─────────────────────────────────────────
   const [
-    [summaryRows],
-    [outcomeRows],
-    [sourceRows],
-    [processRows],
-    [recruiterRows],
-    [branchRows],
-    [genderRows],
-    [dowRows],
-    [trendRows],
-    [followupRows],
+    summaryRows,
+    outcomeRows,
+    sourceRows,
+    processRows,
+    recruiterRows,
+    branchRows,
+    genderRows,
+    dowRows,
+    trendRows,
+    followupRows,
   ] = await Promise.all([
-    db.execute<RowDataPacket[]>(
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*)                                             AS logged,
          SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END)    AS contacted,
@@ -1636,15 +1652,15 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END)    AS joined
        FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.current_status,''), NULLIF(arha.recruiter_remarks,''), 'Pending') AS label,
               COUNT(*) AS count
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY count DESC LIMIT 12`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.hiring_source,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
@@ -1653,8 +1669,8 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT 10`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.process_name,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
@@ -1663,8 +1679,8 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT 15`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
@@ -1673,8 +1689,8 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT 15`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.branch_name,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
@@ -1683,8 +1699,8 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT 20`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
               COUNT(*) AS count,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
@@ -1693,24 +1709,25 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY count DESC LIMIT 10`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT DAYOFWEEK(arha.activity_date) AS dow, COUNT(*) AS count
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY dow ORDER BY dow ASC`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT arha.activity_date AS date,
               COUNT(*) AS logged,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected
          FROM ats_recruiter_hiring_activity arha
-        WHERE arha.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${W}
-        GROUP BY arha.activity_date ORDER BY arha.activity_date ASC`,
+        WHERE ${W}
+        GROUP BY arha.activity_date ORDER BY arha.activity_date ASC
+        LIMIT 90`,
       params
-    ),
-    db.execute<RowDataPacket[]>(
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
       `SELECT id, candidate_name, mobile,
               DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
               followup_reason
@@ -1718,7 +1735,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
         WHERE ${followupClauses.join(" AND ")}
         ORDER BY followup_date ASC LIMIT 50`,
       followupParams
-    ),
+    ), [] as RowDataPacket[]),
   ]);
 
   // ── Map results ───────────────────────────────────────────────────────────
