@@ -817,13 +817,14 @@ export function Step4Documents({
 // ── Step 5: BGV Consent & Verification ────────────────────────────────────────
 
 export function Step5Bgv({
-  bgv, bgvApiAvailable, consentAccepted, saving,
+  bgv, bgvApiAvailable, consentAccepted, saving, status,
   onConsent, onVerifyAadhaar, onVerifyPan, onVerifyBank, onVerifyUan, onDigilocker, digilockerStatus,
 }: {
   bgv: BgvStatus | null;
   bgvApiAvailable: boolean;
   consentAccepted: boolean;
   saving: boolean;
+  status: StatusData | null;
   onConsent: () => void;
   onVerifyAadhaar: () => void;
   onVerifyPan: () => void;
@@ -948,7 +949,7 @@ export function Step5Bgv({
               { label: "Verify PAN", onClick: onVerifyPan, icon: "📋" },
               { label: "Verify Bank A/C", onClick: onVerifyBank, icon: "🏦" },
               { label: "Verify UAN / Employment", onClick: onVerifyUan, icon: "🏢" },
-            ].map(({ label, onClick, icon, highlight }) => {
+            ].map(({ label, onClick, icon }) => {
               const checkType = label.toLowerCase().includes("aadhaar") ? "aadhaar"
                 : label.toLowerCase().includes("pan") ? "pan"
                 : label.toLowerCase().includes("bank") ? "bank"
@@ -959,7 +960,7 @@ export function Step5Bgv({
               return (
                 <Button
                   key={label}
-                  variant={highlight ? "default" : "outline"}
+                  variant="outline"
                   onClick={onClick}
                   disabled={!consentAccepted || saving || verified}
                   size="lg"

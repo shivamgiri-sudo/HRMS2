@@ -488,11 +488,17 @@ export function useOnboardingFull(token: string) {
     try {
       await hrmsApi.post(`${BGV}/consent`, { token, purposes: ["identity_verification", "employment_onboarding", "payroll_readiness", "statutory_compliance"] });
       setConsentAccepted(true);
+      setBgvApiAvailable(true);
       await load();
     } catch (e: any) {
-      // BGV consent API might not be available — mark as locally accepted so form isn't blocked
-      setConsentAccepted(true);
-      setBgvApiAvailable(false);
+      const status = (e as any)?.response?.status;
+      if (status === 503) {
+        // BGV service offline — consent not recorded on server; inform HR will process manually
+        setBgvApiAvailable(false);
+        setError("BGV service is temporarily offline. Your consent could not be recorded digitally. HR will process background verification manually after submission. You may continue your onboarding.");
+      } else {
+        setError(extractBgvError(e, "Failed to record BGV consent. Please try again or contact HR."));
+      }
     } finally { setSaving(false); }
   };
 
@@ -517,18 +523,25 @@ export function useOnboardingFull(token: string) {
   };
 
   const verifyBank = async () => {
-    // Check if account number is available in form state
-    if (!bank.accountNo || bank.accountNo.trim() === '') {
-      setError(
-        "Account number required for verification. For security, we don't store your raw account number. " +
-        "Please re-enter your account number in the Bank Details section (Step 6) above, then try verification again."
-      );
-      return;
-    }
     // PAN must be saved in Step 3 before bank verification (Luckpay penny-drop requires PAN).
     const panSaved = Boolean((status as any)?.token?.saved_profile?.pan_number_masked);
     if (!panSaved) {
       setError("Please save your PAN number in Step 3 (DigiLocker & KYC) before verifying your bank account.");
+      return;
+    }
+    // Bank details must be saved first (IFSC at minimum — account number can come from server-side decrypt)
+    const bankSaved = Boolean(bank.bankName || (status as any)?.bank?.ifsc_code);
+    if (!bankSaved) {
+      setError("Please save your bank details in Step 6 first, then return here to verify.");
+      return;
+    }
+    // If account number is not in React state, the backend will attempt to decrypt the stored encrypted value.
+    // Only block if we know there's no bank record at all.
+    if (!bank.accountNo && !(status as any)?.bank) {
+      setError(
+        "Account number required for verification. For security, we don't store your raw account number. " +
+        "Please go to Step 6, re-enter your account number and save, then try verification again."
+      );
       return;
     }
     setSaving(true);

@@ -181,6 +181,7 @@ export default function CandidateOnboardingFullPage() {
           bgvApiAvailable={onb.bgvApiAvailable}
           consentAccepted={onb.consentAccepted}
           saving={onb.saving}
+          status={onb.status}
           onConsent={onb.grantConsent}
           onVerifyAadhaar={onb.verifyAadhaar}
           onVerifyPan={onb.verifyPan}

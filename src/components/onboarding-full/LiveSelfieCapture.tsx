@@ -18,6 +18,14 @@ export function LiveSelfieCapture({ onCapture, captured, disabled }: LiveSelfieC
 
   const startCamera = useCallback(async () => {
     setError(null);
+    // Camera API requires a secure context (HTTPS or localhost)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setError(
+        "Camera is not available. This may be because the page is loaded over HTTP instead of HTTPS. " +
+        "Please ask HR to share the secure (https://) link, or upload a photo from your gallery using the document upload below."
+      );
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
@@ -31,9 +39,11 @@ export function LiveSelfieCapture({ onCapture, captured, disabled }: LiveSelfieC
       setStreaming(true);
     } catch (e: any) {
       if (e.name === "NotAllowedError") {
-        setError("Camera permission denied. Please allow camera access to take a live selfie.");
+        setError("Camera permission denied. Please allow camera access in your browser settings and try again.");
       } else if (e.name === "NotFoundError") {
-        setError("No camera found on this device.");
+        setError("No camera found on this device. Please upload a clear photo using the document upload section below.");
+      } else if (e.name === "NotReadableError" || e.name === "AbortError") {
+        setError("Camera is in use by another app. Please close other apps using the camera and try again.");
       } else {
         setError("Could not access camera: " + e.message);
       }

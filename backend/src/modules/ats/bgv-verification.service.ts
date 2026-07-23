@@ -502,16 +502,16 @@ export async function verifyAadhaarOfflineForCandidate(candidateId: string, inpu
 }
 
 export async function startDigilockerByToken(token: string, requestedDocuments: string[], meta?: { ip?: string; userAgent?: string }) {
-  await ensureConsent((await validateOnboardingToken(token)).candidate_id as string);
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
+  await ensureConsent(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
   const session = await adapter.startDigilocker(candidateId, requestedDocuments.length ? requestedDocuments : ["AADHAAR", "PAN"]);
   await db.execute(
     `INSERT INTO candidate_digilocker_session
        (id, candidate_id, state_token, provider_key, auth_url, session_status, requested_documents_json, expires_at)
-     VALUES (?, ?, ?, 'mock_digilocker', ?, 'created', ?, ?)`,
-    [randomUUID(), candidateId, session.state, session.authUrl, JSON.stringify(requestedDocuments), session.expiresAt]
+     VALUES (?, ?, ?, ?, ?, 'created', ?, ?)`,
+    [randomUUID(), candidateId, session.state, adapter.providerKey, session.authUrl, JSON.stringify(requestedDocuments), session.expiresAt]
   );
   await logEvent(candidateId, "DIGILOCKER_SESSION_CREATED", { state: session.state, requestedDocuments }, null, { actorType: "candidate", ip: meta?.ip, userAgent: meta?.userAgent });
   return session;

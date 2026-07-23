@@ -318,7 +318,7 @@ const Onboarding = () => {
     );
     if (!uploadResponse.ok) throw new Error("File upload failed");
     const uploadData = await uploadResponse.json();
-    const publicUrl = `${HRMS_API}${uploadData.url}`;
+    const publicUrl = `${apiBaseUrl()}${uploadData.url}`;
 
     // Step 2: register metadata
     await hrmsApi.post(`/api/employee-docs/${employeeId}`, {
@@ -807,11 +807,6 @@ const Onboarding = () => {
             <TabsTrigger value="requests" className="w-full justify-center">
               <span className="hidden sm:inline">Requests</span>
               <span className="sm:hidden">Requests</span>
-              {pendingRequests.length > 0 && (
-                <Badge variant="secondary" className="ml-2">
-                  {pendingRequests.length}
-                </Badge>
-              )}
               {pendingRequests.length > 0 && (
                 <Badge variant="secondary" className="ml-2">
                   {pendingRequests.length}
