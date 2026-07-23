@@ -232,10 +232,10 @@ export async function approve(
   );
   if (rows.length) {
     await db.execute(
-      `INSERT INTO work_items
-         (id, item_type, reference_id, assigned_user, title, status, created_by, created_at)
-       VALUES (UUID(), 'dpdp_withdrawal_notification', ?, ?, 'Your data withdrawal request was approved', 'open', ?, NOW())`,
-      [id, rows[0].requester_id, approvedBy]
+      `INSERT INTO work_item
+         (id, item_type, title, module_code, entity_type, entity_id, assigned_to_user_id, assigned_to_role, priority, status, created_at)
+       VALUES (UUID(), 'DPDP_WITHDRAWAL_APPROVED', 'Your data withdrawal request was approved', 'compliance', 'dpdp_withdrawal', ?, ?, 'employee', 'normal', 'pending', NOW())`,
+      [id, rows[0].requester_id]
     ).catch(() => {});
   }
 }

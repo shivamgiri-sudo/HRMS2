@@ -40,7 +40,7 @@ export async function createTatInstance(
   // Insert a work item for the assignee
   await db.execute(
     `INSERT INTO work_item
-       (id, item_type, entity_type, entity_id, assigned_to, due_at, priority, status, created_at, updated_at)
+       (id, item_type, entity_type, entity_id, assigned_to_user_id, due_at, priority, status, created_at, updated_at)
      VALUES (UUID(), ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 'high', 'pending', NOW(), NOW())`,
     [taskType, entityType, entityId, assignedTo, tatHours]
   );
@@ -106,7 +106,7 @@ export async function checkAndEscalate(): Promise<number> {
       if ((esc as any).notify_role) {
         await db.execute(
           `INSERT INTO work_item
-             (id, item_type, entity_type, entity_id, assigned_role, due_at, priority, status, created_at, updated_at)
+             (id, item_type, entity_type, entity_id, assigned_to_role, due_at, priority, status, created_at, updated_at)
            VALUES (UUID(), 'TAT_BREACH', ?, ?, ?, NOW(), 'high', 'pending', NOW(), NOW())`,
           [(task as any).entity_type, (task as any).entity_id, (esc as any).notify_role]
         );

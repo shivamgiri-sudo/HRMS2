@@ -72,6 +72,29 @@ interface PayslipRecord {
   run_month: string;
   run_status?: string;
   status?: string;
+  source?: 'hrms' | 'legacy';
+  legacy_id?: number;
+  sal_date?: string;
+  is_fnf?: number;
+  // legacy field aliases
+  gross_earned?: number | string;
+  conveyance?: number | string;
+  portfolio?: number | string;
+  medical_allowance?: number | string;
+  lta?: number | string;
+  other_allowance?: number | string;
+  bonus?: number | string;
+  incentive?: number | string;
+  arrear?: number | string;
+  pli?: number | string;
+  income_tax?: number | string;
+  advance_paid?: number | string;
+  loan_deduction?: number | string;
+  short_collection?: number | string;
+  asset_recovery?: number | string;
+  leave_deduction?: number | string;
+  ctc_monthly?: number | string;
+  earned_days?: number | string;
   gross_salary: number | string;
   total_deductions: number | string;
   net_salary: number | string;
@@ -123,7 +146,9 @@ const MONTHS = [
 ];
 
 const currentYear = new Date().getFullYear();
-const YEARS = Array.from({ length: 5 }, (_, i) => ({
+// Show years back to 2018 to include legacy db_bill payslips
+const LEGACY_START_YEAR = 2018;
+const YEARS = Array.from({ length: currentYear - LEGACY_START_YEAR + 1 }, (_, i) => ({
   value: String(currentYear - i),
   label: String(currentYear - i),
 }));
@@ -352,27 +377,28 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       return Number(comp?.amount ?? 0);
     };
 
-    // Earnings — component array with flat-field fallback
+    // Earnings — component array with flat-field fallback (legacy records use flat fields directly)
     const basic = getEarning('BASIC') || Number(record.basic ?? record.basic_salary ?? 0);
     const hra = getEarning('HRA') || Number(record.hra ?? 0);
-    const bonus = getEarning('BONUS');
-    const conv = getEarning('CONVEYANCE') || getEarning('CONV');
-    const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE');
-    const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE');
-    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE');
-    const arrear = getEarning('ARREAR');
-    const incentive = getEarning('INCENTIVE');
-    const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive;
-    const oa = Math.max(Number(record.gross_salary ?? 0) - knownEarnings, 0);
+    const bonus = getEarning('BONUS') || Number(record.bonus ?? 0);
+    const conv = getEarning('CONVEYANCE') || getEarning('CONV') || Number(record.conveyance ?? 0);
+    const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || Number(record.portfolio ?? 0);
+    const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || Number(record.medical_allowance ?? 0);
+    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || Number(record.special_allowance ?? 0);
+    const arrear = getEarning('ARREAR') || Number(record.arrear ?? 0);
+    const incentive = getEarning('INCENTIVE') || Number(record.incentive ?? 0);
+    const lta = Number(record.lta ?? 0);
+    const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive + lta;
+    const oa = Math.max(Number(record.gross_salary ?? record.gross_earned ?? 0) - knownEarnings, 0);
 
-    // Deductions — component array with flat-field fallback
+    // Deductions — component array with flat-field fallback (legacy records use flat fields directly)
     const pf = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(record.pf_employee ?? 0);
     const esic = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(record.esic_employee ?? 0);
     const pt = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(record.professional_tax ?? 0);
-    const tds = getDeduction('TDS') || Number(record.tds ?? 0);
-    const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? 0);
-    const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY');
-    const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? 0);
+    const tds = getDeduction('TDS') || Number(record.tds ?? record.income_tax ?? 0);
+    const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? record.leave_deduction ?? 0);
+    const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || Number(record.loan_deduction ?? 0);
+    const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? record.advance_paid ?? 0);
     const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
     const otherDed = Math.max(Number(record.total_deductions ?? 0) - knownDeductions, 0);
 
@@ -390,7 +416,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       location: record.branch_name || record.location_name || "N/A",
       esiNo: record.esi_number || "",
       wDays: Number(record.working_days ?? 30),
-      earnedDays: Number(record.present_days ?? record.working_days ?? 30),
+      earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
       lwpDays: Number(record.lwp_days ?? 0),
       totalDaysInMonth: Number(record.working_days ?? 30),
       basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
@@ -821,7 +847,15 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </TableCell>
                           <TableCell className="font-medium">
-                            {monthName}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{monthName}</span>
+                              {record.source === 'legacy' && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 uppercase tracking-wide">Legacy</span>
+                              )}
+                              {record.is_fnf === 1 && (
+                                <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 uppercase tracking-wide">F&F</span>
+                              )}
+                            </div>
                             {isDuplicate && record.payslip_ref && (
                               <span className="ml-1.5 text-xs text-slate-400">({record.payslip_ref})</span>
                             )}
@@ -841,7 +875,11 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                           <TableCell className="text-right font-semibold">
                             {renderSensitive(formatCurrency(Number(record.net_salary) || 0))}
                           </TableCell>
-                          <TableCell>{getStatusBadge(record.run_status || record.status || "processed")}</TableCell>
+                          <TableCell>
+                            {record.source === 'legacy'
+                              ? <Badge className="bg-amber-50 text-amber-700 border-amber-200">Historical</Badge>
+                              : getStatusBadge(record.run_status || record.status || "processed")}
+                          </TableCell>
                           <TableCell className="text-right">
                             <Button
                               variant="ghost"

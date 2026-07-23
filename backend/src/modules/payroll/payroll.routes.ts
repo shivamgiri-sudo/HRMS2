@@ -683,7 +683,42 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
     req,
   });
 
-  return res.json({ success: true, data: rows });
+  // Merge legacy payslips for months NOT already covered by salary_prep_line
+  const coveredMonths = new Set((rows as any[]).map((r: any) => String(r.run_month || '').substring(0, 7)));
+  const [legacyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT lps.id AS legacy_id, lps.employee_code, lps.pay_month AS run_month,
+            lps.sal_date, lps.gross_salary, lps.gross_earned, lps.total_deductions,
+            lps.net_salary, lps.basic, lps.hra, lps.special_allowance, lps.conveyance,
+            lps.portfolio, lps.medical_allowance, lps.lta, lps.other_allowance,
+            lps.bonus, lps.incentive, lps.arrear, lps.pli, lps.extra_day,
+            lps.epf_employee, lps.esic_employee, lps.professional_tax, lps.income_tax,
+            lps.advance_paid, lps.loan_deduction, lps.other_deduction,
+            lps.short_collection, lps.asset_recovery, lps.leave_deduction,
+            lps.epf_employer, lps.esic_employer, lps.admin_charges,
+            lps.ctc_monthly, lps.ctc_offered, lps.working_days, lps.earned_days,
+            lps.leave_days, lps.epf_number, lps.esic_number, lps.salary_payment_mode,
+            lps.cheque_number, lps.is_fnf, lps.status AS db_bill_status,
+            NULL AS acknowledged_at, NULL AS file_url, NULL AS run_id,
+            NULL AS run_status, NULL AS paid_at, NULL AS payslip_ref,
+            'legacy' AS source
+     FROM legacy_payslip_snapshot lps
+     WHERE lps.employee_id = ?
+       AND lps.pay_month LIKE ?
+     ORDER BY lps.pay_month DESC`,
+    [callerEmp.id, `${year}-%`]
+  );
+
+  // Only include legacy rows for months not in current HRMS run data
+  const legacyFiltered = (legacyRows as any[]).filter(r => !coveredMonths.has(r.run_month));
+
+  // Tag HRMS rows with source
+  for (const r of rows as any[]) { r.source = 'hrms'; }
+
+  const combined = [...(rows as any[]), ...legacyFiltered].sort((a, b) =>
+    String(b.run_month).localeCompare(String(a.run_month))
+  );
+
+  return res.json({ success: true, data: combined });
 }));
 
 // GET /api/payroll/verify/payslip/:empCode/:monthYear — PUBLIC (no auth) — QR code verify
@@ -805,6 +840,70 @@ router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin
     [employeeId]
   );
   return res.json({ success: true, data: rows });
+}));
+
+// GET /api/payroll/payslip/legacy/:employeeId — list legacy payslips (HR/admin/payroll)
+router.get("/payslip/legacy/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId } = req.params;
+  const year = req.query.year ? String(req.query.year) : null;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id AS legacy_id, employee_code, pay_month AS run_month, sal_date,
+            gross_salary, gross_earned, total_deductions, net_salary,
+            basic, hra, special_allowance, conveyance, portfolio,
+            medical_allowance, lta, other_allowance, bonus, incentive,
+            arrear, pli, extra_day,
+            epf_employee, esic_employee, professional_tax, income_tax,
+            advance_paid, loan_deduction, other_deduction, short_collection,
+            asset_recovery, leave_deduction, epf_employer, esic_employer,
+            admin_charges, ctc_monthly, ctc_offered,
+            working_days, earned_days, leave_days,
+            epf_number, esic_number, salary_payment_mode, cheque_number,
+            is_fnf, status AS db_bill_status, db_bill_id, snapshot_taken_at,
+            'legacy' AS source
+       FROM legacy_payslip_snapshot
+      WHERE employee_id = ?
+        ${year ? "AND pay_month LIKE ?" : ""}
+      ORDER BY pay_month DESC
+      LIMIT 120`,
+    year ? [employeeId, `${year}-%`] : [employeeId]
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+// GET /api/payroll/payslip/legacy-detail/:employeeCode/:payMonth — single legacy payslip detail
+router.get("/payslip/legacy-detail/:employeeCode/:payMonth", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeCode, payMonth } = req.params;
+
+  // Employees can only view their own; HR+ can view any
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  const isHR = hasAnyRole(req, ["super_admin", "admin", "hr", "finance", "payroll", "ceo"]);
+  if (!isHR && (!callerEmp || callerEmp.employee_code !== employeeCode)) {
+    return res.status(403).json({ success: false, message: "Access denied" });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT lps.*,
+            e.first_name, e.last_name,
+            e.pan_number,
+            CASE WHEN e.bank_account_number IS NOT NULL
+              THEN CONCAT('XXXX', RIGHT(e.bank_account_number, 4))
+              ELSE NULL END AS bank_account_masked,
+            d.designation_name,
+            dept.dept_name,
+            br.branch_name
+       FROM legacy_payslip_snapshot lps
+       LEFT JOIN employees e ON e.employee_code = lps.employee_code
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       LEFT JOIN branch_master br ON br.id = e.branch_id
+      WHERE lps.employee_code = ? AND lps.pay_month = ?
+      LIMIT 1`,
+    [employeeCode, payMonth]
+  );
+  if (!(rows as any[]).length) {
+    return res.status(404).json({ success: false, message: "Legacy payslip not found" });
+  }
+  return res.json({ success: true, data: (rows as any[])[0] });
 }));
 
 // POST /api/payroll/payslip/:runId/generate — admin/hr/finance/payroll only

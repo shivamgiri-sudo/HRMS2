@@ -66,7 +66,7 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.*, e.full_name as assigned_employee_name
      FROM work_item wi
-     LEFT JOIN employees e ON e.auth_user_id = wi.assigned_to_user_id
+     LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
      WHERE (wi.assigned_to_user_id = ? OR wi.assigned_to_role = ?)
        AND wi.status NOT IN ('completed', 'cancelled')
      ORDER BY FIELD(wi.priority,'critical','high','medium','low'), wi.due_at ASC
@@ -80,7 +80,7 @@ export async function getTeamWorkItems(userId: string, limit = 100) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.* FROM work_item wi
      WHERE wi.created_by = ?
-        OR wi.branch_id IN (SELECT branch_id FROM employees WHERE auth_user_id = ?)
+        OR wi.branch_id IN (SELECT branch_id FROM employees WHERE user_id = ?)
      ORDER BY wi.created_at DESC LIMIT ?`,
     [userId, userId, limit]
   );
