@@ -2,7 +2,11 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { runFinanceSchemaHardeningMigrations } from "./db/runFinanceSchemaHardeningMigrations.js";
 import { runFinanceSupplementalMigrations } from "./db/runFinanceSupplementalMigrations.js";
-import { runPendingMigrations } from "./db/runPendingMigrations.js";
+import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
+
+// MIGRATION GOVERNANCE: When enabled, API startup only verifies schema version
+// instead of running migrations. Use `npm run migrate` to apply migrations separately.
+const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
@@ -123,13 +127,40 @@ async function initializeRuntime() {
   startServer();
 }
 
-runPendingMigrations()
-  .then(runFinanceSupplementalMigrations)
-  .then(runFinanceSchemaHardeningMigrations)
+async function handleMigrations(): Promise<void> {
+  if (MIGRATIONS_VERIFY_ONLY) {
+    // GOVERNANCE: Verify schema version without running migrations
+    console.log("[startup] MIGRATIONS_VERIFY_ONLY=true - verifying schema version...");
+    const schemaStatus = await verifySchemaVersion();
+
+    if (!schemaStatus.valid) {
+      const message =
+        `Schema validation failed: ${schemaStatus.pendingCount} pending migrations. ` +
+        `Run 'npm run migrate' before starting the API. ` +
+        `Pending: ${schemaStatus.pendingFiles.join(", ")}${schemaStatus.pendingCount > 10 ? "..." : ""}`;
+
+      if (env.NODE_ENV === "production") {
+        throw new Error(message);
+      }
+      console.warn(`[startup] ${message}`);
+      console.warn("[startup] development mode: continuing with incomplete schema.");
+    } else {
+      console.log(`[startup] schema verified: ${schemaStatus.appliedCount} migrations applied`);
+    }
+    return;
+  }
+
+  // Default behavior: run migrations at startup
+  await runPendingMigrations();
+  await runFinanceSupplementalMigrations();
+  await runFinanceSchemaHardeningMigrations();
+}
+
+handleMigrations()
   .then(initializeRuntime)
   .catch(async (error) => {
     console.error(
-      "[startup] migration runner failed:",
+      "[startup] migration/schema verification failed:",
       error instanceof Error ? error.message : error
     );
 
