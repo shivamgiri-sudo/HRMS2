@@ -1,667 +1,498 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import {
-  User, Phone, Mail, MapPin, Briefcase, GraduationCap,
-  Clock, CheckCircle, XCircle, AlertCircle, Star, ThumbsUp,
-  ThumbsDown, MessageSquare, Calendar, TrendingUp, Award
+  TrendingUp, Users, CheckCircle, XCircle, AlertCircle, Clock,
+  BarChart2, Award, Target, RefreshCw, Briefcase, Megaphone,
+  ChevronDown, UserCheck, UserX, ClipboardList,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Candidate {
-  candidate_id: string;
-  full_name: string;
-  mobile: string;
-  email: string;
-  applied_for_role: string;
-  applied_for_branch: string;
-  branch_display_name: string;
-  education: string;
-  years_of_experience: string;
-  address: string;
-  gender: string;
-  resume_url: string;
-  selfie_url: string;
-  token_number: string;
-  queue_status: string;
-  registered_at: string;
+type Period = 'FTD' | 'WTD' | 'MTD' | 'L30';
+
+interface KPI {
+  total: number;
+  selected: number;
+  rejected: number;
+  hold: number;
+  no_show: number;
+  client_pending: number;
+  conversion_rate: number;
+  avg_interview_min: number | null;
+  avg_typing_wpm: number | null;
+  avg_ai_score: number | null;
 }
 
-interface PerformanceMetrics {
-  total_interviews: number;
-  selected_count: number;
-  rejected_count: number;
-  hold_count: number;
-  no_show_count: number;
-  avg_communication_rating: number;
-  avg_stability_rating: number;
-  selection_rate: number;
+interface HiringKpi {
+  total_entries: number;
+  walkin_flag: number;
+  final_selected: number;
+  joined: number;
+}
+
+interface FunnelRow {
+  stage: string;
+  entered: number;
+  passed: number;
+  rejected: number;
+  hold: number;
+  no_show: number;
+  pending: number;
+  completed: number;
+  pass_rate: number;
+}
+
+interface TrendRow  { day: string; total: number; selected: number; rejected: number; no_show: number; }
+interface ProcessRow { process: string; total: number; selected: number; rate: number; }
+interface VocRow    { voc_reason: string; cnt: number; }
+interface SourceRow { source: string; total: number; selected: number; }
+
+interface PerformanceData {
+  kpi: KPI;
+  hiringKpi: HiringKpi;
+  funnel: FunnelRow[];
+  trend: TrendRow[];
+  byProcess: ProcessRow[];
+  voc: VocRow[];
+  bySource: SourceRow[];
+}
+
+interface Profile { name: string; recruiterCode: string; branch: string; }
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+const PERIOD_LABELS: Record<Period, string> = {
+  FTD: 'Today', WTD: 'This Week', MTD: 'This Month', L30: 'Last 30 Days',
+};
+
+const STAGE_SHORT: Record<string, string> = {
+  'Arrival': 'Arrival',
+  'Round 1- HR Screening': 'HR Round',
+  'Interview - Skill Test': 'Skill Test',
+  "Round 2- Op's": 'Ops Round',
+  'Round 3- Client': 'Client Round',
+  'Selection Discussion': 'Final Selection',
+};
+
+function n(v: number | null | undefined) { return v ?? 0; }
+function pct(a: number, b: number) { if (!b) return 0; return Math.round((a / b) * 10) / 10; }
+
+// ── Stat Card ──────────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, icon: Icon, bg, text }: {
+  label: string; value: string | number; sub?: string;
+  icon: React.ElementType; bg: string; text: string;
+}) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">{label}</span>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
+          <Icon className={`w-4 h-4 ${text}`} />
+        </div>
+      </div>
+      <div className="text-2xl font-bold text-gray-900">{value}</div>
+      {sub && <div className="text-[11px] text-gray-400">{sub}</div>}
+    </div>
+  );
+}
+
+// ── Funnel Stage Card ──────────────────────────────────────────────────────────
+
+function FunnelCard({ row, prev, isFirst }: { row: FunnelRow; prev?: FunnelRow; isFirst: boolean }) {
+  const dropOff = !isFirst && prev ? prev.entered - row.entered : 0;
+  const dropOffPct = !isFirst && prev?.entered ? pct(dropOff, prev.entered) : 0;
+  const barW = (isFirst || !prev?.entered) ? 100 : Math.max(4, Math.round((row.entered / prev.entered) * 100));
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-2">
+      {/* Stage name + drop-off */}
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-semibold text-gray-800 text-sm">{STAGE_SHORT[row.stage] ?? row.stage}</span>
+        {!isFirst && dropOff > 0 && (
+          <span className="text-[10px] bg-red-50 text-red-600 border border-red-200 rounded px-1.5 py-0.5 shrink-0">
+            −{dropOff} dropped ({dropOffPct}%)
+          </span>
+        )}
+      </div>
+
+      {/* Funnel width bar */}
+      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+        <div className="h-full bg-purple-400 rounded-full transition-all" style={{ width: `${barW}%` }} />
+      </div>
+
+      {/* Metrics grid */}
+      <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-[11px]">
+        <div className="flex flex-col">
+          <span className="text-gray-400 font-medium">Entered</span>
+          <span className="font-bold text-gray-800 text-sm">{row.entered}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-gray-400 font-medium">Passed</span>
+          <span className="font-bold text-green-600 text-sm">{row.passed}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-gray-400 font-medium">Pass Rate</span>
+          <span className={`font-bold text-sm ${row.pass_rate >= 50 ? 'text-green-600' : row.pass_rate >= 25 ? 'text-yellow-600' : 'text-red-500'}`}>
+            {row.pass_rate}%
+          </span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-gray-400 font-medium">Rejected</span>
+          <span className="font-semibold text-red-500">{row.rejected}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-gray-400 font-medium">Hold</span>
+          <span className="font-semibold text-yellow-600">{row.hold}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-gray-400 font-medium">No Show</span>
+          <span className="font-semibold text-gray-400">{row.no_show}</span>
+        </div>
+        {row.pending > 0 && (
+          <div className="flex flex-col col-span-3 mt-0.5">
+            <span className="text-blue-500 text-[10px]">⏳ {row.pending} pending decision</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Trend Chart ────────────────────────────────────────────────────────────────
+
+function TrendChart({ rows }: { rows: TrendRow[] }) {
+  if (!rows.length) return (
+    <div className="flex items-center justify-center h-40 text-sm text-gray-400">No data for this period</div>
+  );
+  const maxVal = Math.max(...rows.map(r => r.total), 1);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Bar chart */}
+      <div className="flex items-end gap-1" style={{ height: 100 }}>
+        {rows.map(row => {
+          const totalH = Math.max(4, Math.round((row.total / maxVal) * 96));
+          const selH   = row.total ? Math.round((n(row.selected) / row.total) * totalH) : 0;
+          const rejH   = row.total ? Math.round((n(row.rejected) / row.total) * totalH) : 0;
+          const nsH    = totalH - selH - rejH;
+
+          return (
+            <div key={row.day} className="flex-1 flex flex-col items-center group relative" style={{ minWidth: 6 }}>
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-1 hidden group-hover:flex z-20 flex-col bg-gray-900 text-white text-[10px] rounded-lg px-2 py-1.5 gap-0.5 whitespace-nowrap shadow-lg pointer-events-none" style={{ left: '50%', transform: 'translateX(-50%)' }}>
+                <span className="font-semibold">{row.day}</span>
+                <span>Total: {row.total}</span>
+                <span className="text-green-300">Selected: {n(row.selected)}</span>
+                <span className="text-red-300">Rejected: {n(row.rejected)}</span>
+                {n(row.no_show) > 0 && <span className="text-gray-300">No Show: {n(row.no_show)}</span>}
+              </div>
+              {/* Bar segments stacked bottom-up: no_show (gray) + rejected (red) + selected (green) */}
+              <div className="w-full flex flex-col-reverse rounded-t overflow-hidden" style={{ height: totalH }}>
+                <div className="w-full bg-green-400" style={{ height: selH, minHeight: selH > 0 ? 1 : 0 }} />
+                <div className="w-full bg-red-300"   style={{ height: rejH, minHeight: rejH > 0 ? 1 : 0 }} />
+                <div className="w-full bg-gray-300"  style={{ height: nsH,  minHeight: nsH  > 0 ? 1 : 0 }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* X-axis labels */}
+      <div className="flex gap-1">
+        {rows.map(row => (
+          <div key={row.day} className="flex-1 text-center text-[9px] text-gray-400 truncate" style={{ minWidth: 6 }}>
+            {row.day.slice(5).replace('-', '/')}
+          </div>
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-[10px] text-gray-500 pt-1 border-t border-gray-100">
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-400 inline-block" />Selected</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-300 inline-block" />Rejected</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block" />No Show / Other</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Horizontal Bar ─────────────────────────────────────────────────────────────
+
+function HBar({ val, total, color }: { val: number; total: number; color: string }) {
+  const w = total ? Math.max(2, Math.round((val / total) * 100)) : 0;
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${w}%` }} />
+      </div>
+      <span className="text-[11px] text-gray-500 w-6 text-right tabular-nums">{val}</span>
+    </div>
+  );
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function NativeRecruiterPortal() {
-  const [view, setView] = useState<'list' | 'interview' | 'metrics'>('list');
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [candidatePhotos, setCandidatePhotos] = useState<Record<string, string>>({});
-  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
-  const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
+  const [period, setPeriod] = useState<Period>('MTD');
+  const [data, setData] = useState<PerformanceData | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
 
-  // Interview form state
-  const [interviewStatus, setInterviewStatus] = useState<'selected' | 'rejected' | 'hold' | 'callback' | 'no_show' | 'walkout'>('selected');
-  const [communicationRating, setCommunicationRating] = useState(3);
-  const [stabilityRating, setStabilityRating] = useState(3);
-  const [salaryFit, setSalaryFit] = useState(true);
-  const [shiftFit, setShiftFit] = useState(true);
-  const [locationFit, setLocationFit] = useState(true);
-  const [roleFit, setRoleFit] = useState(true);
-  const [remarks, setRemarks] = useState('');
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [nextStep, setNextStep] = useState('');
-
-  // ── Load assigned candidates ───────────────────────────────────────────────
-  useEffect(() => {
-    if (view === 'list') {
-      loadCandidates();
-    } else if (view === 'metrics') {
-      loadMetrics();
-    }
-  }, [view]);
-
-  useEffect(() => {
-    const objectUrls: string[] = [];
-    let cancelled = false;
-
-    const loadCandidatePhotos = async () => {
-      const next: Record<string, string> = {};
-      for (const candidate of candidates) {
-        if (!candidate.selfie_url) continue;
-        try {
-          const blob = await hrmsApi.getBlob(candidate.selfie_url);
-          const objectUrl = URL.createObjectURL(blob);
-          objectUrls.push(objectUrl);
-          next[candidate.candidate_id] = objectUrl;
-        } catch {
-          // Silent fallback: show initials/avatar when secured file fetch is unavailable
-        }
-      }
-      if (!cancelled) {
-        setCandidatePhotos(next);
-      } else {
-        objectUrls.forEach((url) => URL.revokeObjectURL(url));
-      }
-    };
-
-    if (candidates.length > 0) {
-      void loadCandidatePhotos();
-    } else {
-      setCandidatePhotos({});
-    }
-
-    return () => {
-      cancelled = true;
-      objectUrls.forEach((url) => URL.revokeObjectURL(url));
-    };
-  }, [candidates]);
-
-  const loadCandidates = async () => {
+  const load = useCallback(async (p: Period) => {
     setLoading(true);
     setError('');
     try {
-      const res = await hrmsApi.get('/api/ats/interview/assigned-candidates');
-      setCandidates(res.data || []);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load candidates');
+      const res = await hrmsApi.get<unknown>(`/api/ats/recruiter/my-performance?period=${p}`) as {
+        success: boolean; period: string; profile: Profile | null; data: PerformanceData;
+      };
+      setData(res.data);
+      if (res.profile) setProfile(res.profile);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load performance data');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadMetrics = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await hrmsApi.get('/api/ats/interview/performance');
-      setMetrics(res.data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load metrics');
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => { void load(period); }, [period, load]);
 
-  // ── Update queue status ────────────────────────────────────────────────────
-  const updateStatus = async (candidateId: string, status: 'called' | 'in_interview') => {
-    try {
-      await hrmsApi.post('/api/ats/interview/update-queue-status', {
-        candidate_id: candidateId,
-        status,
-      });
-      loadCandidates();
-    } catch (err: any) {
-      setError(err.message || 'Failed to update status');
-    }
-  };
+  const kpi  = data?.kpi;
+  const hkpi = data?.hiringKpi;
 
-  // ── Submit interview result ────────────────────────────────────────────────
-  const submitInterview = async () => {
-    if (!selectedCandidate) return;
-
-    setSubmitting(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      await hrmsApi.post('/api/ats/interview/submit-result', {
-        candidate_id: selectedCandidate.candidate_id,
-        interview_status: interviewStatus,
-        communication_rating: communicationRating,
-        stability_rating: stabilityRating,
-        salary_fit: salaryFit,
-        shift_fit: shiftFit,
-        location_fit: locationFit,
-        role_fit: roleFit,
-        remarks,
-        rejection_reason: interviewStatus === 'rejected' ? rejectionReason : undefined,
-        next_step: nextStep,
-      });
-
-      setSuccess(`Interview result submitted: ${interviewStatus}`);
-      setTimeout(() => {
-        setView('list');
-        setSelectedCandidate(null);
-        resetForm();
-      }, 2000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to submit interview result');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const resetForm = () => {
-    setInterviewStatus('selected');
-    setCommunicationRating(3);
-    setStabilityRating(3);
-    setSalaryFit(true);
-    setShiftFit(true);
-    setLocationFit(true);
-    setRoleFit(true);
-    setRemarks('');
-    setRejectionReason('');
-    setNextStep('');
-  };
-
-  // ── Render Star Rating ─────────────────────────────────────────────────────
-  const StarRating = ({ value, onChange }: { value: number; onChange: (v: number) => void }) => (
-    <div className="flex gap-1">
-      {[1, 2, 3, 4, 5].map((star) => (
-        <button
-          key={star}
-          type="button"
-          onClick={() => onChange(star)}
-          className="focus:outline-none"
-        >
-          <Star
-            className={`w-6 h-6 ${
-              star <= value ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'
-            }`}
-          />
-        </button>
-      ))}
-    </div>
-  );
-
-  // ── View: List ─────────────────────────────────────────────────────────────
-  if (view === 'list') {
-    return (
-      <DashboardLayout>
-        <div className="p-6">
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Recruiter Portal</h1>
-              <p className="text-sm text-gray-600 mt-1">Your assigned candidates</p>
-            </div>
-            <button
-              onClick={() => setView('metrics')}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
-            >
-              <TrendingUp className="w-4 h-4" />
-              My Performance
-            </button>
-          </div>
-
-          {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-              <XCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <span className="text-sm text-red-800">{error}</span>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          ) : candidates.length === 0 ? (
-            <div className="text-center py-12 bg-gray-50 rounded-lg">
-              <User className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-              <p className="text-gray-600">No candidates assigned</p>
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              {candidates.map((candidate) => (
-                <div
-                  key={candidate.candidate_id}
-                  className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-4">
-                      {candidatePhotos[candidate.candidate_id] ? (
-                        <img
-                          src={candidatePhotos[candidate.candidate_id]}
-                          alt={candidate.full_name}
-                          className="w-16 h-16 rounded-full object-cover border-2 border-purple-200"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center">
-                          <User className="w-8 h-8 text-purple-600" />
-                        </div>
-                      )}
-                      <div>
-                        <h3 className="text-lg font-semibold text-gray-900">{candidate.full_name}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="px-3 py-1 bg-purple-100 text-purple-800 text-xs font-medium rounded-full">
-                            {candidate.token_number}
-                          </span>
-                          <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                            candidate.queue_status === 'waiting' ? 'bg-yellow-100 text-yellow-800' :
-                            candidate.queue_status === 'called' ? 'bg-blue-100 text-blue-800' :
-                            candidate.queue_status === 'in_interview' ? 'bg-green-100 text-green-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {candidate.queue_status.replace('_', ' ').toUpperCase()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <Phone className="w-4 h-4" />
-                      <span>{candidate.mobile}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <Mail className="w-4 h-4" />
-                      <span>{candidate.email}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <Briefcase className="w-4 h-4" />
-                      <span>{candidate.applied_for_role}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-gray-600">
-                      <GraduationCap className="w-4 h-4" />
-                      <span>{candidate.education}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2">
-                    {candidate.queue_status === 'waiting' && (
-                      <button
-                        onClick={() => updateStatus(candidate.candidate_id, 'called')}
-                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                      >
-                        Call Candidate
-                      </button>
-                    )}
-                    {candidate.queue_status === 'called' && (
-                      <button
-                        onClick={() => updateStatus(candidate.candidate_id, 'in_interview')}
-                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                      >
-                        Start Interview
-                      </button>
-                    )}
-                    {candidate.queue_status === 'in_interview' && (
-                      <button
-                        onClick={() => {
-                          setSelectedCandidate(candidate);
-                          setView('interview');
-                        }}
-                        className="flex-1 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700"
-                      >
-                        Submit Interview Result
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  // ── View: Interview ────────────────────────────────────────────────────────
-  if (view === 'interview' && selectedCandidate) {
-    return (
-      <DashboardLayout>
-        <div className="p-6 max-w-4xl mx-auto">
-          <div className="mb-6">
-            <button
-              onClick={() => {
-                setView('list');
-                setSelectedCandidate(null);
-                resetForm();
-              }}
-              className="text-sm text-purple-600 hover:text-purple-700 font-medium mb-2"
-            >
-              ← Back to List
-            </button>
-            <h1 className="text-2xl font-bold text-gray-900">Interview Result</h1>
-            <p className="text-sm text-gray-600 mt-1">{selectedCandidate.full_name}</p>
-          </div>
-
-          {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-              <XCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <span className="text-sm text-red-800">{error}</span>
-            </div>
-          )}
-
-          {success && (
-            <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-start gap-3">
-              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-              <span className="text-sm text-green-800">{success}</span>
-            </div>
-          )}
-
-          <div className="space-y-6">
-            {/* Interview Status */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Interview Status</h2>
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { value: 'selected', label: 'Selected', icon: CheckCircle, color: 'green' },
-                  { value: 'rejected', label: 'Rejected', icon: XCircle, color: 'red' },
-                  { value: 'hold', label: 'On Hold', icon: AlertCircle, color: 'yellow' },
-                ].map((status) => {
-                  const Icon = status.icon;
-                  return (
-                    <button
-                      key={status.value}
-                      onClick={() => setInterviewStatus(status.value as any)}
-                      className={`p-4 border-2 rounded-lg flex flex-col items-center gap-2 transition-all ${
-                        interviewStatus === status.value
-                          ? `border-${status.color}-500 bg-${status.color}-50`
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <Icon className={`w-6 h-6 ${
-                        interviewStatus === status.value ? `text-${status.color}-600` : 'text-gray-400'
-                      }`} />
-                      <span className="font-medium text-sm">{status.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Ratings */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Ratings</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Communication Skills
-                  </label>
-                  <StarRating value={communicationRating} onChange={setCommunicationRating} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Stability/Commitment
-                  </label>
-                  <StarRating value={stabilityRating} onChange={setStabilityRating} />
-                </div>
-              </div>
-            </div>
-
-            {/* Fit Assessment */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Fit Assessment</h2>
-              <div className="grid grid-cols-2 gap-4">
-                {[
-                  { label: 'Salary Expectation Fit', value: salaryFit, onChange: setSalaryFit },
-                  { label: 'Shift Availability Fit', value: shiftFit, onChange: setShiftFit },
-                  { label: 'Location Comfort Fit', value: locationFit, onChange: setLocationFit },
-                  { label: 'Role Suitability Fit', value: roleFit, onChange: setRoleFit },
-                ].map((item) => (
-                  <label key={item.label} className="flex items-center gap-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={item.value}
-                      onChange={(e) => item.onChange(e.target.checked)}
-                      className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700">{item.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Rejection Reason (if rejected) */}
-            {interviewStatus === 'rejected' && (
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Rejection Reason *
-                </label>
-                <select
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                  required
-                >
-                  <option value="">Select reason</option>
-                  <option value="communication_poor">Poor Communication Skills</option>
-                  <option value="experience_insufficient">Insufficient Experience</option>
-                  <option value="salary_mismatch">Salary Expectation Mismatch</option>
-                  <option value="location_issue">Location/Travel Concerns</option>
-                  <option value="shift_unavailable">Shift Availability Issue</option>
-                  <option value="attitude_concern">Attitude/Cultural Fit Concern</option>
-                  <option value="background_issue">Background Verification Concern</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-            )}
-
-            {/* Next Step (if hold/callback) */}
-            {(interviewStatus === 'hold' || interviewStatus === 'callback') && (
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Next Step *
-                </label>
-                <input
-                  type="text"
-                  value={nextStep}
-                  onChange={(e) => setNextStep(e.target.value)}
-                  placeholder="e.g., Second round interview with manager"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                  required
-                />
-              </div>
-            )}
-
-            {/* Remarks */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Remarks
-              </label>
-              <textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                rows={4}
-                placeholder="Additional notes about the interview..."
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setView('list');
-                  setSelectedCandidate(null);
-                  resetForm();
-                }}
-                className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitInterview}
-                disabled={submitting}
-                className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {submitting ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    Submitting...
-                  </>
-                ) : (
-                  'Submit Interview Result'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  // ── View: Performance Metrics ──────────────────────────────────────────────
-  if (view === 'metrics' && metrics) {
-    return (
-      <DashboardLayout>
-        <div className="p-6 max-w-6xl mx-auto">
-          <div className="mb-6">
-            <button
-              onClick={() => setView('list')}
-              className="text-sm text-purple-600 hover:text-purple-700 font-medium mb-2"
-            >
-              ← Back to Candidates
-            </button>
-            <h1 className="text-2xl font-bold text-gray-900">My Performance</h1>
-            <p className="text-sm text-gray-600 mt-1">Your interview statistics</p>
-          </div>
-
-          {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-              <XCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <span className="text-sm text-red-800">{error}</span>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Total Interviews */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">Total Interviews</h3>
-                  <User className="w-5 h-5 text-gray-400" />
-                </div>
-                <p className="text-3xl font-bold text-gray-900">{metrics.total_interviews}</p>
-              </div>
-
-              {/* Selected */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">Selected</h3>
-                  <CheckCircle className="w-5 h-5 text-green-500" />
-                </div>
-                <p className="text-3xl font-bold text-green-600">{metrics.selected_count}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {metrics.selection_rate.toFixed(1)}% selection rate
-                </p>
-              </div>
-
-              {/* Rejected */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">Rejected</h3>
-                  <XCircle className="w-5 h-5 text-red-500" />
-                </div>
-                <p className="text-3xl font-bold text-red-600">{metrics.rejected_count}</p>
-              </div>
-
-              {/* On Hold */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">On Hold</h3>
-                  <AlertCircle className="w-5 h-5 text-yellow-500" />
-                </div>
-                <p className="text-3xl font-bold text-yellow-600">{metrics.hold_count}</p>
-              </div>
-
-              {/* No Show */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">No Show</h3>
-                  <Clock className="w-5 h-5 text-gray-400" />
-                </div>
-                <p className="text-3xl font-bold text-gray-600">{metrics.no_show_count}</p>
-              </div>
-
-              {/* Avg Communication Rating */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">Avg Communication</h3>
-                  <MessageSquare className="w-5 h-5 text-purple-500" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <p className="text-3xl font-bold text-purple-600">
-                    {metrics.avg_communication_rating.toFixed(1)}
-                  </p>
-                  <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
-                </div>
-              </div>
-
-              {/* Avg Stability Rating */}
-              <div className="bg-white border border-gray-200 rounded-lg p-6 md:col-span-2 lg:col-span-1">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-medium text-gray-600">Avg Stability</h3>
-                  <Award className="w-5 h-5 text-blue-500" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <p className="text-3xl font-bold text-blue-600">
-                    {metrics.avg_stability_rating.toFixed(1)}
-                  </p>
-                  <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  // Default
   return (
     <DashboardLayout>
-      <div className="p-6 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+      <div className="p-6 max-w-7xl mx-auto">
+
+        {/* ── Header ── */}
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">My Performance</h1>
+            {profile && (
+              <p className="text-sm text-gray-500 mt-0.5">
+                {profile.name} · {profile.branch} · {profile.recruiterCode}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <select
+                value={period}
+                onChange={e => setPeriod(e.target.value as Period)}
+                className="appearance-none pl-3 pr-8 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 cursor-pointer"
+              >
+                {(Object.keys(PERIOD_LABELS) as Period[]).map(p => (
+                  <option key={p} value={p}>{PERIOD_LABELS[p]}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+            <button
+              onClick={() => load(period)}
+              disabled={loading}
+              className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 text-gray-600 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800 flex items-center gap-2">
+            <XCircle className="w-4 h-4 flex-shrink-0" />{error}
+          </div>
+        )}
+
+        {loading && !data && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            {[...Array(8)].map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />)}
+          </div>
+        )}
+
+        {data && (
+          <>
+            {/* ── Walk-in Interview KPIs ── */}
+            <div className="mb-2">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Walk-in Interview Outcomes</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <StatCard label="Total Interviewed" value={n(kpi?.total)} icon={Users}       bg="bg-purple-100" text="text-purple-600"
+                  sub={`${PERIOD_LABELS[period]}`} />
+                <StatCard label="Selected"           value={n(kpi?.selected)} icon={CheckCircle} bg="bg-green-100"  text="text-green-600"
+                  sub={`${n(kpi?.conversion_rate)}% conversion`} />
+                <StatCard label="Rejected"           value={n(kpi?.rejected)}  icon={XCircle}     bg="bg-red-100"   text="text-red-600" />
+                <StatCard label="Hold"               value={n(kpi?.hold)}      icon={AlertCircle} bg="bg-yellow-100" text="text-yellow-600" />
+                <StatCard label="No Show"            value={n(kpi?.no_show)}   icon={Clock}       bg="bg-gray-100"  text="text-gray-500" />
+                <StatCard label="Client Pending"     value={n(kpi?.client_pending)} icon={Target} bg="bg-blue-100"  text="text-blue-600" />
+              </div>
+            </div>
+
+            {/* ── Hiring Entry KPIs ── */}
+            {hkpi && (
+              <div className="mb-5 mt-4">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">Hiring Entries (Activity Tracker)</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <StatCard label="Total Entries"    value={n(hkpi.total_entries)} icon={ClipboardList} bg="bg-indigo-100" text="text-indigo-600" />
+                  <StatCard label="Walk-ins"         value={n(hkpi.walkin_flag)}   icon={Users}         bg="bg-purple-100" text="text-purple-600" />
+                  <StatCard label="Final Selected"   value={n(hkpi.final_selected)} icon={UserCheck}   bg="bg-green-100"  text="text-green-600" />
+                  <StatCard label="Joined"           value={n(hkpi.joined)}        icon={UserX}         bg="bg-teal-100"  text="text-teal-600" />
+                </div>
+              </div>
+            )}
+
+            {/* ── Secondary metrics ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <TrendingUp className="w-4 h-4 text-purple-600" />
+                  <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wide">Conversion Rate</span>
+                </div>
+                <div className="text-3xl font-bold text-purple-700">{n(kpi?.conversion_rate)}%</div>
+                <div className="text-[11px] text-purple-500 mt-0.5">{n(kpi?.selected)} selected / {n(kpi?.total)} interviewed</div>
+              </div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Award className="w-4 h-4 text-blue-600" />
+                  <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wide">Avg Typing Speed</span>
+                </div>
+                <div className="text-3xl font-bold text-blue-700">
+                  {kpi?.avg_typing_wpm != null ? `${kpi.avg_typing_wpm} WPM` : '—'}
+                </div>
+                <div className="text-[11px] text-blue-500 mt-0.5">Net WPM from assessed candidates</div>
+              </div>
+              <div className="bg-gradient-to-br from-teal-50 to-teal-100 border border-teal-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <BarChart2 className="w-4 h-4 text-teal-600" />
+                  <span className="text-[10px] font-bold text-teal-700 uppercase tracking-wide">Avg Interview Duration</span>
+                </div>
+                <div className="text-3xl font-bold text-teal-700">
+                  {kpi?.avg_interview_min != null ? `${kpi.avg_interview_min}m` : '—'}
+                </div>
+                <div className="text-[11px] text-teal-500 mt-0.5">Start → submission</div>
+              </div>
+            </div>
+
+            {/* ── Funnel + Trend ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4">
+
+              {/* Stage Funnel */}
+              <div className="lg:col-span-3 bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-1">
+                  <Target className="w-4 h-4 text-purple-600" />
+                  <h2 className="font-semibold text-gray-800">Interview Stage Funnel</h2>
+                </div>
+                <p className="text-[10px] text-gray-400 mb-4">
+                  Cumulative — each stage shows all candidates who reached AT LEAST that stage. "Passed" = moved to next stage.
+                </p>
+                {!data.funnel.length ? (
+                  <p className="text-sm text-gray-400 text-center py-6">No stage data for this period</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {data.funnel.map((row, i) => (
+                      <FunnelCard
+                        key={row.stage}
+                        row={row}
+                        prev={i > 0 ? data.funnel[i - 1] : undefined}
+                        isFirst={i === 0}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Daily Trend */}
+              <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-1">
+                  <TrendingUp className="w-4 h-4 text-purple-600" />
+                  <h2 className="font-semibold text-gray-800">Daily Activity</h2>
+                </div>
+                <p className="text-[10px] text-gray-400 mb-4">Submissions per day — hover for details</p>
+                <TrendChart rows={data.trend} />
+              </div>
+            </div>
+
+            {/* ── Process + VOC + Source ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+              {/* Process */}
+              <div className="bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Briefcase className="w-4 h-4 text-blue-600" />
+                  <h2 className="font-semibold text-gray-800">By Process</h2>
+                </div>
+                {!data.byProcess.length ? (
+                  <p className="text-sm text-gray-400 text-center py-6">No data</p>
+                ) : (
+                  <div className="space-y-3">
+                    {data.byProcess.map(row => (
+                      <div key={row.process}>
+                        <div className="flex items-center justify-between text-[11px] mb-1">
+                          <span className="font-medium text-gray-700 truncate max-w-[130px]" title={row.process}>{row.process}</span>
+                          <span className="text-gray-400 ml-2 shrink-0">{row.selected}/{row.total} · {row.rate}%</span>
+                        </div>
+                        <HBar val={row.selected} total={row.total} color="bg-blue-400" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* VOC */}
+              <div className="bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <XCircle className="w-4 h-4 text-red-500" />
+                  <h2 className="font-semibold text-gray-800">Top Rejection Reasons</h2>
+                </div>
+                {!data.voc.length ? (
+                  <p className="text-sm text-gray-400 text-center py-6">No VOC data</p>
+                ) : (() => {
+                  const total = data.voc.reduce((s, r) => s + r.cnt, 0);
+                  return (
+                    <div className="space-y-3">
+                      {data.voc.map(row => (
+                        <div key={row.voc_reason}>
+                          <div className="flex items-center justify-between text-[11px] mb-1">
+                            <span className="font-medium text-gray-700 truncate max-w-[150px]" title={row.voc_reason}>{row.voc_reason}</span>
+                            <span className="text-gray-400 ml-2 shrink-0">{row.cnt} · {pct(row.cnt, total)}%</span>
+                          </div>
+                          <HBar val={row.cnt} total={total} color="bg-red-400" />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Source */}
+              <div className="bg-white border border-gray-200 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Megaphone className="w-4 h-4 text-teal-600" />
+                  <h2 className="font-semibold text-gray-800">By Hiring Source</h2>
+                </div>
+                {!data.bySource.length ? (
+                  <p className="text-sm text-gray-400 text-center py-6">No source data</p>
+                ) : (() => {
+                  const maxSrc = Math.max(...data.bySource.map(r => r.total), 1);
+                  return (
+                    <div className="space-y-3">
+                      {data.bySource.map(row => (
+                        <div key={row.source}>
+                          <div className="flex items-center justify-between text-[11px] mb-1">
+                            <span className="font-medium text-gray-700 truncate max-w-[130px]" title={row.source}>{row.source}</span>
+                            <span className="text-gray-400 ml-2 shrink-0">{row.selected}/{row.total} · {pct(n(row.selected), row.total)}%</span>
+                          </div>
+                          <HBar val={row.total} total={maxSrc} color="bg-teal-400" />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </DashboardLayout>
   );

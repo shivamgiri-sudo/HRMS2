@@ -54,6 +54,20 @@ interface AssignedCandidate {
  * Get assigned candidates for a recruiter
  */
 export async function getAssignedCandidates(recruiterId: string): Promise<AssignedCandidate[]> {
+  // Resolve recruiter roster id from users.id via employees table
+  const [rosterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id as roster_id
+     FROM ats_recruiter_roster r
+     INNER JOIN employees e ON e.id = r.employee_id
+     WHERE e.user_id = ?
+     LIMIT 1`,
+    [recruiterId]
+  );
+  const rosterId: string | null = (rosterRows[0]?.roster_id as string) ?? null;
+
+  // Fall back: if no roster mapping, return empty (recruiter not yet set up)
+  if (!rosterId) return [];
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       c.id as candidate_id,
@@ -64,9 +78,9 @@ export async function getAssignedCandidates(recruiterId: string): Promise<Assign
       c.applied_for_branch,
       c.branch_display_name,
       c.education,
-      c.years_of_experience,
+      COALESCE(c.experience, '') AS years_of_experience,
       c.address,
-      c.gender,
+      NULL AS gender,
       c.resume_url,
       c.selfie_url,
       c.created_at as registered_at,
@@ -78,7 +92,7 @@ export async function getAssignedCandidates(recruiterId: string): Promise<Assign
       AND c.candidate_status = 'registered'
       AND qt.queue_status IN ('waiting', 'called', 'in_interview')
     ORDER BY qt.created_at ASC`,
-    [recruiterId]
+    [rosterId]
   );
 
   return rows as AssignedCandidate[];
@@ -323,9 +337,14 @@ export async function getInterviewHistory(candidateId: string) {
  * Get recruiter performance metrics
  */
 export async function getRecruiterPerformance(recruiterId: string, fromDate?: string, toDate?: string) {
-  const dateFilter = fromDate && toDate
-    ? `AND DATE(ir.created_at) BETWEEN '${fromDate}' AND '${toDate}'`
-    : `AND DATE(ir.created_at) = CURDATE()`;
+  const params: unknown[] = [recruiterId];
+  let dateFilter: string;
+  if (fromDate && toDate) {
+    dateFilter = 'AND DATE(ir.created_at) BETWEEN ? AND ?';
+    params.push(fromDate, toDate);
+  } else {
+    dateFilter = 'AND DATE(ir.created_at) = CURDATE()';
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -336,10 +355,10 @@ export async function getRecruiterPerformance(recruiterId: string, fromDate?: st
       SUM(CASE WHEN interview_status = 'no_show' THEN 1 ELSE 0 END) as no_show_count,
       ROUND(AVG(communication_rating), 2) as avg_communication_rating,
       ROUND(AVG(stability_rating), 2) as avg_stability_rating,
-      ROUND(SUM(CASE WHEN interview_status = 'selected' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as selection_rate
+      ROUND(SUM(CASE WHEN interview_status = 'selected' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as selection_rate
     FROM ats_interview_result ir
     WHERE ir.recruiter_id = ? ${dateFilter}`,
-    [recruiterId]
+    params
   );
 
   return rows[0] || {
