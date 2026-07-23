@@ -9,7 +9,11 @@ import { env } from "../config/env.js";
 
 // Migration governance configuration
 const MIGRATION_LOCK_TIMEOUT_SECONDS = 60;
-const MIGRATION_STRICT_MODE = process.env.MIGRATION_STRICT_MODE === "true";
+// GOVERNANCE: Strict mode is ON by default in production, optional in development
+// In strict mode: missing files block execution, checksum mismatches fail
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const MIGRATION_STRICT_MODE = process.env.MIGRATION_STRICT_MODE === "true" ||
+  (IS_PRODUCTION && process.env.MIGRATION_STRICT_MODE !== "false");
 const STOP_ON_FIRST_FAILURE = process.env.MIGRATION_STOP_ON_FAILURE !== "false"; // default true
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -106,9 +110,18 @@ export const MIGRATION_MANIFEST: string[] = [
   "099_ats_candidate_uploads.sql",
   "100_user_page_access.sql",
   "125_kpi_process_role_engine.sql",
+  "128_ats_queue_token.sql",
+  "129_ats_recruiter_roster.sql",
+  "130_ats_offer_letter_templates.sql",
+  "131_ats_candidate_tokens.sql",
+  "132_ats_fix_candidate_tokens.sql",
   "134_external_db_credentials.sql",
   "135_payroll_masters.sql",
   "137_schema_gaps.sql",
+  "373_create_candidate_onboarding_profile.sql",
+  "138_ats_complete_journey.sql",
+  "139_ats_enhanced_journey_safe.sql",
+  "140_candidate_portal_tables.sql",
   "141_branch_head_approval.sql",
   "142_offer_letter_system.sql",
   "143_report_builder.sql",
@@ -270,7 +283,6 @@ export const MIGRATION_MANIFEST: string[] = [
   "370_pf_creation_automation.sql",
   "371_user_device_sessions.sql",
   "372_add_name_on_cheque.sql",
-  "373_create_candidate_onboarding_profile.sql",
   "374_employees_missing_indexes.sql",
   "375_salary_prep_line_attendance_source.sql",
   "376_break_management_module.sql",

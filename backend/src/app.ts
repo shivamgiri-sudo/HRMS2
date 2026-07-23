@@ -1,4 +1,5 @@
 import compression from "compression";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import fs from "fs";
@@ -241,6 +242,7 @@ app.use(express.json({
   verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => { req.rawBody = buf; }
 }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser()); // Required for httpOnly refresh token cookies
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 app.use(globalLimiter);
 

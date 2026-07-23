@@ -72,8 +72,10 @@ describe("Auth Security Hardening", () => {
       expect(authServiceCode).toContain("UPDATE auth_refresh_token SET revoked = 1 WHERE token_family_id");
     });
 
-    it("refresh route should return new refresh token", () => {
-      expect(authRoutesCode).toContain("refreshToken: tokens.refreshToken");
+    it("refresh route should set new refresh token via httpOnly cookie", () => {
+      // After migration to httpOnly cookies, refresh tokens are no longer in response body
+      // They are set via setRefreshTokenCookie() for XSS protection
+      expect(authRoutesCode).toContain("setRefreshTokenCookie(res, tokens.refreshToken)");
     });
   });
 

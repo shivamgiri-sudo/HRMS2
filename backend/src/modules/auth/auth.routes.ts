@@ -12,6 +12,11 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
+import {
+  setRefreshTokenCookie,
+  clearRefreshTokenCookie,
+  getRefreshTokenFromRequest,
+} from "./auth-cookie.js";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -142,6 +147,7 @@ async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId
 
 // POST /api/auth/login — public (rate limited)
 // Accepts: { identifier: "email or employee code", password } OR legacy { email, password }
+// SECURITY: Refresh token is set as httpOnly cookie, NOT returned in response body
 router.post("/login", authLimiter, h(async (req, res) => {
   const identifier = req.body.identifier || req.body.email;
   const { password } = req.body;
@@ -149,7 +155,21 @@ router.post("/login", authLimiter, h(async (req, res) => {
 
   try {
     const tokens = await authService.login(identifier, password, req);
-    return res.json({ data: tokens });
+
+    // SECURITY: Set refresh token as httpOnly cookie (if provided - not provided for 2FA pending)
+    if (tokens.refreshToken) {
+      setRefreshTokenCookie(res, tokens.refreshToken);
+    }
+
+    // Return response WITHOUT refresh token in body (security improvement)
+    // The refresh token is only accessible via httpOnly cookie
+    return res.json({
+      data: {
+        accessToken: tokens.accessToken,
+        // refreshToken intentionally omitted from response body
+        user: tokens.user,
+      }
+    });
   } catch (error: unknown) {
     return res.status(401).json({ error: error instanceof Error ? error.message : "Authentication failed" });
   }
@@ -308,20 +328,33 @@ router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin
 // SECURITY: Implements token rotation - each refresh returns a NEW refresh token.
 // The old token is marked as rotated (not deleted) for reuse detection.
 // If a rotated token is reused, the entire token family is revoked.
+// SECURITY: Refresh token is read from httpOnly cookie, NOT request body
 router.post("/refresh", h(async (req, res) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) return res.status(400).json({ error: "refreshToken required" });
+  // SECURITY: Read refresh token from httpOnly cookie (with legacy body fallback)
+  const refreshToken = getRefreshTokenFromRequest(req);
+  if (!refreshToken) {
+    return res.status(400).json({ error: "Refresh token required (via cookie)" });
+  }
 
   try {
     const tokens = await authService.refreshAccess(refreshToken);
+
+    // SECURITY: Set rotated refresh token as httpOnly cookie
+    setRefreshTokenCookie(res, tokens.refreshToken);
+
+    // Return response WITHOUT refresh token in body
     return res.json({
       data: {
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken, // NEW: rotated refresh token
+        // refreshToken intentionally omitted from response body
       }
     });
   } catch (error: unknown) {
     const err = error as { code?: string; message?: string };
+
+    // Clear cookie on auth failure
+    clearRefreshTokenCookie(res);
+
     // Return specific error codes for client-side handling
     if (err.code === 'TOKEN_REUSED') {
       return res.status(401).json({
@@ -349,9 +382,17 @@ router.post("/refresh", h(async (req, res) => {
 }));
 
 // POST /api/auth/logout — requires auth
+// SECURITY: Clears httpOnly refresh token cookie
 router.post("/logout", requireAuth, h(async (req, res) => {
-  const { refreshToken } = req.body;
-  if (refreshToken) await authService.logout(refreshToken, req);
+  // SECURITY: Read refresh token from httpOnly cookie (with legacy body fallback)
+  const refreshToken = getRefreshTokenFromRequest(req);
+  if (refreshToken) {
+    await authService.logout(refreshToken, req);
+  }
+
+  // Always clear the refresh token cookie
+  clearRefreshTokenCookie(res);
+
   return res.json({ success: true });
 }));
 
@@ -425,6 +466,7 @@ router.post("/verify-otp-reset", authLimiter, h(async (req, res) => {
 }));
 
 // POST /api/auth/reset-password — public
+// SECURITY: Clears httpOnly cookie as password reset invalidates all sessions
 router.post("/reset-password", h(async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: "token and password required" });
@@ -432,12 +474,19 @@ router.post("/reset-password", h(async (req, res) => {
 
   try {
     await authService.resetPassword(token, password);
+
+    // SECURITY: Clear any existing refresh token cookie
+    // Password reset invalidates all existing sessions
+    clearRefreshTokenCookie(res);
+
     return res.json({ success: true });
   } catch (error: unknown) {
     return res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
   }
 }));
 
+// POST /api/auth/change-password — requires auth
+// SECURITY: Clears httpOnly cookie as password change invalidates all sessions
 router.post("/change-password", requireAuth, authLimiter, h(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) {
@@ -447,6 +496,10 @@ router.post("/change-password", requireAuth, authLimiter, h(async (req, res) => 
     return res.status(400).json({ error: "New password must be at least 8 characters" });
   }
   await authService.changePassword(req.authUser!.id, String(currentPassword), String(newPassword));
+
+  // SECURITY: Clear refresh token cookie as password change invalidates all sessions
+  clearRefreshTokenCookie(res);
+
   return res.json({ success: true });
 }));
 
@@ -470,31 +523,43 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req, res) => 
   // SECURITY: Refresh token is ONLY created here, after 2FA verification.
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   let accessToken: string | null = null;
-  let refreshToken: string | null = null;
   try {
     const exchanged = await authService.exchangePreAuthToken(preAuthToken, req);
     accessToken = exchanged.accessToken;
-    refreshToken = exchanged.refreshToken;
+
+    // SECURITY: Set refresh token as httpOnly cookie
+    if (exchanged.refreshToken) {
+      setRefreshTokenCookie(res, exchanged.refreshToken);
+    }
   } catch {
     // If exchange fails (e.g. already-verified challenge, race), the client will
     // need to call POST /api/auth/2fa/exchange explicitly.
   }
 
+  // Return response WITHOUT refresh token in body
   return res.json({
     success: true,
     twoFactorVerified: true,
     ...(accessToken ? { accessToken } : {}),
-    ...(refreshToken ? { refreshToken } : {}),
+    // refreshToken intentionally omitted - set as httpOnly cookie
   });
 }));
 
 // POST /api/auth/2fa/exchange — exchange a verified pre_auth token for full session
 // Separated out so clients can call this independently if /2fa/verify didn't return the tokens.
+// SECURITY: Refresh token is set as httpOnly cookie, NOT returned in response body
 router.post("/2fa/exchange", requireAuth, h(async (req, res) => {
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   try {
     const { accessToken, refreshToken } = await authService.exchangePreAuthToken(preAuthToken, req);
-    return res.json({ success: true, accessToken, refreshToken });
+
+    // SECURITY: Set refresh token as httpOnly cookie
+    if (refreshToken) {
+      setRefreshTokenCookie(res, refreshToken);
+    }
+
+    // Return response WITHOUT refresh token in body
+    return res.json({ success: true, accessToken });
   } catch (error: unknown) {
     const status = typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode?: unknown }).statusCode === "number"
       ? (error as { statusCode: number }).statusCode
@@ -882,14 +947,18 @@ router.delete("/sessions/:sessionId", requireAuth, h(async (req, res) => {
 }));
 
 // DELETE /api/auth/sessions/all/others — Logout all other devices
+// DELETE /api/auth/sessions/all/others — logout all other devices
+// SECURITY: Reads current refresh token from httpOnly cookie
 router.delete("/sessions/all/others", requireAuth, h(async (req, res) => {
   const userId = req.authUser!.id;
-  const currentRefreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
+
+  // SECURITY: Read current refresh token from httpOnly cookie (with legacy fallback)
+  const currentRefreshToken = getRefreshTokenFromRequest(req) || req.headers['x-refresh-token'];
 
   if (!currentRefreshToken) {
     return res.status(400).json({
       success: false,
-      message: "Current refresh token required to identify this session"
+      message: "Current refresh token required (via cookie) to identify this session"
     });
   }
 

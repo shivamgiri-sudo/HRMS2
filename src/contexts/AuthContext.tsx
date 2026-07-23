@@ -41,6 +41,10 @@ async function parseJsonResponse(res: Response): Promise<any> {
   }
 }
 
+/**
+ * Fetch JSON with timeout support.
+ * For auth endpoints, use fetchAuthJson which includes credentials for cookies.
+ */
 async function fetchJson(
   path: string,
   init: RequestInit,
@@ -52,6 +56,41 @@ async function fetchJson(
   try {
     const res = await fetch(apiUrl(path), {
       ...init,
+      headers: {
+        Accept: 'application/json',
+        ...init.headers,
+      },
+      signal: controller.signal,
+    });
+    const payload = await parseJsonResponse(res);
+    return { ok: res.ok, status: res.status, payload };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch JSON for auth endpoints with credentials: "include".
+ * SECURITY: This is required for httpOnly refresh token cookies to be sent/received.
+ * Refresh tokens are stored in httpOnly cookies, NOT localStorage.
+ */
+async function fetchAuthJson(
+  path: string,
+  init: RequestInit,
+  timeoutMs = AUTH_REQUEST_TIMEOUT_MS,
+): Promise<{ ok: boolean; status: number; payload: any }> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(apiUrl(path), {
+      ...init,
+      credentials: 'include', // SECURITY: Required for httpOnly cookies
       headers: {
         Accept: 'application/json',
         ...init.headers,
@@ -87,20 +126,23 @@ function decodeJwtUser(token: string): HrmsUser | null {
   }
 }
 
+/**
+ * Attempt to refresh the access token using httpOnly cookie.
+ * SECURITY: Refresh token is stored in httpOnly cookie, NOT localStorage.
+ * The browser automatically sends the cookie; we don't need to read/send it explicitly.
+ */
 async function tryRefresh(): Promise<HrmsUser | null> {
-  const raw = localStorage.getItem('hrms_refresh_token');
-  if (!raw) return null;
   try {
-    const { ok, payload } = await fetchJson('/api/auth/refresh', {
+    // SECURITY: Use fetchAuthJson with credentials: "include" to send/receive cookies
+    const { ok, payload } = await fetchAuthJson('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: raw }),
+      // No body needed - refresh token comes from httpOnly cookie
     });
     if (!ok) {
       // Check for security-related errors that require logout
       if (payload?.logoutRequired || payload?.code === 'TOKEN_REUSED' || payload?.code === 'PASSWORD_CHANGED') {
         localStorage.removeItem('hrms_access_token');
-        localStorage.removeItem('hrms_refresh_token');
         localStorage.removeItem('hrms_must_change_password');
         localStorage.removeItem('hrms_2fa_required');
         localStorage.removeItem('hrms_2fa_verified');
@@ -109,10 +151,8 @@ async function tryRefresh(): Promise<HrmsUser | null> {
     }
     const { data } = payload ?? {};
     localStorage.setItem('hrms_access_token', data.accessToken);
-    // SECURITY: Store the rotated refresh token (token rotation is now enforced)
-    if (data.refreshToken) {
-      localStorage.setItem('hrms_refresh_token', data.refreshToken);
-    }
+    // SECURITY: Refresh token is rotated server-side and set via httpOnly cookie
+    // We don't store it in localStorage anymore
     return decodeJwtUser(data.accessToken);
   } catch {
     return null;
@@ -124,9 +164,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [mustChangePassword, setMustChangePassword] = useState(() => {
-    // Only honour the flag when a session token actually exists.
-    // Without a token there is no authenticated session, so the flag is stale.
-    const hasToken = !!localStorage.getItem('hrms_access_token') || !!localStorage.getItem('hrms_refresh_token');
+    // Only honour the flag when an access token exists.
+    // SECURITY: Refresh token is now in httpOnly cookie, not localStorage
+    const hasToken = !!localStorage.getItem('hrms_access_token');
     if (!hasToken) {
       localStorage.removeItem('hrms_must_change_password');
       return false;
@@ -134,7 +174,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem('hrms_must_change_password') === 'true';
   });
   const [twoFactorRequired, setTwoFactorRequired] = useState(() => {
-    const hasToken = !!localStorage.getItem('hrms_access_token') || !!localStorage.getItem('hrms_refresh_token');
+    // SECURITY: Refresh token is now in httpOnly cookie, not localStorage
+    const hasToken = !!localStorage.getItem('hrms_access_token');
     if (!hasToken) {
       localStorage.removeItem('hrms_2fa_required');
       localStorage.removeItem('hrms_2fa_verified');
@@ -143,7 +184,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem('hrms_2fa_required') === 'true';
   });
   const [twoFactorVerified, setTwoFactorVerified] = useState(() => {
-    const hasToken = !!localStorage.getItem('hrms_access_token') || !!localStorage.getItem('hrms_refresh_token');
+    // SECURITY: Refresh token is now in httpOnly cookie, not localStorage
+    const hasToken = !!localStorage.getItem('hrms_access_token');
     if (!hasToken) return false;
     return localStorage.getItem('hrms_2fa_verified') === 'true';
   });
@@ -158,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const refreshed = await tryRefresh();
       if (!refreshed) {
         localStorage.removeItem('hrms_access_token');
-        localStorage.removeItem('hrms_refresh_token');
+        // SECURITY: Refresh token is now in httpOnly cookie, cleared by server
         setUser(null);
         queryClient.clear();
         if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
@@ -188,7 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           scheduleRefresh();
           return;
         }
-        localStorage.removeItem('hrms_refresh_token');
+        // SECURITY: Refresh token is now in httpOnly cookie, cleared by server
       }
 
       // Demo sessions are only checked if no real JWT token exists and local demo mode is explicit.
@@ -268,7 +310,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // PRIVACY: Removed geolocation collection - backend doesn't use it for security
       // and collecting it without clear purpose violates data minimization principle
-      const { ok, payload } = await fetchJson('/api/auth/login', {
+      // SECURITY: Use fetchAuthJson with credentials: "include" to receive httpOnly cookies
+      const { ok, payload } = await fetchAuthJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
@@ -276,19 +319,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!ok) {
         return { error: new Error(payload?.error || payload?.message || 'Authentication failed') };
       }
-      const { accessToken, refreshToken, user: authUser } = payload?.data ?? {};
-      // SECURITY: refreshToken may be null when 2FA is required (token only issued after 2FA)
+      const { accessToken, user: authUser } = payload?.data ?? {};
+      // SECURITY: Refresh token is now set as httpOnly cookie by server
+      // It is NOT returned in the response body and NOT stored in localStorage
       if (!accessToken || !authUser?.id) {
         return { error: new Error('Login response was incomplete. Please try again.') };
       }
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
-      // Only store refresh token if provided (not provided when 2FA is required)
-      if (refreshToken) {
-        localStorage.setItem('hrms_refresh_token', refreshToken);
-      } else {
-        localStorage.removeItem('hrms_refresh_token');
-      }
+      // SECURITY: Refresh token is handled via httpOnly cookie, not localStorage
       const forceChange = authUser.mustChangePassword === true;
       const requiresTwoFactor = authUser.twoFactorRequired === true;
       const verifiedTwoFactor = authUser.twoFactorVerified === true;
@@ -327,22 +366,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     setIsSigningOut(true);
     try {
-      const refreshToken = localStorage.getItem('hrms_refresh_token');
-      if (refreshToken) {
-        const token = localStorage.getItem('hrms_access_token');
-        await fetch(apiUrl('/api/auth/logout'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ refreshToken }),
-        }).catch(() => { /* best-effort */ });
-      }
+      // SECURITY: Use fetchAuthJson with credentials: "include" to send/clear cookies
+      const token = localStorage.getItem('hrms_access_token');
+      await fetch(apiUrl('/api/auth/logout'), {
+        method: 'POST',
+        credentials: 'include', // SECURITY: Required to send/clear httpOnly cookie
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        // No body needed - refresh token comes from httpOnly cookie
+      }).catch(() => { /* best-effort */ });
     } finally {
       localStorage.removeItem('hrms_demo_session');
       localStorage.removeItem('hrms_access_token');
-      localStorage.removeItem('hrms_refresh_token');
+      // SECURITY: Refresh token is now in httpOnly cookie, cleared by server on logout
       localStorage.removeItem('hrms_must_change_password');
       localStorage.removeItem('hrms_2fa_required');
       localStorage.removeItem('hrms_2fa_verified');
@@ -405,7 +443,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyTwoFactorCode = async (otp: string): Promise<{ error: Error | null }> => {
     try {
       const token = localStorage.getItem('hrms_access_token');
-      const { ok, payload } = await fetchJson('/api/auth/2fa/verify', {
+      // SECURITY: Use fetchAuthJson with credentials: "include" to receive httpOnly cookies
+      const { ok, payload } = await fetchAuthJson('/api/auth/2fa/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -415,14 +454,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!ok) return { error: new Error(payload?.error || payload?.message || 'Verification failed') };
 
-      // Backend returns full session tokens (access + refresh) after successful 2FA.
-      // SECURITY: The refresh token is ONLY issued after 2FA verification.
+      // Backend returns full access token after successful 2FA.
+      // SECURITY: Refresh token is set as httpOnly cookie by server, NOT in response body
       if (payload?.accessToken) {
         localStorage.setItem('hrms_access_token', payload.accessToken);
       }
-      if (payload?.refreshToken) {
-        localStorage.setItem('hrms_refresh_token', payload.refreshToken);
-      }
+      // SECURITY: Refresh token is handled via httpOnly cookie, not localStorage
 
       localStorage.setItem('hrms_2fa_required', 'true');
       localStorage.setItem('hrms_2fa_verified', 'true');
