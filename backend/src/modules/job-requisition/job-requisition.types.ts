@@ -204,3 +204,52 @@ export interface LmsBatchOption {
   expected_trainees: number;
   current_trainees: number;
 }
+
+export interface AggregateFunnel {
+  linked: number;
+  walkin: number;
+  screened: number;
+  selected: number;
+  offered: number;
+  onboarding: number;
+  joined: number;
+  lms: number;
+}
+
+export interface JoinedEmployee {
+  employee_id: string;
+  full_name: string;
+  employee_code: string | null;
+  date_of_joining: string | null;
+  bridge_status: string;
+  lms_enrolled: boolean;
+  candidate_id: string;
+  candidate_name: string;
+}
+
+export interface HandoverPackCandidate {
+  candidate_id: string;
+  full_name: string;
+  outcome: string;
+  linked_at: string;
+}
+
+export interface HandoverPack {
+  summary: {
+    requisition_code: string;
+    designation_name: string;
+    branch_name: string;
+    process_name: string | null;
+    planned_batch_no: string | null;
+    planned_batch_name: string | null;
+    training_start_date: string | null;
+    requisition_validity: string | null;
+    requested_headcount: number;
+    fulfilled_headcount: number;
+    handover_at: string | null;
+    handover_notes: string | null;
+  };
+  funnel: AggregateFunnel;
+  joined_employees: JoinedEmployee[];
+  candidate_pipeline: HandoverPackCandidate[];
+}

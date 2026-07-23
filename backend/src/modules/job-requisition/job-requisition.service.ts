@@ -28,7 +28,11 @@ import type {
   LmsBatchOption,
   ApprovalStatus,
   CandidateOutcome,
+  AggregateFunnel,
+  JoinedEmployee,
+  HandoverPack,
 } from "./job-requisition.types.js";
+import { emailService } from "../communication/email.service.js";
 
 function generateRequisitionCode(): string {
   const now = new Date();
@@ -1077,10 +1081,13 @@ export const jobRequisitionService = {
     id: string,
     actorId: string,
     actorName: string | null,
-    notes?: string
+    notes?: string,
+    emailRecipientUserIds?: string[],
+    manualCcEmails?: string[]
   ): Promise<void> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT approval_status, requested_headcount, fulfilled_headcount, handover_status, branch_name, process_name, requisition_code
+      `SELECT approval_status, requested_headcount, fulfilled_headcount, handover_status,
+              branch_name, process_name, requisition_code, planned_batch_no, planned_batch_name, training_start_date
        FROM job_requisition WHERE id = ? AND active_status = 1`,
       [id]
     );
@@ -1105,18 +1112,23 @@ export const jobRequisitionService = {
       [actorId, notes ?? null, id]
     );
 
-    // Notify HR admin and ops manager roles via inbox
+    const processLabel = (req.process_name as string) ?? (req.branch_name as string);
+    const batchLabel = (req.planned_batch_name as string) ?? (req.planned_batch_no as string) ?? "—";
+
+    // Inbox notifications — use canonical user_roles + auth_user tables
     try {
-      const [recipients] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM users WHERE role IN ('super_admin', 'hr', 'operations_manager') AND active_status = 1`,
+      const [roleRecipients] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT ur.user_id
+         FROM user_roles ur
+         WHERE ur.role_key IN ('super_admin', 'hr', 'operations_manager') AND ur.active_status = 1`,
         []
       );
-      for (const r of recipients as RowDataPacket[]) {
+      for (const r of roleRecipients as RowDataPacket[]) {
         await inboxService.createItem({
-          user_id: r.id as string,
+          user_id: r.user_id as string,
           type: "requisition_handover",
           title: `Batch Handed Over: ${req.requisition_code as string}`,
-          description: `${req.requisition_code as string} (${(req.process_name as string) ?? (req.branch_name as string)}) has been handed over to operations by ${actorName ?? actorId}. ${notes ? `Note: ${notes}` : ""}`.trim(),
+          description: `${req.requisition_code as string} (${processLabel}) batch ${batchLabel} handed over by ${actorName ?? actorId}. ${notes ? `Note: ${notes}` : ""}`.trim(),
           entity_type: "job_requisition",
           entity_id: id,
           priority: "normal",
@@ -1125,5 +1137,247 @@ export const jobRequisitionService = {
     } catch (e) {
       console.warn("[JobRequisition markHandover] inbox notification failed:", e instanceof Error ? e.message : e);
     }
+
+    // Email notification (graceful fail)
+    try {
+      // Collect emails: explicit recipients + manual CC
+      const toEmails: string[] = [...(manualCcEmails ?? [])];
+
+      // Add emails for specified user IDs
+      const allUserIds = [...new Set([...(emailRecipientUserIds ?? [])])];
+      if (allUserIds.length > 0) {
+        const placeholders = allUserIds.map(() => "?").join(",");
+        const [userRows] = await db.execute<RowDataPacket[]>(
+          `SELECT email FROM auth_user WHERE id IN (${placeholders}) AND email IS NOT NULL`,
+          allUserIds
+        );
+        for (const u of userRows as RowDataPacket[]) {
+          if (u.email) toEmails.push(u.email as string);
+        }
+      }
+
+      if (toEmails.length > 0 && emailService.isConfigured()) {
+        const trainingDate = req.training_start_date
+          ? new Date(req.training_start_date as string).toLocaleDateString("en-IN")
+          : "TBD";
+        const htmlBody = `
+          <table style="width:100%;border-collapse:collapse;margin-bottom:18px">
+            <tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600;width:40%">Requisition</td><td style="padding:6px 10px">${req.requisition_code as string}</td></tr>
+            <tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600">Process / Branch</td><td style="padding:6px 10px">${processLabel}</td></tr>
+            <tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600">Batch</td><td style="padding:6px 10px">${batchLabel}</td></tr>
+            <tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600">Training Start</td><td style="padding:6px 10px">${trainingDate}</td></tr>
+            <tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600">Headcount</td><td style="padding:6px 10px">${req.fulfilled_headcount as number} / ${req.requested_headcount as number} filled</td></tr>
+            <tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600">Handed Over By</td><td style="padding:6px 10px">${actorName ?? actorId}</td></tr>
+            ${notes ? `<tr><td style="padding:6px 10px;background:#f8fafc;font-weight:600">Notes</td><td style="padding:6px 10px">${notes}</td></tr>` : ""}
+          </table>
+          <p style="color:#374151;font-size:14px">Please log in to PeopleOS to download the full Batch Handover Pack for this requisition.</p>
+        `;
+        await emailService.send({
+          to: toEmails.join(", "),
+          subject: `Batch Handover: ${req.requisition_code as string} — ${processLabel} — ${batchLabel}`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:660px;margin:0 auto">${htmlBody}</div>`,
+        });
+      }
+    } catch (e) {
+      console.warn("[JobRequisition markHandover] email send failed:", e instanceof Error ? e.message : e);
+    }
+  },
+
+  /**
+   * Aggregate funnel across all approved/active requisitions (or filtered subset)
+   */
+  async getAggregateFunnel(filters: { branch_name?: string; approval_status?: string } = {}): Promise<AggregateFunnel> {
+    const conditions: string[] = ["jr.active_status = 1"];
+    const params: unknown[] = [];
+    if (filters.branch_name) { conditions.push("jr.branch_name = ?"); params.push(filters.branch_name); }
+    if (filters.approval_status) { conditions.push("jr.approval_status = ?"); params.push(filters.approval_status); }
+    const where = conditions.join(" AND ");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT jrc.candidate_id)                                         AS linked,
+         COUNT(DISTINCT CASE WHEN c.walk_in_date IS NOT NULL OR qt.id IS NOT NULL THEN c.id END) AS walkin,
+         COUNT(DISTINCT CASE WHEN c.current_stage NOT IN ('Applied','New','Registered') THEN c.id END) AS screened,
+         COUNT(DISTINCT CASE WHEN c.current_stage IN ('Selected','Offered','Joined','Converted') THEN c.id END) AS selected_cnt,
+         COUNT(DISTINCT CASE WHEN c.current_stage IN ('Offered','Joined','Converted') THEN c.id END) AS offered,
+         COUNT(DISTINCT ob.id)                                                    AS onboarding,
+         COUNT(DISTINCT CASE WHEN ob.employee_id IS NOT NULL AND e.active_status = 1 THEN e.id END) AS joined,
+         COUNT(DISTINCT lm.id)                                                    AS lms
+       FROM job_requisition jr
+       LEFT JOIN job_requisition_candidate jrc ON jrc.requisition_id = jr.id
+       LEFT JOIN ats_candidate c              ON c.id = jrc.candidate_id
+       LEFT JOIN ats_queue_token qt           ON qt.candidate_id = c.id
+       LEFT JOIN ats_onboarding_bridge ob     ON ob.candidate_id = c.id
+       LEFT JOIN employees e                  ON e.id = ob.employee_id
+       LEFT JOIN lms_employee_mapping lm      ON lm.employee_id = e.id
+       WHERE ${where}`,
+      params
+    );
+    const r = rows[0] ?? {};
+    return {
+      linked:     Number(r.linked ?? 0),
+      walkin:     Number(r.walkin ?? 0),
+      screened:   Number(r.screened ?? 0),
+      selected:   Number(r.selected_cnt ?? 0),
+      offered:    Number(r.offered ?? 0),
+      onboarding: Number(r.onboarding ?? 0),
+      joined:     Number(r.joined ?? 0),
+      lms:        Number(r.lms ?? 0),
+    };
+  },
+
+  /**
+   * Get joined employees for a specific requisition
+   */
+  async getJoinedEmployees(requisitionId: string): Promise<JoinedEmployee[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id            AS employee_id,
+         e.full_name,
+         e.employee_code,
+         e.date_of_joining,
+         ob.bridge_status,
+         c.id            AS candidate_id,
+         c.full_name     AS candidate_name,
+         (lm.id IS NOT NULL) AS lms_enrolled
+       FROM job_requisition_candidate jrc
+       JOIN ats_candidate c          ON c.id = jrc.candidate_id
+       JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+       JOIN employees e              ON e.id = ob.employee_id AND e.active_status = 1
+       LEFT JOIN lms_employee_mapping lm ON lm.employee_id = e.id
+       WHERE jrc.requisition_id = ?
+       ORDER BY e.date_of_joining ASC`,
+      [requisitionId]
+    );
+    return (rows as RowDataPacket[]).map(r => ({
+      employee_id:    r.employee_id as string,
+      full_name:      r.full_name as string,
+      employee_code:  r.employee_code as string | null,
+      date_of_joining: r.date_of_joining as string | null,
+      bridge_status:  r.bridge_status as string,
+      lms_enrolled:   Boolean(r.lms_enrolled),
+      candidate_id:   r.candidate_id as string,
+      candidate_name: r.candidate_name as string,
+    }));
+  },
+
+  /**
+   * Build handover pack data for download
+   */
+  async getHandoverPack(id: string): Promise<HandoverPack> {
+    const [reqRows] = await db.execute<RowDataPacket[]>(
+      `SELECT requisition_code, designation_name, branch_name, process_name,
+              planned_batch_no, planned_batch_name, training_start_date, requisition_validity,
+              requested_headcount, fulfilled_headcount, handover_at, handover_notes
+       FROM job_requisition WHERE id = ? AND active_status = 1`,
+      [id]
+    );
+    if (!reqRows[0]) throw Object.assign(new Error("Requisition not found"), { status: 404 });
+    const req = reqRows[0];
+
+    const [funnelRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT jrc.candidate_id) AS linked,
+         COUNT(DISTINCT CASE WHEN c.walk_in_date IS NOT NULL OR qt.id IS NOT NULL THEN c.id END) AS walkin,
+         COUNT(DISTINCT CASE WHEN c.current_stage NOT IN ('Applied','New','Registered') THEN c.id END) AS screened,
+         COUNT(DISTINCT CASE WHEN c.current_stage IN ('Selected','Offered','Joined','Converted') THEN c.id END) AS selected_cnt,
+         COUNT(DISTINCT CASE WHEN c.current_stage IN ('Offered','Joined','Converted') THEN c.id END) AS offered,
+         COUNT(DISTINCT ob.id) AS onboarding,
+         COUNT(DISTINCT CASE WHEN ob.employee_id IS NOT NULL AND e.active_status = 1 THEN e.id END) AS joined,
+         COUNT(DISTINCT lm.id) AS lms
+       FROM job_requisition_candidate jrc
+       LEFT JOIN ats_candidate c          ON c.id = jrc.candidate_id
+       LEFT JOIN ats_queue_token qt       ON qt.candidate_id = c.id
+       LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+       LEFT JOIN employees e              ON e.id = ob.employee_id
+       LEFT JOIN lms_employee_mapping lm  ON lm.employee_id = e.id
+       WHERE jrc.requisition_id = ?`,
+      [id]
+    );
+    const fr = funnelRows[0] ?? {};
+
+    const joinedEmployees = await this.getJoinedEmployees(id);
+
+    const [pipelineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT jrc.candidate_id, c.full_name, jrc.outcome, jrc.linked_at
+       FROM job_requisition_candidate jrc
+       JOIN ats_candidate c ON c.id = jrc.candidate_id
+       WHERE jrc.requisition_id = ?
+       ORDER BY jrc.linked_at ASC`,
+      [id]
+    );
+
+    return {
+      summary: {
+        requisition_code:   req.requisition_code as string,
+        designation_name:   req.designation_name as string,
+        branch_name:        req.branch_name as string,
+        process_name:       req.process_name as string | null,
+        planned_batch_no:   req.planned_batch_no as string | null,
+        planned_batch_name: req.planned_batch_name as string | null,
+        training_start_date: req.training_start_date as string | null,
+        requisition_validity: req.requisition_validity as string | null,
+        requested_headcount: Number(req.requested_headcount),
+        fulfilled_headcount: Number(req.fulfilled_headcount),
+        handover_at:        req.handover_at as string | null,
+        handover_notes:     req.handover_notes as string | null,
+      },
+      funnel: {
+        linked:     Number(fr.linked ?? 0),
+        walkin:     Number(fr.walkin ?? 0),
+        screened:   Number(fr.screened ?? 0),
+        selected:   Number(fr.selected_cnt ?? 0),
+        offered:    Number(fr.offered ?? 0),
+        onboarding: Number(fr.onboarding ?? 0),
+        joined:     Number(fr.joined ?? 0),
+        lms:        Number(fr.lms ?? 0),
+      },
+      joined_employees: joinedEmployees,
+      candidate_pipeline: (pipelineRows as RowDataPacket[]).map(r => ({
+        candidate_id: r.candidate_id as string,
+        full_name:    r.full_name as string,
+        outcome:      r.outcome as string,
+        linked_at:    r.linked_at as string,
+      })),
+    };
+  },
+
+  /**
+   * Soft-delete a requisition (super_admin only; approved requisitions cannot be deleted)
+   */
+  async deleteRequisition(id: string): Promise<void> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT approval_status FROM job_requisition WHERE id = ? AND active_status = 1`,
+      [id]
+    );
+    if (!rows[0]) throw Object.assign(new Error("Requisition not found"), { status: 404 });
+    if (rows[0].approval_status === "approved") {
+      throw Object.assign(new Error("Cannot delete an approved requisition — close it first"), { status: 422 });
+    }
+    await db.execute(
+      `UPDATE job_requisition SET active_status = 0, updated_at = NOW() WHERE id = ?`,
+      [id]
+    );
+  },
+
+  /**
+   * Get list of users with a given role (for handover email recipient picker)
+   */
+  async getHandoverRecipientOptions(roles: string[]): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
+    if (roles.length === 0) return [];
+    const placeholders = roles.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ur.user_id, ur.role_key, au.email
+       FROM user_roles ur
+       JOIN auth_user au ON au.id = ur.user_id
+       WHERE ur.role_key IN (${placeholders}) AND ur.active_status = 1 AND au.email IS NOT NULL
+       ORDER BY ur.role_key, au.email`,
+      roles
+    );
+    return (rows as RowDataPacket[]).map(r => ({
+      user_id:  r.user_id as string,
+      email:    r.email as string,
+      role_key: r.role_key as string,
+    }));
   },
 };

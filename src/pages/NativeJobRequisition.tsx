@@ -6,7 +6,8 @@ import {
   Users, Target, Clock, CheckCircle, XCircle, AlertCircle,
   Plus, Search, Filter, Building2, Briefcase, Calendar,
   ChevronDown, ChevronRight, Eye, Edit, Send, ThumbsUp, ThumbsDown,
-  GraduationCap, UserCheck, FileText, TrendingUp, X
+  GraduationCap, UserCheck, FileText, TrendingUp, X,
+  Trash2, Download, Mail, Bell, UserPlus
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
@@ -111,6 +112,21 @@ interface Process { id: string; process_name: string; }
 interface Designation { id: string; designation_name: string; }
 interface Department { id: string; dept_name: string; }
 
+interface AggregateFunnel {
+  linked: number; walkin: number; screened: number; selected: number;
+  offered: number; onboarding: number; joined: number; lms: number;
+}
+
+interface JoinedEmployee {
+  employee_id: string; full_name: string; employee_code: string | null;
+  date_of_joining: string | null; bridge_status: string; lms_enrolled: boolean;
+  candidate_id: string; candidate_name: string;
+}
+
+interface HandoverRecipient {
+  user_id: string; email: string; role_key: string;
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
@@ -189,7 +205,7 @@ export default function NativeJobRequisition() {
 
   // Inline confirmation state
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'submit' | 'approve' | 'reject' | 'handover';
+    type: 'submit' | 'approve' | 'reject' | 'handover' | 'delete';
     id: string;
     code: string;
   } | null>(null);
@@ -202,6 +218,27 @@ export default function NativeJobRequisition() {
   const [funnelLoading, setFunnelLoading] = useState(false);
   const [availableBatches, setAvailableBatches] = useState<LmsBatch[]>([]);
   const [batchAssigning, setBatchAssigning] = useState(false);
+
+  // Analytics
+  const [aggregateFunnel, setAggregateFunnel] = useState<AggregateFunnel | null>(null);
+
+  // Detail drawer tab
+  const [detailTab, setDetailTab] = useState<'funnel' | 'joined'>('funnel');
+  const [joinedEmployees, setJoinedEmployees] = useState<JoinedEmployee[]>([]);
+  const [joinedLoading, setJoinedLoading] = useState(false);
+
+  // Handover modal state
+  const [showHandoverModal, setShowHandoverModal] = useState(false);
+  const [handoverTargetReq, setHandoverTargetReq] = useState<JobRequisition | null>(null);
+  const [handoverNotes, setHandoverNotes] = useState('');
+  const [handoverRecipients, setHandoverRecipients] = useState<HandoverRecipient[]>([]);
+  const [handoverSelectedUserIds, setHandoverSelectedUserIds] = useState<string[]>([]);
+  const [handoverManualCc, setHandoverManualCc] = useState('');
+  const [handoverSubmitting, setHandoverSubmitting] = useState(false);
+  const [handoverPackLoading, setHandoverPackLoading] = useState(false);
+
+  // Current user role (from JWT decoded or from API)
+  const [currentUserRole, setCurrentUserRole] = useState<string>('');
 
   // ── Load Data ──────────────────────────────────────────────────────────────────
 
@@ -233,11 +270,21 @@ export default function NativeJobRequisition() {
 
   const loadInitialData = async () => {
     setLoading(true);
+    // Decode role from JWT
+    try {
+      const token = localStorage.getItem('hrms_access_token');
+      if (token) {
+        const b64 = token.split('.')[1];
+        const payload = JSON.parse(atob(b64.replace(/-/g, '+').replace(/_/g, '/')));
+        setCurrentUserRole(payload.role ?? '');
+      }
+    } catch { /* ignore */ }
     try {
       await Promise.all([
         loadRequisitions(),
         loadMetrics(),
         loadMasters(),
+        loadAggregateFunnel(),
       ]);
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
@@ -307,6 +354,18 @@ export default function NativeJobRequisition() {
     }
   };
 
+  const loadAggregateFunnel = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (branchFilter) params.append('branch_name', branchFilter);
+      if (statusFilter) params.append('approval_status', statusFilter);
+      const res = await hrmsApi.get<{ success: boolean; data: AggregateFunnel }>(
+        `/api/job-requisition/aggregate-funnel?${params.toString()}`
+      );
+      if (res.data) setAggregateFunnel(res.data);
+    } catch { /* non-critical */ }
+  };
+
   // ── Actions ────────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
@@ -361,8 +420,8 @@ export default function NativeJobRequisition() {
           return;
         }
         await hrmsApi.post(`/api/job-requisition/${id}/reject`, { reason: confirmInput.trim() });
-      } else if (type === 'handover') {
-        await hrmsApi.post(`/api/job-requisition/${id}/handover`, { notes: confirmInput || null });
+      } else if (type === 'delete') {
+        await hrmsApi.delete(`/api/job-requisition/${id}`);
       }
       setConfirmAction(null);
       setConfirmInput('');
@@ -373,20 +432,131 @@ export default function NativeJobRequisition() {
     }
   };
 
+  const openHandoverModal = async (req: JobRequisition) => {
+    setHandoverTargetReq(req);
+    setHandoverNotes('');
+    setHandoverManualCc('');
+    setHandoverSelectedUserIds([]);
+    setShowHandoverModal(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: HandoverRecipient[] }>(
+        '/api/job-requisition/handover-recipients'
+      );
+      const recipients = res.data || [];
+      setHandoverRecipients(recipients);
+      // Pre-select all by default
+      setHandoverSelectedUserIds(recipients.map(r => r.user_id));
+    } catch { /* non-critical */ }
+  };
+
+  const handleHandoverSubmit = async () => {
+    if (!handoverTargetReq) return;
+    setHandoverSubmitting(true);
+    try {
+      const manualEmails = handoverManualCc
+        .split(',')
+        .map(e => e.trim())
+        .filter(e => e.includes('@'));
+      await hrmsApi.post(`/api/job-requisition/${handoverTargetReq.id}/handover`, {
+        notes: handoverNotes || null,
+        emailRecipientUserIds: handoverSelectedUserIds,
+        manualCcEmails: manualEmails,
+      });
+      setShowHandoverModal(false);
+      loadRequisitions();
+      loadMetrics();
+    } catch (err: any) {
+      alert(err.message || 'Handover failed');
+    } finally {
+      setHandoverSubmitting(false);
+    }
+  };
+
+  const downloadHandoverPack = async (requisitionId: string, requisitionCode: string) => {
+    setHandoverPackLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        `/api/job-requisition/${requisitionId}/handover-pack`
+      );
+      const pack = res.data;
+      if (!pack) return;
+
+      const XLSX = await import('xlsx');
+
+      // Sheet 1: Summary
+      const summary = [
+        ['Field', 'Value'],
+        ['Requisition Code', pack.summary.requisition_code],
+        ['Designation', pack.summary.designation_name],
+        ['Branch', pack.summary.branch_name],
+        ['Process', pack.summary.process_name ?? '—'],
+        ['Batch No', pack.summary.planned_batch_no ?? '—'],
+        ['Batch Name', pack.summary.planned_batch_name ?? '—'],
+        ['Training Start', pack.summary.training_start_date ?? '—'],
+        ['Hiring Deadline', pack.summary.requisition_validity ?? '—'],
+        ['Requested Headcount', pack.summary.requested_headcount],
+        ['Fulfilled Headcount', pack.summary.fulfilled_headcount],
+        ['Handover Date', pack.summary.handover_at ?? '—'],
+        ['Notes', pack.summary.handover_notes ?? '—'],
+        [],
+        ['Funnel Step', 'Count'],
+        ['Linked Candidates', pack.funnel.linked],
+        ['Walk-ins', pack.funnel.walkin],
+        ['Screened', pack.funnel.screened],
+        ['Selected', pack.funnel.selected],
+        ['Offered', pack.funnel.offered],
+        ['Onboarding', pack.funnel.onboarding],
+        ['Joined', pack.funnel.joined],
+        ['LMS Enrolled', pack.funnel.lms],
+      ];
+
+      // Sheet 2: Joined Employees
+      const joinedHeaders = ['#', 'Full Name', 'Employee Code', 'Date of Joining', 'Bridge Status', 'LMS Enrolled'];
+      const joinedRows = (pack.joined_employees as any[]).map((e: any, i: number) => [
+        i + 1, e.full_name, e.employee_code ?? '—',
+        e.date_of_joining ? e.date_of_joining.slice(0, 10) : '—',
+        e.bridge_status, e.lms_enrolled ? 'Yes' : 'No',
+      ]);
+
+      // Sheet 3: Candidate Pipeline
+      const pipelineHeaders = ['#', 'Name', 'Outcome', 'Linked At'];
+      const pipelineRows = (pack.candidate_pipeline as any[]).map((c: any, i: number) => [
+        i + 1, c.full_name, c.outcome, c.linked_at ? c.linked_at.slice(0, 10) : '—',
+      ]);
+
+      const wb = XLSX.utils.book_new();
+      const ws1 = XLSX.utils.aoa_to_sheet(summary);
+      const ws2 = XLSX.utils.aoa_to_sheet([joinedHeaders, ...joinedRows]);
+      const ws3 = XLSX.utils.aoa_to_sheet([pipelineHeaders, ...pipelineRows]);
+      XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
+      XLSX.utils.book_append_sheet(wb, ws2, 'Joined Employees');
+      XLSX.utils.book_append_sheet(wb, ws3, 'Candidate Pipeline');
+      XLSX.writeFile(wb, `Handover_Pack_${requisitionCode}.xlsx`);
+    } catch (err: any) {
+      alert('Failed to generate handover pack: ' + (err.message || 'Unknown error'));
+    } finally {
+      setHandoverPackLoading(false);
+    }
+  };
+
   const openDetail = async (req: JobRequisition) => {
     setSelectedRequisition(req);
     setShowDetail(true);
+    setDetailTab('funnel');
     setFunnelData(null);
     setFunnelLoading(true);
+    setJoinedEmployees([]);
     try {
-      const [funnelRes, batchesRes] = await Promise.all([
+      const [funnelRes, batchesRes, joinedRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: RequisitionFunnel }>(`/api/job-requisition/${req.id}/funnel`),
         hrmsApi.get<{ success: boolean; data: LmsBatch[] }>(`/api/job-requisition/batches/available?branch=${encodeURIComponent(req.branch_name)}`),
+        hrmsApi.get<{ success: boolean; data: JoinedEmployee[] }>(`/api/job-requisition/${req.id}/joined-employees`),
       ]);
       setFunnelData(funnelRes.data);
       setAvailableBatches(batchesRes.data || []);
+      setJoinedEmployees(joinedRes.data || []);
     } catch (err: any) {
-      console.error('Failed to load funnel data:', err);
+      console.error('Failed to load detail data:', err);
     } finally {
       setFunnelLoading(false);
     }
@@ -558,6 +728,79 @@ export default function NativeJobRequisition() {
           </div>
         )}
 
+        {/* Alert Strip */}
+        {(() => {
+          const today = new Date(); today.setHours(0,0,0,0);
+          const in3Days = new Date(today); in3Days.setDate(in3Days.getDate() + 3);
+          const overdue = requisitions.filter(r => r.requisition_validity && new Date(r.requisition_validity) < today && r.approval_status === 'approved' && r.fulfilled_headcount < r.requested_headcount);
+          const nearDeadline = requisitions.filter(r => r.requisition_validity && new Date(r.requisition_validity) >= today && new Date(r.requisition_validity) <= in3Days && r.approval_status === 'approved' && r.fulfilled_headcount < r.requested_headcount);
+          const staleDraft = requisitions.filter(r => r.approval_status === 'draft' && r.aging_days >= 7);
+          const readyHandover = requisitions.filter(r => r.approval_status === 'approved' && r.fulfilled_headcount >= r.requested_headcount && (r as any).handover_status !== 'handed_over');
+          const hasAlerts = overdue.length + nearDeadline.length + staleDraft.length + readyHandover.length > 0;
+          if (!hasAlerts) return null;
+          return (
+            <div className="flex flex-wrap gap-2 p-3 bg-white rounded-xl shadow-sm border border-gray-100">
+              {overdue.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {overdue.length} Deadline Overdue
+                </span>
+              )}
+              {nearDeadline.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+                  <Clock className="w-3.5 h-3.5" />
+                  {nearDeadline.length} Deadline Within 3 Days
+                </span>
+              )}
+              {staleDraft.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+                  <FileText className="w-3.5 h-3.5" />
+                  {staleDraft.length} Stale Draft{staleDraft.length > 1 ? 's' : ''} (&gt;7d)
+                </span>
+              )}
+              {readyHandover.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-teal-100 text-teal-700">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  {readyHandover.length} Ready for Handover
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Aggregate Funnel Chart */}
+        {aggregateFunnel && (aggregateFunnel.linked > 0) && (
+          <div className="bg-white rounded-xl shadow-sm border p-4">
+            <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-blue-500" /> Hiring-to-Joining Funnel (All Active Requisitions)
+            </h3>
+            <div className="flex items-end gap-1 h-28">
+              {[
+                { label: 'Linked', value: aggregateFunnel.linked, color: '#3b82f6' },
+                { label: 'Walk-in', value: aggregateFunnel.walkin, color: '#8b5cf6' },
+                { label: 'Screened', value: aggregateFunnel.screened, color: '#f59e0b' },
+                { label: 'Selected', value: aggregateFunnel.selected, color: '#10b981' },
+                { label: 'Offered', value: aggregateFunnel.offered, color: '#06b6d4' },
+                { label: 'Onboarding', value: aggregateFunnel.onboarding, color: '#f97316' },
+                { label: 'Joined', value: aggregateFunnel.joined, color: '#22c55e' },
+                { label: 'LMS', value: aggregateFunnel.lms, color: '#a855f7' },
+              ].map((step, i, arr) => {
+                const max = arr[0].value || 1;
+                const pct = Math.max(4, Math.round((step.value / max) * 100));
+                const convPct = i > 0 && arr[i-1].value > 0 ? Math.round((step.value / arr[i-1].value) * 100) : null;
+                return (
+                  <div key={step.label} className="flex-1 flex flex-col items-center gap-1">
+                    <span className="text-xs font-bold text-gray-700">{step.value}</span>
+                    {convPct !== null && <span className="text-[10px] text-gray-400">{convPct}%</span>}
+                    <div className="w-full rounded-t" style={{ height: `${pct}%`, backgroundColor: step.color, minHeight: 4 }} />
+                    <span className="text-[10px] text-gray-500 text-center leading-tight">{step.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-sm border p-4">
           <div className="flex flex-wrap gap-4">
@@ -692,10 +935,27 @@ export default function NativeJobRequisition() {
                            req.fulfilled_headcount >= req.requested_headcount &&
                            (req as any).handover_status !== 'handed_over' && (
                             <button
-                              onClick={() => setConfirmAction({ type: 'handover', id: req.id, code: req.requisition_code })}
+                              onClick={() => openHandoverModal(req)}
                               className="p-1.5 text-gray-500 hover:text-teal-600 hover:bg-teal-50 rounded" title="Mark as Handed Over"
                             >
                               <Send className="w-4 h-4" />
+                            </button>
+                          )}
+                          {(req as any).handover_status === 'handed_over' && (
+                            <button
+                              onClick={() => downloadHandoverPack(req.id, req.requisition_code)}
+                              disabled={handoverPackLoading}
+                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title="Download Handover Pack"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          )}
+                          {currentUserRole === 'super_admin' && req.approval_status !== 'approved' && (
+                            <button
+                              onClick={() => setConfirmAction({ type: 'delete', id: req.id, code: req.requisition_code })}
+                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded" title="Delete Requisition"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -706,31 +966,27 @@ export default function NativeJobRequisition() {
                       <tr className="bg-yellow-50 border-l-4 border-yellow-400">
                         <td colSpan={9} className="px-4 py-3">
                           <div className="flex flex-wrap items-center gap-3">
-                            <span className="text-sm font-medium text-yellow-800">
+                            <span className={`text-sm font-medium ${confirmAction.type === 'delete' ? 'text-red-700' : 'text-yellow-800'}`}>
                               {confirmAction.type === 'submit' && `Submit ${confirmAction.code} for approval?`}
                               {confirmAction.type === 'approve' && `Approve ${confirmAction.code}?`}
                               {confirmAction.type === 'reject' && `Reject ${confirmAction.code}?`}
-                              {confirmAction.type === 'handover' && `Mark ${confirmAction.code} as handed over to operations?`}
+                              {confirmAction.type === 'delete' && `Permanently delete ${confirmAction.code}? This cannot be undone.`}
                             </span>
-                            {(confirmAction.type === 'approve' || confirmAction.type === 'reject' || confirmAction.type === 'handover') && (
+                            {(confirmAction.type === 'approve' || confirmAction.type === 'reject') && (
                               <input
                                 autoFocus
                                 type="text"
                                 value={confirmInput}
                                 onChange={e => setConfirmInput(e.target.value)}
-                                placeholder={
-                                  confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' :
-                                  confirmAction.type === 'handover' ? 'Handover notes (optional)' :
-                                  'Remarks (optional)'
-                                }
+                                placeholder={confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' : 'Remarks (optional)'}
                                 className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400"
                               />
                             )}
                             <button
                               onClick={handleConfirmAction}
-                              className={`px-3 py-1.5 text-sm text-white rounded ${confirmAction.type === 'reject' ? 'bg-red-600 hover:bg-red-700' : confirmAction.type === 'handover' ? 'bg-teal-600 hover:bg-teal-700' : 'bg-green-600 hover:bg-green-700'}`}
+                              className={`px-3 py-1.5 text-sm text-white rounded ${confirmAction.type === 'reject' || confirmAction.type === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
                             >
-                              {confirmAction.type === 'submit' ? 'Yes, Submit' : confirmAction.type === 'approve' ? 'Confirm Approve' : confirmAction.type === 'handover' ? 'Confirm Handover' : 'Confirm Reject'}
+                              {confirmAction.type === 'submit' ? 'Yes, Submit' : confirmAction.type === 'approve' ? 'Confirm Approve' : confirmAction.type === 'delete' ? 'Yes, Delete' : 'Confirm Reject'}
                             </button>
                             <button onClick={() => { setConfirmAction(null); setConfirmInput(''); }} className="px-3 py-1.5 text-sm text-gray-600 border rounded hover:bg-gray-100">
                               Cancel
@@ -937,12 +1193,26 @@ export default function NativeJobRequisition() {
                       <input
                         type="date"
                         value={formData.training_start_date}
-                        onChange={(e) => field('training_start_date', e.target.value)}
+                        onChange={(e) => {
+                          const startDate = e.target.value;
+                          // Auto-set Hiring Deadline to training_start_date - 1 day
+                          let autoDeadline = '';
+                          if (startDate) {
+                            const d = new Date(startDate);
+                            d.setDate(d.getDate() - 1);
+                            autoDeadline = d.toISOString().slice(0, 10);
+                          }
+                          setFormData(prev => ({
+                            ...prev,
+                            training_start_date: startDate,
+                            requisition_validity: autoDeadline || prev.requisition_validity,
+                          }));
+                        }}
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Hiring Deadline</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Hiring Deadline <span className="text-xs text-gray-400">(auto: training date −1)</span></label>
                       <input
                         type="date"
                         value={formData.requisition_validity}
@@ -1045,8 +1315,25 @@ export default function NativeJobRequisition() {
                   </div>
                 )}
 
-                {/* Hiring Funnel */}
-                {funnelLoading ? (
+                {/* Tab Nav */}
+                <div className="flex gap-1 border-b">
+                  {(['funnel', 'joined'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setDetailTab(tab)}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${detailTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                      {tab === 'funnel' ? (
+                        <span className="flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5" />Hiring Funnel</span>
+                      ) : (
+                        <span className="flex items-center gap-1.5"><UserPlus className="w-3.5 h-3.5" />Joined ({joinedEmployees.length})</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Hiring Funnel Tab */}
+                {detailTab === 'funnel' && (funnelLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                   </div>
@@ -1074,7 +1361,51 @@ export default function NativeJobRequisition() {
                       Total linked: <strong>{funnelData.funnel.total_linked}</strong>
                     </div>
                   </div>
-                ) : null}
+                ) : null)}
+
+                {/* Joined Employees Tab */}
+                {detailTab === 'joined' && (
+                  <div>
+                    {joinedEmployees.length === 0 ? (
+                      <p className="text-sm text-gray-500 text-center py-6">No employees have joined from this requisition yet.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-50 text-left">
+                              <th className="px-3 py-2 text-xs font-semibold text-gray-500">#</th>
+                              <th className="px-3 py-2 text-xs font-semibold text-gray-500">Name</th>
+                              <th className="px-3 py-2 text-xs font-semibold text-gray-500">Emp Code</th>
+                              <th className="px-3 py-2 text-xs font-semibold text-gray-500">Date of Joining</th>
+                              <th className="px-3 py-2 text-xs font-semibold text-gray-500">Status</th>
+                              <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">LMS</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {joinedEmployees.map((e, i) => (
+                              <tr key={e.employee_id} className="border-t hover:bg-gray-50">
+                                <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                                <td className="px-3 py-2 font-medium text-gray-900">{e.full_name}</td>
+                                <td className="px-3 py-2 text-gray-500">{e.employee_code ?? '—'}</td>
+                                <td className="px-3 py-2 text-gray-600">{e.date_of_joining ? e.date_of_joining.slice(0, 10) : '—'}</td>
+                                <td className="px-3 py-2">
+                                  <span className="px-2 py-0.5 rounded text-xs bg-green-100 text-green-700">
+                                    {e.bridge_status}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  {e.lms_enrolled
+                                    ? <span className="text-green-600 font-semibold">✓</span>
+                                    : <span className="text-gray-300">—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Batch Assignment */}
                 {funnelData && (
@@ -1143,6 +1474,106 @@ export default function NativeJobRequisition() {
           </div>
         )}
       </div>
+
+      {/* Handover Modal */}
+      {showHandoverModal && handoverTargetReq && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Mark as Handed Over</h2>
+                <p className="text-sm text-gray-500">{handoverTargetReq.requisition_code} · {handoverTargetReq.process_name ?? handoverTargetReq.branch_name}</p>
+              </div>
+              <button onClick={() => setShowHandoverModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Summary */}
+              <div className="bg-teal-50 rounded-lg p-3 text-sm grid grid-cols-2 gap-2">
+                <div><span className="text-gray-500">Headcount:</span> <strong>{handoverTargetReq.fulfilled_headcount}/{handoverTargetReq.requested_headcount}</strong></div>
+                <div><span className="text-gray-500">Batch:</span> <strong>{(handoverTargetReq as any).planned_batch_no ?? '—'}</strong></div>
+                <div><span className="text-gray-500">Training Start:</span> <strong>{(handoverTargetReq as any).training_start_date ? (handoverTargetReq as any).training_start_date.slice(0,10) : '—'}</strong></div>
+                <div><span className="text-gray-500">Joined:</span> <strong>{joinedEmployees.length > 0 ? `${joinedEmployees.length} employees` : 'Loading…'}</strong></div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Handover Notes</label>
+                <textarea
+                  value={handoverNotes}
+                  onChange={e => setHandoverNotes(e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500"
+                  placeholder="Any notes for operations / training team…"
+                />
+              </div>
+
+              {/* Email Recipients */}
+              {handoverRecipients.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5" /> Email Notifications
+                  </label>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {handoverRecipients.map(r => (
+                      <label key={r.user_id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-2 py-1 rounded">
+                        <input
+                          type="checkbox"
+                          checked={handoverSelectedUserIds.includes(r.user_id)}
+                          onChange={e => setHandoverSelectedUserIds(prev =>
+                            e.target.checked ? [...prev, r.user_id] : prev.filter(id => id !== r.user_id)
+                          )}
+                          className="rounded text-teal-600"
+                        />
+                        <span className="text-gray-700">{r.email}</span>
+                        <span className="text-xs text-gray-400 ml-auto">{r.role_key.replace(/_/g, ' ')}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Manual CC */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Manual CC (comma-separated emails)</label>
+                <input
+                  type="text"
+                  value={handoverManualCc}
+                  onChange={e => setHandoverManualCc(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-teal-500"
+                  placeholder="ops@company.com, training@company.com"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  onClick={() => downloadHandoverPack(handoverTargetReq.id, handoverTargetReq.requisition_code)}
+                  disabled={handoverPackLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm text-blue-700 border border-blue-300 rounded-lg hover:bg-blue-50 disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  {handoverPackLoading ? 'Generating…' : 'Download Pack (.xlsx)'}
+                </button>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowHandoverModal(false)} className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleHandoverSubmit}
+                    disabled={handoverSubmitting}
+                    className="px-4 py-2 text-sm text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50 inline-flex items-center gap-2"
+                  >
+                    {handoverSubmitting ? 'Submitting…' : <><Bell className="w-4 h-4" /> Confirm &amp; Notify</>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

@@ -394,6 +394,32 @@ jobRequisitionRouter.get(
   })
 );
 
+// ─── Aggregate Funnel Across All Requisitions ────────────────────────────────
+jobRequisitionRouter.get(
+  "/aggregate-funnel",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const branch_name = req.query.branch_name as string | undefined;
+    const approval_status = req.query.approval_status as string | undefined;
+    const data = await jobRequisitionService.getAggregateFunnel({ branch_name, approval_status });
+    return res.json({ success: true, data });
+  })
+);
+
+// ─── Handover Recipient Options ───────────────────────────────────────────────
+jobRequisitionRouter.get(
+  "/handover-recipients",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await jobRequisitionService.getHandoverRecipientOptions([
+      "operations_manager", "trainer", "branch_head", "process_manager",
+    ]);
+    return res.json({ success: true, data });
+  })
+);
+
 // ─── Mark Batch as Handed Over to Operations ─────────────────────────────────
 jobRequisitionRouter.post(
   "/:id/handover",
@@ -401,7 +427,7 @@ jobRequisitionRouter.post(
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
-    const { notes } = req.body;
+    const { notes, emailRecipientUserIds, manualCcEmails } = req.body;
     const userId = req.authUser?.id;
     const userName = req.authUser?.email ?? null;
 
@@ -409,8 +435,48 @@ jobRequisitionRouter.post(
       return res.status(401).json({ success: false, message: "User not authenticated" });
     }
 
-    await jobRequisitionService.markHandover(id, userId, userName, notes);
+    await jobRequisitionService.markHandover(
+      id, userId, userName, notes,
+      Array.isArray(emailRecipientUserIds) ? emailRecipientUserIds : undefined,
+      Array.isArray(manualCcEmails) ? manualCcEmails : undefined
+    );
     return res.json({ success: true, message: "Requisition marked as handed over" });
+  })
+);
+
+// ─── Get Handover Pack Data ───────────────────────────────────────────────────
+jobRequisitionRouter.get(
+  "/:id/handover-pack",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const data = await jobRequisitionService.getHandoverPack(id);
+    return res.json({ success: true, data });
+  })
+);
+
+// ─── Get Joined Employees for Requisition ────────────────────────────────────
+jobRequisitionRouter.get(
+  "/:id/joined-employees",
+  requireAuth,
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const data = await jobRequisitionService.getJoinedEmployees(id);
+    return res.json({ success: true, data });
+  })
+);
+
+// ─── Delete Requisition (super_admin only) ────────────────────────────────────
+jobRequisitionRouter.delete(
+  "/:id",
+  requireAuth,
+  requireRole("super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    await jobRequisitionService.deleteRequisition(id);
+    return res.json({ success: true, message: "Requisition deleted" });
   })
 );
 
