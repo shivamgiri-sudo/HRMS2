@@ -31,9 +31,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # HARDENED: Lint failures now break CI (removed || true and continue-on-error)
       - name: Run ESLint
-        run: bun run lint || true
-        continue-on-error: true
+        run: bun run lint
 
   typecheck:
     name: Type Check
@@ -80,6 +80,32 @@ jobs:
           name: build
           path: dist/
           retention-days: 7
+
+  security-tests:
+    name: Security and RBAC Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Run security tests
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/auth/__tests__/auth-security.test.ts
+          src/modules/files/__tests__/document-vault-security.test.ts
+          src/db/__tests__/migration-governance.test.ts
+          src/db/__tests__/connection-reliability.test.ts
+          src/workers/__tests__/worker-safety.test.ts
 
   finance-validation:
     name: Finance API and schema contract
