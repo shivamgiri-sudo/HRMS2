@@ -45,8 +45,8 @@ export const jobRequisitionService = {
   async listRequisitions(
     filters: RequisitionFilters = {}
   ): Promise<PaginatedResult<JobRequisitionSummary>> {
-    const page = filters.page ?? 1;
-    const limit = filters.limit ?? 20;
+    const page = Math.max(1, Math.floor(filters.page ?? 1));
+    const limit = Math.min(500, Math.max(1, Math.floor(filters.limit ?? 20)));
     const offset = (page - 1) * limit;
 
     const conditions: string[] = ["jr.active_status = 1"];
