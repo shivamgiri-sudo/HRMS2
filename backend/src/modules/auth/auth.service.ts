@@ -318,8 +318,9 @@ export const authService = {
         [user.id]
       );
 
+      const primaryRole = await getUserPrimaryRole(user.id);
       const accessToken = jwt.sign(
-        { sub: user.id, email: user.email, is_read_only: Boolean((user as any).is_read_only) },
+        { sub: user.id, email: user.email, is_read_only: Boolean((user as any).is_read_only), role: primaryRole },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
       );
@@ -529,8 +530,9 @@ export const authService = {
     );
     if (!rows[0]) throw new Error('Invalid or expired refresh token');
 
+    const primaryRole = await getUserPrimaryRole(rows[0].user_id);
     const accessToken = jwt.sign(
-      { sub: rows[0].user_id, email: rows[0].email },
+      { sub: rows[0].user_id, email: rows[0].email, role: primaryRole },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
