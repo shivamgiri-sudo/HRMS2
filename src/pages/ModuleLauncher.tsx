@@ -7,6 +7,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 const iconMap: Record<string, JSX.Element> = {
+  // Core modules
   HRMS: <Users className="h-5 w-5" />,
   ATS: <Briefcase className="h-5 w-5" />,
   LMS: <GraduationCap className="h-5 w-5" />,
@@ -15,6 +16,25 @@ const iconMap: Record<string, JSX.Element> = {
   OPERATIONS: <BarChart3 className="h-5 w-5" />,
   PERFORMANCE: <BarChart3 className="h-5 w-5" />,
   SETTINGS: <Settings className="h-5 w-5" />,
+  // Additional modules (normalized from page_catalog)
+  HR: <Users className="h-5 w-5" />,
+  Payroll: <BarChart3 className="h-5 w-5" />,
+  Finance: <BarChart3 className="h-5 w-5" />,
+  Admin: <Settings className="h-5 w-5" />,
+  Compliance: <ShieldCheck className="h-5 w-5" />,
+  Support: <ShieldCheck className="h-5 w-5" />,
+  Expenses: <BarChart3 className="h-5 w-5" />,
+  Engagement: <Users className="h-5 w-5" />,
+  Dashboards: <BarChart3 className="h-5 w-5" />,
+  KPI: <BarChart3 className="h-5 w-5" />,
+  Management: <Briefcase className="h-5 w-5" />,
+  Integrations: <Settings className="h-5 w-5" />,
+  Portal: <Users className="h-5 w-5" />,
+  Provisioning: <Settings className="h-5 w-5" />,
+  Attendance: <Clock className="h-5 w-5" />,
+  Quality: <ShieldCheck className="h-5 w-5" />,
+  Operations: <BarChart3 className="h-5 w-5" />,
+  Overview: <BarChart3 className="h-5 w-5" />,
 };
 
 type PageRow = {
