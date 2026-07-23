@@ -2,9 +2,14 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../db/mysql.js';
 import { calculatePayrollRun } from '../modules/payroll/payrollCalculate.service.js';
 import { writeAuditLog } from '../shared/auditLog.js';
+import { withWorkerLock, registerTimer, unregisterTimer } from './worker-utils.js';
 
 const WORKER_NAME = 'payroll-nightly-recalc';
 const SYSTEM_ACTOR_ID = 'system-auto-recalc';
+
+// Track timers for graceful shutdown
+let scheduledTimer: NodeJS.Timeout | null = null;
+let intervalTimer: NodeJS.Timeout | null = null;
 
 function currentRunMonth(): string {
   // Use IST date (UTC+5:30)
@@ -14,7 +19,7 @@ function currentRunMonth(): string {
   return `${y}-${m}`;
 }
 
-async function runNightlyRecalc(): Promise<void> {
+async function runNightlyRecalcInternal(): Promise<void> {
   const runMonth = currentRunMonth();
   console.log(`[${WORKER_NAME}] Starting nightly recalc for ${runMonth}...`);
 
@@ -48,12 +53,24 @@ async function runNightlyRecalc(): Promise<void> {
           total_net: result.total_net,
         },
       });
-    } catch (err: any) {
-      console.error(`[${WORKER_NAME}] Failed for run ${run.id}:`, err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[${WORKER_NAME}] Failed for run ${run.id}:`, message);
     }
   }
 
   console.log(`[${WORKER_NAME}] Nightly recalc complete.`);
+}
+
+/**
+ * Run nightly recalc with distributed lock protection.
+ * Only one instance will execute at a time.
+ */
+async function runNightlyRecalc(): Promise<void> {
+  const executed = await withWorkerLock(WORKER_NAME, runNightlyRecalcInternal);
+  if (!executed) {
+    console.log(`[${WORKER_NAME}] Skipped - another instance is running`);
+  }
 }
 
 export async function startPayrollNightlyRecalcWorker(): Promise<void> {
@@ -68,14 +85,41 @@ export async function startPayrollNightlyRecalcWorker(): Promise<void> {
     }
     const delay = target.getTime() - now.getTime();
     console.log(`[${WORKER_NAME}] Next run scheduled at ${target.toISOString()} (in ${Math.round(delay / 60000)} min)`);
-    setTimeout(async () => {
-      await runNightlyRecalc().catch(err => console.error(`[${WORKER_NAME}] Error:`, err.message));
-      setInterval(
-        () => runNightlyRecalc().catch(err => console.error(`[${WORKER_NAME}] Error:`, err.message)),
+
+    scheduledTimer = setTimeout(async () => {
+      await runNightlyRecalc().catch(err => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[${WORKER_NAME}] Error:`, message);
+      });
+
+      intervalTimer = setInterval(
+        () => runNightlyRecalc().catch(err => {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[${WORKER_NAME}] Error:`, message);
+        }),
         24 * 60 * 60 * 1000
       );
+      registerTimer(`${WORKER_NAME}-interval`, intervalTimer);
     }, delay);
+    registerTimer(`${WORKER_NAME}-scheduled`, scheduledTimer);
   };
 
   scheduleNext();
+}
+
+/**
+ * Stop the payroll nightly recalc worker (for graceful shutdown).
+ */
+export function stopPayrollNightlyRecalcWorker(): void {
+  if (scheduledTimer) {
+    clearTimeout(scheduledTimer);
+    unregisterTimer(`${WORKER_NAME}-scheduled`);
+    scheduledTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    unregisterTimer(`${WORKER_NAME}-interval`);
+    intervalTimer = null;
+  }
+  console.log(`[${WORKER_NAME}] stopped`);
 }
