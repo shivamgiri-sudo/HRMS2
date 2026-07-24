@@ -537,8 +537,14 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                JOIN employees e ON e.id = spl.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN salary_prep_run pspr ON pspr.run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
-                 AND LOWER(COALESCE(pspr.status,'')) NOT IN ('draft','cancelled')
+               LEFT JOIN (
+                 SELECT MAX(id) AS id, branch_id
+                   FROM salary_prep_run
+                  WHERE run_month = DATE_FORMAT(DATE_SUB(STR_TO_DATE(CONCAT('${month}', '-01'),'%Y-%m-%d'), INTERVAL 1 MONTH),'%Y-%m')
+                    AND LOWER(COALESCE(status,'')) NOT IN ('draft','cancelled')
+                  GROUP BY branch_id
+               ) pspr_pick ON pspr_pick.branch_id = COALESCE(e.branch_id, 0)
+               LEFT JOIN salary_prep_run pspr ON pspr.id = pspr_pick.id
                LEFT JOIN salary_prep_line prev ON prev.run_id = pspr.id AND prev.employee_id = spl.employee_id
               WHERE ${clauses.join(" AND ")}
               ${minVarianceAmount > 0 ? `AND ABS(spl.net_salary - COALESCE(prev.net_salary, 0)) >= ${minVarianceAmount}` : ''}
@@ -579,10 +585,16 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               ORDER BY bank_status DESC, employee_name`;
       break;
     case "increment-requests":
+      addEmployeeFilters(req.query, clauses, params);
       sql = `SELECT sir.id, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
                     sir.current_ctc, sir.proposed_ctc, sir.increment_percentage, sir.effective_from, sir.status,
                     sir.communication_status, sir.letter_status, sir.created_at
-               FROM salary_increment_request sir JOIN employees e ON e.id = sir.employee_id
+               FROM salary_increment_request sir
+               JOIN employees e ON e.id = sir.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+              WHERE ${clauses.join(" AND ")}
               ORDER BY sir.created_at DESC`;
       break;
     case "cosec-unmapped":
@@ -1153,41 +1165,46 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "cost-centre-salary-summary": {
       const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     COALESCE(cc.cost_centre_name, 'Unassigned') AS cost_centre_name,
-                    COUNT(spl.id) AS headcount,
+                    b.branch_name,
+                    COUNT(DISTINCT spl.employee_id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
-                    SUM(spl.net_salary) AS total_net,
-                    ROUND(AVG(esa.ctc_annual / 12), 0) AS avg_ctc_monthly
+                    SUM(spl.net_salary) AS total_net
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-               LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
               WHERE ${clauses.join(" AND ")}
-              GROUP BY cc.cost_centre_code, cc.cost_centre_name
+              GROUP BY cc.cost_centre_code, cc.cost_centre_name, b.branch_name
               ORDER BY total_gross DESC`;
       break;
     }
 
     case "process-lob-salary-cost": {
       const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
-      sql = `SELECT p.process_name, COALESCE(l.lob_name, 'N/A') AS lob_name,
-                    COUNT(spl.id) AS headcount,
+      sql = `SELECT COALESCE(p.process_name, 'Unassigned') AS process_name,
+                    COALESCE(l.lob_name, 'N/A') AS lob_name,
+                    b.branch_name,
+                    COUNT(DISTINCT spl.employee_id) AS headcount,
                     SUM(spl.gross_salary) AS total_gross,
                     SUM(spl.net_salary) AS total_net,
                     ROUND(AVG(spl.net_salary), 0) AS avg_net
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN lob_master l ON l.id = e.lob_id
               WHERE ${clauses.join(" AND ")}
-              GROUP BY p.process_name, l.lob_name
+              GROUP BY p.process_name, l.lob_name, b.branch_name
               ORDER BY total_gross DESC`;
       break;
     }
@@ -1209,14 +1226,18 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    spr.run_month, spl.lwp_days, spl.lwp_deduction AS lwp_deduction_amount,
-                    spl.gross_salary, spl.net_salary, b.branch_name
+                    spr.run_month, MAX(spl.lwp_days) AS lwp_days,
+                    MAX(spl.lwp_deduction) AS lwp_deduction_amount,
+                    MAX(spl.gross_salary) AS gross_salary, MAX(spl.net_salary) AS net_salary,
+                    b.branch_name, p.process_name
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
                LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")} AND spl.lwp_days > 0
-              ORDER BY spl.lwp_days DESC`;
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, spr.run_month, b.branch_name, p.process_name
+              ORDER BY lwp_days DESC`;
       break;
     }
 
@@ -1267,6 +1288,8 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "grade-salary-distribution": {
       const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("e.active_status = 1");
       sql = `SELECT COALESCE(CONCAT(gb.grade_code,' - ',gb.grade_name), 'Ungraded') AS grade_band,
                     COUNT(DISTINCT e.id) AS headcount,
                     ROUND(AVG(esa.ctc_annual / 12), 0) AS avg_ctc_monthly,
@@ -1276,12 +1299,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                FROM employees e
                LEFT JOIN grade_band_master gb ON gb.id = e.grade_id
                LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-               LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id
-               LEFT JOIN salary_prep_run spr ON spr.id = spl.run_id AND spr.run_month = ?
-              WHERE e.active_status = 1
+               JOIN (SELECT id FROM salary_prep_run WHERE run_month = '${month}' AND LOWER(COALESCE(status,'')) NOT IN ('draft','cancelled')) spr_ids
+               JOIN salary_prep_line spl ON spl.run_id = spr_ids.id AND spl.employee_id = e.id
+              WHERE ${clauses.join(" AND ")}
               GROUP BY gb.grade_code, gb.grade_name
               ORDER BY avg_ctc_monthly DESC`;
-      params.push(month);
       break;
     }
 
@@ -1292,13 +1314,19 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       clauses.push("spl.net_salary > 0");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name,
                     ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_holder_name, ebd.account_type,
-                    spl.net_salary AS transfer_amount, spr.run_month
+                    MAX(spl.net_salary) AS transfer_amount, spr.run_month
                FROM salary_prep_line spl
                JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
               WHERE ${clauses.join(" AND ")}
+              GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
+                       b.branch_name, p.process_name, ebd.bank_name, ebd.account_number,
+                       ebd.ifsc_code, ebd.account_holder_name, ebd.account_type, spr.run_month
               ORDER BY ebd.bank_name, employee_name`;
       break;
     }
@@ -1393,6 +1421,34 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                JOIN employees e ON e.id = spl.employee_id
               WHERE ${clauses.join(" AND ")} AND spl.professional_tax > 0
               ORDER BY e.state, employee_name`;
+      break;
+    }
+
+    case "pf-esic-salary-register": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+                    b.branch_name, p.process_name, spr.run_month AS payroll_month,
+                    COALESCE(eu.uan, e.epf_number) AS uan,
+                    e.esic_number,
+                    LEAST(COALESCE(spl.basic, 0), 15000) AS pf_basic,
+                    spl.gross_salary AS gross_wages,
+                    COALESCE(spl.pf_employee, 0) AS pf_employee,
+                    COALESCE(spl.pf_employer, 0) AS pf_employer,
+                    ROUND(COALESCE(spl.pf_employer,0) * 8.33/12, 0) AS eps_contribution,
+                    COALESCE(spl.esic_employee, 0) AS esic_employee,
+                    COALESCE(spl.esic_employer, 0) AS esic_employer,
+                    spl.net_salary
+               FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+               JOIN employees e ON e.id = spl.employee_id
+               LEFT JOIN branch_master b ON b.id = e.branch_id
+               LEFT JOIN process_master p ON p.id = e.process_id
+               LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+              WHERE ${clauses.join(" AND ")}
+              ORDER BY b.branch_name, employee_name`;
       break;
     }
 
@@ -2271,17 +2327,23 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // ─── Missing Payroll ──────────────────────────────────────────────────────
     case "payroll-readiness-status": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
-      clauses.push("spr.payroll_month = ?"); params.push(month);
-      sql = `SELECT spr.payroll_month, b.branch_name,
+      const prsClauses = ["spr.run_month = ?"];
+      const prsParams: unknown[] = [month];
+      if (req.query.branchId) { prsClauses.push("spr.branch_id = ?"); prsParams.push(String(req.query.branchId)); }
+      if (req.query.processId) { prsClauses.push("spr.branch_id IN (SELECT branch_id FROM process_master WHERE id = ?)"); prsParams.push(String(req.query.processId)); }
+      sql = `SELECT spr.run_month AS payroll_month, b.branch_name,
                     spr.status AS run_status,
-                    spr.total_employees, spr.processed_count, spr.error_count,
-                    spr.finalized_at, spr.finalized_by,
-                    ROUND(spr.processed_count / NULLIF(spr.total_employees,0) * 100, 1) AS readiness_pct
+                    COUNT(spl.id) AS total_lines,
+                    spr.finalized_at,
+                    COALESCE(NULLIF(fin.full_name,''), CONCAT(fin.first_name,' ',COALESCE(fin.last_name,''))) AS finalized_by
                FROM salary_prep_run spr
                LEFT JOIN branch_master b ON b.id = spr.branch_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY spr.payroll_month DESC, b.branch_name`;
+               LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
+               LEFT JOIN employees fin ON fin.id = spr.approved_by
+              WHERE ${prsClauses.join(" AND ")}
+              GROUP BY spr.id, spr.run_month, b.branch_name, spr.status, spr.finalized_at, fin.full_name, fin.first_name, fin.last_name
+              ORDER BY spr.run_month DESC, b.branch_name`;
+      params.length = 0; params.push(...prsParams);
       break;
     }
 
