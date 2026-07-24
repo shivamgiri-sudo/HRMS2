@@ -156,7 +156,7 @@ export const navGroups: NavGroup[] = [
       {
         label: "Lifecycle",    href: "/employee-lifecycle", icon: ic(Users), pageCode: "EMPLOYEE_LIFECYCLE", description: "Employee lifecycle",
         children: [
-          { label: "Employee Stat Cards", href: "/employee-stat-card", icon: ic(Users), roles: ["admin","hr","manager","process_manager","branch_head","super_admin"], description: "Employee profile and live stats" },
+          { label: "Employee Stat Cards", href: "/employee-stat-card", icon: ic(Users), roles: ["admin","hr","manager","process_manager","branch_head","super_admin","employee"], description: "Employee profile and live stats" },
           { label: "Career Timeline",         href: "/employee-journey",      icon: ic(TrendingUp), roles: ["admin","hr","manager","process_manager","branch_head","super_admin"], description: "Career progression timeline" },
           { label: "Employee Lifecycle", href: "/employee-lifecycle",    icon: ic(Users),     pageCode: "EMPLOYEE_LIFECYCLE", roles: ["admin","hr"], description: "Lifecycle" },
           { label: "Career Planning",    href: "/career-planning",       icon: ic(TrendingUp),pageCode: "CAREER_PLANNING",   description: "Career paths" },
