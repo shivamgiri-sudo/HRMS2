@@ -22,6 +22,7 @@ import { startPayrollWindowClosureScheduler, stopPayrollWindowClosureScheduler }
 import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
 import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
+import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
@@ -112,6 +113,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "rta-nightly",
     start: () => { startRtaNightlyCron(); return Promise.resolve(); },
   },
+  {
+    name: "walkin-sla",
+    start: () => { startWalkinSlaCron(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -157,6 +162,7 @@ function shutdown(): void {
   stopITProvisioningLockScheduler();
   stopPayrollWindowClosureScheduler();
   stopBreachSlaCron();
+  stopWalkinSlaCron();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);
 }

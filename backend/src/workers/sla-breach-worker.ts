@@ -1,4 +1,5 @@
 import { notifySLABreach } from "../services/ats-notification.helper.js";
+import { inboxService } from "../modules/inbox/inbox.service.js";
 
 // Database connection
 let db: any;
@@ -72,13 +73,18 @@ async function findSLABreachCandidates(): Promise<any[]> {
          c.applied_for_process AS role_applied,
          c.recruiter_assigned_name AS recruiter_name,
          qt.token AS q_token,
-         TIMESTAMPDIFF(MINUTE, CONCAT(c.created_date, ' ', c.created_time), NOW()) AS pending_minutes
+         TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) AS pending_minutes,
+         -- resolve the recruiter's user account for inbox delivery
+         u.id AS recruiter_user_id
        FROM ats_candidate c
        LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND qt.status = 'active'
+       LEFT JOIN ats_recruiter_roster rr ON rr.id = c.recruiter_id
+       LEFT JOIN employees emp ON emp.id = rr.employee_id
+       LEFT JOIN users u ON u.employee_id = emp.id
        WHERE c.status = 'Waiting'
          AND c.recruiter_assigned_name IS NOT NULL
-         AND TIMESTAMPDIFF(MINUTE, CONCAT(c.created_date, ' ', c.created_time), NOW()) >= ?
-         AND CONCAT(c.created_date, ' ', c.created_time) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+         AND TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) >= ?
+         AND COALESCE(qt.arrival_time, qt.created_at) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
        ORDER BY pending_minutes ASC
        LIMIT ${CANDIDATE_SCAN_LIMIT}`,
       [SLA_THRESHOLD_MINUTES]
@@ -129,6 +135,20 @@ async function processSLABreaches(): Promise<void> {
         roleApplied: candidate.role_applied || "N/A",
         slaMinutes: candidate.pending_minutes,
       });
+
+      // Inbox alert so the recruiter sees a toast + bell notification
+      if (candidate.recruiter_user_id) {
+        await inboxService.createItem({
+          user_id: candidate.recruiter_user_id,
+          type: "sla_breach_uncalled",
+          title: `Candidate not called — ${candidate.candidate_name}`,
+          description: `Token ${candidate.q_token || "N/A"} has been waiting ${candidate.pending_minutes} min without being called. SLA threshold: ${SLA_THRESHOLD_MINUTES} min.`,
+          entity_type: "ats_candidate",
+          entity_id: candidate.candidate_id,
+          action_url: "/ats/walkin-queue",
+          priority: "urgent",
+        }).catch((e: unknown) => console.warn("[SLABreachWorker] inbox write failed:", e));
+      }
 
       markAlerted(candidate.candidate_id);
       alertsSent += 1;

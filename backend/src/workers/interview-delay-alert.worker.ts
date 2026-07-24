@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { db } from '../db/mysql.js';
 import { env } from '../config/env.js';
 import nodemailer from 'nodemailer';
+import { inboxService } from '../modules/inbox/inbox.service.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -147,10 +148,13 @@ async function findDelayedInterviews(): Promise<any[]> {
          COALESCE(rr.name, 'Unassigned')                 AS recruiter_name,
          rr.email                                        AS recruiter_email,
          rr.reporting_manager                            AS reporting_manager,
-         TIMESTAMPDIFF(MINUTE, qt.called_at, NOW())      AS delay_minutes
+         TIMESTAMPDIFF(MINUTE, qt.called_at, NOW())      AS delay_minutes,
+         u.id                                            AS recruiter_user_id
        FROM ats_queue_token qt
        JOIN ats_candidate c ON c.id = qt.candidate_id
        LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
+       LEFT JOIN employees emp ON emp.id = rr.employee_id
+       LEFT JOIN users u ON u.employee_id = emp.id
        WHERE qt.queue_status IN ('called', 'in_interview')
          AND qt.called_at IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, qt.called_at, NOW()) >= ?
@@ -184,6 +188,24 @@ async function checkDelays(): Promise<void> {
       continue;
     }
     await sendDelayAlert(row);
+
+    // Inbox alert so the recruiter sees a toast + bell in the app
+    if (row.recruiter_user_id) {
+      const hours = Math.floor(row.delay_minutes / 60);
+      const mins  = row.delay_minutes % 60;
+      const delayStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+      await inboxService.createItem({
+        user_id: row.recruiter_user_id,
+        type: "interview_submission_overdue",
+        title: `Interview result not submitted — ${row.candidate_name}`,
+        description: `Token ${row.token_number} (${row.applied_role}) has been in interview for ${delayStr} without a submission. Please close out this interview.`,
+        entity_type: "ats_candidate",
+        entity_id: row.candidate_id,
+        action_url: "/ats/walkin-queue",
+        priority: "urgent",
+      }).catch((e: unknown) => console.warn("[InterviewDelayAlert] inbox write failed:", e));
+    }
+
     markAlerted(row.token_id);
   }
 
