@@ -5,6 +5,22 @@ import type { Twilio } from "twilio";
 import Handlebars from "handlebars";
 import type { RowDataPacket } from "mysql2";
 
+// Web Push — loaded lazily so the service starts even without web-push installed
+let webpush: typeof import("web-push") | null = null;
+try {
+  webpush = (await import("web-push")).default as unknown as typeof import("web-push");
+  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
+  const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
+  const vapidEmail   = process.env.VAPID_EMAIL;
+  if (vapidPublic && vapidPrivate && vapidEmail) {
+    webpush.setVapidDetails(`mailto:${vapidEmail}`, vapidPublic, vapidPrivate);
+  } else {
+    webpush = null; // not configured — skip silently
+  }
+} catch {
+  webpush = null;
+}
+
 // Database connection (assume exists)
 // import { db } from "../db/mysql.js";
 // For now, we'll use a mock - replace with actual db import
@@ -341,6 +357,34 @@ export class NotificationService {
         const success = await this.sendSms(recipient.mobile, smsBody, logId);
         if (success) sent++;
         else failed++;
+      }
+
+      // Web Push — send to all browser subscriptions for this recipient (by user_id if available)
+      if (webpush && recipient.user_id && db) {
+        try {
+          const [subs] = await db.execute<RowDataPacket[]>(
+            `SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = ?`,
+            [recipient.user_id],
+          );
+          const title = template.subject
+            ? this.renderTemplate(template.subject, context)
+            : template_code;
+          const body = this.renderTemplate(template.body_template, context).slice(0, 200);
+          const payload = JSON.stringify({ title, body });
+          for (const sub of subs as { endpoint: string; p256dh: string; auth_key: string }[]) {
+            webpush.sendNotification(
+              { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth_key } },
+              payload,
+            ).catch((err: any) => {
+              // 410 Gone = subscription expired; remove it
+              if (err?.statusCode === 410 && db) {
+                db.execute(`DELETE FROM push_subscriptions WHERE endpoint = ?`, [sub.endpoint]).catch(() => {});
+              }
+            });
+          }
+        } catch {
+          /* web push is best-effort */
+        }
       }
     }
 

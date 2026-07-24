@@ -58,6 +58,7 @@ const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
 const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboard"));
 const NativeReportsCenter           = lazy(() => import("@/pages/NativeReportsCenterV2"));
+const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
 const CompanyCalendar               = lazy(() => import("@/pages/CompanyCalendar"));
@@ -127,6 +128,7 @@ export const platformRouteElements = (
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
       <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><NativePolicyEngine /></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
+      <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin']}><LiveLocationMap /></ProtectedRoute>} />
 
       {/* AI / Copilot */}
       <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />

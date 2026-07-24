@@ -1,6 +1,8 @@
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
+import { playChime } from "./useSoundNotification";
 
 export interface Notification {
   id: string;
@@ -32,13 +34,12 @@ interface InboxItem {
   created_at: string;
 }
 
-// Map work_inbox_item rows to Notification shape
 function mapInboxItem(item: InboxItem): Notification {
   return {
     id: item.id,
     user_id: item.user_id,
     title: item.title,
-    message: item.description || '',
+    message: item.description || "",
     type: item.type,
     priority: item.priority || "normal",
     read: item.is_read === 1 || item.is_read === true,
@@ -50,19 +51,126 @@ function mapInboxItem(item: InboxItem): Notification {
   };
 }
 
+// Repeat intervals by priority (ms)
+const REPEAT_INTERVAL: Record<"urgent" | "high" | "normal", number> = {
+  urgent: 2 * 60 * 1000,
+  high: 5 * 60 * 1000,
+  normal: 15 * 60 * 1000,
+};
+
+function chimePriorityFrom(p: Notification["priority"]): "urgent" | "high" | "normal" | null {
+  if (p === "urgent") return "urgent";
+  if (p === "high") return "high";
+  if (p === "normal") return "normal";
+  return null; // "low" → no sound
+}
+
+function requestNotificationPermission() {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission().catch(() => { /* silently ignore */ });
+  }
+}
+
+function fireBrowserNotification(title: string, body: string) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    new Notification(title, {
+      body,
+      icon: "/favicon.svg",
+      tag: "hrms-notification",
+    });
+  } catch {
+    /* some browsers block programmatic Notification outside SW */
+  }
+}
+
 export const useNotifications = () => {
   const { user } = useAuth();
+  const prevCountRef = useRef<number>(-1);
+  // Map<itemId, intervalId> — tracks active repeat timers
+  const repeatTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const permissionRequested = useRef(false);
 
-  return useQuery({
+  useEffect(() => {
+    if (user && !permissionRequested.current) {
+      permissionRequested.current = true;
+      requestNotificationPermission();
+    }
+  }, [user]);
+
+  // Clear all repeat timers on unmount / logout
+  useEffect(() => {
+    return () => {
+      repeatTimers.current.forEach((id) => clearInterval(id));
+      repeatTimers.current.clear();
+    };
+  }, []);
+
+  const query = useQuery({
     queryKey: ["notifications", user?.id],
     queryFn: async () => {
-      if (!user?.id) return [];
-      const res = await hrmsApi.get<{ success: boolean; data: InboxItem[] }>('/api/inbox');
-      return (res.data ?? []).map(mapInboxItem) as Notification[];
+      if (!user?.id) return [] as Notification[];
+      const res = await hrmsApi.get<{ success: boolean; data: InboxItem[] }>("/api/inbox");
+      return (res.data ?? []).map(mapInboxItem);
     },
     enabled: !!user?.id,
     refetchInterval: 60000,
   });
+
+  // Sound + repeat logic whenever data refreshes
+  useEffect(() => {
+    const notifications = query.data;
+    if (!notifications) return;
+
+    const unactioned = notifications.filter((n) => !n.actioned);
+    const currentCount = notifications.length;
+
+    // --- New notifications arrived ---
+    if (prevCountRef.current >= 0 && currentCount > prevCountRef.current) {
+      const newOnes = notifications.slice(0, currentCount - prevCountRef.current);
+      // Find highest priority among new items
+      const priorities: Array<"urgent" | "high" | "normal"> = ["urgent", "high", "normal"];
+      for (const p of priorities) {
+        if (newOnes.some((n) => n.priority === p)) {
+          playChime(p);
+          const newest = newOnes[0];
+          fireBrowserNotification(
+            newest.title,
+            newest.message || `You have a new ${p} priority notification`,
+          );
+          break;
+        }
+      }
+    }
+    prevCountRef.current = currentCount;
+
+    // --- Repeat-until-actioned timers ---
+    const unactionedIds = new Set(unactioned.map((n) => n.id));
+
+    // Clear timers for items that are now actioned
+    repeatTimers.current.forEach((timerId, itemId) => {
+      if (!unactionedIds.has(itemId)) {
+        clearInterval(timerId);
+        repeatTimers.current.delete(itemId);
+      }
+    });
+
+    // Start timers for unactioned items that don't yet have one
+    for (const n of unactioned) {
+      if (repeatTimers.current.has(n.id)) continue;
+      const cp = chimePriorityFrom(n.priority);
+      if (!cp) continue; // "low" — no repeat
+      const intervalMs = REPEAT_INTERVAL[cp];
+      const timerId = setInterval(() => {
+        // Re-check: if item has since been actioned, the timer will be cleared on next query cycle
+        playChime(cp);
+        fireBrowserNotification(n.title, n.message || "Reminder: unactioned notification");
+      }, intervalMs);
+      repeatTimers.current.set(n.id, timerId);
+    }
+  }, [query.data]);
+
+  return query;
 };
 
 export const useUnreadNotificationsCount = () => {
@@ -72,7 +180,7 @@ export const useUnreadNotificationsCount = () => {
     queryKey: ["notifications-unread-count", user?.id],
     queryFn: async () => {
       if (!user?.id) return 0;
-      const res = await hrmsApi.get<{ success: boolean; count: number }>('/api/inbox/count');
+      const res = await hrmsApi.get<{ success: boolean; count: number }>("/api/inbox/count");
       return Number(res.count ?? 0);
     },
     enabled: !!user?.id,
@@ -102,7 +210,7 @@ export const useMarkAllNotificationsRead = () => {
   return useMutation({
     mutationFn: async () => {
       if (!user?.id) return;
-      await hrmsApi.patch('/api/inbox/mark-all-read');
+      await hrmsApi.patch("/api/inbox/mark-all-read");
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });

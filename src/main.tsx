@@ -3,6 +3,8 @@ import { ThemeProvider } from "next-themes";
 import App from "./App.tsx";
 import "./index.css";
 
+const PUSH_SW_URL = "/sw-push.js";
+
 async function clearLegacyServiceWorkers() {
   if (!("serviceWorker" in navigator)) return;
 
@@ -10,8 +12,14 @@ async function clearLegacyServiceWorkers() {
 
   try {
     const registrations = await navigator.serviceWorker.getRegistrations();
-    hadLegacyRuntime = hadLegacyRuntime || registrations.length > 0;
-    await Promise.all(registrations.map((registration) => registration.unregister()));
+    // Keep sw-push.js; unregister everything else
+    const toRemove = registrations.filter((r) => {
+      const scope = r.scope || "";
+      const scriptUrl: string = (r as any).active?.scriptURL || (r as any).installing?.scriptURL || (r as any).waiting?.scriptURL || "";
+      return !scriptUrl.endsWith(PUSH_SW_URL) && !scope.endsWith("/sw-push/");
+    });
+    hadLegacyRuntime = hadLegacyRuntime || toRemove.length > 0;
+    await Promise.all(toRemove.map((r) => r.unregister()));
   } catch (error) {
     console.warn("Failed to unregister service workers", error);
   }
@@ -20,8 +28,10 @@ async function clearLegacyServiceWorkers() {
 
   try {
     const cacheKeys = await caches.keys();
-    hadLegacyRuntime = hadLegacyRuntime || cacheKeys.length > 0;
-    await Promise.all(cacheKeys.map((key) => caches.delete(key)));
+    // Keep push-related caches; remove legacy ones
+    const legacyCaches = cacheKeys.filter((k) => !k.startsWith("push-"));
+    hadLegacyRuntime = hadLegacyRuntime || legacyCaches.length > 0;
+    await Promise.all(legacyCaches.map((key) => caches.delete(key)));
   } catch (error) {
     console.warn("Failed to clear service worker caches", error);
   }
@@ -34,6 +44,22 @@ async function clearLegacyServiceWorkers() {
   }
 
   sessionStorage.removeItem(reloadKey);
+}
+
+async function registerPushServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const existing = await navigator.serviceWorker.getRegistrations();
+    const alreadyRegistered = existing.some((r) => {
+      const scriptUrl: string = (r as any).active?.scriptURL || (r as any).installing?.scriptURL || (r as any).waiting?.scriptURL || "";
+      return scriptUrl.endsWith(PUSH_SW_URL);
+    });
+    if (!alreadyRegistered) {
+      await navigator.serviceWorker.register(PUSH_SW_URL);
+    }
+  } catch (err) {
+    console.warn("Failed to register push service worker", err);
+  }
 }
 
 function installChunkLoadRecovery() {
@@ -70,7 +96,7 @@ function installChunkLoadRecovery() {
   }, { once: true });
 }
 
-void clearLegacyServiceWorkers();
+void clearLegacyServiceWorkers().then(() => registerPushServiceWorker());
 installChunkLoadRecovery();
 
 createRoot(document.getElementById("root")!).render(

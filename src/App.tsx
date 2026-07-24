@@ -11,6 +11,12 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { useLocationHeartbeat } from "@/hooks/useLocationHeartbeat";
+
+function LocationHeartbeatRunner() {
+  useLocationHeartbeat();
+  return null;
+}
 
 import { appRouteElements } from "./config/routes";
 import NotFound from "./pages/NotFound";
@@ -39,6 +45,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <LocationHeartbeatRunner />
           <ScrollToTop />
           <ErrorBoundary>
             <Suspense fallback={<PageLoader />}>

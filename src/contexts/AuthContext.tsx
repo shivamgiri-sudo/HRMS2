@@ -135,7 +135,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   const queryClient = useQueryClient();
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [autoLogoutMinutes, setAutoLogoutMinutes] = useState<number>(0);
 
   const scheduleRefresh = () => {
     if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
@@ -207,34 +206,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Fetch auto-logout setting from server
-  useEffect(() => {
-    const fetchAutoLogoutSetting = async () => {
-      try {
-        const res = await fetch(apiUrl('/api/org/settings/public/auto-logout-minutes'));
-        if (res.ok) {
-          const data = await res.json();
-          setAutoLogoutMinutes(data.minutes || 0);
-        }
-      } catch (error) {
-        console.error('[AuthContext] Failed to fetch auto-logout setting:', error);
-        // Default to 0 (disabled) on error
-        setAutoLogoutMinutes(0);
-      }
-    };
-
-    fetchAutoLogoutSetting();
-  }, []);
-
-  // Setup inactivity timeout - only when user is logged in
-  useInactivityTimeout(
-    user ? autoLogoutMinutes : 0,
-    async () => {
-      if (!user) return;
-      console.log('[AuthContext] Inactivity timeout triggered - logging out');
-      await signOut();
-    }
-  );
+  // Auto-logout disabled — inactivity timeout hardcoded to 0 (no-op)
+  useInactivityTimeout(0, async () => { /* disabled */ });
 
   const signIn = async (identifier: string, password: string): Promise<{ error: Error | null }> => {
     if (DEMO_LOGIN_ENABLED) {

@@ -201,6 +201,8 @@ import { orgChartRouter } from "./modules/org-chart/org-chart.routes.js";
 import { visitorRouter } from "./modules/visitor/visitor.routes.js";
 import { visitorPublicRouter } from "./modules/visitor/visitor-public.routes.js";
 import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes.js";
+import { pushRouter } from "./modules/push/push.routes.js";
+import { locationRouter } from "./modules/location/location.routes.js";
 
 export const app = express();
 
@@ -501,6 +503,9 @@ app.use("/api/operations", operationsLiveRouter);
 
 import { policyEngineRouter } from "./modules/policy-engine/policy-engine.routes.js";
 app.use("/api/policy-engine", policyEngineRouter);
+
+app.use("/api/push", pushRouter);
+app.use("/api/location", locationRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

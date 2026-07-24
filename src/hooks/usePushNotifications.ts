@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 // Push subscriptions via backend API
 // Push subscriptions are not available in local MySQL deployment.
@@ -71,9 +72,19 @@ export function usePushNotifications() {
         applicationServerKey: applicationServerKey.buffer as ArrayBuffer,
       });
 
-      // Note: subscription endpoint persisted to backend not yet implemented.
-      // Backend push_subscriptions endpoint
-      console.info("[PushNotifications] Subscribed to browser push (endpoint not persisted — backend endpoint pending)");
+      // Persist subscription to backend
+      try {
+        await hrmsApi.post("/api/push/subscribe", {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: subscription.toJSON().keys?.p256dh,
+            auth: subscription.toJSON().keys?.auth,
+          },
+          userAgent: navigator.userAgent,
+        });
+      } catch (err) {
+        console.warn("[PushNotifications] Failed to persist subscription to backend:", err);
+      }
 
       setIsSubscribed(true);
       setIsLoading(false);
@@ -94,9 +105,13 @@ export function usePushNotifications() {
       const subscription = await registration.pushManager.getSubscription();
 
       if (subscription) {
+        // Remove from backend first, then unsubscribe
+        try {
+          await hrmsApi.delete("/api/push/subscribe", { data: { endpoint: subscription.endpoint } });
+        } catch {
+          /* best-effort */
+        }
         await subscription.unsubscribe();
-        // Note: use backend endpoint for push subscriptions
-        console.info("[PushNotifications] Unsubscribed from browser push");
       }
 
       setIsSubscribed(false);
