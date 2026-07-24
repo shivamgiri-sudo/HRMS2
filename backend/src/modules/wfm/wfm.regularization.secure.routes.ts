@@ -469,20 +469,22 @@ wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async
         LIMIT 1`,
       [date, date, requestedEmployeeId],
     ),
+    // Use biometric_attendance_log (mas_hrms native table) instead of cosec_punch_sync
+    // to avoid cross-DB collation issues and vicidial-sync lock contention.
     db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
-              cps.io_type,
-              CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
-              cps.device_id
-         FROM cosec_punch_sync cps
-         JOIN employees e ON (e.employee_code = cps.user_id COLLATE utf8mb4_unicode_ci OR e.biometric_code = cps.user_id COLLATE utf8mb4_unicode_ci)
-        WHERE e.id = ?
-          AND (
-            DATE(cps.punch_time) = ?
-            OR (DATE(cps.punch_time) = DATE_ADD(?, INTERVAL 1 DAY) AND TIME(cps.punch_time) < '06:00:00')
-          )
-        ORDER BY cps.punch_time ASC`,
-      [requestedEmployeeId, date, date],
+      `SELECT DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS punch_time,
+              1 AS io_type, 'In' AS io_label, NULL AS device_id
+         FROM biometric_attendance_log bal
+        WHERE bal.employee_id = ? AND bal.punch_date = ?
+          AND bal.first_punch_in IS NOT NULL
+       UNION ALL
+       SELECT DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS punch_time,
+              2 AS io_type, 'Out' AS io_label, NULL AS device_id
+         FROM biometric_attendance_log bal
+        WHERE bal.employee_id = ? AND bal.punch_date = ?
+          AND bal.last_punch_out IS NOT NULL
+        ORDER BY punch_time ASC`,
+      [requestedEmployeeId, date, requestedEmployeeId, date],
     ),
   ]);
 
