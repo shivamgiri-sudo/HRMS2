@@ -57,6 +57,21 @@ async function registerPushServiceWorker() {
     if (!alreadyRegistered) {
       await navigator.serviceWorker.register(PUSH_SW_URL);
     }
+
+    // Register Periodic Background Sync for location heartbeat (Android Chrome PWA)
+    const reg = await navigator.serviceWorker.ready;
+    if ("periodicSync" in reg) {
+      try {
+        const status = await (navigator.permissions as any).query({ name: "periodic-background-sync" });
+        if (status.state === "granted") {
+          await (reg as any).periodicSync.register("location-heartbeat-periodic", {
+            minInterval: 30 * 60 * 1000, // 30 minutes
+          });
+        }
+      } catch {
+        // periodicSync not available on this browser — silent
+      }
+    }
   } catch (err) {
     console.warn("Failed to register push service worker", err);
   }
