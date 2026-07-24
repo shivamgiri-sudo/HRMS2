@@ -44,14 +44,24 @@ export function useLocationHeartbeat() {
           }
         },
         () => { /* permission denied — silent */ },
-        { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 },
+        // maximumAge: 300_000 — use any position the browser already has cached
+        // in the last 5 minutes. Returns instantly on page load without waiting
+        // for a fresh GPS fix. Avoids the 5–15s cold-start delay.
+        { enableHighAccuracy: false, maximumAge: 300_000, timeout: 10_000 },
       );
     }
 
-    snap(); // fire once immediately on login
+    snap(); // fire immediately on login / page load
     timerRef.current = setInterval(snap, HEARTBEAT_INTERVAL_MS);
 
+    // Also re-snap when the tab becomes visible again (user switches back to HRMS)
+    function onVisible() {
+      if (document.visibilityState === "visible") snap();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
+      document.removeEventListener("visibilitychange", onVisible);
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;

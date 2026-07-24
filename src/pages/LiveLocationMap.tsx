@@ -108,6 +108,7 @@ export default function LiveLocationMap() {
       return res.data ?? [];
     },
     refetchInterval: 30_000,
+    refetchIntervalInBackground: true, // keep polling even when tab is not focused
     staleTime: 15_000,
   });
 
