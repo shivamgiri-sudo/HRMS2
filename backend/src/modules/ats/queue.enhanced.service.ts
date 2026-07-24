@@ -526,11 +526,15 @@ export interface OpsBoardEntry {
 export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBoardEntry[]> {
   const targetDate = date || getIstDateString();
 
+  // Branch filter: match by branch_master name OR the raw string stored in applied_for_branch
   const branchCondition = branch
-    ? `AND COALESCE(NULLIF(bm.branch_name,''), NULLIF(c.applied_for_branch,'')) = ?`
+    ? `AND (
+        LOWER(TRIM(COALESCE(bm.branch_name, ''))) = LOWER(TRIM(?))
+        OR LOWER(TRIM(COALESCE(c.applied_for_branch, ''))) = LOWER(TRIM(?))
+      )`
     : '';
-  const params: unknown[] = [targetDate, targetDate];
-  if (branch) params.push(branch);
+  const params: unknown[] = [targetDate, targetDate, targetDate];
+  if (branch) params.push(branch, branch);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -545,41 +549,44 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.walkin_end_stage,
       c.recruiter_assigned_name,
       c.second_round_interviewer_name_snapshot,
-      scores.assessment_percentage,
-      scores.typing_net_wpm,
-      scores.typing_accuracy,
+      today_scores.assessment_percentage,
+      today_scores.typing_net_wpm,
+      today_scores.typing_accuracy,
       COALESCE(
         MIN(COALESCE(qt.arrival_time, qt.created_at)),
-        MIN(aca_today.created_at)
+        MIN(aca_today.created_at),
+        DATE(c.updated_at)
       )                                                                                     AS arrived_at
     FROM ats_candidate c
     LEFT JOIN ats_queue_token qt
            ON qt.candidate_id = c.id
-          AND DATE(COALESCE(qt.arrival_time, qt.created_at)) = ?
+          AND DATE(CONVERT_TZ(COALESCE(qt.arrival_time, qt.created_at), '+00:00', '+05:30')) = ?
     LEFT JOIN ats_candidate_assessment aca_today
            ON aca_today.candidate_id = c.id
-          AND DATE(aca_today.created_at) = ?
+          AND DATE(CONVERT_TZ(aca_today.created_at, '+00:00', '+05:30')) = ?
     LEFT JOIN process_master pm  ON pm.id = c.applied_for_process
     LEFT JOIN branch_master bm   ON bm.id = c.applied_for_branch
     LEFT JOIN (
       SELECT aca.candidate_id,
-             MAX(aca.percentage)           AS assessment_percentage,
-             MAX(ata.net_wpm)              AS typing_net_wpm,
-             MAX(ata.accuracy_percentage)  AS typing_accuracy
+             aca.percentage           AS assessment_percentage,
+             ata.net_wpm              AS typing_net_wpm,
+             ata.accuracy_percentage  AS typing_accuracy
       FROM ats_candidate_assessment aca
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
-      GROUP BY aca.candidate_id
-    ) scores ON scores.candidate_id = c.id
+      WHERE DATE(CONVERT_TZ(aca.created_at, '+00:00', '+05:30')) = ?
+        AND aca.status IN ('submitted', 'completed', 'reviewed')
+      ORDER BY aca.created_at DESC
+    ) today_scores ON today_scores.candidate_id = c.id
     WHERE (
       qt.id IS NOT NULL OR aca_today.id IS NOT NULL
     )
-    AND (
-      c.current_stage IN (
-        'Operations Interview', "Round 2- Op's",
-        'HR Interview', "Round 1- HR Screening", 'Interview - Skill Test',
-        'Applied', 'New', 'Screening', 'Written Test', 'Hold', 'Arrived'
-      )
-      OR (c.current_stage IN ('Rejected', 'Selected', 'Offered') AND c.final_decision IS NOT NULL)
+    AND c.current_stage IN (
+      'Arrived', 'Applied', 'New', 'Screening', 'Written Test', 'Hold',
+      'Round 1- HR Screening', 'HR Interview',
+      'Interview - Skill Test',
+      "Round 2- Op's", 'Operations Interview',
+      'Selected', 'Offered', 'Joined',
+      'Rejected', 'No Show', 'Dropped'
     )
     ${branchCondition}
     GROUP BY
@@ -587,7 +594,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.applied_for_process, c.round1_result, c.skilltest_result, c.round2_result,
       c.final_decision, c.walkin_end_stage, c.recruiter_assigned_name,
       c.second_round_interviewer_name_snapshot,
-      scores.assessment_percentage, scores.typing_net_wpm, scores.typing_accuracy,
+      today_scores.assessment_percentage, today_scores.typing_net_wpm, today_scores.typing_accuracy,
       pm.process_name, bm.branch_name
     ORDER BY arrived_at ASC`,
     params

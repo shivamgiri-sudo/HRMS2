@@ -28,17 +28,17 @@ type TabKey = "all" | "waiting" | "interview" | "decisions";
 
 const POLL_MS = 30_000;
 
-const WAITING_STAGES   = ["Applied", "New", "Screening", "Written Test", "Hold"];
+const WAITING_STAGES   = ["Arrived", "Applied", "New", "Screening", "Written Test", "Hold"];
 const INTERVIEW_STAGES = ["Round 1- HR Screening", "HR Interview", "Interview - Skill Test", "Round 2- Op's", "Operations Interview"];
-const DECISION_STAGES  = ["Selected", "Offered", "Rejected"];
+const DECISION_STAGES  = ["Selected", "Offered", "Joined", "Rejected", "No Show", "Dropped"];
 
 // Pipeline position — used for journey cell rendering (stage-order guard)
 const PIPELINE_POS: Record<string, number> = {
-  Applied: 0, New: 0, Screening: 0, "Written Test": 0, Hold: 0,
+  Arrived: 0, Applied: 0, New: 0, Screening: 0, "Written Test": 0, Hold: 0,
   "Round 1- HR Screening": 1, "HR Interview": 1,
   "Interview - Skill Test": 2,
   "Round 2- Op's": 3, "Operations Interview": 3,
-  Selected: 4, Offered: 4, Rejected: 4,
+  Selected: 4, Offered: 4, Joined: 4, Rejected: 4, "No Show": 4, Dropped: 4,
 };
 
 const STAGE_DISPLAY: Record<string, string> = {
@@ -57,7 +57,11 @@ const STAGE_BADGE_CLS: Record<string, string> = {
   "Operations Interview":    "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
   Selected:                  "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
   Offered:                   "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+  Joined:                    "bg-teal-500/20 text-teal-300 border-teal-500/30",
   Rejected:                  "bg-rose-500/20 text-rose-300 border-rose-500/30",
+  "No Show":                 "bg-orange-500/20 text-orange-300 border-orange-500/30",
+  Dropped:                   "bg-rose-700/20 text-rose-400 border-rose-700/30",
+  Arrived:                   "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
   Applied:                   "bg-slate-500/20 text-slate-400 border-slate-600",
   New:                       "bg-slate-500/20 text-slate-400 border-slate-600",
   Screening:                 "bg-slate-500/20 text-slate-400 border-slate-600",
