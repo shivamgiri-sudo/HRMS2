@@ -1629,8 +1629,28 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   if (scopedOnly) {
     if (branch) {
-      clauses.push("(arha.branch_name = ? OR arha.created_by = ? OR arha.recruiter_id = ?)");
-      params.push(branch, userId, userId);
+      clauses.push(`(
+        LOWER(TRIM(COALESCE(arha.branch_name, ''))) = LOWER(TRIM(?))
+        OR LOWER(TRIM(COALESCE(arha.location_name, ''))) = LOWER(TRIM(?))
+        OR EXISTS (
+          SELECT 1
+            FROM branch_master bm_scope
+           WHERE LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))) = LOWER(TRIM(?))
+             AND (
+               LOWER(TRIM(COALESCE(arha.branch_name, ''))) IN (
+                 LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))),
+                 LOWER(TRIM(COALESCE(bm_scope.branch_code, '')))
+               )
+               OR LOWER(TRIM(COALESCE(arha.location_name, ''))) IN (
+                 LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))),
+                 LOWER(TRIM(COALESCE(bm_scope.branch_code, '')))
+               )
+             )
+        )
+        OR arha.created_by = ?
+        OR arha.recruiter_id = ?
+      )`);
+      params.push(branch, branch, branch, userId, userId);
     } else {
       clauses.push("(arha.created_by = ? OR arha.recruiter_id = ?)");
       params.push(userId, userId);
@@ -1738,7 +1758,22 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
               SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END) AS contacted,
               SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END) AS selected,
-              SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END) AS joined
+              SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END) AS joined,
+              SUM(CASE
+                    WHEN COALESCE(arha.walkin_flag, 0) = 1
+                     AND COALESCE(arha.contacted_flag, 0) = 0
+                    THEN 1 ELSE 0
+                  END) AS walkins_without_contact,
+              SUM(CASE
+                    WHEN COALESCE(arha.final_selection_flag, 0) = 1
+                     AND COALESCE(arha.walkin_flag, 0) = 0
+                    THEN 1 ELSE 0
+                  END) AS selected_without_walkin,
+              SUM(CASE
+                    WHEN COALESCE(arha.joined_flag, 0) = 1
+                     AND COALESCE(arha.final_selection_flag, 0) = 0
+                    THEN 1 ELSE 0
+                  END) AS joined_without_selection
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY label ORDER BY total DESC LIMIT 100`,
       params
@@ -1834,6 +1869,9 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     walkins: number;
     selected: number;
     joined: number;
+    walkinsWithoutContact: number;
+    selectedWithoutWalkin: number;
+    joinedWithoutSelection: number;
   }>();
   for (const row of branchRows as any[]) {
     const rawLabel = String(row.label ?? "").trim() || "Unmapped";
@@ -1845,12 +1883,18 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       walkins: 0,
       selected: 0,
       joined: 0,
+      walkinsWithoutContact: 0,
+      selectedWithoutWalkin: 0,
+      joinedWithoutSelection: 0,
     };
     current.total += Number(row.total) || 0;
     current.contacted += Number(row.contacted) || 0;
     current.walkins += Number(row.walkins) || 0;
     current.selected += Number(row.selected) || 0;
     current.joined += Number(row.joined) || 0;
+    current.walkinsWithoutContact += Number(row.walkins_without_contact) || 0;
+    current.selectedWithoutWalkin += Number(row.selected_without_walkin) || 0;
+    current.joinedWithoutSelection += Number(row.joined_without_selection) || 0;
     branchAccumulator.set(preferred, current);
   }
 
@@ -1860,12 +1904,23 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const byBranch = Array.from(branchAccumulator.values())
     .map((row) => {
       const dataQualityIssues: string[] = [];
-      if (row.contacted > row.total) dataQualityIssues.push("Contacted exceeds logged");
-      if (row.walkins > row.contacted) dataQualityIssues.push("Walk-ins exceed contacted");
-      if (row.selected > row.walkins) dataQualityIssues.push("Selected exceeds walk-ins");
-      if (row.joined > row.selected) dataQualityIssues.push("Joined exceeds selected");
+      if (row.walkinsWithoutContact > 0) {
+        dataQualityIssues.push(`${row.walkinsWithoutContact} walk-in record(s) not marked contacted`);
+      }
+      if (row.selectedWithoutWalkin > 0) {
+        dataQualityIssues.push(`${row.selectedWithoutWalkin} selected record(s) not marked walk-in`);
+      }
+      if (row.joinedWithoutSelection > 0) {
+        dataQualityIssues.push(`${row.joinedWithoutSelection} joined record(s) not marked selected`);
+      }
+      const {
+        walkinsWithoutContact: _walkinsWithoutContact,
+        selectedWithoutWalkin: _selectedWithoutWalkin,
+        joinedWithoutSelection: _joinedWithoutSelection,
+        ...branchMetrics
+      } = row;
       return {
-        ...row,
+        ...branchMetrics,
         contactRate: rate(row.contacted, row.total),
         walkinRate: rate(row.walkins, row.contacted),
         selectionRate: rate(row.selected, row.walkins),
