@@ -865,7 +865,7 @@ export default function NativeJobRequisition() {
                               </button>
                             </>
                           )}
-                          {req.approval_status === 'pending_approval' && (
+                          {req.approval_status === 'pending_approval' && (currentUserRole === 'super_admin' || currentUserRole === 'branch_head') && (
                             <>
                               <button
                                 onClick={() => setConfirmAction({ type: 'approve', id: req.id, code: req.requisition_code })}

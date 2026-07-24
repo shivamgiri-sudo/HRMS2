@@ -827,8 +827,8 @@ export const jobRequisitionService = {
     const [users] = await db.execute<RowDataPacket[]>(
       `SELECT u.id FROM users u
        WHERE u.active_status = 1
-         AND u.role IN ('super_admin','hr','branch_head','management')
-         AND (u.branch_name = ? OR u.role IN ('super_admin','management'))
+         AND u.role IN ('super_admin','branch_head')
+         AND (u.branch_name = ? OR u.role = 'super_admin')
        LIMIT 50`,
       [requisition.branch_name]
     );

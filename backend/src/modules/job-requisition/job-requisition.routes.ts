@@ -76,9 +76,9 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.get(
   "/pending-approvals",
   requireAuth,
-  requireRole("super_admin", "hr", "branch_head", "management"),
+  requireRole("super_admin", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const role = req.authUser?.role ?? "hr";
+    const role = req.authUser?.role ?? "branch_head";
     const data = await jobRequisitionService.getPendingForApproval(role);
     return res.json({ success: true, data });
   })
@@ -286,7 +286,7 @@ jobRequisitionRouter.post(
 jobRequisitionRouter.post(
   "/:id/approve",
   requireAuth,
-  requireRole("super_admin", "hr", "branch_head", "management"),
+  requireRole("super_admin", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { remarks } = req.body;
@@ -307,7 +307,7 @@ jobRequisitionRouter.post(
 jobRequisitionRouter.post(
   "/:id/reject",
   requireAuth,
-  requireRole("super_admin", "hr", "branch_head", "management"),
+  requireRole("super_admin", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { reason } = req.body;
@@ -335,7 +335,7 @@ jobRequisitionRouter.post(
 jobRequisitionRouter.post(
   "/:id/close",
   requireAuth,
-  requireRole("super_admin", "hr", "branch_head", "management"),
+  requireRole("super_admin", "branch_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const { reason } = req.body;
