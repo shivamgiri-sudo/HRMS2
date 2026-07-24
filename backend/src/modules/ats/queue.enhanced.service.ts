@@ -130,7 +130,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
       c.skilltest_ai,
       c.skilltest_result,
       scores.assessment_percentage,
-      scores.typing_net_wpm
+      scores.typing_net_wpm,
+      scores.typing_accuracy
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
     LEFT JOIN process_master pm ON pm.id = c.applied_for_process
@@ -139,17 +140,18 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
     LEFT JOIN employees e ON e.id = rr.employee_id
     LEFT JOIN (
       SELECT aca.candidate_id,
-             MAX(aca.percentage)                                    AS assessment_percentage,
-             MAX(CASE WHEN ata.net_wpm > 0 THEN ata.net_wpm END)   AS typing_net_wpm
+             MAX(aca.percentage)                                                        AS assessment_percentage,
+             MAX(CASE WHEN ata.submitted_at IS NOT NULL THEN ata.net_wpm END)           AS typing_net_wpm,
+             MAX(CASE WHEN ata.submitted_at IS NOT NULL THEN ata.accuracy_percentage END) AS typing_accuracy
       FROM ats_candidate_assessment aca
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       GROUP BY aca.candidate_id
     ) scores ON scores.candidate_id = c.id
     WHERE ${conditions.join(' AND ')}
-      AND (
+      ${!filters.status ? `AND (
         qt.queue_status IN ('waiting','called','in_interview')
         OR (qt.queue_status IS NULL AND qt.status = 'active')
-      )
+      )` : ''}
       ORDER BY
         CASE COALESCE(qt.queue_status, 'waiting')
         WHEN 'in_interview' THEN 1
@@ -480,9 +482,9 @@ export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Pr
     LEFT JOIN branch_master bm             ON bm.id = c.applied_for_branch
     LEFT JOIN (
       SELECT aca.candidate_id,
-             MAX(aca.percentage)                                           AS assessment_percentage,
-             MAX(CASE WHEN ata.net_wpm > 0 THEN ata.net_wpm END)          AS typing_net_wpm,
-             MAX(CASE WHEN ata.net_wpm > 0 THEN ata.accuracy_percentage END) AS typing_accuracy
+             MAX(aca.percentage)                                                          AS assessment_percentage,
+             MAX(CASE WHEN ata.submitted_at IS NOT NULL THEN ata.net_wpm END)             AS typing_net_wpm,
+             MAX(CASE WHEN ata.submitted_at IS NOT NULL THEN ata.accuracy_percentage END) AS typing_accuracy
       FROM ats_candidate_assessment aca
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       GROUP BY aca.candidate_id
@@ -612,7 +614,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
                           COALESCE(ata.attempt_no, 0) DESC
                ) AS rn
         FROM ats_candidate_assessment aca
-        LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
+        LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id AND ata.submitted_at IS NOT NULL
         WHERE DATE(CONVERT_TZ(aca.created_at, '+00:00', '+05:30')) = ?
           AND aca.status IN ('submitted_pending_scoring', 'manual_review', 'completed')
       ) ranked

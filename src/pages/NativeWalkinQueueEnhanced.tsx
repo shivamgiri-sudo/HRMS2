@@ -3,9 +3,8 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Users, Clock, UserCheck, Search,
-  RefreshCw, Phone, TrendingUp, AlertCircle, Target, X,
+  RefreshCw, Phone, TrendingUp, AlertCircle,
 } from "lucide-react";
-import { formatISTTime } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -34,6 +33,7 @@ interface QueueToken {
   skilltest_result?: string | null;
   assessment_percentage?: number | null;
   typing_net_wpm?: number | null;
+  typing_accuracy?: number | null;
 }
 
 interface QueueMetrics {
@@ -43,19 +43,6 @@ interface QueueMetrics {
   average_wait_time: number;
   avg_wait_time: number;
 }
-
-interface OpenRequisition {
-  id: string;
-  requisition_code: string;
-  designation_name: string;
-  process_name: string | null;
-  requested_headcount: number;
-  open_positions: number;
-  planned_batch_name: string | null;
-  planned_batch_no: string | null;
-}
-
-const ACTIVE_DRIVE_KEY = "hrms_active_drive_requisition";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -76,6 +63,27 @@ const STATUS_LABEL: Record<QueueStatus, string> = {
   no_show:      "No Show",
   cancelled:    "Cancelled",
 };
+
+// Left border accent per status
+const STATUS_BORDER: Record<QueueStatus, string> = {
+  waiting:      "border-l-amber-400",
+  called:       "border-l-blue-400",
+  in_interview: "border-l-purple-400",
+  completed:    "border-l-emerald-400",
+  no_show:      "border-l-red-400",
+  cancelled:    "border-l-gray-300",
+};
+
+// Pill quick-filter config
+const STATUS_PILLS: Array<{ value: QueueStatus | "all"; label: string; activeClass: string }> = [
+  { value: "all",          label: "All",          activeClass: "bg-gray-800 text-white border-gray-800" },
+  { value: "waiting",      label: "Waiting",      activeClass: "bg-amber-500 text-white border-amber-500" },
+  { value: "called",       label: "Called",       activeClass: "bg-blue-500 text-white border-blue-500" },
+  { value: "in_interview", label: "In Interview", activeClass: "bg-purple-500 text-white border-purple-500" },
+  { value: "completed",    label: "Completed",    activeClass: "bg-emerald-500 text-white border-emerald-500" },
+  { value: "no_show",      label: "No Show",      activeClass: "bg-red-500 text-white border-red-500" },
+  { value: "cancelled",    label: "Cancelled",    activeClass: "bg-gray-500 text-white border-gray-500" },
+];
 
 function formatWaitTime(minutes: number | null): string {
   if (!minutes) return "—";
@@ -100,17 +108,7 @@ export default function NativeWalkinQueueEnhanced() {
     return ist.toISOString().slice(0, 10);
   });
 
-  // Active drive context — persisted in localStorage
-  const [activeDrive, setActiveDrive] = useState<OpenRequisition | null>(() => {
-    try {
-      const saved = localStorage.getItem(ACTIVE_DRIVE_KEY);
-      return saved ? (JSON.parse(saved) as OpenRequisition) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [openRequisitions, setOpenRequisitions] = useState<OpenRequisition[]>([]);
-  const [showDrivePicker, setShowDrivePicker] = useState(false);
+  const [allBranches, setAllBranches] = useState<string[]>([]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -148,9 +146,20 @@ export default function NativeWalkinQueueEnhanced() {
   };
 
   useEffect(() => {
+    hrmsApi.get<{ success: boolean; data: Array<{ branch_name?: string; name?: string }> }>("/api/org/branches")
+      .then(res => {
+        const names = (res.data || [])
+          .map(b => b.branch_name || b.name || "")
+          .filter(Boolean)
+          .sort();
+        setAllBranches(names);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     loadQueue();
     loadMetrics();
-    loadOpenRequisitions(branchFilter || undefined);
 
     intervalRef.current = setInterval(() => {
       loadQueue(true);
@@ -161,30 +170,6 @@ export default function NativeWalkinQueueEnhanced() {
   }, [statusFilter, branchFilter, searchQuery, dateFilter]);
 
   // ── Actions ────────────────────────────────────────────────────────────────────
-
-  const loadOpenRequisitions = async (branch?: string) => {
-    try {
-      const path = branch
-        ? `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}`
-        : "/api/job-requisition?approval_status=approved&limit=50";
-      const res = await hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(path);
-      setOpenRequisitions(res.data || []);
-    } catch {
-      setOpenRequisitions([]);
-    }
-  };
-
-  const selectDrive = (req: OpenRequisition) => {
-    setActiveDrive(req);
-    localStorage.setItem(ACTIVE_DRIVE_KEY, JSON.stringify(req));
-    setShowDrivePicker(false);
-  };
-
-  const clearDrive = () => {
-    setActiveDrive(null);
-    localStorage.removeItem(ACTIVE_DRIVE_KEY);
-    setShowDrivePicker(false);
-  };
 
   const handleCallNext = async (tokenId: string) => {
     try {
@@ -213,11 +198,10 @@ export default function NativeWalkinQueueEnhanced() {
     }
   };
 
-  // ── Derived ────────────────────────────────────────────────────────────────────
+  // ── Derived counts for pill quick-filters ──────────────────────────────────────
 
-  const branches = Array.from(
-    new Set(tokens.map(t => t.branch_display_name || t.branch_name))
-  ).filter(Boolean);
+  const countByStatus = (status: QueueStatus | "all") =>
+    status === "all" ? tokens.length : tokens.filter(t => t.queue_status === status).length;
 
   if (loading && !tokens.length) {
     return (
@@ -231,167 +215,122 @@ export default function NativeWalkinQueueEnhanced() {
 
   return (
     <DashboardLayout>
-      {/* Drive Picker Modal */}
-      {showDrivePicker && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
-            <div className="p-4 border-b flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900">Select Today's Hiring Drive</h3>
-              <button onClick={() => setShowDrivePicker(false)} className="p-1 text-gray-400 hover:text-gray-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
-              {openRequisitions.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-4">No approved active requisitions found.</p>
-              ) : (
-                openRequisitions.map((req) => (
-                  <button
-                    key={req.id}
-                    onClick={() => selectDrive(req)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg border hover:border-blue-400 hover:bg-blue-50 transition-colors ${activeDrive?.id === req.id ? "border-emerald-400 bg-emerald-50" : "border-gray-200"}`}
-                  >
-                    <div className="font-medium text-sm text-gray-900">{req.designation_name}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {req.requisition_code}
-                      {req.process_name && ` | ${req.process_name}`}
-                      {req.planned_batch_name && ` | Batch: ${req.planned_batch_name}`}
-                      <span className="ml-1 text-blue-600">{req.open_positions} open</span>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-            <div className="p-4 border-t flex justify-between">
-              {activeDrive && (
-                <button onClick={clearDrive} className="text-sm text-red-500 hover:text-red-700">
-                  Clear drive selection
-                </button>
-              )}
-              <button
-                onClick={() => setShowDrivePicker(false)}
-                className="ml-auto px-4 py-2 text-sm border rounded hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Page layout: compact top bar, then sticky-header table */}
       <div className="flex flex-col bg-gray-50" style={{ height: "calc(100vh - 64px)" }}>
 
         {/* ── Top Section ─────────────────────────────────────────────────────── */}
-        <div className="bg-white border-b px-4 pt-3 pb-2 shrink-0 space-y-2">
+        <div className="bg-white border-b px-4 pt-2.5 pb-2 shrink-0 space-y-2">
 
-          {/* Row 1: Title + Drive selector */}
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <p className="text-xs text-gray-500 flex items-center gap-1 mb-0.5">
-                <Users className="w-3.5 h-3.5" />
+          {/* Row 1: Title + metrics chips + auto-refresh — full width */}
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Title */}
+            <div className="shrink-0">
+              <p className="text-[10px] text-gray-400 flex items-center gap-1 leading-none mb-0.5">
+                <Users className="w-3 h-3" />
                 ATS / Queue Management
               </p>
-              <h1 className="text-lg font-bold text-gray-900 leading-tight">Live Walk-in Queue</h1>
+              <h1 className="text-base font-bold text-gray-900 leading-tight">Live Walk-in Queue</h1>
             </div>
 
-            {/* Drive selector — compact inline */}
-            <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${activeDrive ? "bg-emerald-50 border-emerald-300" : "bg-gray-50 border-gray-200"}`}>
-              <Target className={`w-4 h-4 shrink-0 ${activeDrive ? "text-emerald-600" : "text-gray-400"}`} />
-              {activeDrive ? (
-                <span className="text-emerald-800 font-medium max-w-xs truncate text-xs">
-                  {activeDrive.requisition_code} — {activeDrive.designation_name}
-                  {activeDrive.process_name && ` | ${activeDrive.process_name}`}
-                  <span className="ml-1.5 font-normal text-emerald-600">({activeDrive.open_positions} open)</span>
-                </span>
+            {/* Separator */}
+            <div className="w-px h-8 bg-gray-200 shrink-0" />
+
+            {/* Metric chips — flex-1 so they fill available space */}
+            <div className="flex items-center gap-2 flex-1 flex-wrap min-w-0">
+              {metrics ? (
+                <>
+                  <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1 text-amber-700 font-medium text-[11px] whitespace-nowrap">
+                    <Users className="w-3 h-3" />
+                    <span>{metrics.total_waiting} In Queue</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 rounded-full px-2.5 py-1 text-purple-700 font-medium text-[11px] whitespace-nowrap">
+                    <Clock className="w-3 h-3" />
+                    <span>{metrics.total_in_interview} In Progress</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1 text-emerald-700 font-medium text-[11px] whitespace-nowrap">
+                    <UserCheck className="w-3 h-3" />
+                    <span>{metrics.total_completed_today} Completed</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 text-blue-700 font-medium text-[11px] whitespace-nowrap">
+                    <TrendingUp className="w-3 h-3" />
+                    <span>Avg Wait {formatWaitTime(metrics.average_wait_time || metrics.avg_wait_time)}</span>
+                  </div>
+                </>
               ) : (
-                <span className="text-gray-500 text-xs">No drive selected</span>
+                <span className="text-xs text-gray-400">Loading metrics…</span>
               )}
-              <button
-                onClick={() => { void loadOpenRequisitions(branchFilter || undefined); setShowDrivePicker(true); }}
-                className="px-2.5 py-1 text-xs font-medium rounded border bg-white hover:bg-gray-50 border-gray-200 whitespace-nowrap"
-              >
-                {activeDrive ? "Change" : "Select Drive"}
-              </button>
-              {activeDrive && (
-                <button onClick={clearDrive} className="p-0.5 text-gray-400 hover:text-red-500">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
+            </div>
+
+            {/* Separator */}
+            <div className="w-px h-8 bg-gray-200 shrink-0" />
+
+            {/* Auto-refresh indicator */}
+            <div className="flex items-center gap-1 text-[11px] text-gray-400 shrink-0">
+              <RefreshCw className="w-3 h-3" />
+              <span>Auto 5s</span>
             </div>
           </div>
 
-          {/* Row 2: Metrics chips */}
-          {metrics && (
-            <div className="flex items-center gap-3 flex-wrap text-xs">
-              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1 text-amber-700 font-medium">
-                <Users className="w-3.5 h-3.5" />
-                <span>{metrics.total_waiting} In Queue</span>
-              </div>
-              <div className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 rounded-full px-3 py-1 text-purple-700 font-medium">
-                <Clock className="w-3.5 h-3.5" />
-                <span>{metrics.total_in_interview} In Progress</span>
-              </div>
-              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1 text-emerald-700 font-medium">
-                <UserCheck className="w-3.5 h-3.5" />
-                <span>{metrics.total_completed_today} Completed</span>
-              </div>
-              <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-blue-700 font-medium">
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span>Avg Wait {formatWaitTime(metrics.average_wait_time || metrics.avg_wait_time)}</span>
-              </div>
-              <div className="ml-auto flex items-center gap-1 text-gray-400">
-                <RefreshCw className="w-3 h-3" />
-                <span>Auto-refresh 5s</span>
-              </div>
-            </div>
-          )}
+          {/* Row 2: Status pill quick-filters */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {STATUS_PILLS.map(pill => {
+              const count = countByStatus(pill.value);
+              const isActive = statusFilter === pill.value;
+              return (
+                <button
+                  key={pill.value}
+                  onClick={() => setStatusFilter(pill.value)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors whitespace-nowrap ${
+                    isActive
+                      ? pill.activeClass
+                      : "bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  {pill.label}
+                  <span className={`${isActive ? "bg-white/25" : "bg-gray-100 text-gray-500"} rounded-full px-1.5 py-0 text-[10px] font-bold`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
-          {/* Row 3: Filters */}
-          <div className="flex items-center gap-2 flex-wrap pb-1">
+          {/* Row 3: Secondary filters + result count */}
+          <div className="flex items-center gap-2 flex-wrap pb-0.5">
             <input
               type="date"
               value={dateFilter}
               onChange={e => setDateFilter(e.target.value)}
-              className="h-8 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className="h-7 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as QueueStatus | "all")}
-              className="h-8 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            >
-              <option value="all">All Status</option>
-              <option value="waiting">Waiting</option>
-              <option value="called">Called</option>
-              <option value="in_interview">In Interview</option>
-              <option value="completed">Completed</option>
-              <option value="no_show">No Show</option>
-            </select>
             <select
               value={branchFilter}
               onChange={e => setBranchFilter(e.target.value)}
-              className="h-8 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              className="h-7 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
             >
               <option value="">All Branches</option>
-              {branches.map(branch => (
+              {allBranches.map(branch => (
                 <option key={branch} value={branch}>{branch}</option>
               ))}
             </select>
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Name or token..."
-                className="h-8 pl-8 pr-3 rounded border border-gray-300 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none w-48"
+                className="h-7 pl-7 pr-3 rounded border border-gray-300 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none w-40"
               />
             </div>
+            {/* Result count badge */}
+            <span className="ml-auto text-[11px] text-gray-400 font-medium whitespace-nowrap">
+              {tokens.length} candidate{tokens.length !== 1 ? "s" : ""}
+            </span>
           </div>
         </div>
 
         {/* ── Scrollable Table ─────────────────────────────────────────────────── */}
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex-1 overflow-auto p-3">
           {error && (
             <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertCircle className="w-4 h-4 shrink-0" />
@@ -400,26 +339,29 @@ export default function NativeWalkinQueueEnhanced() {
           )}
 
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
+            <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
               <table className="w-full text-sm min-w-max">
                 <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Token</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Candidate</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Role</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Branch</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Wait</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Typing</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Assessment</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Recruiter</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Actions</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Token</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Candidate</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Role</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Branch</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Status</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Wait</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Typing</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Assessment</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Recruiter</th>
+                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {tokens.map((token) => (
-                    <tr key={token.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
+                    <tr
+                      key={token.id}
+                      className={`hover:bg-gray-50 transition-colors border-l-[3px] ${STATUS_BORDER[token.queue_status] || "border-l-gray-200"}`}
+                    >
+                      <td className="px-3 py-2.5">
                         <div className="flex items-center gap-2">
                           {token.position_in_queue && (
                             <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">
@@ -431,39 +373,45 @@ export default function NativeWalkinQueueEnhanced() {
                           </span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <p className="text-sm font-medium text-gray-900 whitespace-nowrap">{token.candidate_name}</p>
                         <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
                           <Phone className="w-3 h-3" />
                           {token.mobile}
                         </p>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{token.applied_role}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-sm text-gray-700 whitespace-nowrap">{token.applied_role}</td>
+                      <td className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">
                         {token.branch_display_name || token.branch_name}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border whitespace-nowrap ${STATUS_STYLES[token.queue_status] || STATUS_STYLES.waiting}`}>
                           {STATUS_LABEL[token.queue_status] || token.queue_status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">
                         {formatWaitTime(token.estimated_wait_time)}
                       </td>
-                      <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                         {(() => {
-                          const wpm =
-                            (token.typing_net_wpm != null && Number(token.typing_net_wpm) > 0)
-                              ? token.typing_net_wpm
-                              : (token.skilltest_typing != null && Number(token.skilltest_typing) > 0)
-                                ? token.skilltest_typing
-                                : null;
-                          return wpm != null
-                            ? <span className="font-medium text-gray-800">{Number(wpm).toFixed(0)} WPM</span>
-                            : <span className="text-gray-400">—</span>;
+                          const wpm = token.typing_net_wpm != null
+                            ? token.typing_net_wpm
+                            : (token.skilltest_typing != null ? token.skilltest_typing : null);
+                          const acc = token.typing_accuracy;
+                          if (wpm == null) return <span className="text-gray-400">—</span>;
+                          return (
+                            <div className="flex flex-col leading-tight">
+                              <span className={`font-semibold ${Number(wpm) >= 25 ? "text-emerald-600" : Number(wpm) > 0 ? "text-amber-600" : "text-rose-500"}`}>
+                                {Number(wpm).toFixed(0)} WPM
+                              </span>
+                              {acc != null && (
+                                <span className="text-xs text-gray-500">{Number(acc).toFixed(0)}% acc</span>
+                              )}
+                            </div>
+                          );
                         })()}
                       </td>
-                      <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                         {(() => {
                           const pct = token.assessment_percentage ?? token.skilltest_ai;
                           const result = token.skilltest_result;
@@ -482,10 +430,10 @@ export default function NativeWalkinQueueEnhanced() {
                           );
                         })()}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">
                         {token.recruiter_name || "—"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-2.5">
                         <div className="flex items-center gap-1.5">
                           {token.queue_status === "waiting" && (
                             <button
@@ -501,6 +449,14 @@ export default function NativeWalkinQueueEnhanced() {
                               className="px-2.5 py-1 bg-purple-600 text-white text-xs font-medium rounded hover:bg-purple-700 transition-colors whitespace-nowrap"
                             >
                               Start
+                            </button>
+                          )}
+                          {token.queue_status === "in_interview" && (
+                            <button
+                              onClick={() => handleUpdateStatus(token.id, "completed")}
+                              className="px-2.5 py-1 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-700 transition-colors whitespace-nowrap"
+                            >
+                              Complete
                             </button>
                           )}
                           {(token.queue_status === "waiting" || token.queue_status === "called") && (
