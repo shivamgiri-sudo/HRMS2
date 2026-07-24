@@ -74,7 +74,28 @@ export const inboxService = {
     return result;
   },
 
-  async createItem(data: CreateInboxItem) {
+  /**
+   * Create an inbox item with built-in deduplication.
+   * If an unread/unactioned item of the same (user_id, type, entity_type, entity_id)
+   * already exists within the cooldown window (default 30 min), skip insertion.
+   */
+  async createItem(data: CreateInboxItem, cooldownMinutes = 30) {
+    // Dedup check: skip if identical unactioned item exists within cooldown window
+    if (data.entity_type && data.entity_id) {
+      const [existing] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM work_inbox_item
+         WHERE user_id = ? AND type = ? AND entity_type = ? AND entity_id = ?
+           AND is_actioned = 0
+           AND created_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)
+         LIMIT 1`,
+        [data.user_id, data.type, data.entity_type, data.entity_id, cooldownMinutes]
+      );
+      if ((existing as RowDataPacket[]).length > 0) {
+        // Return existing item instead of creating duplicate
+        return (existing as RowDataPacket[])[0];
+      }
+    }
+
     const id = randomUUID();
     await db.execute(
       `INSERT INTO work_inbox_item
