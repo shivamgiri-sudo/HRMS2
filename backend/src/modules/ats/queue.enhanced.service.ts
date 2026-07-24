@@ -516,6 +516,7 @@ export interface OpsBoardEntry {
   final_decision: string | null;
   walkin_end_stage: string | null;
   assessment_percentage: number | null;
+  mcq_percentage: number | null;
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
   arrived_at: string | null;
@@ -550,6 +551,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.recruiter_assigned_name,
       c.second_round_interviewer_name_snapshot,
       today_scores.assessment_percentage,
+      today_scores.mcq_percentage,
       today_scores.typing_net_wpm,
       today_scores.typing_accuracy,
       COALESCE(
@@ -569,6 +571,20 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
     LEFT JOIN (
       SELECT aca.candidate_id,
              aca.percentage           AS assessment_percentage,
+             /* MCQ-only %: exclude typing section from overall score/max */
+             CASE
+               WHEN (aca.max_score - COALESCE(
+                       JSON_UNQUOTE(JSON_EXTRACT(aca.section_scores, '$.typing.maximum')), 0
+                     )) > 0
+               THEN ROUND(
+                 (aca.overall_score - COALESCE(
+                    JSON_UNQUOTE(JSON_EXTRACT(aca.section_scores, '$.typing.awarded')), 0
+                  )) /
+                 (aca.max_score - COALESCE(
+                    JSON_UNQUOTE(JSON_EXTRACT(aca.section_scores, '$.typing.maximum')), 0
+                  )) * 100, 1)
+               ELSE aca.percentage
+             END                      AS mcq_percentage,
              ata.net_wpm              AS typing_net_wpm,
              ata.accuracy_percentage  AS typing_accuracy
       FROM ats_candidate_assessment aca
@@ -594,7 +610,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.applied_for_process, c.round1_result, c.skilltest_result, c.round2_result,
       c.final_decision, c.walkin_end_stage, c.recruiter_assigned_name,
       c.second_round_interviewer_name_snapshot,
-      today_scores.assessment_percentage, today_scores.typing_net_wpm, today_scores.typing_accuracy,
+      today_scores.assessment_percentage, today_scores.mcq_percentage, today_scores.typing_net_wpm, today_scores.typing_accuracy,
       pm.process_name, bm.branch_name
     ORDER BY arrived_at ASC`,
     params

@@ -15,6 +15,7 @@ interface OpsBoardEntry {
   final_decision: string | null;
   walkin_end_stage: string | null;
   assessment_percentage: number | null;
+  mcq_percentage: number | null;
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
   arrived_at: string | null;
@@ -212,12 +213,17 @@ function CandidateRow({ entry }: { entry: OpsBoardEntry }) {
       <td className="px-3 py-2.5 whitespace-nowrap">
         <span className="text-sm text-slate-300">{entry.recruiter_assigned_name ?? "—"}</span>
       </td>
-      {/* MCQ */}
+      {/* MCQ — use mcq_percentage (MCQ-only, typing excluded) when available */}
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
-        {entry.assessment_percentage != null
-          ? <span className={`text-sm font-bold tabular-nums ${entry.assessment_percentage >= 60 ? "text-emerald-400" : "text-rose-400"}`}>
-              {entry.assessment_percentage.toFixed(0)}%
-            </span>
+        {(entry.mcq_percentage ?? entry.assessment_percentage) != null
+          ? (() => {
+              const pct = entry.mcq_percentage ?? entry.assessment_percentage!;
+              return (
+                <span className={`text-sm font-bold tabular-nums ${pct >= 60 ? "text-emerald-400" : "text-rose-400"}`}>
+                  {pct.toFixed(0)}%
+                </span>
+              );
+            })()
           : <span className="text-slate-700">—</span>
         }
       </td>
