@@ -65,27 +65,65 @@ function buildReadinessChecks(dbStatus: "ok" | "error"): ReadinessCheck[] {
   ];
 }
 
+/**
+ * GET /health/live - Liveness probe (process-only, no DB check)
+ *
+ * For Kubernetes liveness probes. Returns 200 if the process is running.
+ * Does NOT check database or external dependencies - those are for readiness.
+ * Fast response, no I/O.
+ */
+healthRouter.get("/live", (_req, res) => {
+  return res.status(200).json({
+    success: true,
+    status: "alive",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * GET /health - Basic health check (public)
+ *
+ * HARDENED: Does not expose internal details like migration failures.
+ * Returns only healthy/degraded status for external monitoring.
+ * Internal details available via /health/readiness (protected).
+ */
 healthRouter.get("/", async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
   const migrations = getMigrationHealth();
   const healthy = dbStatus === "ok" && migrations.status !== "failed";
 
+  // SECURITY: Do not expose migration failure details to unauthenticated users
   return res.status(healthy ? 200 : 503).json({
     success: healthy,
     service: "MCN HRMS Backend API",
     status: healthy ? "healthy" : "degraded",
-    db: dbStatus,
-    migrations: {
-      status: migrations.status,
-      applied_count: migrations.applied.length,
-      skipped_count: migrations.skipped.length,
-      failed: migrations.failed,
-      completed_at: migrations.completedAt,
-    },
     timestamp: new Date().toISOString(),
   });
 });
 
+/**
+ * GET /health/ready - Readiness probe (basic, public)
+ *
+ * For Kubernetes readiness probes. Checks database connectivity.
+ * Returns 200 if ready to accept traffic, 503 if not ready.
+ */
+healthRouter.get("/ready", async (_req, res) => {
+  const dbStatus = await getDatabaseStatus();
+  const ready = dbStatus === "ok";
+
+  return res.status(ready ? 200 : 503).json({
+    success: ready,
+    status: ready ? "ready" : "not_ready",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * GET /health/readiness - Detailed readiness check (protected)
+ *
+ * Full diagnostic information for administrators.
+ * Includes migration status, database connectivity, and checklist items.
+ */
 healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
   const migrations = getMigrationHealth();
@@ -106,6 +144,8 @@ healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"),
         status: migrations.status,
         applied_count: migrations.applied.length,
         skipped_count: migrations.skipped.length,
+        failed_count: migrations.failed.length,
+        // Only include failure details in protected endpoint
         failed: migrations.failed,
         completed_at: migrations.completedAt,
       },
