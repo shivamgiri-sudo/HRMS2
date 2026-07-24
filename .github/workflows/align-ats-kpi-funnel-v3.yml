@@ -1,0 +1,100 @@
+name: Align ATS KPI funnel stages v3
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [agent/fix-ats-kpi-calculations]
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-ats-kpi-calculations
+          fetch-depth: 0
+      - name: Align stages by semantic lines
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def find_line(lines, predicate, start=0, label='line'):
+              for i in range(start, len(lines)):
+                  if predicate(lines[i]):
+                      return i
+              raise SystemExit(f'{label} not found')
+
+          backend = Path('backend/src/modules/ats/recruiter-hiring.service.ts')
+          lines = backend.read_text(encoding='utf-8').splitlines()
+          fn = find_line(lines, lambda x: 'export async function getHiringActivityAnalytics' in x, label='analytics function')
+
+          summary = find_line(lines, lambda x: '${IS_CONTACTED}' in x and 'AS contacted' in x, fn, 'contacted summary')
+          if summary + 1 >= len(lines) or 'AS shortlisted' not in lines[summary + 1]:
+              indent = lines[summary][:len(lines[summary]) - len(lines[summary].lstrip())]
+              lines.insert(summary + 1, indent + 'SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,')
+
+          mapped = find_line(lines, lambda x: 'const contacted' in x and 'Number(s.contacted' in x, fn, 'contacted mapping')
+          if mapped + 1 >= len(lines) or 'const shortlisted' not in lines[mapped + 1]:
+              lines.insert(mapped + 1, '  const shortlisted = Number(s.shortlisted ?? 0);')
+
+          funnel = find_line(lines, lambda x: '{ stage: "Contacted"' in x, fn, 'contacted funnel stage')
+          if funnel + 1 >= len(lines) or 'stage: "Shortlisted"' not in lines[funnel + 1]:
+              lines.insert(funnel + 1, '    { stage: "Shortlisted", count: shortlisted, pct: pct(shortlisted) },')
+
+          backend.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+          frontend = Path('src/pages/NativeATSHiringEntry.tsx')
+          lines = frontend.read_text(encoding='utf-8').splitlines()
+
+          lookup = find_line(lines, lambda x: 'const contactedCount = funnelStage("Contacted")' in x, label='contacted stage lookup')
+          if lookup + 1 >= len(lines) or 'shortlistedCount' not in lines[lookup + 1]:
+              indent = lines[lookup][:len(lines[lookup]) - len(lines[lookup].lstrip())]
+              lines.insert(lookup + 1, indent + 'const shortlistedCount = funnelStage("Shortlisted")?.count ?? 0;')
+
+          contact_rate = find_line(lines, lambda x: 'const contactRate = stageRate(contactedCount, totalLogged)' in x, label='contact rate')
+          if contact_rate + 1 >= len(lines) or 'const shortlistRate' not in lines[contact_rate + 1]:
+              indent = lines[contact_rate][:len(lines[contact_rate]) - len(lines[contact_rate].lstrip())]
+              lines.insert(contact_rate + 1, indent + 'const shortlistRate = stageRate(shortlistedCount, contactedCount);')
+          walk_rate = find_line(lines, lambda x: 'const walkinRate = stageRate(' in x, contact_rate, 'walk-in rate')
+          indent = lines[walk_rate][:len(lines[walk_rate]) - len(lines[walk_rate].lstrip())]
+          lines[walk_rate] = indent + 'const walkinRate = stageRate(walkinCount, shortlistedCount);'
+
+          kpi_marker = find_line(lines, lambda x: 'KPI tiles' in x, label='KPI marker')
+          grid = find_line(lines, lambda x: 'grid grid-cols-2 gap-3' in x and 'xl:grid-cols-6' in x, kpi_marker, 'analytics KPI grid')
+          lines[grid] = lines[grid].replace('md:grid-cols-3 xl:grid-cols-6', 'md:grid-cols-4 xl:grid-cols-7')
+
+          total_tile = find_line(lines, lambda x: '<KpiTile label="Total Candidates"' in x, kpi_marker, 'total tile')
+          lines[total_tile] = lines[total_tile].replace('label="Total Candidates"', 'label="Candidate Records"').replace('sub="logged candidate records"', 'sub="base candidate entries"')
+
+          contacted_tile = find_line(lines, lambda x: '<KpiTile label="Contacted"' in x, total_tile, 'contacted tile')
+          lines[contacted_tile] = lines[contacted_tile].replace('sub={`${contactRate}% of logged`}', 'sub={`${contactRate}% of candidate records`}')
+          if contacted_tile + 1 >= len(lines) or 'label="Shortlisted"' not in lines[contacted_tile + 1]:
+              indent = lines[contacted_tile][:len(lines[contacted_tile]) - len(lines[contacted_tile].lstrip())]
+              lines.insert(contacted_tile + 1, indent + '<KpiTile label="Shortlisted" value={shortlistedCount.toLocaleString()} sub={`${shortlistRate}% of contacted`} color="border-amber-300" icon={<Target className="h-4 w-4 text-amber-500" />} />')
+
+          walk_tile = find_line(lines, lambda x: '<KpiTile label="Walk-ins"' in x, contacted_tile, 'walk-in tile')
+          lines[walk_tile] = lines[walk_tile].replace('sub={`${walkinRate}% of contacted`}', 'sub={`${walkinRate}% of shortlisted`}')
+
+          frontend.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+      - name: Validate and commit
+        run: |
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run typecheck
+          npm run build
+          (cd backend && npm install --ignore-scripts && npm run typecheck)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx
+          git rm -f --ignore-unmatch \
+            .github/workflows/align-ats-kpi-funnel.yml \
+            .github/workflows/align-ats-kpi-funnel-v2.yml \
+            .github/workflows/align-ats-kpi-funnel-v3.yml
+          git commit -m 'fix(ats): align KPI funnel stages'
+          git push origin HEAD:agent/fix-ats-kpi-calculations
