@@ -263,6 +263,19 @@ function CandidateFeedbackForm({
   const [interviewerLoading, setInterviewerLoading] = useState(false);
   const interviewerRef = useRef<HTMLDivElement>(null);
 
+  // Batch / Hiring Drive state (cascades from process selection)
+  type OpenRequisition = {
+    id: string; requisition_code: string; designation_name: string;
+    planned_batch_no: string | null; planned_batch_name: string | null;
+    open_positions: number; target_joining_date: string | null; requisition_validity: string | null;
+  };
+  type ProcessOption = { id: string; process_name: string; process_code: string };
+  const [branchProcesses, setBranchProcesses] = useState<ProcessOption[]>([]);
+  const [selectedProcessId, setSelectedProcessId] = useState("");
+  const [openBatches, setOpenBatches] = useState<OpenRequisition[]>([]);
+  const [selectedRequisitionId, setSelectedRequisitionId] = useState("");
+  const [loadingBatches, setLoadingBatches] = useState(false);
+
   const rank = STAGE_RANK[form.stageName] ?? 0;
   const effectiveRank = form.round1Result === "Rejected" ? Math.min(rank, 1)
     : form.round2Result === "Rejected" ? Math.min(rank, 3) : rank;
@@ -272,6 +285,51 @@ function CandidateFeedbackForm({
     : form.round2Result === "Rejected"
     ? config.stageOptions.filter(s => (STAGE_RANK[s] ?? 0) <= 3)
     : config.stageOptions;
+
+  // Load processes for this candidate's branch
+  useEffect(() => {
+    const branch = candidate.branch_name;
+    if (!branch) { setBranchProcesses([]); return; }
+    hrmsApi.get<{ success: boolean; data: ProcessOption[] }>(
+      `/api/job-requisition/processes-for-branch/${encodeURIComponent(branch)}`
+    ).then(res => setBranchProcesses(res.data || [])).catch(() => setBranchProcesses([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidate.branch_name]);
+
+  // Load open batches when process selection changes
+  useEffect(() => {
+    const branch = candidate.branch_name;
+    if (!selectedProcessId || !branch) {
+      setOpenBatches([]);
+      setSelectedRequisitionId("");
+      return;
+    }
+    setLoadingBatches(true);
+    const isUuid = /^[0-9a-f-]{36}$/i.test(selectedProcessId);
+    let queryParam: string;
+    if (isUuid) {
+      const processOpt = branchProcesses.find(p => p.id === selectedProcessId);
+      queryParam = `processId=${encodeURIComponent(selectedProcessId)}${processOpt ? `&processName=${encodeURIComponent(processOpt.process_name)}` : ''}`;
+    } else {
+      queryParam = `processName=${encodeURIComponent(selectedProcessId)}`;
+    }
+    hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(
+      `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}?${queryParam}`
+    ).then(res => {
+      const batches = res.data || [];
+      batches.sort((a, b) => {
+        if (!a.requisition_validity && !b.requisition_validity) return 0;
+        if (!a.requisition_validity) return 1;
+        if (!b.requisition_validity) return -1;
+        return new Date(a.requisition_validity).getTime() - new Date(b.requisition_validity).getTime();
+      });
+      setOpenBatches(batches);
+      if (batches.length === 1) setSelectedRequisitionId(batches[0].id);
+    }).catch(() => setOpenBatches([]))
+      .finally(() => setLoadingBatches(false));
+    setSelectedRequisitionId("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProcessId, candidate.branch_name]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -356,6 +414,7 @@ function CandidateFeedbackForm({
         reportingTiming: form.reportingTiming || null,
         otDetails: form.otDetails || null,
         performanceIncentives: form.performanceIncentives || null,
+        ...(selectedRequisitionId ? { requisitionId: selectedRequisitionId } : {}),
       });
       toast.success("Interview feedback saved successfully.");
       onSuccess();
@@ -420,10 +479,64 @@ function CandidateFeedbackForm({
       <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
         <p className="text-[11px] font-black uppercase tracking-widest text-slate-500">Walk-in Summary</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {sf("Process", "processName", "select", config.processOptions, true)}
+          {/* Process dropdown — from process_master for this branch */}
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Process<span className="text-rose-500 ml-0.5">*</span>
+            </label>
+            <select
+              value={selectedProcessId}
+              onChange={e => {
+                const opt = branchProcesses.find(p => p.id === e.target.value);
+                setSelectedProcessId(e.target.value);
+                update({ processName: opt?.process_name || e.target.value });
+              }}
+              className="h-9 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+            >
+              <option value="">Select</option>
+              {branchProcesses.length > 0
+                ? branchProcesses.map(p => <option key={p.id} value={p.id}>{p.process_name}</option>)
+                : config.processOptions.map(p => <option key={p} value={p}>{p}</option>)
+              }
+            </select>
+          </div>
           {sf("End Stage", "stageName", "select", reachableStageOptions, true)}
           {sf("Final Decision", "finalDecision", "select", config.decisionOptions, true)}
         </div>
+        {/* Batch / Hiring Drive — cascades from process, shown when open requisitions exist */}
+        {(openBatches.length > 0 || loadingBatches) && (
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              Batch / Hiring Drive<span className="text-rose-500 ml-0.5">*</span>
+              {loadingBatches && <span className="font-normal ml-2 text-slate-400">Loading…</span>}
+            </label>
+            <select
+              value={selectedRequisitionId}
+              onChange={e => setSelectedRequisitionId(e.target.value)}
+              disabled={loadingBatches}
+              className="h-9 w-full rounded-xl border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none focus:border-slate-400"
+            >
+              <option value="">— Select Batch / Hiring Drive —</option>
+              {openBatches.map(b => {
+                const deadline = b.requisition_validity ? new Date(b.requisition_validity) : null;
+                const today = new Date(); today.setHours(0, 0, 0, 0);
+                const daysLeft = deadline ? Math.ceil((deadline.getTime() - today.getTime()) / 86400000) : null;
+                const urgency = daysLeft !== null && daysLeft <= 0 ? '⚠️ OVERDUE' : daysLeft !== null && daysLeft <= 3 ? '🔴 URGENT' : daysLeft !== null && daysLeft <= 7 ? '🟡' : '';
+                return (
+                  <option key={b.id} value={b.id}>
+                    {urgency ? `${urgency} ` : ''}{b.requisition_code}
+                    {b.requisition_validity ? ` | Deadline ${b.requisition_validity.slice(0, 10)}` : ''}
+                    {b.planned_batch_no ? ` | Batch ${b.planned_batch_no}` : ''}
+                    {` | ${b.open_positions} open`}
+                  </option>
+                );
+              })}
+            </select>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Open hiring drives for this process at {candidate.branch_name || "this branch"}. Required before submitting.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Round 1 */}

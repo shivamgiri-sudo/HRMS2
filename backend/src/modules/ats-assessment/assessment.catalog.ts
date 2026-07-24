@@ -80,7 +80,6 @@ const written = (
   keywords,
   marks,
   difficulty: "advanced",
-  manualReview: true,
 });
 
 const COMMON: Record<AssessmentRole, AssessmentQuestionDefinition[]> = {

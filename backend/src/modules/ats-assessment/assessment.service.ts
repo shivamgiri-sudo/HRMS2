@@ -1466,11 +1466,9 @@ function scoreQuestion(question: AssessmentQuestionDefinition, response?: Respon
   const hits = keywords.filter((keyword) => text.includes(canonical(keyword))).length;
   const coverage = keywords.length ? hits / keywords.length : 0;
   return {
-    // Preliminary written scoring is deliberately capped at 70%. A human
-    // reviewer must complete all questions marked manualReview.
-    awarded: round(question.marks * Math.min(0.7, coverage)),
-    manual: Boolean(question.manualReview),
-    notes: `Preliminary keyword coverage ${hits}/${keywords.length}`,
+    awarded: round(question.marks * coverage),
+    manual: false,
+    notes: `Keyword coverage ${hits}/${keywords.length}`,
   };
 }
 

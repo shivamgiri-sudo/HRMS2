@@ -590,7 +590,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       FROM ats_candidate_assessment aca
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       WHERE DATE(CONVERT_TZ(aca.created_at, '+00:00', '+05:30')) = ?
-        AND aca.status IN ('submitted', 'completed', 'reviewed')
+        AND aca.status IN ('submitted_pending_scoring', 'manual_review', 'completed')
       ORDER BY aca.created_at DESC
     ) today_scores ON today_scores.candidate_id = c.id
     WHERE (
