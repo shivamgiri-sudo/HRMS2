@@ -1482,24 +1482,37 @@ async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: b
 export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
+
+  const IS_JOINED = `joined_flag = 1`;
+  const IS_SELECTED = `(final_selection_flag = 1 OR ${IS_JOINED})`;
+  const IS_WALKIN = `(walkin_flag = 1 OR ${IS_SELECTED})`;
+  const IS_SHORTLISTED = `(
+    LOWER(TRIM(COALESCE(recruiter_remarks, ''))) = 'shortlisted'
+    OR LOWER(TRIM(COALESCE(recruiter_remarks, ''))) LIKE 'interested%'
+    OR LOWER(TRIM(COALESCE(recruiter_remarks, ''))) LIKE '%will visit%'
+    OR LOWER(TRIM(COALESCE(current_status, ''))) IN ('shortlisted', 'expected walk-in')
+    OR ${IS_WALKIN}
+  )`;
+  const IS_CONTACTED = `(contacted_flag = 1 OR ${IS_SHORTLISTED})`;
+
   const [summary] = await db.execute<DashboardSummaryRow[]>(
     `SELECT
         COUNT(*) AS total_records,
-        SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS total_contacted,
-        SUM(CASE WHEN contacted_flag = 0 THEN 1 ELSE 0 END) AS not_contacted,
-        SUM(CASE WHEN LOWER(recruiter_remarks) = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
-        SUM(CASE WHEN LOWER(recruiter_remarks) = 'rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
+        SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END) AS total_contacted,
+        SUM(CASE WHEN NOT (${IS_CONTACTED}) THEN 1 ELSE 0 END) AS not_contacted,
+        SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,
+        SUM(CASE WHEN LOWER(recruiter_remarks) IN ('rejected', 'rejected (recruiter decision)') THEN 1 ELSE 0 END) AS recruiter_rejected,
         SUM(CASE WHEN hr_interview_status = 'Selected' THEN 1 ELSE 0 END) AS hr_selected,
         SUM(CASE WHEN hr_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS hr_rejected,
         SUM(CASE WHEN ai_interview_result IN ('Selected','Pass') THEN 1 ELSE 0 END) AS ai_selected,
         SUM(CASE WHEN ai_interview_result IN ('Rejected','Fail') THEN 1 ELSE 0 END) AS ai_rejected,
         SUM(CASE WHEN ops_interview_status = 'Selected' THEN 1 ELSE 0 END) AS ops_selected,
         SUM(CASE WHEN ops_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS ops_rejected,
-        SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END) AS final_selected,
+        SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS final_selected,
         SUM(CASE WHEN offer_letter_status IN ('Issued','Sent','Offer Issued','Offer Sent') THEN 1 ELSE 0 END) AS offer_letter_issued,
-        SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END) AS joined,
+        SUM(CASE WHEN ${IS_JOINED} THEN 1 ELSE 0 END) AS joined,
         SUM(CASE WHEN joining_status IN ('Pending','Joining Pending','Offer Accepted') THEN 1 ELSE 0 END) AS joining_pending,
-        SUM(CASE WHEN walkin_flag = 1 THEN 1 ELSE 0 END) AS walkins,
+        SUM(CASE WHEN ${IS_WALKIN} THEN 1 ELSE 0 END) AS walkins,
         SUM(CASE WHEN hiring_source = 'Employee Referral' THEN 1 ELSE 0 END) AS employee_referrals,
         COUNT(DISTINCT recruiter_name_snapshot) AS active_recruiters,
         COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS recruiter_inactive_count
@@ -1512,6 +1525,11 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     total_records: Number(summary[0]?.total_records ?? 0),
     total_contacted: Number(summary[0]?.total_contacted ?? 0),
     contacted_pct: 0,
+    contact_rate: 0,
+    shortlist_rate: 0,
+    walkin_rate: 0,
+    selection_rate: 0,
+    join_rate: 0,
     not_contacted: Number(summary[0]?.not_contacted ?? 0),
     shortlisted: Number(summary[0]?.shortlisted ?? 0),
     recruiter_rejected: Number(summary[0]?.recruiter_rejected ?? 0),
@@ -1530,7 +1548,15 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     active_recruiters: Number(summary[0]?.active_recruiters ?? 0),
     recruiter_inactive_count: Number(summary[0]?.recruiter_inactive_count ?? 0),
   };
-  metrics.contacted_pct = metrics.total_records ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10 : 0;
+  const rate = (numerator: number, denominator: number) => denominator > 0
+    ? Math.round((numerator / denominator) * 1000) / 10
+    : 0;
+  metrics.contact_rate = rate(metrics.total_contacted, metrics.total_records);
+  metrics.contacted_pct = metrics.contact_rate;
+  metrics.shortlist_rate = rate(metrics.shortlisted, metrics.total_contacted);
+  metrics.walkin_rate = rate(metrics.walkins, metrics.shortlisted);
+  metrics.selection_rate = rate(metrics.final_selected, metrics.walkins);
+  metrics.join_rate = rate(metrics.joined, metrics.final_selected);
 
   const [byRecruiter, bySource, byProcess, byBranch] = await Promise.all([
     aggregateBy("recruiter_name_snapshot", filters, scopedOnly, userId),
@@ -1538,7 +1564,6 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     aggregateBy("process_name", filters, scopedOnly, userId),
     aggregateBy("branch_name", filters, scopedOnly, userId),
   ]);
-
   return { metrics, byRecruiter, bySource, byProcess, byBranch };
 }
 
@@ -1589,6 +1614,7 @@ export interface HiringActivityAnalytics {
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
+  followupDueCount: number;
 }
 
 export async function getHiringActivityAnalytics(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringActivityAnalytics> {
@@ -1664,23 +1690,17 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const IS_JOINED    = `arha.joined_flag = 1`;
   const IS_SELECTED  = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;
   const IS_WALKIN    = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;
-  const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_WALKIN})`;
+  const IS_SHORTLISTED = `(
+    LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) = 'shortlisted'
+    OR LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) LIKE 'interested%'
+    OR LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) LIKE '%will visit%'
+    OR LOWER(TRIM(COALESCE(arha.current_status, ''))) IN ('shortlisted', 'expected walk-in')
+    OR ${IS_WALKIN}
+  )`;
+  const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_SHORTLISTED})`;
 
-  // Build follow-up params reusing already-resolved branch
-  const followupClauses: string[] = [
-    "followup_required = 1",
-    "followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)",
-  ];
-  const followupParams: unknown[] = [];
-  if (scopedOnly) {
-    if (branch) {
-      followupClauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
-      followupParams.push(branch, userId, userId);
-    } else {
-      followupClauses.push("(created_by = ? OR recruiter_id = ?)");
-      followupParams.push(userId, userId);
-    }
-  }
+  const FOLLOWUP_WINDOW = `arha.followup_required = 1
+    AND arha.followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`;
 
   // Safe wrapper — one failing query must not kill the entire analytics response
   const safe = async <T>(fn: () => Promise<[T, ...unknown[]]>, fallback: T): Promise<T> => {
@@ -1700,11 +1720,13 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     dowRows,
     trendRows,
     followupRows,
+    followupCountRows,
   ] = await Promise.all([
     safe(() => db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*)                                             AS logged,
          SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END)    AS contacted,
+         SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,
          SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END)    AS walkins,
          SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END)    AS selected,
          SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END)    AS joined
@@ -1813,20 +1835,27 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       params
     ), [] as RowDataPacket[]),
     safe(() => db.execute<RowDataPacket[]>(
-      `SELECT id, candidate_name, mobile,
-              DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
-              followup_reason
-         FROM ats_recruiter_hiring_activity
-        WHERE ${followupClauses.join(" AND ")}
-        ORDER BY followup_date ASC LIMIT 50`,
-      followupParams
-    ), [] as RowDataPacket[]),
+    `SELECT arha.id, arha.candidate_name, arha.mobile,
+            DATE_FORMAT(arha.followup_date,'%Y-%m-%d') AS followup_date,
+            arha.followup_reason
+       FROM ats_recruiter_hiring_activity arha
+      WHERE ${W} AND ${FOLLOWUP_WINDOW}
+      ORDER BY arha.followup_date ASC LIMIT 50`,
+    params
+  ), [] as RowDataPacket[]),
+  safe(() => db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total
+       FROM ats_recruiter_hiring_activity arha
+      WHERE ${W} AND ${FOLLOWUP_WINDOW}`,
+    params
+  ), [] as RowDataPacket[]),
   ]);
 
   // ── Map results ───────────────────────────────────────────────────────────
   const s = summaryRows[0] ?? {};
   const logged    = Number(s.logged    ?? 0);
   const contacted = Number(s.contacted ?? 0);
+  const shortlisted = Number(s.shortlisted ?? 0);
   const walkins   = Number(s.walkins   ?? 0);
   const selected  = Number(s.selected  ?? 0);
   const joined    = Number(s.joined    ?? 0);
@@ -1834,6 +1863,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const funnel = [
     { stage: "Logged",    count: logged,    pct: 100           },
     { stage: "Contacted", count: contacted, pct: pct(contacted) },
+    { stage: "Shortlisted", count: shortlisted, pct: pct(shortlisted) },
     { stage: "Walked In", count: walkins,   pct: pct(walkins)   },
     { stage: "Selected",  count: selected,  pct: pct(selected)  },
     { stage: "Joined",    count: joined,    pct: pct(joined)    },
@@ -1955,8 +1985,9 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     mobile: String(r.mobile ?? ""), followup_date: String(r.followup_date ?? ""),
     followup_reason: String(r.followup_reason ?? ""),
   }));
+  const followupDueCount = Number((followupCountRows as any[])[0]?.total ?? 0);
 
-  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue };
+  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue, followupDueCount };
 }
 
 export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {
