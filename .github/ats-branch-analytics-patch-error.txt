@@ -1,3 +1,0 @@
-/tmp/apply-ats-branch-analytics.py:150: SyntaxWarning: invalid escape sequence '\s'
-  '''  const normalizeBranchKey = (value: unknown) => String(value ?? "")
-monotonic funnel stages: expected exactly one match, found 0
