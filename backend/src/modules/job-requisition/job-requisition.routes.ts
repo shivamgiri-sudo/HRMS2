@@ -213,7 +213,7 @@ jobRequisitionRouter.get(
 jobRequisitionRouter.post(
   "/",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const input: CreateRequisitionInput = req.body;
 
@@ -247,7 +247,7 @@ jobRequisitionRouter.post(
 jobRequisitionRouter.patch(
   "/:id",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const input: UpdateRequisitionInput = req.body;
@@ -266,7 +266,7 @@ jobRequisitionRouter.patch(
 jobRequisitionRouter.post(
   "/:id/submit",
   requireAuth,
-  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager"),
+  requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "assistant_manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const userId = req.authUser?.id;
