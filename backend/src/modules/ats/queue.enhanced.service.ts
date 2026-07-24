@@ -553,6 +553,9 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.walkin_end_stage,
       COALESCE(
         NULLIF(ir_latest.rejection_reason,''),
+        NULLIF(ht.ops_rejection_reason,''),
+        NULLIF(ht.hr_rejection_reason,''),
+        NULLIF(ht.recruiter_rejection_reason,''),
         NULLIF(c.hard_reject_reason,''),
         NULLIF(c.rejection_voc,'')
       )                                                                                    AS rejection_reason,
@@ -587,17 +590,33 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       ) ir2 ON ir2.candidate_id = ir1.candidate_id AND ir2.latest = ir1.interviewed_at
     ) ir_latest ON ir_latest.candidate_id = c.id
     LEFT JOIN (
-      SELECT aca.candidate_id,
-             aca.percentage           AS assessment_percentage,
-             /* MCQ-only %: exclude typing section from overall score/max */
-             aca.percentage           AS mcq_percentage,
-             ata.net_wpm              AS typing_net_wpm,
-             ata.accuracy_percentage  AS typing_accuracy
-      FROM ats_candidate_assessment aca
-      LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
-      WHERE DATE(CONVERT_TZ(aca.created_at, '+00:00', '+05:30')) = ?
-        AND aca.status IN ('submitted_pending_scoring', 'manual_review', 'completed')
-      ORDER BY aca.created_at DESC
+      SELECT linked_candidate_id,
+             ops_rejection_reason,
+             hr_rejection_reason,
+             recruiter_rejection_reason
+      FROM ats_hiring_tracker
+      WHERE linked_candidate_id IS NOT NULL
+    ) ht ON ht.linked_candidate_id = c.id
+    LEFT JOIN (
+      SELECT candidate_id, assessment_percentage, mcq_percentage, typing_net_wpm, typing_accuracy
+      FROM (
+        SELECT aca.candidate_id,
+               aca.percentage AS assessment_percentage,
+               aca.percentage AS mcq_percentage,
+               ata.net_wpm              AS typing_net_wpm,
+               ata.accuracy_percentage  AS typing_accuracy,
+               ROW_NUMBER() OVER (
+                 PARTITION BY aca.candidate_id
+                 ORDER BY aca.created_at DESC,
+                          (ata.net_wpm IS NOT NULL AND ata.net_wpm > 0) DESC,
+                          COALESCE(ata.attempt_no, 0) DESC
+               ) AS rn
+        FROM ats_candidate_assessment aca
+        LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
+        WHERE DATE(CONVERT_TZ(aca.created_at, '+00:00', '+05:30')) = ?
+          AND aca.status IN ('submitted_pending_scoring', 'manual_review', 'completed')
+      ) ranked
+      WHERE rn = 1
     ) today_scores ON today_scores.candidate_id = c.id
     WHERE (
       qt.id IS NOT NULL OR aca_today.id IS NOT NULL
@@ -616,6 +635,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.applied_for_process, c.round1_result, c.skilltest_result, c.round2_result,
       c.final_decision, c.walkin_end_stage, c.hard_reject_reason, c.rejection_voc,
       ir_latest.rejection_reason,
+      ht.ops_rejection_reason, ht.hr_rejection_reason, ht.recruiter_rejection_reason,
       c.recruiter_assigned_name, c.second_round_interviewer_name_snapshot,
       today_scores.assessment_percentage, today_scores.mcq_percentage, today_scores.typing_net_wpm, today_scores.typing_accuracy,
       pm.process_name, bm.branch_name
