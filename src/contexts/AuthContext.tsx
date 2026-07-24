@@ -225,11 +225,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Silent IP-based location — no GPS permission prompt shown to user
-      const loginGeo = await fetch("https://ipwho.is/", { signal: AbortSignal.timeout(5000) })
-        .then((r) => r.json())
-        .then((d) => d.success ? { latitude: d.latitude as number, longitude: d.longitude as number } : { latitude: null, longitude: null })
-        .catch(() => ({ latitude: null, longitude: null }));
+      // Best-effort GPS for login location — uses cached position (no prompt if already granted)
+      const loginGeo = await new Promise<{ latitude: number | null; longitude: number | null }>((resolve) => {
+        if (!navigator?.geolocation) return resolve({ latitude: null, longitude: null });
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          () => resolve({ latitude: null, longitude: null }),
+          { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false },
+        );
+      });
       const { ok, payload } = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

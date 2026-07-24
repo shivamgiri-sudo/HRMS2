@@ -4,25 +4,11 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const IP_GEO_URL = "https://ipwho.is/";
-
-async function fetchIpPosition(): Promise<{ latitude: number; longitude: number; accuracy: number } | null> {
-  try {
-    const res = await fetch(IP_GEO_URL, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.success && data.latitude && data.longitude) {
-      return { latitude: data.latitude, longitude: data.longitude, accuracy: 5000 };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchIdRef  = useRef<number | null>(null);
+  const lastSentRef = useRef<number>(0);
 
   // Keep JWT in IndexedDB so the SW Background Sync handler can use it
   useEffect(() => {
@@ -39,32 +25,35 @@ export function useLocationHeartbeat() {
     return () => window.removeEventListener("storage", sync);
   }, [user?.id]);
 
-  // Silent IP-based heartbeat — no GPS permission prompt, no alerts
+  // GPS heartbeat — accurate, silent after first permission grant
   useEffect(() => {
-    if (!user) return;
+    if (!user || !("geolocation" in navigator)) return;
 
-    async function beat() {
-      const pos = await fetchIpPosition();
-      if (!pos) return;
-      try {
-        await hrmsApi.post("/api/location/heartbeat", {
-          latitude: pos.latitude,
-          longitude: pos.longitude,
-          accuracy: pos.accuracy,
-        });
-        await enqueuePosition(pos);
-        triggerBackgroundSync();
-      } catch {
-        // Network failure — queue for SW retry, no error shown to user
-        void enqueuePosition(pos).then(() => triggerBackgroundSync());
-      }
-    }
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      async (pos) => {
+        const now = Date.now();
+        if (now - lastSentRef.current < HEARTBEAT_INTERVAL_MS) return;
+        lastSentRef.current = now;
 
-    void beat(); // fire immediately on login
-    timerRef.current = setInterval(() => void beat(), HEARTBEAT_INTERVAL_MS);
+        const { latitude, longitude, accuracy } = pos.coords;
+        try {
+          await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
+          await enqueuePosition({ latitude, longitude, accuracy });
+          triggerBackgroundSync();
+        } catch {
+          void enqueuePosition({ latitude, longitude, accuracy })
+            .then(() => triggerBackgroundSync());
+        }
+      },
+      () => { /* permission denied — silent, no fallback */ },
+      { enableHighAccuracy: true, maximumAge: 15_000, timeout: 15_000 },
+    );
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
     };
   }, [user?.id]);
 }
