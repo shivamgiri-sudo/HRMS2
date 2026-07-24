@@ -837,17 +837,19 @@ export default function NativeReportsCenterV2() {
   const pageSize = 100;
   const runnerRef = useRef<HTMLDivElement>(null);
 
-  // Filter catalog by user roles
+  // Filter catalog by user roles — super_admin sees all reports
   const visibleCatalog = useMemo(() => {
+    if (userRoles.includes("super_admin")) return CATALOG;
     return CATALOG.filter(r => {
       if (!r.viewRoles || r.viewRoles.length === 0) return true;
       return r.viewRoles.some(role => userRoles.includes(role));
     });
   }, [userRoles]);
 
-  // Check export permission
+  // Check export permission — super_admin can always export
   const canExport = useMemo(() => {
     if (!selectedReport) return false;
+    if (userRoles.includes("super_admin")) return true;
     const exportRoles = selectedReport.exportRoles ?? selectedReport.viewRoles ?? [];
     if (exportRoles.length === 0) return true;
     return exportRoles.some(role => userRoles.includes(role));
