@@ -3,12 +3,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
-const HEARTBEAT_INTERVAL_MS = 60_000; // 60s — stable indoor GPS, less map fluctuation
+const HEARTBEAT_INTERVAL_MS = 60_000;
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();
-  const watchIdRef  = useRef<number | null>(null);
-  const lastSentRef = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Keep JWT in IndexedDB so the SW Background Sync handler can use it
   useEffect(() => {
@@ -25,34 +24,37 @@ export function useLocationHeartbeat() {
     return () => window.removeEventListener("storage", sync);
   }, [user?.id]);
 
-  // GPS heartbeat — accurate, silent after first permission grant
+  // Fixed-interval snapshot — ONE reading per minute, no continuous watching.
+  // watchPosition fires on every GPS chip update (noisy indoors, causes jumping).
+  // getCurrentPosition on a timer gives one stable reading per interval.
   useEffect(() => {
     if (!user || !("geolocation" in navigator)) return;
 
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      async (pos) => {
-        const now = Date.now();
-        if (now - lastSentRef.current < HEARTBEAT_INTERVAL_MS) return;
-        lastSentRef.current = now;
+    function snap() {
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          try {
+            await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
+            await enqueuePosition({ latitude, longitude, accuracy });
+            triggerBackgroundSync();
+          } catch {
+            void enqueuePosition({ latitude, longitude, accuracy })
+              .then(() => triggerBackgroundSync());
+          }
+        },
+        () => { /* permission denied — silent */ },
+        { enableHighAccuracy: false, maximumAge: 60_000, timeout: 10_000 },
+      );
+    }
 
-        const { latitude, longitude, accuracy } = pos.coords;
-        try {
-          await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
-          await enqueuePosition({ latitude, longitude, accuracy });
-          triggerBackgroundSync();
-        } catch {
-          void enqueuePosition({ latitude, longitude, accuracy })
-            .then(() => triggerBackgroundSync());
-        }
-      },
-      () => { /* permission denied — silent, no fallback */ },
-      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 15_000 },
-    );
+    snap(); // fire once immediately on login
+    timerRef.current = setInterval(snap, HEARTBEAT_INTERVAL_MS);
 
     return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
       }
     };
   }, [user?.id]);
