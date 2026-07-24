@@ -1569,8 +1569,23 @@ export interface HiringActivityAnalytics {
   bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byProcess: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byRecruiter: { label: string; total: number; walkins: number; selected: number; joined: number; selRate: number }[];
-  byBranch: { label: string; total: number; walkins: number; selected: number; joined: number }[];
-  byGender: { label: string; count: number; joined: number }[];
+  byBranch: Array<{
+    label: string;
+    total: number;
+    contacted: number;
+    walkins: number;
+    selected: number;
+    joined: number;
+    contactRate: number;
+    walkinRate: number;
+    selectionRate: number;
+    joinRate: number;
+    overallRate: number;
+    volumeSharePct: number;
+    dataQualityIssues: string[];
+  }>;
+  branchOptions: string[];
+  byGender: { label: string; count: number; walkins: number; selected: number; joined: number }[];
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
@@ -1585,7 +1600,28 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
 
   if (filters.fromDate)    { clauses.push("arha.activity_date >= ?");              params.push(filters.fromDate); }
   if (filters.toDate)      { clauses.push("arha.activity_date <= ?");              params.push(filters.toDate); }
-  if (filters.branch)      { clauses.push("arha.branch_name LIKE ?");              params.push(`%${filters.branch}%`); }
+  if (filters.branch) {
+    clauses.push(`(
+      LOWER(TRIM(COALESCE(arha.branch_name, ''))) = LOWER(TRIM(?))
+      OR LOWER(TRIM(COALESCE(arha.location_name, ''))) = LOWER(TRIM(?))
+      OR EXISTS (
+        SELECT 1
+          FROM branch_master bm_filter
+         WHERE LOWER(TRIM(COALESCE(bm_filter.branch_name, ''))) = LOWER(TRIM(?))
+           AND (
+             LOWER(TRIM(COALESCE(arha.branch_name, ''))) IN (
+               LOWER(TRIM(COALESCE(bm_filter.branch_name, ''))),
+               LOWER(TRIM(COALESCE(bm_filter.branch_code, '')))
+             )
+             OR LOWER(TRIM(COALESCE(arha.location_name, ''))) IN (
+               LOWER(TRIM(COALESCE(bm_filter.branch_name, ''))),
+               LOWER(TRIM(COALESCE(bm_filter.branch_code, '')))
+             )
+           )
+      )
+    )`);
+    params.push(filters.branch, filters.branch, filters.branch);
+  }
   if (filters.process)     { clauses.push("arha.process_name LIKE ?");             params.push(`%${filters.process}%`); }
   if (filters.hiringSource){ clauses.push("arha.hiring_source LIKE ?");            params.push(`%${filters.hiringSource}%`); }
   if (filters.recruiter)   { clauses.push("arha.recruiter_name_snapshot LIKE ?");  params.push(`%${filters.recruiter}%`); }
@@ -1593,8 +1629,28 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   if (scopedOnly) {
     if (branch) {
-      clauses.push("(arha.branch_name = ? OR arha.created_by = ? OR arha.recruiter_id = ?)");
-      params.push(branch, userId, userId);
+      clauses.push(`(
+        LOWER(TRIM(COALESCE(arha.branch_name, ''))) = LOWER(TRIM(?))
+        OR LOWER(TRIM(COALESCE(arha.location_name, ''))) = LOWER(TRIM(?))
+        OR EXISTS (
+          SELECT 1
+            FROM branch_master bm_scope
+           WHERE LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))) = LOWER(TRIM(?))
+             AND (
+               LOWER(TRIM(COALESCE(arha.branch_name, ''))) IN (
+                 LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))),
+                 LOWER(TRIM(COALESCE(bm_scope.branch_code, '')))
+               )
+               OR LOWER(TRIM(COALESCE(arha.location_name, ''))) IN (
+                 LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))),
+                 LOWER(TRIM(COALESCE(bm_scope.branch_code, '')))
+               )
+             )
+        )
+        OR arha.created_by = ?
+        OR arha.recruiter_id = ?
+      )`);
+      params.push(branch, branch, branch, userId, userId);
     } else {
       clauses.push("(arha.created_by = ? OR arha.recruiter_id = ?)");
       params.push(userId, userId);
@@ -1603,11 +1659,12 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
 
   const W = clauses.join(" AND ");
 
-  // Use pre-computed flag columns — avoids expensive correlated subqueries on every row
-  const IS_CONTACTED = `arha.contacted_flag = 1`;
-  const IS_WALKIN    = `arha.walkin_flag = 1`;
-  const IS_SELECTED  = `arha.final_selection_flag = 1`;
+  // Later stages imply every earlier funnel stage. This keeps historical and
+  // backfilled records from producing impossible Selected > Walk-in funnels.
   const IS_JOINED    = `arha.joined_flag = 1`;
+  const IS_SELECTED  = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;
+  const IS_WALKIN    = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;
+  const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_WALKIN})`;
 
   // Build follow-up params reusing already-resolved branch
   const followupClauses: string[] = [
@@ -1638,6 +1695,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     processRows,
     recruiterRows,
     branchRows,
+    branchMasterRows,
     genderRows,
     dowRows,
     trendRows,
@@ -1691,14 +1749,41 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       params
     ), [] as RowDataPacket[]),
     safe(() => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(arha.branch_name,''),'Unknown') AS label,
+      `SELECT COALESCE(
+                NULLIF(TRIM(arha.branch_name),''),
+                NULLIF(TRIM(arha.location_name),''),
+                'Unmapped'
+              ) AS label,
               COUNT(*) AS total,
-              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
-              SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
+              SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END) AS contacted,
+              SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END) AS joined,
+              SUM(CASE
+                    WHEN COALESCE(arha.walkin_flag, 0) = 1
+                     AND COALESCE(arha.contacted_flag, 0) = 0
+                    THEN 1 ELSE 0
+                  END) AS walkins_without_contact,
+              SUM(CASE
+                    WHEN COALESCE(arha.final_selection_flag, 0) = 1
+                     AND COALESCE(arha.walkin_flag, 0) = 0
+                    THEN 1 ELSE 0
+                  END) AS selected_without_walkin,
+              SUM(CASE
+                    WHEN COALESCE(arha.joined_flag, 0) = 1
+                     AND COALESCE(arha.final_selection_flag, 0) = 0
+                    THEN 1 ELSE 0
+                  END) AS joined_without_selection
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY total DESC LIMIT 20`,
+         GROUP BY label ORDER BY total DESC LIMIT 100`,
       params
+    ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
+      `SELECT branch_name, branch_code
+         FROM branch_master
+        WHERE NULLIF(TRIM(branch_name), '') IS NOT NULL
+        ORDER BY branch_name ASC`,
+      []
     ), [] as RowDataPacket[]),
     safe(() => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
@@ -1757,7 +1842,96 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const byOutcome   = (outcomeRows as any[]).map((r) => ({ label: String(r.label), count: Number(r.count) }));
   const bySource    = (sourceRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
   const byProcess   = (processRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
-  const byBranch    = (branchRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
+  const normalizeBranchKey = (value: unknown) => String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\b(branch|office|site)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const branchAliases = new Map<string, string>();
+  const branchOptionSet = new Set<string>();
+  for (const row of branchMasterRows as any[]) {
+    const preferred = String(row.branch_name ?? "").trim();
+    if (!preferred) continue;
+    branchOptionSet.add(preferred);
+    const nameKey = normalizeBranchKey(preferred);
+    const codeKey = normalizeBranchKey(row.branch_code);
+    if (nameKey) branchAliases.set(nameKey, preferred);
+    if (codeKey) branchAliases.set(codeKey, preferred);
+  }
+
+  const branchAccumulator = new Map<string, {
+    label: string;
+    total: number;
+    contacted: number;
+    walkins: number;
+    selected: number;
+    joined: number;
+    walkinsWithoutContact: number;
+    selectedWithoutWalkin: number;
+    joinedWithoutSelection: number;
+  }>();
+  for (const row of branchRows as any[]) {
+    const rawLabel = String(row.label ?? "").trim() || "Unmapped";
+    const preferred = branchAliases.get(normalizeBranchKey(rawLabel)) ?? rawLabel.replace(/\s+/g, " ");
+    const current = branchAccumulator.get(preferred) ?? {
+      label: preferred,
+      total: 0,
+      contacted: 0,
+      walkins: 0,
+      selected: 0,
+      joined: 0,
+      walkinsWithoutContact: 0,
+      selectedWithoutWalkin: 0,
+      joinedWithoutSelection: 0,
+    };
+    current.total += Number(row.total) || 0;
+    current.contacted += Number(row.contacted) || 0;
+    current.walkins += Number(row.walkins) || 0;
+    current.selected += Number(row.selected) || 0;
+    current.joined += Number(row.joined) || 0;
+    current.walkinsWithoutContact += Number(row.walkins_without_contact) || 0;
+    current.selectedWithoutWalkin += Number(row.selected_without_walkin) || 0;
+    current.joinedWithoutSelection += Number(row.joined_without_selection) || 0;
+    branchAccumulator.set(preferred, current);
+  }
+
+  const rate = (numerator: number, denominator: number) => denominator > 0
+    ? Math.round((numerator / denominator) * 1000) / 10
+    : 0;
+  const byBranch = Array.from(branchAccumulator.values())
+    .map((row) => {
+      const dataQualityIssues: string[] = [];
+      if (row.walkinsWithoutContact > 0) {
+        dataQualityIssues.push(`${row.walkinsWithoutContact} walk-in record(s) not marked contacted`);
+      }
+      if (row.selectedWithoutWalkin > 0) {
+        dataQualityIssues.push(`${row.selectedWithoutWalkin} selected record(s) not marked walk-in`);
+      }
+      if (row.joinedWithoutSelection > 0) {
+        dataQualityIssues.push(`${row.joinedWithoutSelection} joined record(s) not marked selected`);
+      }
+      const {
+        walkinsWithoutContact: _walkinsWithoutContact,
+        selectedWithoutWalkin: _selectedWithoutWalkin,
+        joinedWithoutSelection: _joinedWithoutSelection,
+        ...branchMetrics
+      } = row;
+      return {
+        ...branchMetrics,
+        contactRate: rate(row.contacted, row.total),
+        walkinRate: rate(row.walkins, row.contacted),
+        selectionRate: rate(row.selected, row.walkins),
+        joinRate: rate(row.joined, row.selected),
+        overallRate: rate(row.joined, row.total),
+        volumeSharePct: rate(row.total, logged),
+        dataQualityIssues,
+      };
+    })
+    .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+  const branchOptions = Array.from(branchOptionSet).sort((a, b) => a.localeCompare(b));
   const byGender    = (genderRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), count: Number(r.count) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
   const byRecruiter = (recruiterRows as any[]).map((r) => {
     const total = Number(r.total) || 0;
@@ -1782,7 +1956,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     followup_reason: String(r.followup_reason ?? ""),
   }));
 
-  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, byGender, byDayOfWeek, trend, followupDue };
+  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue };
 }
 
 export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {
