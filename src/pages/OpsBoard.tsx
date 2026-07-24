@@ -9,11 +9,13 @@ interface OpsBoardEntry {
   candidate_name: string;
   current_stage: string;
   applied_role: string | null;
+  process_name: string | null;
   round1_result: string | null;
   skilltest_result: string | null;
   round2_result: string | null;
   final_decision: string | null;
   walkin_end_stage: string | null;
+  rejection_reason: string | null;
   assessment_percentage: number | null;
   mcq_percentage: number | null;
   typing_net_wpm: number | null;
@@ -262,6 +264,13 @@ function CandidateRow({ entry }: { entry: OpsBoardEntry }) {
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
         <DecisionBadge entry={entry} />
       </td>
+      {/* Rejection Reason */}
+      <td className="px-3 py-2.5 max-w-[180px]">
+        {entry.rejection_reason
+          ? <span className="text-xs text-rose-300 leading-snug break-words">{entry.rejection_reason}</span>
+          : <span className="text-slate-700">—</span>
+        }
+      </td>
     </tr>
   );
 }
@@ -273,10 +282,11 @@ export default function OpsBoard() {
   const branchParam = searchParams.get("branch") ?? "";
   const dateParam   = searchParams.get("date")   ?? "";
 
-  const [entries,        setEntries]        = useState<OpsBoardEntry[]>([]);
-  const [branches,       setBranches]       = useState<string[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState(branchParam);
-  const [selectedDate,   setSelectedDate]   = useState(dateParam);
+  const [entries,         setEntries]         = useState<OpsBoardEntry[]>([]);
+  const [branches,        setBranches]        = useState<string[]>([]);
+  const [selectedBranch,  setSelectedBranch]  = useState(branchParam);
+  const [selectedDate,    setSelectedDate]    = useState(dateParam);
+  const [selectedProcess, setSelectedProcess] = useState("");
   const [lastUpdated,    setLastUpdated]     = useState<Date | null>(null);
   const [clockStr,       setClockStr]       = useState(fmtNow());
   const [loading,        setLoading]        = useState(true);
@@ -348,28 +358,45 @@ export default function OpsBoard() {
     e.final_decision === "Rejected" || e.current_stage === "Rejected"
   ), [entries]);
 
-  // Avg wait — computed from waiting candidates only (not all active)
+  // Avg wait — from all waiting (unfiltered) so the stat reflects reality
   const avgWaitMins = useMemo(() => {
     if (!waitingQueue.length) return 0;
     const total = waitingQueue.reduce((sum, e) => sum + waitMins(e.arrived_at), 0);
     return Math.round(total / waitingQueue.length);
   }, [waitingQueue]);
 
+  // Unique process names for the filter dropdown
+  const processOptions = useMemo(() => {
+    const names = new Set<string>();
+    entries.forEach(e => { if (e.process_name) names.add(e.process_name); });
+    return [...names].sort();
+  }, [entries]);
+
+  // Base entries after process filter
+  const filteredEntries = useMemo(() =>
+    selectedProcess ? entries.filter(e => e.process_name === selectedProcess) : entries,
+    [entries, selectedProcess],
+  );
+
+  const filteredWaiting   = useMemo(() => filteredEntries.filter(e => WAITING_STAGES.includes(e.current_stage)),   [filteredEntries]);
+  const filteredInterview = useMemo(() => filteredEntries.filter(e => INTERVIEW_STAGES.includes(e.current_stage)), [filteredEntries]);
+  const filteredDecisions = useMemo(() => filteredEntries.filter(e => DECISION_STAGES.includes(e.current_stage) || e.final_decision != null), [filteredEntries]);
+
   // Rows for current tab
   const visibleEntries = useMemo(() => {
     switch (activeTab) {
-      case "waiting":   return waitingQueue;
-      case "interview": return interviewQueue;
-      case "decisions": return decisionsQueue;
-      default:          return entries;
+      case "waiting":   return filteredWaiting;
+      case "interview": return filteredInterview;
+      case "decisions": return filteredDecisions;
+      default:          return filteredEntries;
     }
-  }, [activeTab, entries, waitingQueue, interviewQueue, decisionsQueue]);
+  }, [activeTab, filteredEntries, filteredWaiting, filteredInterview, filteredDecisions]);
 
   const tabs: Array<{ key: TabKey; label: string; count: number }> = [
-    { key: "all",       label: "All",         count: entries.length        },
-    { key: "waiting",   label: "Waiting",      count: waitingQueue.length   },
-    { key: "interview", label: "In Interview", count: interviewQueue.length },
-    { key: "decisions", label: "Decisions",    count: decisionsQueue.length },
+    { key: "all",       label: "All",         count: filteredEntries.length  },
+    { key: "waiting",   label: "Waiting",      count: filteredWaiting.length  },
+    { key: "interview", label: "In Interview", count: filteredInterview.length },
+    { key: "decisions", label: "Decisions",    count: filteredDecisions.length },
   ];
 
   return (
@@ -413,6 +440,16 @@ export default function OpsBoard() {
               >
                 <option value="">All Branches</option>
                 {branches.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            )}
+            {processOptions.length > 0 && (
+              <select
+                value={selectedProcess}
+                onChange={e => setSelectedProcess(e.target.value)}
+                className="h-8 rounded-lg border border-slate-600 bg-slate-700 px-2.5 text-xs text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">All Processes</option>
+                {processOptions.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             )}
             <input
@@ -507,12 +544,13 @@ export default function OpsBoard() {
                   <Th center>Ops</Th>
                   <Th>Ops Interviewer</Th>
                   <Th center>Decision</Th>
+                  <Th>Rejection Reason</Th>
                 </tr>
               </thead>
               <tbody>
                 {visibleEntries.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="py-12 text-center text-slate-600 text-sm font-medium">
+                    <td colSpan={13} className="py-12 text-center text-slate-600 text-sm font-medium">
                       No candidates in this category
                     </td>
                   </tr>

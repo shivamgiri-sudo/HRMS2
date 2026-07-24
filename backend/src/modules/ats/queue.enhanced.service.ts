@@ -510,11 +510,13 @@ export interface OpsBoardEntry {
   candidate_name: string;
   current_stage: string;
   applied_role: string | null;
+  process_name: string | null;
   round1_result: string | null;
   skilltest_result: string | null;
   round2_result: string | null;
   final_decision: string | null;
   walkin_end_stage: string | null;
+  rejection_reason: string | null;
   assessment_percentage: number | null;
   mcq_percentage: number | null;
   typing_net_wpm: number | null;
@@ -543,11 +545,17 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       c.full_name                                                                          AS candidate_name,
       c.current_stage,
       COALESCE(NULLIF(c.role_applied,''), NULLIF(pm.process_name,''), NULLIF(c.applied_for_process,'')) AS applied_role,
+      COALESCE(NULLIF(pm.process_name,''), NULLIF(c.applied_for_process,''))              AS process_name,
       c.round1_result,
       c.skilltest_result,
       c.round2_result,
       c.final_decision,
       c.walkin_end_stage,
+      COALESCE(
+        NULLIF(ir_latest.rejection_reason,''),
+        NULLIF(c.hard_reject_reason,''),
+        NULLIF(c.rejection_voc,'')
+      )                                                                                    AS rejection_reason,
       c.recruiter_assigned_name,
       c.second_round_interviewer_name_snapshot,
       today_scores.assessment_percentage,
@@ -568,6 +576,16 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
           AND DATE(CONVERT_TZ(aca_today.created_at, '+00:00', '+05:30')) = ?
     LEFT JOIN process_master pm  ON pm.id = c.applied_for_process
     LEFT JOIN branch_master bm   ON bm.id = c.applied_for_branch
+    LEFT JOIN (
+      SELECT ir1.candidate_id, ir1.rejection_reason
+      FROM ats_interview_result ir1
+      INNER JOIN (
+        SELECT candidate_id, MAX(interviewed_at) AS latest
+        FROM ats_interview_result
+        WHERE rejection_reason IS NOT NULL AND rejection_reason != ''
+        GROUP BY candidate_id
+      ) ir2 ON ir2.candidate_id = ir1.candidate_id AND ir2.latest = ir1.interviewed_at
+    ) ir_latest ON ir_latest.candidate_id = c.id
     LEFT JOIN (
       SELECT aca.candidate_id,
              aca.percentage           AS assessment_percentage,
@@ -596,8 +614,9 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
     GROUP BY
       c.id, c.candidate_code, c.full_name, c.current_stage, c.role_applied,
       c.applied_for_process, c.round1_result, c.skilltest_result, c.round2_result,
-      c.final_decision, c.walkin_end_stage, c.recruiter_assigned_name,
-      c.second_round_interviewer_name_snapshot,
+      c.final_decision, c.walkin_end_stage, c.hard_reject_reason, c.rejection_voc,
+      ir_latest.rejection_reason,
+      c.recruiter_assigned_name, c.second_round_interviewer_name_snapshot,
       today_scores.assessment_percentage, today_scores.mcq_percentage, today_scores.typing_net_wpm, today_scores.typing_accuracy,
       pm.process_name, bm.branch_name
     ORDER BY arrived_at ASC`,
