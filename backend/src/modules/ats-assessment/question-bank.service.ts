@@ -71,6 +71,43 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
+/**
+ * Parses a JSON column that may contain either:
+ * - A valid JSON-encoded value (e.g., "\"Saturday\"" or "[\"A\",\"B\"]")
+ * - A plain string that wasn't JSON-encoded (e.g., "Saturday")
+ *
+ * If JSON.parse fails and the input is a non-empty string, returns
+ * the string itself (for single) or an array of that string (for multi).
+ */
+function parseAnswerJson(
+  value: unknown,
+  type: "single" | "multi",
+): string | string[] {
+  const fallback = type === "multi" ? [] : "";
+
+  if (value === null || value === undefined) return fallback;
+
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      // Validate the shape matches the expected type
+      if (type === "multi" && Array.isArray(parsed)) return parsed;
+      if (type === "single" && typeof parsed === "string") return parsed;
+      // If JSON parsed but wrong shape, treat as plain string
+      return type === "multi" ? [value] : value;
+    } catch {
+      // JSON.parse failed — treat as plain string value
+      return type === "multi" ? [value] : value;
+    }
+  }
+
+  // Already the correct type (e.g., mysql2 returned parsed JSON object)
+  if (type === "multi" && Array.isArray(value)) return value;
+  if (type === "single" && typeof value === "string") return value;
+
+  return fallback;
+}
+
 function questionRowToDefinition(row: QuestionRow): AssessmentQuestionDefinition {
   const base: AssessmentQuestionDefinition = {
     id: row.question_code,
@@ -84,7 +121,7 @@ function questionRowToDefinition(row: QuestionRow): AssessmentQuestionDefinition
 
   if (row.question_type === "single" || row.question_type === "multi") {
     base.options = parseJson<string[]>(row.options_json, []);
-    base.correctAnswer = parseJson<string | string[]>(row.correct_answer_json, row.question_type === "multi" ? [] : "");
+    base.correctAnswer = parseAnswerJson(row.correct_answer_json, row.question_type);
   }
 
   if (row.question_type === "text") {

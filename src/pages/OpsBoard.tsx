@@ -20,6 +20,8 @@ interface OpsBoardEntry {
   mcq_percentage: number | null;
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
+  skilltest_typing: number | null;  // Legacy fallback for typing WPM
+  skilltest_ai: number | null;      // Legacy fallback for assessment %
   arrived_at: string | null;
   recruiter_assigned_name: string | null;
   second_round_interviewer_name_snapshot: string | null;
@@ -231,7 +233,7 @@ function CandidateRow({ entry }: { entry: OpsBoardEntry }) {
       </td>
       {/* Typing */}
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
-        <TypingCell wpm={entry.typing_net_wpm} accuracy={entry.typing_accuracy} />
+        <TypingCell wpm={entry.typing_net_wpm ?? entry.skilltest_typing} accuracy={entry.typing_accuracy} />
       </td>
       {/* Wait */}
       <td className="px-3 py-2.5 text-center whitespace-nowrap">

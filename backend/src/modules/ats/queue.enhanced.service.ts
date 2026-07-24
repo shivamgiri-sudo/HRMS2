@@ -523,6 +523,8 @@ export interface OpsBoardEntry {
   mcq_percentage: number | null;
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
+  skilltest_typing: number | null;  // Legacy typing score fallback
+  skilltest_ai: number | null;      // Legacy assessment score fallback
   arrived_at: string | null;
   recruiter_assigned_name: string | null;
   second_round_interviewer_name_snapshot: string | null;
@@ -567,6 +569,8 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       today_scores.mcq_percentage,
       today_scores.typing_net_wpm,
       today_scores.typing_accuracy,
+      c.skilltest_typing,
+      c.skilltest_ai,
       COALESCE(
         MIN(COALESCE(qt.arrival_time, qt.created_at)),
         MIN(aca_today.created_at),
@@ -640,6 +644,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
       ht.ops_rejection_reason, ht.hr_rejection_reason, ht.recruiter_rejection_reason,
       c.recruiter_assigned_name, c.second_round_interviewer_name_snapshot,
       today_scores.assessment_percentage, today_scores.mcq_percentage, today_scores.typing_net_wpm, today_scores.typing_accuracy,
+      c.skilltest_typing, c.skilltest_ai,
       pm.process_name, bm.branch_name
     ORDER BY arrived_at ASC`,
     params
