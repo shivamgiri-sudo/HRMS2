@@ -1,0 +1,66 @@
+name: Clean ATS branch analytics PR scope
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  clean-scope:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Restore unrelated scripts from main
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git fetch origin main
+          git checkout origin/main -- \
+            scripts/allocate-2026-leave-balances.sql \
+            scripts/check-branch-aliases.sql \
+            scripts/cleanup-duplicate-salary-records.sql \
+            scripts/create-missing-kpi-metrics.sql \
+            scripts/fix-branch-aliases.sql \
+            scripts/fix-mas47814-final.sql \
+            scripts/fix-mas47814-salary-gap-v2.sql \
+            scripts/fix-mas47814-salary-gap.sql \
+            scripts/objection-analysis.sql \
+            scripts/setup-friendly-branch-names.sql \
+            scripts/verify-kpi-metrics.sql \
+            scripts/wfm_auto_roster_preflight.sql
+          rm -f .github/workflows/agent-clean-ats-branch-pr.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            scripts/allocate-2026-leave-balances.sql \
+            scripts/check-branch-aliases.sql \
+            scripts/cleanup-duplicate-salary-records.sql \
+            scripts/create-missing-kpi-metrics.sql \
+            scripts/fix-branch-aliases.sql \
+            scripts/fix-mas47814-final.sql \
+            scripts/fix-mas47814-salary-gap-v2.sql \
+            scripts/fix-mas47814-salary-gap.sql \
+            scripts/objection-analysis.sql \
+            scripts/setup-friendly-branch-names.sql \
+            scripts/verify-kpi-metrics.sql \
+            scripts/wfm_auto_roster_preflight.sql \
+            .github/workflows/agent-clean-ats-branch-pr.yml
+          git commit -m "chore: remove unrelated script changes from ATS PR"
+          git push origin "HEAD:${HEAD_BRANCH}"
+
+      - name: Verify final scope
+        run: |
+          changed="$(git diff --name-only origin/main...HEAD | sort)"
+          printf '%s\n' "$changed"
+          unexpected="$(printf '%s\n' "$changed" | grep -v -E '^(backend/src/modules/ats/recruiter-hiring\.service\.ts|src/pages/NativeATSHiringEntry\.tsx)$' || true)"
+          test -z "$unexpected"
