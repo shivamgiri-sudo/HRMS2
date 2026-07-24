@@ -121,14 +121,8 @@ export const useNotifications = () => {
   const prevCountRef = useRef<number>(-1);
   // Map<itemId, intervalId> — tracks active repeat timers
   const repeatTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
-  const permissionRequested = useRef(false);
-
-  useEffect(() => {
-    if (user && !permissionRequested.current) {
-      permissionRequested.current = true;
-      requestNotificationPermission();
-    }
-  }, [user]);
+  // Browser notification permission is NOT requested automatically —
+  // no popups shown to user without explicit opt-in
 
   // Clear all repeat timers on unmount / logout
   useEffect(() => {
