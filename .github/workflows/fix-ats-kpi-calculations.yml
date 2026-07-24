@@ -2,15 +2,10 @@ name: Fix ATS KPI calculations
 
 on:
   pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - synchronize
-      - reopened
+    branches: [main]
+    types: [opened, synchronize, reopened]
   push:
-    branches:
-      - agent/fix-ats-kpi-calculations
+    branches: [agent/fix-ats-kpi-calculations]
 
 permissions:
   contents: write
@@ -20,42 +15,39 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: agent/fix-ats-kpi-calculations
           fetch-depth: 0
 
       - name: Patch KPI logic and presentation
-        shell: bash
         run: |
           python <<'PY'
           from pathlib import Path
 
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
-              if old not in text:
-                  raise SystemExit(f"Missing expected block: {label}")
+          def between(text, start, end, replacement, label):
+              a = text.find(start)
+              if a < 0: raise SystemExit(f"start marker missing: {label}")
+              b = text.find(end, a)
+              if b < 0: raise SystemExit(f"end marker missing: {label}")
+              return text[:a] + replacement + text[b:]
+
+          def once(text, old, new, label):
+              if old not in text: raise SystemExit(f"text missing: {label}")
               return text.replace(old, new, 1)
 
-          backend_path = Path("backend/src/modules/ats/recruiter-hiring.service.ts")
-          backend = backend_path.read_text(encoding="utf-8")
+          bp = Path('backend/src/modules/ats/recruiter-hiring.service.ts')
+          b = bp.read_text(encoding='utf-8')
 
-          backend = replace_once(
-              backend,
-              "  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n}",
-              "  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n  followupDueCount: number;\n}",
-              "analytics interface follow-up count",
-          )
+          b = once(b,
+            '  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n}',
+            '  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n  followupDueCount: number;\n}',
+            'backend followupDueCount type')
 
-          dashboard_start = backend.index("export async function getHiringDashboard(")
-          dashboard_end = backend.index("\nexport async function getCallingDashboard", dashboard_start)
-          new_dashboard = r'''export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
+          dashboard = '''export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
             const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
             const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
 
-            // KPI stages are cumulative: reaching a later stage proves every earlier stage.
-            // This prevents cards such as Selected > Walk-ins or Joined > Selected when
-            // historical/imported rows have incomplete raw flags.
             const IS_JOINED = `joined_flag = 1`;
             const IS_SELECTED = `(final_selection_flag = 1 OR ${IS_JOINED})`;
             const IS_WALKIN = `(walkin_flag = 1 OR ${IS_SELECTED})`;
@@ -137,40 +129,41 @@ jobs:
               aggregateBy("process_name", filters, scopedOnly, userId),
               aggregateBy("branch_name", filters, scopedOnly, userId),
             ]);
-
             return { metrics, byRecruiter, bySource, byProcess, byBranch };
           }
+
           '''
-          backend = backend[:dashboard_start] + new_dashboard + backend[dashboard_end:]
+          b = between(b, 'export async function getHiringDashboard(', 'export async function getCallingDashboard', dashboard, 'getHiringDashboard')
 
-          backend = replace_once(
-              backend,
-              "  const IS_JOINED    = `arha.joined_flag = 1`;\n  const IS_SELECTED  = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;\n  const IS_WALKIN    = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;\n  const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_WALKIN})`;",
-              "  const IS_JOINED    = `arha.joined_flag = 1`;\n  const IS_SELECTED  = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;\n  const IS_WALKIN    = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;\n  const IS_SHORTLISTED = `(\n    LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) = 'shortlisted'\n    OR LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) LIKE 'interested%'\n    OR LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) LIKE '%will visit%'\n    OR LOWER(TRIM(COALESCE(arha.current_status, ''))) IN ('shortlisted', 'expected walk-in')\n    OR ${IS_WALKIN}\n  )`;\n  const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_SHORTLISTED})`;",
-              "analytics cumulative contacted stage",
-          )
+          predicates = '''  // Later stages imply every earlier funnel stage. This keeps historical and
+            // backfilled records from producing impossible Selected > Walk-in funnels.
+            const IS_JOINED    = `arha.joined_flag = 1`;
+            const IS_SELECTED  = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;
+            const IS_WALKIN    = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;
+            const IS_SHORTLISTED = `(
+              LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) = 'shortlisted'
+              OR LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) LIKE 'interested%'
+              OR LOWER(TRIM(COALESCE(arha.recruiter_remarks, ''))) LIKE '%will visit%'
+              OR LOWER(TRIM(COALESCE(arha.current_status, ''))) IN ('shortlisted', 'expected walk-in')
+              OR ${IS_WALKIN}
+            )`;
+            const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_SHORTLISTED})`;
 
-          followup_start = backend.index("  // Build follow-up params reusing already-resolved branch")
-          followup_end = backend.index("  // Safe wrapper", followup_start)
-          backend = backend[:followup_start] + "  const FOLLOWUP_WINDOW = `arha.followup_required = 1\\n    AND arha.followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`;\n\n" + backend[followup_end:]
+            const FOLLOWUP_WINDOW = `arha.followup_required = 1
+              AND arha.followup_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`;
 
-          backend = replace_once(
-              backend,
-              "    trendRows,\n    followupRows,\n  ] = await Promise.all([",
-              "    trendRows,\n    followupRows,\n    followupCountRows,\n  ] = await Promise.all([",
-              "analytics promise destructuring",
-          )
+          '''
+          b = between(b, '  // Later stages imply every earlier funnel stage.', '  // Safe wrapper', predicates, 'analytics predicates and followups')
 
-          old_followup_query = '''    safe(() => db.execute<RowDataPacket[]>(
-              `SELECT id, candidate_name, mobile,
-                      DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
-                      followup_reason
-                 FROM ats_recruiter_hiring_activity
-                WHERE ${followupClauses.join(" AND ")}
-                ORDER BY followup_date ASC LIMIT 50`,
-              followupParams
-            ), [] as RowDataPacket[]),'''
-          new_followup_query = '''    safe(() => db.execute<RowDataPacket[]>(
+          b = once(b, '    followupRows,\n  ] = await Promise.all([', '    followupRows,\n    followupCountRows,\n  ] = await Promise.all([', 'promise count result')
+
+          qstart = b.find('    safe(() => db.execute<RowDataPacket[]>(\n      `SELECT id, candidate_name, mobile,')
+          if qstart < 0: raise SystemExit('follow-up detail query marker missing')
+          qend_marker = '    ), [] as RowDataPacket[]),'
+          qend = b.find(qend_marker, qstart)
+          if qend < 0: raise SystemExit('follow-up detail query end missing')
+          qend += len(qend_marker)
+          followup_queries = '''    safe(() => db.execute<RowDataPacket[]>(
               `SELECT arha.id, arha.candidate_name, arha.mobile,
                       DATE_FORMAT(arha.followup_date,'%Y-%m-%d') AS followup_date,
                       arha.followup_reason
@@ -185,45 +178,27 @@ jobs:
                 WHERE ${W} AND ${FOLLOWUP_WINDOW}`,
               params
             ), [] as RowDataPacket[]),'''
-          backend = replace_once(backend, old_followup_query, new_followup_query, "filtered follow-up queries")
+          b = b[:qstart] + followup_queries + b[qend:]
 
-          backend = replace_once(
-              backend,
-              "  const followupDue = (followupRows as any[]).map((r) => ({\n    id: String(r.id), candidate_name: String(r.candidate_name ?? \"\"),\n    mobile: String(r.mobile ?? \"\"), followup_date: String(r.followup_date ?? \"\"),\n    followup_reason: String(r.followup_reason ?? \"\"),\n  }));\n\n  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue };",
-              "  const followupDue = (followupRows as any[]).map((r) => ({\n    id: String(r.id), candidate_name: String(r.candidate_name ?? \"\"),\n    mobile: String(r.mobile ?? \"\"), followup_date: String(r.followup_date ?? \"\"),\n    followup_reason: String(r.followup_reason ?? \"\"),\n  }));\n  const followupDueCount = Number((followupCountRows as any[])[0]?.total ?? 0);\n\n  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue, followupDueCount };",
-              "analytics follow-up return",
-          )
+          b = once(b,
+            '  }));\n\n  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue };',
+            '  }));\n  const followupDueCount = Number((followupCountRows as any[])[0]?.total ?? 0);\n\n  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue, followupDueCount };',
+            'follow-up count return')
+          bp.write_text(b, encoding='utf-8')
 
-          backend_path.write_text(backend, encoding="utf-8")
+          fp = Path('src/pages/NativeATSHiringEntry.tsx')
+          f = fp.read_text(encoding='utf-8')
+          f = once(f, '    contacted_pct: number;\n    not_contacted: number;', '    contacted_pct: number;\n    contact_rate: number;\n    shortlist_rate: number;\n    walkin_rate: number;\n    selection_rate: number;\n    join_rate: number;\n    not_contacted: number;', 'frontend rate types')
+          f = once(f, '  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n};', '  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n  followupDueCount: number;\n};', 'frontend followup count type')
 
-          frontend_path = Path("src/pages/NativeATSHiringEntry.tsx")
-          frontend = frontend_path.read_text(encoding="utf-8")
-
-          frontend = replace_once(
-              frontend,
-              "    contacted_pct: number;\n    not_contacted: number;",
-              "    contacted_pct: number;\n    contact_rate: number;\n    shortlist_rate: number;\n    walkin_rate: number;\n    selection_rate: number;\n    join_rate: number;\n    not_contacted: number;",
-              "dashboard metric rate types",
-          )
-          frontend = replace_once(
-              frontend,
-              "  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n};",
-              "  followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];\n  followupDueCount: number;\n};",
-              "frontend analytics follow-up count type",
-          )
-
-          metric_start = frontend.index("function MetricCard({")
-          metric_end = frontend.index("\nfunction KpiTile", metric_start)
-          new_metric = r'''function MetricCard({
+          metric = '''function MetricCard({
             label, value, icon, unavailable, sub,
           }: {
             label: string; value: string | number; icon: ReactNode; unavailable?: boolean; sub?: string;
           }) {
             return (
               <div className="flex min-h-[78px] items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
-                <div className={`rounded-lg p-1.5 ${unavailable ? "bg-slate-50 text-slate-300" : "bg-slate-100 text-slate-600"}`}>
-                  {icon}
-                </div>
+                <div className={`rounded-lg p-1.5 ${unavailable ? "bg-slate-50 text-slate-300" : "bg-slate-100 text-slate-600"}`}>{icon}</div>
                 <div className="min-w-0">
                   <div className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</div>
                   <div className={`text-xl font-black leading-tight ${unavailable ? "text-slate-300" : "text-slate-900"}`}>{value}</div>
@@ -232,146 +207,84 @@ jobs:
               </div>
             );
           }
-          '''
-          frontend = frontend[:metric_start] + new_metric + frontend[metric_end:]
 
-          rate_block_start = frontend.index("  // ── Totals for tab badge")
-          rate_block_end = frontend.index("\n  if (loading)", rate_block_start)
-          new_rate_block = r'''  // Header KPI rates use explicit business denominators.
+          '''
+          f = between(f, 'function MetricCard({', 'function KpiTile', metric, 'MetricCard')
+          rates = '''  // Header KPI rates use explicit business denominators.
             const dashboardMetrics = dashboard?.metrics;
             const dashboardRate = (key: "contact_rate" | "shortlist_rate" | "walkin_rate" | "selection_rate" | "join_rate") =>
               Number(dashboardMetrics?.[key] ?? 0);
+
           '''
-          frontend = frontend[:rate_block_start] + new_rate_block + frontend[rate_block_end:]
+          f = between(f, '  // ── Totals for tab badge', '  if (loading)', rates, 'header rate variables')
 
-          top_cards_start = frontend.index("        {/* ── Compact metric strip ── */}")
-          top_cards_end = frontend.index("\n\n        {/* ── Session Context Panel", top_cards_start)
-          new_top_cards = r'''        {/* ── Compact metric strip ── */}
+          cards = '''        {/* ── Compact metric strip ── */}
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-                    <MetricCard
-                      label="Candidate Records"
-                      value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.total_records ?? 0)}
-                      sub="Base entries · follow-up attempts excluded"
-                      icon={<PhoneCall className="h-4 w-4" />}
-                      unavailable={dashboardFailed}
-                    />
-                    <MetricCard
-                      label="Contacted"
-                      value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.total_contacted ?? 0)}
-                      sub={`${dashboardRate("contact_rate")}% of candidate records`}
-                      icon={<BadgeCheck className="h-4 w-4" />}
-                      unavailable={dashboardFailed}
-                    />
-                    <MetricCard
-                      label="Shortlisted"
-                      value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.shortlisted ?? 0)}
-                      sub={`${dashboardRate("shortlist_rate")}% of contacted`}
-                      icon={<Target className="h-4 w-4" />}
-                      unavailable={dashboardFailed}
-                    />
-                    <MetricCard
-                      label="Walk-ins"
-                      value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.walkins ?? 0)}
-                      sub={`${dashboardRate("walkin_rate")}% of contacted`}
-                      icon={<Users className="h-4 w-4" />}
-                      unavailable={dashboardFailed}
-                    />
-                    <MetricCard
-                      label="Selected"
-                      value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.final_selected ?? 0)}
-                      sub={`${dashboardRate("selection_rate")}% of walk-ins`}
-                      icon={<UserRound className="h-4 w-4" />}
-                      unavailable={dashboardFailed}
-                    />
-                    <MetricCard
-                      label="Joined"
-                      value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.joined ?? 0)}
-                      sub={`${dashboardRate("join_rate")}% of selected`}
-                      icon={<Clock3 className="h-4 w-4" />}
-                      unavailable={dashboardFailed}
-                    />
-                  </div>'''
-          frontend = frontend[:top_cards_start] + new_top_cards + frontend[top_cards_end:]
+                    <MetricCard label="Candidate Records" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.total_records ?? 0)} sub="Base entries · follow-up attempts excluded" icon={<PhoneCall className="h-4 w-4" />} unavailable={dashboardFailed} />
+                    <MetricCard label="Contacted" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.total_contacted ?? 0)} sub={`${dashboardRate("contact_rate")}% of candidate records`} icon={<BadgeCheck className="h-4 w-4" />} unavailable={dashboardFailed} />
+                    <MetricCard label="Shortlisted" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.shortlisted ?? 0)} sub={`${dashboardRate("shortlist_rate")}% of contacted`} icon={<Target className="h-4 w-4" />} unavailable={dashboardFailed} />
+                    <MetricCard label="Walk-ins" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.walkins ?? 0)} sub={`${dashboardRate("walkin_rate")}% of contacted`} icon={<Users className="h-4 w-4" />} unavailable={dashboardFailed} />
+                    <MetricCard label="Selected" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.final_selected ?? 0)} sub={`${dashboardRate("selection_rate")}% of walk-ins`} icon={<UserRound className="h-4 w-4" />} unavailable={dashboardFailed} />
+                    <MetricCard label="Joined" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.joined ?? 0)} sub={`${dashboardRate("join_rate")}% of selected`} icon={<Clock3 className="h-4 w-4" />} unavailable={dashboardFailed} />
+                  </div>
 
-          frontend = replace_once(
-              frontend,
-              "              const totalLogged = analytics.funnel[0]?.count ?? 0;\n              const selPct      = analytics.funnel[3]?.pct ?? 0;\n              const joinPct     = analytics.funnel[4]?.pct ?? 0;\n              const selCount    = analytics.funnel[3]?.count ?? 0;\n              const joinCount   = analytics.funnel[4]?.count ?? 0;",
-              "              const funnelStage = (stage: string) => analytics.funnel.find((item) => item.stage === stage);\n              const totalLogged = funnelStage(\"Logged\")?.count ?? 0;\n              const contactedCount = funnelStage(\"Contacted\")?.count ?? 0;\n              const walkinCount = funnelStage(\"Walked In\")?.count ?? 0;\n              const selCount = funnelStage(\"Selected\")?.count ?? 0;\n              const joinCount = funnelStage(\"Joined\")?.count ?? 0;\n              const stageRate = (numerator: number, denominator: number) => denominator > 0\n                ? Math.round((numerator / denominator) * 1000) / 10\n                : 0;\n              const contactRate = stageRate(contactedCount, totalLogged);\n              const walkinRate = stageRate(walkinCount, contactedCount);\n              const selectionRate = stageRate(selCount, walkinCount);\n              const joinRate = stageRate(joinCount, selCount);\n              const followupDueCount = analytics.followupDueCount ?? analytics.followupDue.length;",
-              "analytics KPI derived values",
-          )
+          '''
+          f = between(f, '        {/* ── Compact metric strip ── */}', '        {/* ── Session Context Panel', cards, 'header KPI cards')
 
-          analytics_kpi_start = frontend.index("                  {/* ── KPI tiles ── */}")
-          analytics_kpi_end = frontend.index("\n\n                  {/* ── Visual Hiring Funnel", analytics_kpi_start)
-          new_analytics_kpis = r'''                  {/* ── KPI tiles ── */}
+          derived = '''              const funnelStage = (stage: string) => analytics.funnel.find((item) => item.stage === stage);
+              const totalLogged = funnelStage("Logged")?.count ?? 0;
+              const contactedCount = funnelStage("Contacted")?.count ?? 0;
+              const walkinCount = funnelStage("Walked In")?.count ?? 0;
+              const selCount = funnelStage("Selected")?.count ?? 0;
+              const joinCount = funnelStage("Joined")?.count ?? 0;
+              const stageRate = (numerator: number, denominator: number) => denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+              const contactRate = stageRate(contactedCount, totalLogged);
+              const walkinRate = stageRate(walkinCount, contactedCount);
+              const selectionRate = stageRate(selCount, walkinCount);
+              const joinRate = stageRate(joinCount, selCount);
+              const followupDueCount = analytics.followupDueCount ?? analytics.followupDue.length;
+
+              '''
+          f = between(f, '              const totalLogged =', '              // ApexCharts: outcome donut', derived, 'analytics KPI variables')
+
+          tiles = '''                  {/* ── KPI tiles ── */}
                             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                               <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} sub="logged candidate records" color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
                               <KpiTile label="Contacted" value={contactedCount.toLocaleString()} sub={`${contactRate}% of logged`} color="border-cyan-300" icon={<PhoneCall className="h-4 w-4 text-cyan-500" />} />
                               <KpiTile label="Walk-ins" value={walkinCount.toLocaleString()} sub={`${walkinRate}% of contacted`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
                               <KpiTile label="Selected" value={selCount.toLocaleString()} sub={`${selectionRate}% of walk-ins`} color="border-emerald-300" icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} />
                               <KpiTile label="Joined" value={joinCount.toLocaleString()} sub={`${joinRate}% of selected`} color="border-violet-300" icon={<BadgeCheck className="h-4 w-4 text-violet-500" />} />
-                              <KpiTile
-                                label="Follow-ups"
-                                value={followupDueCount.toLocaleString()}
-                                sub="due in the next 7 days"
-                                color={followupDueCount > 0 ? "border-amber-400" : "border-slate-200"}
-                                icon={<Bell className="h-4 w-4 text-amber-500" />}
-                              />
-                            </div>'''
-          frontend = frontend[:analytics_kpi_start] + new_analytics_kpis + frontend[analytics_kpi_end:]
+                              <KpiTile label="Follow-ups" value={followupDueCount.toLocaleString()} sub="due in the next 7 days" color={followupDueCount > 0 ? "border-amber-400" : "border-slate-200"} icon={<Bell className="h-4 w-4 text-amber-500" />} />
+                            </div>
 
-          frontend = replace_once(
-              frontend,
-              '<div className="text-xs text-slate-400">Conversion at each stage</div>',
-              '<div className="text-xs text-slate-400">Each percentage is measured from total logged candidates</div>',
-              "funnel percentage label",
-          )
-          frontend = frontend.replace(
-              "const rate = prev.count > 0 ? Math.round((s.count / prev.count) * 100) : 0;",
-              "const rate = prev.count > 0 ? Math.round((s.count / prev.count) * 1000) / 10 : 0;",
-          )
-          frontend = frontend.replace(
-              "{analytics.funnel[0].count > 0 ? Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 100) : 0}%",
-              "{analytics.funnel[0].count > 0 ? Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 1000) / 10 : 0}%",
-          )
-          frontend = frontend.replace(
-              "{analytics.funnel[i - 1].count > 0 ? Math.round((s.count / analytics.funnel[i - 1].count) * 100) : 0}%",
-              "{analytics.funnel[i - 1].count > 0 ? Math.round((s.count / analytics.funnel[i - 1].count) * 1000) / 10 : 0}%",
-          )
-
-          frontend_path.write_text(frontend, encoding="utf-8")
+          '''
+          f = between(f, '                  {/* ── KPI tiles ── */}', '                  {/* ── Visual Hiring Funnel', tiles, 'analytics KPI tiles')
+          f = once(f, '<div className="text-xs text-slate-400">Conversion at each stage</div>', '<div className="text-xs text-slate-400">Stage percentages below use total logged candidates</div>', 'funnel pct explanation')
+          f = f.replace('Math.round((s.count / prev.count) * 100)', 'Math.round((s.count / prev.count) * 1000) / 10')
+          f = f.replace('Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 100)', 'Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 1000) / 10')
+          f = f.replace('Math.round((s.count / analytics.funnel[i - 1].count) * 100)', 'Math.round((s.count / analytics.funnel[i - 1].count) * 1000) / 10')
+          fp.write_text(f, encoding='utf-8')
           PY
 
-      - name: Install frontend dependencies
-        run: npm install --legacy-peer-deps --ignore-scripts
-
-      - name: Frontend typecheck
-        run: npm run typecheck
-
-      - name: Frontend production build
-        run: npm run build
-
-      - name: Install backend dependencies
-        working-directory: backend
+      - run: npm install --legacy-peer-deps --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run build
+      - working-directory: backend
         run: npm install --ignore-scripts
-
-      - name: Backend typecheck
-        working-directory: backend
+      - working-directory: backend
         run: npm run typecheck
 
-      - name: Verify intended scope
-        shell: bash
+      - name: Verify intended source scope
         run: |
           changed=$(git diff --name-only)
           echo "$changed"
           test "$changed" = $'backend/src/modules/ats/recruiter-hiring.service.ts\nsrc/pages/NativeATSHiringEntry.tsx'
 
       - name: Commit validated changes and remove temporary files
-        shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm .github/workflows/fix-ats-kpi-calculations.yml
-          rm .github/kpi-fix-trigger.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm .github/workflows/fix-ats-kpi-calculations.yml .github/kpi-fix-trigger.txt
           git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx .github/workflows/fix-ats-kpi-calculations.yml .github/kpi-fix-trigger.txt
-          git commit -m "fix(ats): correct KPI grid calculations"
+          git commit -m 'fix(ats): correct KPI grid calculations'
           git push origin HEAD:agent/fix-ats-kpi-calculations
