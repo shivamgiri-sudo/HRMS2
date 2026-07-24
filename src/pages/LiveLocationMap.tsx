@@ -5,7 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { MapPin, Users, RefreshCw, AlertCircle, Search, X } from "lucide-react";
+import { MapPin, Users, RefreshCw, AlertCircle, Search, X, Clock } from "lucide-react";
 
 // Fix Leaflet default marker icons broken by Vite bundler
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -27,14 +27,47 @@ interface LiveEmployee {
   designation: string | null;
 }
 
-interface BranchOption { id: string; branch_name: string; }
-interface ProcessOption { id: string; process_name: string; branch_id: string | null; }
+interface BranchOption {
+  id: string;
+  branch_name: string;
+  latitude: string | null;
+  longitude: string | null;
+}
+
+interface ProcessOption {
+  id: string;
+  process_name: string;
+  branch_id: string | null;
+}
 
 function minutesAgo(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (diff < 1) return "just now";
   if (diff === 1) return "1 min ago";
   return `${diff} min ago`;
+}
+
+// Haversine formula — returns distance in km between two lat/lng points
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Returns human-readable travel time estimate at ~40 km/h average city speed
+function travelTimeLabel(distKm: number): string {
+  const minutes = Math.round((distKm / 40) * 60);
+  if (minutes < 1) return "< 1 min";
+  if (minutes < 60) return `~${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `~${h}h ${m}min` : `~${h}h`;
 }
 
 // Auto-fit map bounds to the given employees list when they change
@@ -58,9 +91,9 @@ function MapRefCapture({ onMap }: { onMap: (m: L.Map) => void }) {
 }
 
 export default function LiveLocationMap() {
-  const [selectedId, setSelectedId]     = useState<string | null>(null);
-  const [searchQuery, setSearchQuery]   = useState("");
-  const [branchFilter, setBranchFilter] = useState("");
+  const [selectedId, setSelectedId]       = useState<string | null>(null);
+  const [searchQuery, setSearchQuery]     = useState("");
+  const [branchFilter, setBranchFilter]   = useState("");
   const [processFilter, setProcessFilter] = useState("");
   const mapRef     = useRef<L.Map | null>(null);
   const markerRefs = useRef<Record<string, L.Marker>>({});
@@ -76,7 +109,7 @@ export default function LiveLocationMap() {
     staleTime: 15_000,
   });
 
-  // All active branches from DB — for the branch dropdown
+  // All active branches — includes lat/lng for travel-time calc
   const { data: branchData } = useQuery({
     queryKey: ["org-branches-live-map"],
     queryFn: async () => {
@@ -86,7 +119,7 @@ export default function LiveLocationMap() {
     staleTime: 5 * 60_000,
   });
 
-  // All active processes from DB — for the process dropdown
+  // All active processes — for process dropdown
   const { data: processData } = useQuery({
     queryKey: ["org-processes-live-map"],
     queryFn: async () => {
@@ -96,9 +129,20 @@ export default function LiveLocationMap() {
     staleTime: 5 * 60_000,
   });
 
-  const employees  = liveData ?? [];
-  const allBranches = branchData ?? [];
+  const employees    = liveData ?? [];
+  const allBranches  = branchData ?? [];
   const allProcesses = processData ?? [];
+
+  // Build a lookup: branch_name → { lat, lng } for travel-time calculation
+  const branchCoords = useMemo(() => {
+    const map: Record<string, { lat: number; lng: number }> = {};
+    for (const b of allBranches) {
+      if (b.latitude && b.longitude) {
+        map[b.branch_name] = { lat: Number(b.latitude), lng: Number(b.longitude) };
+      }
+    }
+    return map;
+  }, [allBranches]);
 
   // Filter processes by selected branch (branch_id FK on process_master)
   const filteredProcesses = useMemo(() => {
@@ -124,6 +168,14 @@ export default function LiveLocationMap() {
   const lastUpdate = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString("en-IN")
     : "—";
+
+  function getTravelInfo(emp: LiveEmployee): { distKm: number; label: string } | null {
+    if (!emp.branch_name) return null;
+    const coords = branchCoords[emp.branch_name];
+    if (!coords) return null;
+    const distKm = haversineKm(Number(emp.latitude), Number(emp.longitude), coords.lat, coords.lng);
+    return { distKm, label: travelTimeLabel(distKm) };
+  }
 
   function flyToEmployee(emp: LiveEmployee) {
     setSelectedId(emp.employee_id);
@@ -176,9 +228,8 @@ export default function LiveLocationMap() {
           {/* ── Left sidebar ── */}
           <div className="w-72 shrink-0 flex flex-col border-r bg-gray-50 overflow-hidden">
 
-            {/* Filters — always populated from DB, not from online employees */}
+            {/* Filters */}
             <div className="p-3 border-b bg-white space-y-2">
-              {/* Name search */}
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <input
@@ -210,7 +261,7 @@ export default function LiveLocationMap() {
                 ))}
               </select>
 
-              {/* Process dropdown — all active processes from process_master, filtered by branch */}
+              {/* Process dropdown — filtered by selected branch */}
               <select
                 value={processFilter}
                 onChange={(e) => setProcessFilter(e.target.value)}
@@ -240,31 +291,42 @@ export default function LiveLocationMap() {
                 </div>
               )}
 
-              {filteredEmployees.map((emp) => (
-                <button
-                  key={emp.employee_id}
-                  onClick={() => flyToEmployee(emp)}
-                  className={`w-full text-left px-3 py-2.5 border-b border-gray-100 hover:bg-blue-50 transition-colors ${
-                    selectedId === emp.employee_id
-                      ? "bg-blue-50 border-l-2 border-l-blue-500"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-green-500" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{emp.full_name}</p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {[emp.branch_name, emp.process_name].filter(Boolean).join(" · ") || "—"}
-                      </p>
-                      {emp.designation && (
-                        <p className="text-xs text-gray-400 truncate">{emp.designation}</p>
-                      )}
-                      <p className="text-xs text-gray-400 mt-0.5">{minutesAgo(emp.captured_at)}</p>
+              {filteredEmployees.map((emp) => {
+                const travel = getTravelInfo(emp);
+                return (
+                  <button
+                    key={emp.employee_id}
+                    onClick={() => flyToEmployee(emp)}
+                    className={`w-full text-left px-3 py-2.5 border-b border-gray-100 hover:bg-blue-50 transition-colors ${
+                      selectedId === emp.employee_id
+                        ? "bg-blue-50 border-l-2 border-l-blue-500"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-green-500" />
+                      <div className="min-w-0 w-full">
+                        <p className="text-sm font-medium text-gray-900 truncate">{emp.full_name}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {[emp.branch_name, emp.process_name].filter(Boolean).join(" · ") || "—"}
+                        </p>
+                        {emp.designation && (
+                          <p className="text-xs text-gray-400 truncate">{emp.designation}</p>
+                        )}
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className="text-xs text-gray-400">{minutesAgo(emp.captured_at)}</p>
+                          {travel && (
+                            <span className="flex items-center gap-0.5 text-xs text-amber-600 font-medium">
+                              <Clock className="w-3 h-3" />
+                              {travel.label} to office
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -300,44 +362,71 @@ export default function LiveLocationMap() {
               <MapRefCapture onMap={(m) => { mapRef.current = m; }} />
               <BoundsFitter employees={filteredEmployees} />
 
-              {filteredEmployees.map((emp) => (
-                <Marker
-                  key={emp.employee_id}
-                  position={[Number(emp.latitude), Number(emp.longitude)]}
-                  ref={(m) => {
-                    if (m) markerRefs.current[emp.employee_id] = m;
-                    else delete markerRefs.current[emp.employee_id];
-                  }}
-                  eventHandlers={{ click: () => setSelectedId(emp.employee_id) }}
-                >
-                  <Popup>
-                    <div style={{ minWidth: 170, fontSize: 13 }}>
-                      <strong style={{ display: "block", marginBottom: 4 }}>
-                        {emp.full_name}
-                      </strong>
-                      {emp.branch_name && (
-                        <span style={{ color: "#555", display: "block" }}>
-                          {emp.branch_name}
-                          {emp.process_name ? ` · ${emp.process_name}` : ""}
+              {filteredEmployees.map((emp) => {
+                const travel = getTravelInfo(emp);
+                return (
+                  <Marker
+                    key={emp.employee_id}
+                    position={[Number(emp.latitude), Number(emp.longitude)]}
+                    ref={(m) => {
+                      if (m) markerRefs.current[emp.employee_id] = m;
+                      else delete markerRefs.current[emp.employee_id];
+                    }}
+                    eventHandlers={{ click: () => setSelectedId(emp.employee_id) }}
+                  >
+                    <Popup>
+                      <div style={{ minWidth: 190, fontSize: 13 }}>
+                        <strong style={{ display: "block", marginBottom: 4 }}>
+                          {emp.full_name}
+                        </strong>
+                        {emp.branch_name && (
+                          <span style={{ color: "#555", display: "block" }}>
+                            {emp.branch_name}
+                            {emp.process_name ? ` · ${emp.process_name}` : ""}
+                          </span>
+                        )}
+                        {emp.designation && (
+                          <span style={{ color: "#777", display: "block", fontSize: 11 }}>
+                            {emp.designation}
+                          </span>
+                        )}
+                        <span style={{ color: "#888", fontSize: 11, display: "block", marginTop: 4 }}>
+                          Last seen: {minutesAgo(emp.captured_at)}
                         </span>
-                      )}
-                      {emp.designation && (
-                        <span style={{ color: "#777", display: "block", fontSize: 11 }}>
-                          {emp.designation}
-                        </span>
-                      )}
-                      <span style={{ color: "#888", fontSize: 11, display: "block", marginTop: 4 }}>
-                        Last seen: {minutesAgo(emp.captured_at)}
-                      </span>
-                      {emp.accuracy != null && (
-                        <span style={{ display: "block", color: "#aaa", fontSize: 10, marginTop: 2 }}>
-                          ±{Math.round(emp.accuracy)}m accuracy
-                        </span>
-                      )}
-                    </div>
-                  </Popup>
-                </Marker>
-              ))}
+                        {emp.accuracy != null && (
+                          <span style={{ display: "block", color: "#aaa", fontSize: 10, marginTop: 2 }}>
+                            ±{Math.round(emp.accuracy)}m accuracy
+                          </span>
+                        )}
+                        {travel && (
+                          <div style={{
+                            marginTop: 8,
+                            paddingTop: 8,
+                            borderTop: "1px solid #eee",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            color: "#b45309",
+                            fontWeight: 600,
+                            fontSize: 12,
+                          }}>
+                            <span>🕐</span>
+                            <span>{travel.label} to office</span>
+                            <span style={{ fontWeight: 400, color: "#999", fontSize: 10 }}>
+                              ({travel.distKm.toFixed(1)} km est.)
+                            </span>
+                          </div>
+                        )}
+                        {emp.branch_name && !branchCoords[emp.branch_name] && (
+                          <div style={{ marginTop: 8, fontSize: 10, color: "#aaa" }}>
+                            Travel time unavailable — add branch coordinates in Org Masters
+                          </div>
+                        )}
+                      </div>
+                    </Popup>
+                  </Marker>
+                );
+              })}
             </MapContainer>
           </div>
         </div>

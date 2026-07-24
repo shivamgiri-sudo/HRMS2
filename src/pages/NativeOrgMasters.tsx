@@ -61,6 +61,8 @@ const TABS: TabConfig[] = [
       { key: "city", label: "City", type: "text" },
       { key: "state", label: "State", type: "text" },
       { key: "hr_contact", label: "HR Contact (Email / Phone)", type: "text" },
+      { key: "latitude",   label: "Latitude (for live map)",  type: "text" },
+      { key: "longitude",  label: "Longitude (for live map)", type: "text" },
     ],
   },
   {
