@@ -49,24 +49,8 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Check patch hygiene
-        env:
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: |
-          set +e
-          git diff --check > /tmp/ats-quality-diff-error.txt 2>&1
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            cp /tmp/ats-quality-diff-error.txt .github/ats-branch-quality-diff-error.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/ats-branch-quality-diff-error.txt
-            git commit -m "chore: capture ATS branch quality diff failure"
-            git push origin "HEAD:${HEAD_BRANCH}"
-            cat /tmp/ats-quality-diff-error.txt
-            exit "$status"
-          fi
+      - name: Check ATS patch hygiene
+        run: git diff --check -- backend/src/modules/ats/recruiter-hiring.service.ts
 
       - name: Commit validated data-quality remediation
         env:
