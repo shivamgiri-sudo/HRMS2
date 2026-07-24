@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { MapPin, Users, RefreshCw, AlertCircle } from "lucide-react";
+import { MapPin, Users, RefreshCw, AlertCircle, Search, X } from "lucide-react";
 
-// Fix Leaflet default marker icons broken by bundlers
+// Fix Leaflet default marker icons broken by Vite bundler
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -23,6 +23,8 @@ interface LiveEmployee {
   captured_at: string;
   full_name: string;
   branch_name: string | null;
+  process_name: string | null;
+  designation: string | null;
 }
 
 function minutesAgo(iso: string): string {
@@ -32,7 +34,7 @@ function minutesAgo(iso: string): string {
   return `${diff} min ago`;
 }
 
-// Auto-fit map bounds whenever employee data changes
+// Fits map bounds to the given employees list
 function BoundsFitter({ employees }: { employees: LiveEmployee[] }) {
   const map = useMap();
   useEffect(() => {
@@ -45,8 +47,20 @@ function BoundsFitter({ employees }: { employees: LiveEmployee[] }) {
   return null;
 }
 
+// Exposes map instance to parent via ref callback
+function MapRefCapture({ onMap }: { onMap: (m: L.Map) => void }) {
+  const map = useMap();
+  useEffect(() => { onMap(map); }, [map]);
+  return null;
+}
+
 export default function LiveLocationMap() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [processFilter, setProcessFilter] = useState("");
+  const mapRef = useRef<L.Map | null>(null);
+  const markerRefs = useRef<Record<string, L.Marker>>({});
 
   const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["live-location"],
@@ -62,21 +76,53 @@ export default function LiveLocationMap() {
 
   const employees = data ?? [];
 
-  const branchCounts = employees.reduce<Record<string, number>>((acc, e) => {
-    const b = e.branch_name || "Unknown";
-    acc[b] = (acc[b] || 0) + 1;
-    return acc;
-  }, {});
+  // Derived filter options from online employees
+  const branches = useMemo(
+    () => [...new Set(employees.map((e) => e.branch_name).filter(Boolean) as string[])].sort(),
+    [employees]
+  );
+  const processes = useMemo(() => {
+    const pool = branchFilter
+      ? employees.filter((e) => e.branch_name === branchFilter)
+      : employees;
+    return [...new Set(pool.map((e) => e.process_name).filter(Boolean) as string[])].sort();
+  }, [employees, branchFilter]);
+
+  // Reset process filter when branch changes
+  useEffect(() => { setProcessFilter(""); }, [branchFilter]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return employees.filter((e) => {
+      if (branchFilter && e.branch_name !== branchFilter) return false;
+      if (processFilter && e.process_name !== processFilter) return false;
+      if (q && !e.full_name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [employees, searchQuery, branchFilter, processFilter]);
 
   const lastUpdate = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString("en-IN")
     : "—";
 
+  function flyToEmployee(emp: LiveEmployee) {
+    setSelectedId(emp.employee_id);
+    const map = mapRef.current;
+    if (map) {
+      map.flyTo([Number(emp.latitude), Number(emp.longitude)], 16, { duration: 1 });
+      // Open popup after fly completes (~1s)
+      setTimeout(() => {
+        const marker = markerRefs.current[emp.employee_id];
+        if (marker) marker.openPopup();
+      }, 1100);
+    }
+  }
+
   return (
     <DashboardLayout>
       <div className="flex flex-col" style={{ height: "calc(100vh - 64px)" }}>
 
-        {/* ── Header ── */}
+        {/* ── Top header bar ── */}
         <div className="bg-white border-b px-5 py-3 shrink-0">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
@@ -88,22 +134,11 @@ export default function LiveLocationMap() {
                 Live Employee Location
               </h1>
             </div>
-
             <div className="flex items-center gap-3 flex-wrap text-xs">
               <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-blue-700 font-medium">
                 <Users className="w-3.5 h-3.5" />
-                <span>{employees.length} Online</span>
+                <span>{filteredEmployees.length} / {employees.length} Online</span>
               </div>
-
-              {Object.entries(branchCounts).map(([branch, count]) => (
-                <span
-                  key={branch}
-                  className="bg-gray-100 text-gray-600 rounded-full px-2.5 py-1 border border-gray-200"
-                >
-                  {branch}: {count}
-                </span>
-              ))}
-
               <button
                 onClick={() => void refetch()}
                 className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
@@ -116,66 +151,178 @@ export default function LiveLocationMap() {
           </div>
         </div>
 
-        {/* ── Map ── */}
-        <div className="flex-1 relative overflow-hidden">
-          {isError && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded-lg shadow">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              Failed to load live locations
-            </div>
-          )}
+        {/* ── Main content: sidebar + map ── */}
+        <div className="flex flex-1 overflow-hidden">
 
-          {!isLoading && !isError && employees.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 z-[500] pointer-events-none">
-              <MapPin className="w-10 h-10 mb-2" />
-              <p className="text-sm font-medium">No employees online in the last 5 minutes</p>
-              <p className="text-xs text-gray-400 mt-1">Employees send a location heartbeat every 30 seconds when logged in</p>
-            </div>
-          )}
+          {/* ── Left sidebar ── */}
+          <div className="w-72 shrink-0 flex flex-col border-r bg-gray-50 overflow-hidden">
 
-          <MapContainer
-            center={[20.5937, 78.9629]}
-            zoom={5}
-            style={{ width: "100%", height: "100%" }}
-            zoomControl
-          >
-            <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
-              maxZoom={19}
-            />
+            {/* Filters */}
+            <div className="p-3 border-b bg-white space-y-2">
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by name…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-7 py-1.5 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
-            <BoundsFitter employees={employees} />
-
-            {employees.map((emp) => (
-              <Marker
-                key={emp.employee_id}
-                position={[Number(emp.latitude), Number(emp.longitude)]}
-                eventHandlers={{ click: () => setSelectedId(emp.employee_id) }}
+              {/* Branch filter */}
+              <select
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
               >
-                <Popup>
-                  <div style={{ minWidth: 160, fontSize: 13 }}>
-                    <strong style={{ display: "block", marginBottom: 4 }}>
-                      {emp.full_name}
-                    </strong>
-                    {emp.branch_name && (
-                      <span style={{ color: "#555", display: "block" }}>
-                        {emp.branch_name}
-                      </span>
-                    )}
-                    <span style={{ color: "#888", fontSize: 11 }}>
-                      Last seen: {minutesAgo(emp.captured_at)}
-                    </span>
-                    {emp.accuracy != null && (
-                      <span style={{ display: "block", color: "#aaa", fontSize: 10, marginTop: 2 }}>
-                        ±{Math.round(emp.accuracy)}m accuracy
-                      </span>
-                    )}
+                <option value="">All Branches</option>
+                {branches.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+
+              {/* Process filter */}
+              <select
+                value={processFilter}
+                onChange={(e) => setProcessFilter(e.target.value)}
+                disabled={processes.length === 0}
+                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+              >
+                <option value="">All Processes</option>
+                {processes.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Employee list */}
+            <div className="flex-1 overflow-y-auto">
+              {isLoading && employees.length === 0 && (
+                <div className="flex items-center justify-center h-24 text-gray-400 text-sm">
+                  Loading…
+                </div>
+              )}
+
+              {!isLoading && filteredEmployees.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-24 text-gray-400 text-xs px-4 text-center">
+                  <MapPin className="w-6 h-6 mb-1" />
+                  {employees.length === 0
+                    ? "No employees online in the last 5 min"
+                    : "No match for current filters"}
+                </div>
+              )}
+
+              {filteredEmployees.map((emp) => (
+                <button
+                  key={emp.employee_id}
+                  onClick={() => flyToEmployee(emp)}
+                  className={`w-full text-left px-3 py-2.5 border-b border-gray-100 hover:bg-blue-50 transition-colors ${
+                    selectedId === emp.employee_id ? "bg-blue-50 border-l-2 border-l-blue-500" : ""
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <div
+                      className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-green-500"
+                      title="Online"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{emp.full_name}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {[emp.branch_name, emp.process_name].filter(Boolean).join(" · ") || "—"}
+                      </p>
+                      {emp.designation && (
+                        <p className="text-xs text-gray-400 truncate">{emp.designation}</p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-0.5">{minutesAgo(emp.captured_at)}</p>
+                    </div>
                   </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Map panel ── */}
+          <div className="flex-1 relative overflow-hidden">
+            {isError && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2 rounded-lg shadow">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                Failed to load live locations
+              </div>
+            )}
+
+            {!isLoading && !isError && employees.length === 0 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 z-[500] pointer-events-none">
+                <MapPin className="w-10 h-10 mb-2" />
+                <p className="text-sm font-medium">No employees online in the last 5 minutes</p>
+                <p className="text-xs mt-1">Employees send a heartbeat every 30 seconds when logged in</p>
+              </div>
+            )}
+
+            <MapContainer
+              center={[20.5937, 78.9629]}
+              zoom={5}
+              style={{ width: "100%", height: "100%" }}
+              zoomControl
+            >
+              <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+                maxZoom={19}
+              />
+
+              <MapRefCapture onMap={(m) => { mapRef.current = m; }} />
+              <BoundsFitter employees={filteredEmployees} />
+
+              {filteredEmployees.map((emp) => (
+                <Marker
+                  key={emp.employee_id}
+                  position={[Number(emp.latitude), Number(emp.longitude)]}
+                  ref={(m) => {
+                    if (m) markerRefs.current[emp.employee_id] = m;
+                    else delete markerRefs.current[emp.employee_id];
+                  }}
+                  eventHandlers={{ click: () => setSelectedId(emp.employee_id) }}
+                >
+                  <Popup>
+                    <div style={{ minWidth: 170, fontSize: 13 }}>
+                      <strong style={{ display: "block", marginBottom: 4 }}>
+                        {emp.full_name}
+                      </strong>
+                      {emp.branch_name && (
+                        <span style={{ color: "#555", display: "block" }}>
+                          {emp.branch_name}
+                          {emp.process_name ? ` · ${emp.process_name}` : ""}
+                        </span>
+                      )}
+                      {emp.designation && (
+                        <span style={{ color: "#777", display: "block", fontSize: 11 }}>
+                          {emp.designation}
+                        </span>
+                      )}
+                      <span style={{ color: "#888", fontSize: 11, display: "block", marginTop: 4 }}>
+                        Last seen: {minutesAgo(emp.captured_at)}
+                      </span>
+                      {emp.accuracy != null && (
+                        <span style={{ display: "block", color: "#aaa", fontSize: 10, marginTop: 2 }}>
+                          ±{Math.round(emp.accuracy)}m accuracy
+                        </span>
+                      )}
+                    </div>
+                  </Popup>
+                </Marker>
+              ))}
+            </MapContainer>
+          </div>
         </div>
       </div>
     </DashboardLayout>

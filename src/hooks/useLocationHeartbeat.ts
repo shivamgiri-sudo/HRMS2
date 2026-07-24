@@ -22,7 +22,9 @@ export function useLocationHeartbeat() {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
           accuracy: pos.coords.accuracy,
-        }).catch(() => { /* silent — heartbeat is best-effort */ });
+        }).catch((err) => {
+          if (import.meta.env.DEV) console.warn("[location-heartbeat]", err);
+        });
       },
       () => { /* permission denied or unavailable — silent */ },
       { enableHighAccuracy: false, maximumAge: 30_000, timeout: 10_000 },
