@@ -7,6 +7,7 @@ import {
   BarChart2,
   Bell,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -358,10 +359,16 @@ export default function NativeATSHiringEntry() {
   useEffect(() => () => { timeoutRefs.current.forEach(clearTimeout); }, []);
 
   // Followup modal state
-  const [followupModal, setFollowupModal] = useState<{ id: string; candidateName: string } | null>(null);
+  const [followupModal, setFollowupModal] = useState<{ id: string; candidateName: string; hasReminder?: boolean } | null>(null);
   const [followupDate, setFollowupDate] = useState("");
   const [followupReason, setFollowupReason] = useState("");
   const [followupSaving, setFollowupSaving] = useState(false);
+  // Follow-up call feedback state
+  const [callDate, setCallDate] = useState("");
+  const [callOutcome, setCallOutcome] = useState("");
+  const [callNotes, setCallNotes] = useState("");
+  const [rescheduledTo, setRescheduledTo] = useState("");
+  const [callSaving, setCallSaving] = useState(false);
 
   const [rows, setRows] = useState<HiringActivityRow[]>([]);
   const [rowsTotal, setRowsTotal] = useState(0);
@@ -531,6 +538,12 @@ export default function NativeATSHiringEntry() {
     }
   };
 
+  const closeFollowupModal = () => {
+    setFollowupModal(null);
+    setFollowupDate(""); setFollowupReason("");
+    setCallDate(""); setCallOutcome(""); setCallNotes(""); setRescheduledTo("");
+  };
+
   const saveFollowup = async () => {
     if (!followupModal || !followupDate) return;
     setFollowupSaving(true);
@@ -540,15 +553,34 @@ export default function NativeATSHiringEntry() {
         followup_reason: followupReason,
       });
       toast.success(`Follow-up reminder set for ${followupModal.candidateName}`);
-      setFollowupModal(null);
-      setFollowupDate("");
-      setFollowupReason("");
+      closeFollowupModal();
       await reloadRowsAfterSave();
-      if (analyticsLoadedRef.current) await loadAnalytics();
+      await loadAnalytics();
     } catch (err: unknown) {
       toast.error((err as { message?: string })?.message ?? "Could not set follow-up");
     } finally {
       setFollowupSaving(false);
+    }
+  };
+
+  const logFollowupCall = async () => {
+    if (!followupModal || !callDate || !callOutcome) return;
+    setCallSaving(true);
+    try {
+      await hrmsApi.post(`/api/ats/recruiter/hiring-activity/${followupModal.id}/log-followup-call`, {
+        followup_call_date: callDate,
+        followup_call_outcome: callOutcome,
+        followup_call_notes: callNotes || null,
+        followup_rescheduled_to: callOutcome === "Rescheduled" ? rescheduledTo : null,
+      });
+      toast.success(callOutcome === "Rescheduled" ? `Follow-up rescheduled for ${followupModal.candidateName}` : `Call logged for ${followupModal.candidateName}`);
+      closeFollowupModal();
+      await reloadRowsAfterSave();
+      await loadAnalytics();
+    } catch (err: unknown) {
+      toast.error((err as { message?: string })?.message ?? "Could not log follow-up call");
+    } finally {
+      setCallSaving(false);
     }
   };
 
@@ -1931,6 +1963,51 @@ export default function NativeATSHiringEntry() {
 
         {/* ── TAB 2: My Entries & Progress (full-width table) ── */}
         {activeTab === "progress" && (
+          <>
+          {/* ── Follow-ups Due alert panel ── */}
+          {analytics && analytics.followupDue.length > 0 && (
+            <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-black text-amber-800">
+                <Bell className="h-4 w-4" />
+                Follow-ups Due (Next 7 Days) — {(analytics.followupDueCount ?? analytics.followupDue.length).toLocaleString()}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-b border-amber-200">
+                      <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Candidate</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Mobile</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Due Date</th>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-amber-700">Reason</th>
+                      <th className="px-3 py-2 text-[10px] font-bold uppercase text-amber-700"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-100">
+                    {analytics.followupDue.map((f) => {
+                      const today = new Date().toISOString().slice(0, 10);
+                      const isDue = String(f.followup_date).slice(0, 10) <= today;
+                      return (
+                        <tr key={f.id}>
+                          <td className="px-3 py-2 font-semibold text-slate-800">{f.candidate_name}</td>
+                          <td className="px-3 py-2 tabular-nums text-slate-600">{f.mobile}</td>
+                          <td className={`px-3 py-2 tabular-nums font-bold ${isDue ? "text-red-600" : "text-amber-700"}`}>{String(f.followup_date).slice(0, 10)}</td>
+                          <td className="px-3 py-2 text-slate-600 max-w-[160px] truncate">{f.followup_reason || "—"}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1.5">
+                              <button type="button" onClick={() => { setFollowupModal({ id: f.id, candidateName: f.candidate_name, hasReminder: true }); setFollowupDate(String(f.followup_date).slice(0, 10)); setFollowupReason(f.followup_reason || ""); setCallDate(today); setCallOutcome(""); setCallNotes(""); setRescheduledTo(""); }}
+                                className="rounded-lg border border-emerald-300 bg-white px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50">Log Call</button>
+                              <button type="button" onClick={() => { setFollowupModal({ id: f.id, candidateName: f.candidate_name, hasReminder: true }); setFollowupDate(String(f.followup_date).slice(0, 10)); setFollowupReason(f.followup_reason || ""); setCallDate(""); setCallOutcome(""); setCallNotes(""); setRescheduledTo(""); }}
+                                className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-bold text-amber-700 hover:bg-amber-50">Edit</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
             {/* Filter bar */}
             <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4">
@@ -2124,25 +2201,35 @@ export default function NativeATSHiringEntry() {
                           </td>
                           <td className="px-3 py-2.5 text-slate-500 tabular-nums text-xs">{row.activity_date || "—"}</td>
                           <td className="px-3 py-2.5 text-center">
-                            {row.followup_date ? (
-                              <button
-                                type="button"
-                                onClick={() => { setFollowupModal({ id: row.id, candidateName: row.candidate_name || "Candidate" }); setFollowupDate(row.followup_date); setFollowupReason(row.followup_reason || ""); }}
-                                className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-100"
-                              >
-                                <Bell className="h-2.5 w-2.5" />
-                                {String(row.followup_date).slice(0, 10)}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => { setFollowupModal({ id: row.id, candidateName: row.candidate_name || "Candidate" }); setFollowupDate(""); setFollowupReason(""); }}
-                                className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:border-amber-300 hover:text-amber-600"
-                              >
-                                <Plus className="h-2.5 w-2.5" />
-                                Set
-                              </button>
-                            )}
+                            {(() => {
+                              const today = new Date().toISOString().slice(0, 10);
+                              const openModal = () => {
+                                setFollowupModal({ id: row.id, candidateName: row.candidate_name || "Candidate", hasReminder: !!row.followup_date });
+                                setFollowupDate(row.followup_date ? String(row.followup_date).slice(0, 10) : "");
+                                setFollowupReason(row.followup_reason || "");
+                                setCallDate(today); setCallOutcome(""); setCallNotes(""); setRescheduledTo("");
+                              };
+                              if (row.followup_call_done && !row.followup_required) {
+                                return (
+                                  <button type="button" onClick={openModal} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100">
+                                    <Check className="h-2.5 w-2.5" />Done
+                                  </button>
+                                );
+                              }
+                              if (row.followup_required && row.followup_date) {
+                                const isDue = String(row.followup_date).slice(0, 10) <= today;
+                                return (
+                                  <button type="button" onClick={openModal} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold hover:bg-amber-100 ${isDue ? "animate-pulse bg-amber-100 border-amber-400 text-amber-800" : "bg-amber-50 border-amber-200 text-amber-700"}`}>
+                                    <Bell className="h-2.5 w-2.5" />{isDue ? "Due" : String(row.followup_date).slice(0, 10)}
+                                  </button>
+                                );
+                              }
+                              return (
+                                <button type="button" onClick={openModal} className="inline-flex items-center gap-1 rounded-full border border-dashed border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-400 hover:border-amber-300 hover:text-amber-600">
+                                  <Plus className="h-2.5 w-2.5" />Set
+                                </button>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             {(row.created_by === bootstrap?.actor.userId || row.recruiter_id === bootstrap?.actor.userId) && (
@@ -2178,50 +2265,104 @@ export default function NativeATSHiringEntry() {
               </>
             )}
           </section>
+          </>
         )}
       </div>
 
       {/* ── Follow-up modal ── */}
       {followupModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setFollowupModal(null)}>
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <div className="text-base font-black text-slate-900">Set Follow-up Reminder</div>
-              <button type="button" onClick={() => setFollowupModal(null)} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closeFollowupModal}>
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl overflow-y-auto max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+              <div className="text-base font-black text-slate-900">Follow-up — {followupModal.candidateName}</div>
+              <button type="button" onClick={closeFollowupModal} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
             </div>
-            <div className="mb-1 text-sm font-semibold text-slate-700">{followupModal.candidateName}</div>
-            <div className="space-y-3 mt-3">
-              <label className="block space-y-1">
-                <div className="text-xs font-bold uppercase text-slate-500">Follow-up Date *</div>
-                <input
-                  type="date"
-                  value={followupDate}
-                  onChange={(e) => setFollowupDate(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-amber-400"
-                />
-              </label>
-              <label className="block space-y-1">
-                <div className="text-xs font-bold uppercase text-slate-500">Reason / Note</div>
-                <textarea
-                  value={followupReason}
-                  onChange={(e) => setFollowupReason(e.target.value)}
-                  rows={2}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-amber-400 resize-none"
-                  placeholder="What to follow up on..."
-                />
-              </label>
+
+            {/* Section A — Set/Edit Reminder */}
+            <div className="px-5 pb-4">
+              <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-amber-700">
+                <Bell className="h-3.5 w-3.5" />Set Follow-up Reminder
+              </div>
+              <div className="space-y-3">
+                <label className="block space-y-1">
+                  <div className="text-xs font-bold uppercase text-slate-500">Follow-up Date *</div>
+                  <input type="date" value={followupDate} onChange={(e) => setFollowupDate(e.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-amber-400" />
+                </label>
+                <label className="block space-y-1">
+                  <div className="text-xs font-bold uppercase text-slate-500">Reason / Note</div>
+                  <textarea value={followupReason} onChange={(e) => setFollowupReason(e.target.value)} rows={2}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-amber-400 resize-none"
+                    placeholder="What to follow up on..." />
+                </label>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button type="button" onClick={() => void saveFollowup()} disabled={followupSaving || !followupDate}
+                  className={`h-9 rounded-xl px-4 text-sm font-bold ${followupSaving || !followupDate ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-amber-500 text-white hover:bg-amber-600"}`}>
+                  {followupSaving ? "Saving…" : "Save Reminder"}
+                </button>
+              </div>
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setFollowupModal(null)} className="h-9 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
-              <button
-                type="button"
-                onClick={() => void saveFollowup()}
-                disabled={followupSaving || !followupDate}
-                className={`h-9 rounded-xl px-4 text-sm font-bold ${followupSaving || !followupDate ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-amber-500 text-white hover:bg-amber-600"}`}
-              >
-                {followupSaving ? "Saving…" : "Save Reminder"}
-              </button>
-            </div>
+
+            {/* Section B — Log Follow-up Call (only when reminder already set) */}
+            {followupModal.hasReminder && (
+              <>
+                <div className="mx-5 border-t border-slate-100" />
+                <div className="px-5 pt-4 pb-5">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-700">
+                    <PhoneCall className="h-3.5 w-3.5" />Log Follow-up Call
+                  </div>
+                  <div className="space-y-3">
+                    <label className="block space-y-1">
+                      <div className="text-xs font-bold uppercase text-slate-500">Call Date *</div>
+                      <input type="date" value={callDate} onChange={(e) => setCallDate(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400" />
+                    </label>
+                    <label className="block space-y-1">
+                      <div className="text-xs font-bold uppercase text-slate-500">Outcome *</div>
+                      <select value={callOutcome} onChange={(e) => setCallOutcome(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400">
+                        <option value="">Select outcome…</option>
+                        <option value="Interested">Interested</option>
+                        <option value="Not Interested">Not Interested</option>
+                        <option value="No Response">No Response</option>
+                        <option value="Rescheduled">Rescheduled</option>
+                        <option value="Already Joined">Already Joined</option>
+                        <option value="Declined Offer">Declined Offer</option>
+                        <option value="Wrong Number">Wrong Number</option>
+                      </select>
+                    </label>
+                    {callOutcome === "Rescheduled" && (
+                      <label className="block space-y-1">
+                        <div className="text-xs font-bold uppercase text-slate-500">Next Follow-up Date *</div>
+                        <input type="date" value={rescheduledTo} onChange={(e) => setRescheduledTo(e.target.value)}
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400" />
+                      </label>
+                    )}
+                    <label className="block space-y-1">
+                      <div className="text-xs font-bold uppercase text-slate-500">Notes</div>
+                      <textarea value={callNotes} onChange={(e) => setCallNotes(e.target.value)} rows={2}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-emerald-400 resize-none"
+                        placeholder="What happened on the call..." />
+                    </label>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <button type="button" onClick={closeFollowupModal} className="h-9 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+                    <button type="button" onClick={() => void logFollowupCall()}
+                      disabled={callSaving || !callDate || !callOutcome || (callOutcome === "Rescheduled" && !rescheduledTo)}
+                      className={`h-9 rounded-xl px-4 text-sm font-bold ${callSaving || !callDate || !callOutcome || (callOutcome === "Rescheduled" && !rescheduledTo) ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+                      {callSaving ? "Saving…" : "Log Call"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {!followupModal.hasReminder && (
+              <div className="flex justify-start px-5 pb-5">
+                <button type="button" onClick={closeFollowupModal} className="h-9 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+              </div>
+            )}
           </div>
         </div>
       )}

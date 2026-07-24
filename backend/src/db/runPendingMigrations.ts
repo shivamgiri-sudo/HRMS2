@@ -375,6 +375,7 @@ const MIGRATION_MANIFEST: string[] = [
   "524_job_requisition_batch_link.sql",         // Planned batch columns on job_requisition
   "528_job_requisition_handover.sql",           // Handover workflow columns on job_requisition
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
+  "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   ];
 
 export type MigrationHealth = {
