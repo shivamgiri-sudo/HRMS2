@@ -21,6 +21,7 @@ import {
   getProvisioningStats,
   OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
+import { parseAdEventLog } from './ad-log-parser.js';
 import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
 
 const router = Router();
@@ -556,6 +557,37 @@ router.post(
       });
     } catch (err) {
       console.error('[upload-evidence] document vault registration failed:', err);
+    }
+
+    // Parse AD Security Event Log if it's a .txt or .log file (non-fatal)
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.txt' || ext === '.log') {
+      try {
+        const parsed = await parseAdEventLog(
+          path.resolve(EVIDENCE_UPLOAD_DIR, file.filename)
+        );
+        if (parsed) {
+          await db.execute(
+            `UPDATE it_provisioning_request
+                SET ad_log_type       = ?,
+                    ad_account_name   = ?,
+                    ad_event_id       = ?,
+                    ad_actioned_by_it = ?,
+                    ad_event_time     = ?
+              WHERE id = ?`,
+            [
+              parsed.logType,
+              parsed.accountName   ?? null,
+              parsed.eventId,
+              parsed.actionedByIt  ?? null,
+              parsed.eventTime     ?? null,
+              taskId,
+            ],
+          );
+        }
+      } catch (err) {
+        console.error('[upload-evidence] AD log parsing failed:', err);
+      }
     }
 
     return res.json({ success: true, url: fileUrl, filename: file.filename });

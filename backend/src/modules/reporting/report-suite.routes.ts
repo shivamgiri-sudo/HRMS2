@@ -3173,6 +3173,71 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
     }
 
+    case "it-ad-account-audit": {
+      // AD Account Provisioning Compliance Report
+      // Shows every IT_EMAIL_DOMAIN_ASSET task with parsed AD log fields for audit.
+      const dateFrom = req.query.date_from ? String(req.query.date_from) : null;
+      const dateTo   = req.query.date_to   ? String(req.query.date_to)   : null;
+      const branch   = req.query.branch    ? String(req.query.branch)    : null;
+      const reqType  = req.query.request_type ? String(req.query.request_type) : null;
+      const evStatus = req.query.evidence_status ? String(req.query.evidence_status) : null;
+
+      sql = `
+        SELECT
+          e.employee_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+          DATE_FORMAT(e.date_of_joining,  '%Y-%m-%d') AS date_of_joining,
+          DATE_FORMAT(e.date_of_leaving,  '%Y-%m-%d') AS date_of_leaving,
+          b.branch_name,
+          p.process_name,
+          ipr.request_type,
+          ipr.status,
+          ipr.locked,
+          ipr.domain_account,
+          ipr.official_email,
+          COALESCE(ipr.ad_log_type, 'missing')         AS ad_log_type,
+          ipr.ad_account_name,
+          ipr.ad_event_id,
+          ipr.ad_actioned_by_it,
+          DATE_FORMAT(ipr.ad_event_time, '%Y-%m-%d %H:%i:%s') AS ad_event_time,
+          ipr.evidence_file_url,
+          DATE_FORMAT(ipr.requested_at, '%Y-%m-%d %H:%i:%s') AS requested_at,
+          DATE_FORMAT(ipr.actioned_at,  '%Y-%m-%d %H:%i:%s') AS actioned_at,
+          DATE_FORMAT(ipr.sla_due_at,   '%Y-%m-%d %H:%i:%s') AS sla_due_at,
+          CASE
+            WHEN ipr.sla_due_at IS NOT NULL
+             AND ipr.actioned_at IS NOT NULL
+             AND ipr.actioned_at > ipr.sla_due_at
+            THEN 'SLA Breach'
+            WHEN ipr.sla_due_at IS NOT NULL
+             AND ipr.actioned_at IS NULL
+             AND ipr.sla_due_at < NOW()
+             AND ipr.status NOT IN ('waived','confirmed')
+            THEN 'Overdue'
+            ELSE 'On Time'
+          END AS sla_status,
+          CASE WHEN ipr.evidence_file_url IS NOT NULL THEN 'Evidence Attached'
+               ELSE 'No Evidence' END AS evidence_status
+        FROM it_provisioning_request ipr
+        JOIN employees e ON e.id = ipr.employee_id
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE ipr.task_code = 'IT_EMAIL_DOMAIN_ASSET'
+          ${dateFrom ? 'AND ipr.requested_at >= ?' : ''}
+          ${dateTo   ? 'AND ipr.requested_at <= ?' : ''}
+          ${branch   ? 'AND b.branch_name = ?' : ''}
+          ${reqType  ? 'AND ipr.request_type = ?' : ''}
+          ${evStatus === 'with_evidence'    ? 'AND ipr.evidence_file_url IS NOT NULL' : ''}
+          ${evStatus === 'without_evidence' ? 'AND ipr.evidence_file_url IS NULL' : ''}
+        ORDER BY ipr.requested_at DESC
+      `;
+      if (dateFrom) params.push(dateFrom);
+      if (dateTo)   params.push(dateTo);
+      if (branch)   params.push(branch);
+      if (reqType)  params.push(reqType);
+      break;
+    }
+
     default: {
       const fallback = fallbackReport(code);
       sql = fallback.sql;

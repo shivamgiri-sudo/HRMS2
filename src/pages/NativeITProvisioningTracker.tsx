@@ -689,6 +689,57 @@ export default function NativeITProvisioningTracker() {
   const [reportTaskId, setReportTaskId] = useState<string | null>(null);
   const [reportOpen, setReportOpen]     = useState(false);
   const [bulkOpen, setBulkOpen]         = useState(false);
+  const [adReportOpen, setAdReportOpen] = useState(false);
+  const [adReportDateFrom, setAdReportDateFrom] = useState("");
+  const [adReportDateTo,   setAdReportDateTo]   = useState("");
+  const [adReportBranch,   setAdReportBranch]   = useState("");
+  const [adReportReqType,  setAdReportReqType]  = useState("");
+  const [adReportEvidence, setAdReportEvidence] = useState("");
+
+  const adReportQuery = useQuery({
+    queryKey: ["ad-compliance-report", adReportDateFrom, adReportDateTo, adReportBranch, adReportReqType, adReportEvidence],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: "500" });
+      if (adReportDateFrom) params.set("date_from", adReportDateFrom);
+      if (adReportDateTo)   params.set("date_to",   adReportDateTo);
+      if (adReportBranch)   params.set("branch",    adReportBranch);
+      if (adReportReqType)  params.set("request_type", adReportReqType);
+      if (adReportEvidence) params.set("evidence_status", adReportEvidence);
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/reports/suite/it-ad-account-audit?${params}`
+      );
+      return res.data ?? [];
+    },
+    enabled: adReportOpen,
+    staleTime: 30_000,
+  });
+
+  function downloadAdReportCsv() {
+    const rows = adReportQuery.data ?? [];
+    if (!rows.length) return;
+    const headers = [
+      "Employee Code","Employee Name","Branch","Process","Type","Status",
+      "Domain Account","Official Email","AD Log Type","AD Account Name",
+      "AD Event ID","Done By (IT)","AD Event Time","SLA Status","Evidence Status",
+      "Requested At","Actioned At","SLA Due At","Evidence File",
+    ];
+    const lines = rows.map((r: any) => [
+      r.employee_code, r.employee_name, r.branch_name, r.process_name,
+      r.request_type, r.status,
+      r.domain_account ?? "", r.official_email ?? "",
+      r.ad_log_type ?? "missing", r.ad_account_name ?? "",
+      r.ad_event_id ?? "", r.ad_actioned_by_it ?? "", r.ad_event_time ?? "",
+      r.sla_status, r.evidence_status,
+      r.requested_at ?? "", r.actioned_at ?? "", r.sla_due_at ?? "",
+      r.evidence_file_url ?? "",
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
+    const csv = [headers.join(","), ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `ad-compliance-report-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  }
 
   // ── Data fetch ───────────────────────────────────────────────────────────────
   const queryParams = {
@@ -874,6 +925,9 @@ export default function NativeITProvisioningTracker() {
               <Upload className="h-4 w-4" aria-hidden="true" /> Bulk Upload
             </Button>
           )}
+          <Button variant="outline" onClick={() => setAdReportOpen(true)} className="gap-2 min-h-[44px]">
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" /> AD Compliance Report
+          </Button>
           <Button variant="outline" onClick={() => refetch()} disabled={isFetching} className="gap-2 min-h-[44px]">
             <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />
             Refresh
@@ -1344,6 +1398,139 @@ export default function NativeITProvisioningTracker() {
 
       {/* Bulk Upload Dialog */}
       <BulkUploadDialog open={bulkOpen} onClose={() => setBulkOpen(false)} />
+
+      {/* AD Compliance Report Dialog */}
+      <Dialog open={adReportOpen} onOpenChange={setAdReportOpen}>
+        <DialogContent className="max-w-6xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-emerald-600" />
+              AD Account Provisioning — Compliance Report
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Filters */}
+          <div className="flex flex-wrap gap-3 border-b pb-3 shrink-0">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500 font-medium">From</label>
+              <input type="date" value={adReportDateFrom} onChange={e => setAdReportDateFrom(e.target.value)}
+                className="text-sm border rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500 font-medium">To</label>
+              <input type="date" value={adReportDateTo} onChange={e => setAdReportDateTo(e.target.value)}
+                className="text-sm border rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500 font-medium">Type</label>
+              <select value={adReportReqType} onChange={e => setAdReportReqType(e.target.value)}
+                className="text-sm border rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="">All (Join + Exit)</option>
+                <option value="join">Join Only</option>
+                <option value="exit">Exit Only</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500 font-medium">Evidence</label>
+              <select value={adReportEvidence} onChange={e => setAdReportEvidence(e.target.value)}
+                className="text-sm border rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="">All</option>
+                <option value="with_evidence">With Evidence</option>
+                <option value="without_evidence">No Evidence (Gaps)</option>
+              </select>
+            </div>
+            <div className="flex items-end gap-2">
+              <Button size="sm" variant="outline" onClick={downloadAdReportCsv}
+                disabled={!adReportQuery.data?.length} className="gap-1.5">
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
+            </div>
+            <div className="flex items-end ml-auto">
+              <span className="text-xs text-gray-400">
+                {adReportQuery.data?.length ?? 0} records
+                {adReportQuery.isLoading && " — Loading…"}
+              </span>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="flex-1 overflow-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="sticky top-0 bg-white z-10">
+                  <TableHead className="text-xs">Employee</TableHead>
+                  <TableHead className="text-xs">Branch / Process</TableHead>
+                  <TableHead className="text-xs">Type</TableHead>
+                  <TableHead className="text-xs">Domain Account</TableHead>
+                  <TableHead className="text-xs">AD Log</TableHead>
+                  <TableHead className="text-xs">AD Account</TableHead>
+                  <TableHead className="text-xs">AD Event Time</TableHead>
+                  <TableHead className="text-xs">Done By (IT)</TableHead>
+                  <TableHead className="text-xs">SLA</TableHead>
+                  <TableHead className="text-xs">Evidence</TableHead>
+                  <TableHead className="text-xs">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {adReportQuery.isLoading && (
+                  <TableRow><TableCell colSpan={11} className="text-center text-sm text-gray-400 py-8">Loading report…</TableCell></TableRow>
+                )}
+                {!adReportQuery.isLoading && !adReportQuery.data?.length && (
+                  <TableRow><TableCell colSpan={11} className="text-center text-sm text-gray-400 py-8">No records found for selected filters</TableCell></TableRow>
+                )}
+                {(adReportQuery.data ?? []).map((r: any, i: number) => (
+                  <TableRow key={i} className="text-xs hover:bg-gray-50">
+                    <TableCell className="py-2">
+                      <p className="font-medium">{r.employee_name}</p>
+                      <p className="text-gray-400">{r.employee_code}</p>
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <p>{r.branch_name ?? "—"}</p>
+                      <p className="text-gray-400">{r.process_name ?? ""}</p>
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <Badge variant={r.request_type === "join" ? "default" : "destructive"} className="text-xs capitalize">
+                        {r.request_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="py-2 font-mono text-xs">{r.domain_account ?? "—"}</TableCell>
+                    <TableCell className="py-2">
+                      {r.ad_log_type === "creation" && <Badge className="bg-green-100 text-green-800 text-xs">Created</Badge>}
+                      {r.ad_log_type === "deletion" && <Badge className="bg-blue-100 text-blue-800 text-xs">Deleted</Badge>}
+                      {r.ad_log_type === "missing"  && <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">No Log</Badge>}
+                      {r.ad_event_id && <span className="ml-1 text-gray-400">#{r.ad_event_id}</span>}
+                    </TableCell>
+                    <TableCell className="py-2 font-mono text-xs">{r.ad_account_name ?? "—"}</TableCell>
+                    <TableCell className="py-2 text-xs text-gray-500">{r.ad_event_time ? r.ad_event_time.replace("T", " ").slice(0, 16) : "—"}</TableCell>
+                    <TableCell className="py-2 text-xs">{r.ad_actioned_by_it ?? "—"}</TableCell>
+                    <TableCell className="py-2">
+                      {r.sla_status === "SLA Breach" && <Badge variant="destructive" className="text-xs">Breach</Badge>}
+                      {r.sla_status === "Overdue"    && <Badge className="bg-amber-100 text-amber-800 text-xs">Overdue</Badge>}
+                      {r.sla_status === "On Time"    && <Badge className="bg-green-100 text-green-800 text-xs">On Time</Badge>}
+                    </TableCell>
+                    <TableCell className="py-2">
+                      {r.evidence_file_url
+                        ? <a href={r.evidence_file_url} target="_blank" rel="noreferrer"
+                            className="flex items-center gap-1 text-blue-600 hover:underline text-xs">
+                            <Paperclip className="h-3 w-3" /> View
+                          </a>
+                        : <span className="text-amber-600 text-xs">Missing</span>}
+                    </TableCell>
+                    <TableCell className="py-2">
+                      <Badge variant="outline" className="text-xs capitalize">{r.status}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <DialogFooter className="shrink-0 pt-2 border-t text-xs text-gray-400">
+            Report covers IT_EMAIL_DOMAIN_ASSET tasks only. AD log fields are parsed from uploaded evidence files.
+            For compliance audit, export CSV and attach to your audit package.
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </HrmsModernShell>
     </DashboardLayout>
   );
