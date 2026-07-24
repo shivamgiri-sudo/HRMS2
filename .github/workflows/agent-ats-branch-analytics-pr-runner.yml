@@ -1,0 +1,89 @@
+name: Run ATS branch analytics remediation on PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out PR head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Extract and apply remediation script
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/agent-fix-ats-branch-analytics.yml').read_text(encoding='utf-8')
+          start_marker = "          python3 <<'PY'\n"
+          end_marker = "\n          PY\n"
+          if start_marker not in workflow or end_marker not in workflow:
+              raise SystemExit('Unable to locate embedded remediation script')
+          embedded = workflow.split(start_marker, 1)[1].split(end_marker, 1)[0]
+          lines = [line[10:] if line.startswith('          ') else line for line in embedded.splitlines()]
+          Path('/tmp/apply-ats-branch-analytics.py').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
+          python3 /tmp/apply-ats-branch-analytics.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate frontend types
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-key-for-build
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Check patch hygiene
+        run: git diff --check
+
+      - name: Commit validated remediation
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          rm -f .github/workflows/agent-fix-ats-branch-analytics.yml
+          rm -f .github/workflows/agent-ats-branch-analytics-pr-runner.yml
+          rm -f .github/agent-fix-ats-branch-analytics.trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/NativeATSHiringEntry.tsx backend/src/modules/ats/recruiter-hiring.service.ts .github/workflows .github/agent-fix-ats-branch-analytics.trigger
+          git commit -m "fix(ats): correct branch analytics logic and layout"
+          git push origin "HEAD:${HEAD_BRANCH}"
