@@ -1,0 +1,36 @@
+name: Repair ATS KPI workflow scope guard
+
+on:
+  push:
+    branches: [agent/fix-ats-kpi-calculations]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-ats-kpi-calculations
+          fetch-depth: 0
+      - name: Repair guard and remove helper
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/fix-ats-kpi-calculations.yml')
+          text = p.read_text(encoding='utf-8')
+          old = "          changed=$(git diff --name-only)\n"
+          new = "          git checkout -- package-lock.json backend/package-lock.json\n          changed=$(git diff --name-only)\n"
+          if old not in text:
+              raise SystemExit('scope marker missing')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          rm .github/workflows/repair-ats-kpi-workflow.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/fix-ats-kpi-calculations.yml .github/workflows/repair-ats-kpi-workflow.yml
+          git commit -m 'chore: repair ATS KPI validation scope'
+          git push origin HEAD:agent/fix-ats-kpi-calculations
