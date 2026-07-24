@@ -22,7 +22,6 @@ export const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co
 interface TaskRow {
   id: string;
   employee_id: string;
-  employee_code: string;
   task_code: string;
   assigned_role: string;
   status: string;
@@ -30,7 +29,7 @@ interface TaskRow {
 
 async function getTask(taskId: string): Promise<TaskRow> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, employee_code, task_code, assigned_role, status
+    `SELECT id, employee_id, task_code, assigned_role, status
      FROM it_provisioning_request WHERE id = ? LIMIT 1`,
     [taskId]
   );
@@ -244,12 +243,19 @@ export async function completeAdminProvisioningTask(
   const task = await getTask(taskId);
   const conn = await db.getConnection();
 
+  // Fetch employee_code for cosec fallback (not stored on provisioning task row)
+  const [empCodeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees WHERE id = ? LIMIT 1`,
+    [task.employee_id]
+  );
+  const empCode: string = (empCodeRows as RowDataPacket[])[0]?.employee_code as string ?? task.employee_id;
+
   try {
     await conn.beginTransaction();
 
     // 1. Biometric enrollment — use existing employee_biometric_enrollment table
     if (input.biometric_enrolled) {
-      const cosecUserId = input.cosec_user_id ?? task.employee_code;
+      const cosecUserId = input.cosec_user_id ?? empCode;
       const [existingEnroll] = await conn.execute<RowDataPacket[]>(
         `SELECT id FROM employee_biometric_enrollment WHERE employee_id = ? LIMIT 1`,
         [task.employee_id]
@@ -270,7 +276,7 @@ export async function completeAdminProvisioningTask(
            VALUES (?, ?, ?, ?, ?, ?, NOW(), 1)`,
           [
             randomUUID(), task.employee_id, cosecUserId,
-            task.employee_code,
+            empCode,
             input.biometric_device_id ?? null,
             actorUserId,
           ]
@@ -336,7 +342,7 @@ export async function completeAdminProvisioningTask(
       change_summary: {
         task_id: taskId,
         biometric_enrolled: input.biometric_enrolled,
-        cosec_user_id: input.cosec_user_id ?? task.employee_code,
+        cosec_user_id: input.cosec_user_id ?? empCode,
         id_card_printed: input.id_card_printed,
         id_card_number: input.id_card_number ?? null,
       },

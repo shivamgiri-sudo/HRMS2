@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from "react";
+import { EmployeeIDCard } from "@/components/employees/EmployeeIDCard";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -667,6 +668,20 @@ export default function NativeITProvisioningTracker() {
   const [actionDialog, setActionDialog] = useState<{ open: boolean; request: ProvisioningRequest | null; mode: "action" | "waive" | "confirm" }>({
     open: false, request: null, mode: "action",
   });
+
+  // Stat-card fetch for admin ID card preview — only fires when admin task dialog is open
+  const adminDialogEmployeeId = actionDialog.open && actionDialog.request?.task_code === "ADMIN_BIOMETRIC_ID_CARD"
+    ? actionDialog.request.employee_id
+    : null;
+  const { data: statCardData } = useQuery({
+    queryKey: ["stat-card-provisioning", adminDialogEmployeeId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; employee: any }>(`/api/employees/${adminDialogEmployeeId}/stat-card`);
+      return (res as any)?.employee ?? null;
+    },
+    enabled: !!adminDialogEmployeeId,
+    staleTime: 5 * 60_000,
+  });
   const [evidenceNote, setEvidenceNote] = useState("");
   const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
   const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
@@ -1216,7 +1231,36 @@ export default function NativeITProvisioningTracker() {
               ) : isITTask ? (
                 <ITTaskForm form={itForm} setForm={setItForm} disabled={actionMutation.isPending} />
               ) : isAdminTask ? (
-                <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} />
+                <>
+                  {statCardData && (
+                    <div className="mb-4 flex flex-col items-center gap-2">
+                      <EmployeeIDCard
+                        employeeId={actionDialog.request!.employee_id}
+                        employeeCode={statCardData.employee_code}
+                        fullName={statCardData.full_name}
+                        designation={statCardData.designation ?? ""}
+                        department={statCardData.department}
+                        branchName={statCardData.branch_name}
+                        branchAddress={statCardData.branch_address}
+                        branchCity={statCardData.branch_city}
+                        branchState={statCardData.branch_state}
+                        hrContact={statCardData.branch_hr_contact}
+                        photoUrl={statCardData.photo_url}
+                        emergencyContact={statCardData.emergency_contact ?? ""}
+                        bloodGroup={statCardData.blood_group ?? ""}
+                        printMode={false}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="text-xs text-blue-600 underline mt-1"
+                      >
+                        Print ID Card
+                      </button>
+                    </div>
+                  )}
+                  <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} />
+                </>
               ) : isWfmTask ? (
                 <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />
               ) : isAppointmentLetterTask ? (
