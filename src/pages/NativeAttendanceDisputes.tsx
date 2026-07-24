@@ -82,13 +82,13 @@ export default function NativeAttendanceDisputes() {
     try {
       const params: Record<string, string> = {};
       if (tab === "my") {
-        // Employee sees their own disputes
+        params.queue = "my";
       } else if (tab === "manager") {
-        // Manager queue - no special param needed, API scopes via auth
+        params.queue = "manager";
       } else if (tab === "hr") {
-        // HR queue
+        params.queue = "hr";
       } else if (tab === "payroll") {
-        // Payroll queue
+        params.queue = "payroll";
       }
 
       const qs = new URLSearchParams(params).toString();

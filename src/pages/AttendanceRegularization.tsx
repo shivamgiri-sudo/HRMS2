@@ -6,9 +6,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useSearchParams } from "react-router-dom";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
+import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge"; // kept for stage badges in DetailDialog
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -259,6 +260,7 @@ const STATUS_DISPUTE_TYPES = [
 const EXCEPTION_TYPES = [
   { value: "week_off_worked", label: "Week-Off Worked" },
   { value: "holiday_worked", label: "Holiday Worked" },
+  { value: "work_from_home", label: "Work from Home" },
 ];
 
 function disputeTypesForCategory(cat: RequestCategory) {
@@ -272,8 +274,7 @@ function disputeTypesForCategory(cat: RequestCategory) {
 const statusLabel: Record<string, string> = {
   submitted: "Submitted",
   pending_manager: "Pending Manager",
-  pending_admin: "Pending Admin / WFM",
-  manager_approved: "Pending WFM",
+  pending_admin: "Pending WFM / Admin",
   approved: "Approved",
   rejected: "Rejected",
   cancelled: "Cancelled",
@@ -429,12 +430,18 @@ type FormValues = z.infer<typeof regularizationSchema>;
 
 // ── Component ─────────────────────────────────────────────────────────────
 
+const TABLE_PAGE_SIZE = 20;
+
 export default function AttendanceRegularization() {
   const geoCapture = useGeoCapture();
   const { toast } = useToast();
+  const { employeeId: currentEmployeeId } = useWorkforceAccess();
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("all");
+  const [filterFromDate, setFilterFromDate] = useState("");
+  const [filterToDate, setFilterToDate] = useState("");
+  const [tablePage, setTablePage] = useState(1);
   const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -470,9 +477,21 @@ export default function AttendanceRegularization() {
   const debouncedAttendanceDate = useDebounce(attendanceDate, 180);
 
   const filteredRequests = useMemo(() => {
-    if (filterStatus === "all") return requests;
-    return requests.filter((item) => item.current_status === filterStatus);
-  }, [requests, filterStatus]);
+    return requests.filter((item) => {
+      if (filterStatus !== "all" && item.current_status !== filterStatus) return false;
+      const detail = item.details?.[0];
+      const date = detail?.attendance_date ?? "";
+      if (filterFromDate && date && date < filterFromDate) return false;
+      if (filterToDate && date && date > filterToDate) return false;
+      return true;
+    });
+  }, [requests, filterStatus, filterFromDate, filterToDate]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRequests.length / TABLE_PAGE_SIZE));
+  const pagedRequests = useMemo(() => {
+    const start = (tablePage - 1) * TABLE_PAGE_SIZE;
+    return filteredRequests.slice(start, start + TABLE_PAGE_SIZE);
+  }, [filteredRequests, tablePage]);
 
   const stats = useMemo(() => ({
     total: requests.length,
@@ -1324,12 +1343,12 @@ export default function AttendanceRegularization() {
 
         {/* Requests List */}
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-950">My Requests</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Track status, view approval stages and evidence.</p>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-950">My Requests</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Track status, view approval stages and evidence. ({filteredRequests.length} of {requests.length})</p>
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -1341,8 +1360,10 @@ export default function AttendanceRegularization() {
                 {bulkApproveMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />}
                 Bulk approve safe ({safeBulkIds.length})
               </Button>
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="h-9 w-full md:w-44 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); setTablePage(1); }}>
+                <SelectTrigger className="h-9 w-40 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-white !text-slate-900">
@@ -1353,6 +1374,29 @@ export default function AttendanceRegularization() {
                   <SelectItem value="rejected">Rejected</SelectItem>
                 </SelectContent>
               </Select>
+              <input
+                type="date"
+                className="h-9 rounded-lg border border-gray-200 px-2.5 text-sm bg-white text-slate-900"
+                value={filterFromDate}
+                onChange={(e) => { setFilterFromDate(e.target.value); setTablePage(1); }}
+                title="From date"
+              />
+              <span className="flex items-center text-xs text-slate-400">to</span>
+              <input
+                type="date"
+                className="h-9 rounded-lg border border-gray-200 px-2.5 text-sm bg-white text-slate-900"
+                value={filterToDate}
+                onChange={(e) => { setFilterToDate(e.target.value); setTablePage(1); }}
+                title="To date"
+              />
+              {(filterFromDate || filterToDate) && (
+                <button
+                  onClick={() => { setFilterFromDate(""); setFilterToDate(""); setTablePage(1); }}
+                  className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-500 hover:bg-slate-50"
+                >
+                  Clear dates
+                </button>
+              )}
             </div>
           </div>
 
@@ -1380,10 +1424,11 @@ export default function AttendanceRegularization() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
-                    {filteredRequests.map((request) => {
+                    {pagedRequests.map((request) => {
                       const detail = getDetail(request);
                       const isSelected = selectedIds.includes(request.id);
                       const isException = request.request_type_code === "exception";
+                      const isOwnRequest = currentEmployeeId && request.employee_id === currentEmployeeId;
                       return (
                         <tr key={request.id} className="hover:bg-slate-50">
                           <Td>
@@ -1431,7 +1476,7 @@ export default function AttendanceRegularization() {
                               >
                                 View
                               </button>
-                              {["pending_manager", "pending_admin"].includes(request.current_status) && (
+                              {["pending_manager", "pending_admin"].includes(request.current_status) && !isOwnRequest && (
                                 <>
                                   <button
                                     onClick={() => reviewMutation.mutate({ id: request.id, status: "approved" })}
@@ -1454,6 +1499,29 @@ export default function AttendanceRegularization() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2">
+                <span className="text-xs text-slate-500">
+                  Page {tablePage} of {totalPages} ({filteredRequests.length} records)
+                </span>
+                <div className="flex gap-1.5">
+                  <button
+                    disabled={tablePage <= 1}
+                    onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+                    className="rounded border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    disabled={tablePage >= totalPages}
+                    onClick={() => setTablePage((p) => Math.min(totalPages, p + 1))}
+                    className="rounded border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1506,19 +1574,20 @@ function Td({ children }: { children: ReactNode }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const statusMap: Record<string, string> = {
-    submitted: "pending",
-    pending_manager: "pending",
-    pending_admin: "pending",
-    approved: "success",
-    rejected: "failed",
-    cancelled: "cancelled",
+  // Distinct visual styles per stage — not just one generic "pending" yellow
+  const stageTone: Record<string, string> = {
+    submitted:       "border-slate-200 bg-slate-50 text-slate-600",
+    pending_manager: "border-amber-200 bg-amber-50 text-amber-700",
+    pending_admin:   "border-blue-200 bg-blue-50 text-blue-700",
+    approved:        "border-emerald-200 bg-emerald-50 text-emerald-700",
+    rejected:        "border-rose-200 bg-rose-50 text-rose-700",
+    cancelled:       "border-slate-200 bg-slate-100 text-slate-500",
   };
+  const tone = stageTone[status] ?? "border-slate-200 bg-slate-50 text-slate-600";
   return (
-    <SmartHRStatusBadge
-      status={normalizeStatus(statusMap[status] || status)}
-      label={statusLabel[status] || status}
-    />
+    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold", tone)}>
+      {statusLabel[status] || status}
+    </span>
   );
 }
 

@@ -513,12 +513,21 @@ export const wfmService = {
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ar.*,
-         CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+         COALESCE(NULLIF(TRIM(e.full_name),''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
          e.employee_code,
-         arm.label AS reason_label
+         b.branch_name,
+         p.process_name,
+         arm.label AS reason_label,
+         adr.attendance_status AS current_attendance_status,
+         adr.clock_in_time AS first_punch,
+         adr.clock_out_time AS last_punch,
+         adr.biometric_minutes
        FROM attendance_regularization ar
        LEFT JOIN employees e ON e.id = ar.employee_id
+       LEFT JOIN branch_master b ON b.id = COALESCE(ar.branch_id, e.branch_id)
+       LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN attendance_reason_master arm ON arm.code = ar.reason_code
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
        ${where}
        ORDER BY ar.created_at DESC`, params
     );

@@ -259,6 +259,24 @@ attendanceDisputeRouter.get("/disputes", h(async (req, res) => {
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
 
+  // queue= param: scopes results to a specific review queue tab
+  const queue = req.query.queue ? String(req.query.queue) : null;
+  if (queue === "my") {
+    const callerEmp = await getEmployeeForUser(req.authUser.id);
+    if (callerEmp?.id) { conds.push("ar.employee_id = ?"); params.push(callerEmp.id); }
+    else { conds.push("1=0"); }
+  } else if (queue === "manager") {
+    // Stage 1: pending records — manager queue
+    conds.push("ar.status IN ('pending','submitted')");
+  } else if (queue === "hr") {
+    // Stage 2: manager approved, or escalated to HR
+    conds.push("(ar.status = 'manager_approved' OR (ar.status = 'escalated' AND ar.escalated_to = 'hr'))");
+  } else if (queue === "payroll") {
+    // Payroll head required or escalated to payroll
+    conds.push("(ar.payroll_head_approval_required = 1 OR (ar.status = 'escalated' AND ar.escalated_to = 'payroll'))");
+    conds.push("ar.payroll_head_approved_at IS NULL");
+  }
+
   if (req.query.employeeId)                 { conds.push("ar.employee_id = ?");                       params.push(String(req.query.employeeId)); }
   if (req.query.status)                     { conds.push("ar.status = ?");                             params.push(String(req.query.status)); }
   if (req.query.disputeType)                { conds.push("ar.dispute_type = ?");                       params.push(String(req.query.disputeType)); }

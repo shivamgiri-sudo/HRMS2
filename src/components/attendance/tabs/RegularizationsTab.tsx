@@ -44,7 +44,13 @@ export function RegularizationsTab({ employeeId }: Props) {
             return (
               <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50">
                 <td className="px-4 py-2.5 font-mono text-xs text-slate-700">{r.session_date?.slice(0, 10)}</td>
-                <td className="px-4 py-2.5 text-xs text-slate-600 capitalize">{(r.request_category ?? "—").replace(/_/g, " ")}</td>
+                <td className="px-4 py-2.5 text-xs text-slate-600 capitalize">
+                  {(r as any).dispute_type
+                    ? (["week_off_worked","holiday_worked","work_from_home"].includes((r as any).dispute_type)
+                        ? "Exception"
+                        : "Regularization")
+                    : (r.request_category ?? "Regularization").replace(/_/g, " ")}
+                </td>
                 <td className="px-4 py-2.5 text-xs text-slate-500 capitalize">{(r.old_status ?? "—").replace(/_/g, " ")}</td>
                 <td className="px-4 py-2.5 text-xs text-slate-500 capitalize">{(r.requested_status ?? "—").replace(/_/g, " ")}</td>
                 <td className="px-4 py-2.5 text-xs text-slate-400">{r.submitted_at?.slice(0, 10)}</td>
