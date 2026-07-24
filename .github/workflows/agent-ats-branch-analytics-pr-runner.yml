@@ -24,6 +24,8 @@ jobs:
 
       - name: Extract and apply remediation script
         shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           python3 <<'PY'
           from pathlib import Path
@@ -37,7 +39,21 @@ jobs:
           lines = [line[10:] if line.startswith('          ') else line for line in embedded.splitlines()]
           Path('/tmp/apply-ats-branch-analytics.py').write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
-          python3 /tmp/apply-ats-branch-analytics.py
+          set +e
+          python3 /tmp/apply-ats-branch-analytics.py > /tmp/ats-remediation-output.txt 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            cp /tmp/ats-remediation-output.txt .github/ats-branch-analytics-patch-error.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/ats-branch-analytics-patch-error.txt
+            git commit -m "chore: capture ATS branch analytics patch failure"
+            git push origin "HEAD:${HEAD_BRANCH}"
+            cat /tmp/ats-remediation-output.txt
+            exit "$status"
+          fi
+          cat /tmp/ats-remediation-output.txt
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -82,8 +98,9 @@ jobs:
           rm -f .github/workflows/agent-fix-ats-branch-analytics.yml
           rm -f .github/workflows/agent-ats-branch-analytics-pr-runner.yml
           rm -f .github/agent-fix-ats-branch-analytics.trigger
+          rm -f .github/ats-branch-analytics-patch-error.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/pages/NativeATSHiringEntry.tsx backend/src/modules/ats/recruiter-hiring.service.ts .github/workflows .github/agent-fix-ats-branch-analytics.trigger
+          git add src/pages/NativeATSHiringEntry.tsx backend/src/modules/ats/recruiter-hiring.service.ts .github/workflows .github/agent-fix-ats-branch-analytics.trigger .github/ats-branch-analytics-patch-error.txt
           git commit -m "fix(ats): correct branch analytics logic and layout"
           git push origin "HEAD:${HEAD_BRANCH}"
