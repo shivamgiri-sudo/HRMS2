@@ -70,11 +70,13 @@ function travelTimeLabel(distKm: number): string {
   return m > 0 ? `~${h}h ${m}min` : `~${h}h`;
 }
 
-// Auto-fit map bounds to the given employees list when they change
+// Fit map bounds ONCE on initial load only — never re-fit on polls
 function BoundsFitter({ employees }: { employees: LiveEmployee[] }) {
   const map = useMap();
+  const fittedRef = useRef(false);
   useEffect(() => {
-    if (!employees.length) return;
+    if (fittedRef.current || !employees.length) return;
+    fittedRef.current = true;
     const bounds = L.latLngBounds(
       employees.map((e) => [Number(e.latitude), Number(e.longitude)])
     );

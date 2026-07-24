@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 60_000; // 60s — stable indoor GPS, less map fluctuation
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();
@@ -46,7 +46,7 @@ export function useLocationHeartbeat() {
         }
       },
       () => { /* permission denied — silent, no fallback */ },
-      { enableHighAccuracy: true, maximumAge: 15_000, timeout: 15_000 },
+      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 15_000 },
     );
 
     return () => {
