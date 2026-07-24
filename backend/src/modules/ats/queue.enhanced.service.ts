@@ -139,8 +139,8 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
     LEFT JOIN employees e ON e.id = rr.employee_id
     LEFT JOIN (
       SELECT aca.candidate_id,
-             MAX(aca.percentage)  AS assessment_percentage,
-             MAX(ata.net_wpm)     AS typing_net_wpm
+             MAX(aca.percentage)                                    AS assessment_percentage,
+             MAX(CASE WHEN ata.net_wpm > 0 THEN ata.net_wpm END)   AS typing_net_wpm
       FROM ats_candidate_assessment aca
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       GROUP BY aca.candidate_id
@@ -480,9 +480,9 @@ export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Pr
     LEFT JOIN branch_master bm             ON bm.id = c.applied_for_branch
     LEFT JOIN (
       SELECT aca.candidate_id,
-             MAX(aca.percentage)           AS assessment_percentage,
-             MAX(ata.net_wpm)              AS typing_net_wpm,
-             MAX(ata.accuracy_percentage)  AS typing_accuracy
+             MAX(aca.percentage)                                           AS assessment_percentage,
+             MAX(CASE WHEN ata.net_wpm > 0 THEN ata.net_wpm END)          AS typing_net_wpm,
+             MAX(CASE WHEN ata.net_wpm > 0 THEN ata.accuracy_percentage END) AS typing_accuracy
       FROM ats_candidate_assessment aca
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       GROUP BY aca.candidate_id
@@ -594,7 +594,7 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
              ops_rejection_reason,
              hr_rejection_reason,
              recruiter_rejection_reason
-      FROM ats_hiring_tracker
+      FROM ats_recruiter_hiring_activity
       WHERE linked_candidate_id IS NOT NULL
     ) ht ON ht.linked_candidate_id = c.id
     LEFT JOIN (
