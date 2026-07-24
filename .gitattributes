@@ -4,6 +4,10 @@
 # Explicitly force SQL files to LF so test assertions on \n work on Windows
 *.sql text eol=lf
 
+# Historical migrations — preserve exact bytes from main branch
+backend/sql/038_engagement_gamification.sql -text
+backend/sql/139_ats_enhanced_journey_safe.sql -text
+
 # Binary files — no conversion
 *.png binary
 *.jpg binary

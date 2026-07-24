@@ -12,13 +12,9 @@ const envCandidates = [
 ];
 
 const loadedEnvPaths = new Set<string>();
-// GOVERNANCE: Runtime environment variables are preserved by default.
-// Set HRMS_OVERRIDE_RUNTIME_ENV=true to allow .env files to override existing values.
-// This prevents accidental override of production env vars by development defaults.
-const overrideRuntimeEnv = process.env.HRMS_OVERRIDE_RUNTIME_ENV === "true";
 for (const envPath of envCandidates) {
   if (!fs.existsSync(envPath) || loadedEnvPaths.has(envPath)) continue;
-  dotenv.config({ path: envPath, override: overrideRuntimeEnv });
+  dotenv.config({ path: envPath, override: true });
   loadedEnvPaths.add(envPath);
 }
 

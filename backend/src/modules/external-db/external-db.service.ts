@@ -204,42 +204,9 @@ export async function getPoolForKey(key: string): Promise<sql.ConnectionPool | m
   }
 }
 
-/**
- * Invalidate and close an external database pool.
- * RELIABILITY FIX: Properly close the pool before removing from the map
- * to prevent connection leaks.
- */
-export async function invalidatePool(key: string): Promise<void> {
-  const mssqlPool = mssqlPools.get(key);
-  const mysqlPool = mysqlPools.get(key);
-
-  // Remove from map first to prevent new usage
+export function invalidatePool(key: string): void {
   mssqlPools.delete(key);
   mysqlPools.delete(key);
-
-  // Close the pools with timeout to prevent hanging
-  const closeWithTimeout = async (closePromise: Promise<void>, poolType: string): Promise<void> => {
-    const timeoutMs = 5000;
-    try {
-      await Promise.race([
-        closePromise,
-        new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error(`${poolType} pool close timed out`)), timeoutMs)
-        ),
-      ]);
-    } catch (error) {
-      console.error(`[external-db] Failed to close ${poolType} pool for ${key}:`, error);
-    }
-  };
-
-  if (mssqlPool) {
-    await closeWithTimeout(mssqlPool.close(), "mssql");
-    console.log(`[external-db] Invalidated mssql pool for ${key}`);
-  }
-  if (mysqlPool) {
-    await closeWithTimeout(mysqlPool.end(), "mysql");
-    console.log(`[external-db] Invalidated mysql pool for ${key}`);
-  }
 }
 
 export async function closeExternalDbPools(): Promise<void> {
@@ -256,7 +223,7 @@ export async function testPoolForKey(key: string): Promise<{ ok: boolean; error?
     const creds = await getCredentialsForKey(key);
     if (!creds) return { ok: false, error: 'No credentials configured' };
 
-    await invalidatePool(key); // force fresh connection for test
+    invalidatePool(key); // force fresh connection for test
     const pool = await getPoolForKey(key);
 
     if (creds.db_type === 'mssql') {
@@ -266,7 +233,7 @@ export async function testPoolForKey(key: string): Promise<{ ok: boolean; error?
     }
     return { ok: true };
   } catch (e: unknown) {
-    await invalidatePool(key);
+    invalidatePool(key);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }

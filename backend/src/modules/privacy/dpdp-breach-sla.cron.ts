@@ -166,17 +166,32 @@ async function checkBreaches() {
   }
 }
 
+let startupTimeoutRef: ReturnType<typeof setTimeout> | undefined;
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 export function startBreachSlaCron(): void {
   if (!env.ENABLE_SCHEDULERS) return;
 
   // Run immediately on startup, then every 30 minutes
-  setTimeout(() => {
+  startupTimeoutRef = setTimeout(() => {
     checkBreaches().catch((err) => console.error("[dpdp-breach-sla] check failed:", err));
   }, 5000);
 
-  setInterval(() => {
+  intervalRef = setInterval(() => {
     checkBreaches().catch((err) => console.error("[dpdp-breach-sla] check failed:", err));
   }, 30 * 60 * 1000);
 
   console.log("[dpdp-breach-sla] DPDP breach SLA cron started (checks every 30 min)");
+}
+
+export function stopBreachSlaCron(): void {
+  if (startupTimeoutRef) {
+    clearTimeout(startupTimeoutRef);
+    startupTimeoutRef = undefined;
+  }
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[dpdp-breach-sla] Stopped");
 }

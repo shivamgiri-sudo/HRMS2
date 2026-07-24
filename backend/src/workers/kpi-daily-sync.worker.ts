@@ -4,6 +4,9 @@ const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DAILY_HOUR = 1;
 const QUALITY_DAY = 2;
 
+let initialTimeoutRef: ReturnType<typeof setTimeout> | undefined;
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -86,10 +89,22 @@ async function startWorker(): Promise<void> {
   const delay = msUntilHour(DAILY_HOUR);
   console.log(`[KpiDailySyncWorker] First run in ${Math.round(delay / 60000)} minutes`);
 
-  setTimeout(async () => {
+  initialTimeoutRef = setTimeout(async () => {
     await runDailySync();
-    setInterval(runDailySync, DAILY_INTERVAL_MS);
+    intervalRef = setInterval(runDailySync, DAILY_INTERVAL_MS);
   }, delay);
+}
+
+function stopWorker(): void {
+  if (initialTimeoutRef) {
+    clearTimeout(initialTimeoutRef);
+    initialTimeoutRef = undefined;
+  }
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[KpiDailySyncWorker] Stopped");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -99,4 +114,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startKpiDailySyncWorker, runDailySync };
+export { startWorker as startKpiDailySyncWorker, stopWorker as stopKpiDailySyncWorker, runDailySync };

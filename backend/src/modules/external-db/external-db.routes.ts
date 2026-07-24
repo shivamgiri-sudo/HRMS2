@@ -158,7 +158,7 @@ router.put('/:key', requireRole('admin'), h(async (req, res) => {
     [encrypted, JSON.stringify(newConfig), key]
   );
 
-  await invalidatePool(key);
+  invalidatePool(key);
 
   return res.json({ success: true });
 }));

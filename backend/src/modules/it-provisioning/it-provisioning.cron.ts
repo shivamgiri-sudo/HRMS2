@@ -18,3 +18,11 @@ export function startITProvisioningLockScheduler(): void {
 
   console.log('[it-provisioning] auto-lock scheduler started (hourly)');
 }
+
+export function stopITProvisioningLockScheduler(): void {
+  if (_timer) {
+    clearInterval(_timer);
+    _timer = null;
+  }
+  console.log('[it-provisioning] Stopped');
+}

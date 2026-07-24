@@ -136,7 +136,7 @@ interface OtpMatchRow extends RowDataPacket {
 
 export interface AuthTokens {
   accessToken: string;
-  refreshToken: string | null; // null when 2FA is required but not yet completed
+  refreshToken: string;
   user: {
     id: string;
     email: string;
@@ -318,68 +318,6 @@ export const authService = {
         [user.id]
       );
 
-      const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
-
-      // Fetch both org_settings in one query to avoid two sequential round-trips
-      const [orgSettingRows] = await db.execute<OrgSettingRow[]>(
-        `SELECT setting_key, setting_value FROM org_settings
-          WHERE setting_key IN ('single_device_session_mode', 'two_factor_enabled')`
-      ).catch(() => [[] as OrgSettingRow[]] as unknown as [OrgSettingRow[], unknown[]]);
-      const orgMap: Record<string, string> = {};
-      for (const r of orgSettingRows) orgMap[r.setting_key] = r.setting_value ?? '';
-
-      // Check global 2FA toggle BEFORE creating any tokens
-      const tfaEnabled = orgMap['two_factor_enabled'] !== 'false';
-      const twoFactorRequired = tfaEnabled && !mustChangePassword;
-
-      // SECURITY FIX: If 2FA is required, do NOT create refresh token yet.
-      // Create a pre_auth_challenge instead. The refresh token is only created
-      // after successful 2FA verification in exchangePreAuthToken().
-      if (twoFactorRequired) {
-        // Create pre_auth_challenge record for secure 2FA flow
-        const challengeId = crypto.randomUUID();
-        await db.execute(
-          `INSERT INTO pre_auth_challenge (id, user_id, challenge_type, expires_at, ip_address, user_agent)
-           VALUES (?, ?, '2fa', DATE_ADD(NOW(), INTERVAL 10 MINUTE), ?, ?)`,
-          [challengeId, user.id, req?.ip ?? null, req?.headers['user-agent'] ?? null]
-        );
-
-        // Issue a scoped pre_auth token — NOT a full access token.
-        // This token ONLY allows calling /api/auth/2fa/* endpoints.
-        // The full accessToken AND refreshToken are only issued after 2FA verification.
-        const preAuthToken = jwt.sign(
-          { sub: user.id, email: user.email, scope: 'pre_auth', challengeId },
-          JWT_SECRET,
-          { expiresIn: PRE_AUTH_EXPIRES_IN }
-        );
-
-        // Log password verification (but NOT login success - 2FA not complete)
-        if (req) {
-          writeSecurityEvent({
-            event_type: 'PASSWORD_VERIFIED',
-            severity: 'info',
-            actor_user_id: user.id,
-            title: `Password verified, 2FA required: ${user.email}`,
-            ip_address: req.ip ?? null,
-          });
-        }
-
-        return {
-          accessToken: preAuthToken,
-          refreshToken: null, // SECURITY: No refresh token until 2FA completes
-          user: {
-            id: user.id,
-            email: user.email,
-            isBlocked: user.is_blocked === 1,
-            mustChangePassword,
-            isReadOnly: Boolean((user as any).is_read_only),
-            twoFactorRequired: true,
-            twoFactorVerified: false,
-          },
-        };
-      }
-
-      // 2FA not required - proceed with full authentication
       const primaryRole = await getUserPrimaryRole(user.id);
       const accessToken = jwt.sign(
         { sub: user.id, email: user.email, is_read_only: Boolean((user as any).is_read_only), role: primaryRole },
@@ -387,21 +325,12 @@ export const authService = {
         { expiresIn: JWT_EXPIRES_IN }
       );
 
-      // Get password_changed_at for token family tracking
-      const [pwRows] = await db.execute<RowDataPacket[]>(
-        'SELECT password_changed_at FROM auth_user WHERE id = ? LIMIT 1',
-        [user.id]
-      ).catch(() => [[]] as [RowDataPacket[]]);
-      const passwordChangedAt = pwRows[0]?.password_changed_at ?? null;
-
       const rawRefresh = crypto.randomBytes(48).toString('hex');
       const tokenHash = crypto.createHash('sha256').update(rawRefresh).digest('hex');
-      const tokenFamilyId = crypto.randomUUID();
 
       await db.execute<ResultSetHeader>(
-        `INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at, token_family_id, password_changed_at_snapshot)
-         VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
-        [user.id, tokenHash, REFRESH_EXPIRES_DAYS, tokenFamilyId, passwordChangedAt]
+        'INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))',
+        [user.id, tokenHash, REFRESH_EXPIRES_DAYS]
       );
 
       // Create device session record if request object available
@@ -430,6 +359,16 @@ export const authService = {
           console.error('[auth] Failed to create device session:', error);
         }
       }
+
+      const mustChangePassword = Number(user.must_change_password ?? 0) === 1;
+
+      // Fetch both org_settings in one query to avoid two sequential round-trips
+      const [orgSettingRows] = await db.execute<OrgSettingRow[]>(
+        `SELECT setting_key, setting_value FROM org_settings
+          WHERE setting_key IN ('single_device_session_mode', 'two_factor_enabled')`
+      ).catch(() => [[] as OrgSettingRow[]] as unknown as [OrgSettingRow[], unknown[]]);
+      const orgMap: Record<string, string> = {};
+      for (const r of orgSettingRows) orgMap[r.setting_key] = r.setting_value ?? '';
 
       // Check single device session mode - if enabled, revoke all other sessions
       try {
@@ -513,6 +452,34 @@ export const authService = {
         }).catch(() => {});
       }
 
+      // Check global 2FA toggle — reuse orgMap fetched above
+      const tfaEnabled = orgMap['two_factor_enabled'] !== 'false';
+      const twoFactorRequired = tfaEnabled && !mustChangePassword;
+
+      if (twoFactorRequired) {
+        // Issue a scoped pre_auth token — NOT a full access token.
+        // This token ONLY allows calling /api/auth/2fa/* endpoints.
+        // The full accessToken is only issued after verifyTwoFactorChallenge().
+        const preAuthToken = jwt.sign(
+          { sub: user.id, email: user.email, scope: 'pre_auth' },
+          JWT_SECRET,
+          { expiresIn: PRE_AUTH_EXPIRES_IN }
+        );
+        return {
+          accessToken: preAuthToken,
+          refreshToken: rawRefresh,
+          user: {
+            id: user.id,
+            email: user.email,
+            isBlocked: user.is_blocked === 1,
+            mustChangePassword,
+            isReadOnly: Boolean((user as any).is_read_only),
+            twoFactorRequired: true,
+            twoFactorVerified: false,
+          },
+        };
+      }
+
       return {
         accessToken,
         refreshToken: rawRefresh,
@@ -553,87 +520,23 @@ export const authService = {
     }
   },
 
-  async refreshAccess(rawRefreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
+  async refreshAccess(rawRefreshToken: string): Promise<{ accessToken: string }> {
     const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
-
-    // Extended query to check token rotation, user status, employee status, and password change
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT rt.id AS token_id, rt.user_id, rt.token_family_id, rt.rotated_at, rt.password_changed_at_snapshot,
-              au.email, au.is_blocked, au.password_changed_at AS current_password_changed_at, au.session_version,
-              COALESCE(e.status, 'active') AS employee_status
-         FROM auth_refresh_token rt
+    const [rows] = await db.execute<RefreshRow[]>(
+      `SELECT rt.user_id, au.email FROM auth_refresh_token rt
          JOIN auth_user au ON au.id = rt.user_id
-         LEFT JOIN employees e ON e.user_id = au.id
-        WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW()
-        LIMIT 1`,
+        WHERE rt.token_hash = ? AND rt.revoked = 0 AND rt.expires_at > NOW() LIMIT 1`,
       [tokenHash]
     );
-    const token = rows[0];
-    if (!token) {
-      throw Object.assign(new Error('Invalid or expired refresh token'), { code: 'TOKEN_INVALID' });
-    }
+    if (!rows[0]) throw new Error('Invalid or expired refresh token');
 
-    // SECURITY: Check if this token was already rotated (reuse detection)
-    if (token.rotated_at) {
-      // Token reuse detected! This is a potential theft scenario.
-      // Revoke the entire token family to protect the user.
-      await db.execute(
-        'UPDATE auth_refresh_token SET revoked = 1 WHERE token_family_id = ?',
-        [token.token_family_id]
-      );
-      await writeSecurityEvent({
-        event_type: 'TOKEN_REUSE_DETECTED',
-        severity: 'critical',
-        actor_user_id: token.user_id,
-        title: `Refresh token reuse detected for user ${token.email}`,
-        description: 'Entire token family revoked due to potential token theft',
-      });
-      throw Object.assign(new Error('Token has already been used. All sessions revoked for security.'), { code: 'TOKEN_REUSED' });
-    }
-
-    // Check if user is blocked
-    if (token.is_blocked) {
-      throw Object.assign(new Error('Account is blocked'), { code: 'USER_BLOCKED' });
-    }
-
-    // Check if employee is inactive
-    if (token.employee_status === 'inactive' || token.employee_status === 'separated') {
-      throw Object.assign(new Error('Employee account is inactive'), { code: 'EMPLOYEE_INACTIVE' });
-    }
-
-    // Check if password changed since token was issued
-    if (token.password_changed_at_snapshot && token.current_password_changed_at) {
-      const snapshotTime = new Date(token.password_changed_at_snapshot).getTime();
-      const currentTime = new Date(token.current_password_changed_at).getTime();
-      if (currentTime > snapshotTime) {
-        // Password changed after token was issued - revoke this token
-        await db.execute('UPDATE auth_refresh_token SET revoked = 1 WHERE id = ?', [token.token_id]);
-        throw Object.assign(new Error('Session expired due to password change'), { code: 'PASSWORD_CHANGED' });
-      }
-    }
-
-    // TOKEN ROTATION: Mark old token as rotated (not revoked - for reuse detection)
-    await db.execute(
-      'UPDATE auth_refresh_token SET rotated_at = NOW() WHERE id = ?',
-      [token.token_id]
-    );
-
-    // Create new rotated token in the same family
-    const newRawRefresh = crypto.randomBytes(48).toString('hex');
-    const newTokenHash = crypto.createHash('sha256').update(newRawRefresh).digest('hex');
-    await db.execute(
-      `INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at, token_family_id, previous_token_hash, password_changed_at_snapshot)
-       VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?, ?)`,
-      [token.user_id, newTokenHash, REFRESH_EXPIRES_DAYS, token.token_family_id, tokenHash, token.current_password_changed_at]
-    );
-
-    const primaryRole = await getUserPrimaryRole(token.user_id);
+    const primaryRole = await getUserPrimaryRole(rows[0].user_id);
     const accessToken = jwt.sign(
-      { sub: token.user_id, email: token.email, role: primaryRole },
+      { sub: rows[0].user_id, email: rows[0].email, role: primaryRole },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
-    return { accessToken, refreshToken: newRawRefresh };
+    return { accessToken };
   },
 
   async logout(rawRefreshToken: string, req?: Request): Promise<void> {
@@ -683,115 +586,34 @@ export const authService = {
     }
   },
 
-  // Called after verifyTwoFactorChallenge() succeeds — trades pre_auth token for full session (access + refresh tokens).
-  // SECURITY: This is the ONLY place where a refresh token is created after 2FA verification.
-  async exchangePreAuthToken(preAuthToken: string, req?: Request): Promise<{ accessToken: string; refreshToken: string }> {
-    let payload: { sub: string; email: string; scope?: string; challengeId?: string };
+  // Called after verifyTwoFactorChallenge() succeeds — trades pre_auth token for full access token.
+  async exchangePreAuthToken(preAuthToken: string): Promise<{ accessToken: string }> {
+    let payload: { sub: string; email: string; scope?: string };
     try {
-      payload = jwt.verify(preAuthToken, JWT_SECRET) as { sub: string; email: string; scope?: string; challengeId?: string };
+      payload = jwt.verify(preAuthToken, JWT_SECRET) as { sub: string; email: string; scope?: string };
     } catch {
       throw Object.assign(new Error('Invalid or expired pre-auth token'), { statusCode: 401 });
     }
     if (payload.scope !== 'pre_auth') {
       throw Object.assign(new Error('Token is not a pre-auth token'), { statusCode: 400 });
     }
-
-    // Verify the pre_auth_challenge hasn't been consumed yet (single-use)
-    if (payload.challengeId) {
-      const [challengeRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, consumed_at FROM pre_auth_challenge
-         WHERE id = ? AND user_id = ? AND expires_at > NOW()`,
-        [payload.challengeId, payload.sub]
-      );
-      if (!challengeRows.length) {
-        throw Object.assign(new Error('Pre-auth challenge not found or expired'), { statusCode: 401 });
-      }
-      if (challengeRows[0].consumed_at) {
-        throw Object.assign(new Error('Pre-auth challenge already consumed'), { statusCode: 401 });
-      }
-    }
-
     // Confirm 2FA challenge is in verified state for this user
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await db.execute<OnboardingTokenRow[]>(
       `SELECT id FROM auth_two_factor_challenge
         WHERE user_id = ? AND status = 'verified'
           AND verified_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
         ORDER BY verified_at DESC LIMIT 1`,
       [payload.sub]
     );
-    if (!rows.length) {
+    if (!(rows as RowDataPacket[]).length) {
       throw Object.assign(new Error('2FA not verified or verification expired'), { statusCode: 401 });
     }
-
-    // Mark pre_auth_challenge as consumed (single-use)
-    if (payload.challengeId) {
-      await db.execute(
-        'UPDATE pre_auth_challenge SET consumed_at = NOW() WHERE id = ?',
-        [payload.challengeId]
-      );
-    }
-
-    // Get user details and password_changed_at for token family
-    const [userRows] = await db.execute<RowDataPacket[]>(
-      'SELECT email, password_changed_at FROM auth_user WHERE id = ? LIMIT 1',
-      [payload.sub]
-    );
-    const passwordChangedAt = userRows[0]?.password_changed_at ?? null;
-
-    // NOW create the refresh token (only after 2FA is verified)
-    const rawRefresh = crypto.randomBytes(48).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(rawRefresh).digest('hex');
-    const tokenFamilyId = crypto.randomUUID();
-
-    await db.execute<ResultSetHeader>(
-      `INSERT INTO auth_refresh_token (id, user_id, token_hash, expires_at, token_family_id, password_changed_at_snapshot)
-       VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
-      [payload.sub, tokenHash, REFRESH_EXPIRES_DAYS, tokenFamilyId, passwordChangedAt]
-    );
-
-    // Create device session record
-    if (req) {
-      const deviceName = parseUserAgent(req.headers['user-agent']);
-      const deviceFingerprint = generateDeviceFingerprint(req);
-      try {
-        await db.execute(
-          `INSERT INTO user_device_sessions
-             (user_id, refresh_token_hash, device_fingerprint, device_name, ip_address, user_agent, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY))`,
-          [payload.sub, tokenHash, deviceFingerprint, deviceName, req.ip || null, req.headers['user-agent'] || null, REFRESH_EXPIRES_DAYS]
-        );
-      } catch (error) {
-        console.error('[auth] Failed to create device session after 2FA:', error);
-      }
-    }
-
-    // Log successful 2FA completion and full login
-    writeSecurityEvent({
-      event_type: 'LOGIN_SUCCESS',
-      severity: 'info',
-      actor_user_id: payload.sub,
-      title: `2FA completed, full login: ${payload.email}`,
-      ip_address: req?.ip ?? null,
-    });
-    if (req) {
-      logSensitiveAction({
-        actor_user_id: payload.sub,
-        action_type: 'LOGIN_SUCCESS',
-        module_key: 'AUTH',
-        entity_type: 'auth_user',
-        entity_id: payload.sub,
-        change_summary: { email: payload.email, twoFactorCompleted: true },
-        req,
-      }).catch(() => {});
-    }
-
-    const primaryRole = await getUserPrimaryRole(payload.sub);
     const accessToken = jwt.sign(
-      { sub: payload.sub, email: payload.email, role: primaryRole },
+      { sub: payload.sub, email: payload.email },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
-    return { accessToken, refreshToken: rawRefresh };
+    return { accessToken };
   },
 
   verifyAccessToken(token: string): { id: string; email: string; scope?: string } | null {
@@ -806,11 +628,36 @@ export const authService = {
   async register(email: string, password: string, userId?: string): Promise<string> {
     const hash = await bcrypt.hash(password, 10);
     const id = userId || crypto.randomUUID();
-    await db.execute<ResultSetHeader>(
-      'INSERT INTO auth_user (id, email, password_hash) VALUES (?, ?, ?)',
-      [id, normalizeEmail(email), hash]
-    );
-    return id;
+    const normalizedEmail = normalizeEmail(email);
+
+    // Use a transaction with connection for atomicity
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Check for existing user with FOR UPDATE to prevent race conditions
+      const [existing] = await conn.execute<RowDataPacket[]>(
+        'SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1 FOR UPDATE',
+        [normalizedEmail]
+      );
+      if (existing.length > 0) {
+        throw Object.assign(new Error('Email already registered'), { status: 409 });
+      }
+
+      // Insert new user
+      await conn.execute<ResultSetHeader>(
+        'INSERT INTO auth_user (id, email, password_hash) VALUES (?, ?, ?)',
+        [id, normalizedEmail, hash]
+      );
+
+      await conn.commit();
+      return id;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   },
 
   async registerFromATS(
@@ -818,34 +665,68 @@ export const authService = {
     password: string,
     onboardingToken: string,
   ): Promise<string> {
-    // Validate token exists and is not expired
-    const [tokenRows] = await db.execute<RowDataPacket[]>(
-      `SELECT b.candidate_id, b.onboarding_token_expires_at, c.email AS candidate_email
-       FROM ats_onboarding_bridge b
-       JOIN ats_candidate c ON c.id = b.candidate_id
-       WHERE b.onboarding_token = ?`,
-      [onboardingToken],
-    );
-    if (!tokenRows.length) {
-      throw Object.assign(new Error('Invalid onboarding token'), { status: 400 });
-    }
-    const tokenRow = tokenRows[0];
-    if (new Date(tokenRow.onboarding_token_expires_at) < new Date()) {
-      throw Object.assign(new Error('Onboarding token expired'), { status: 410 });
-    }
-    if (tokenRow.candidate_email && tokenRow.candidate_email !== email) {
-      throw Object.assign(new Error('Email must match your candidate registration email'), { status: 400 });
-    }
+    const normalizedEmail = normalizeEmail(email);
+    const hash = await bcrypt.hash(password, 10);
+    const userId = crypto.randomUUID();
 
-    const userId = await this.register(email, password);
+    // Use a single connection for the entire transaction
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    // Link auth user to candidate record
-    await db.execute(
-      `UPDATE ats_candidate SET user_id = ?, updated_at = NOW() WHERE id = ?`,
-      [userId, tokenRow.candidate_id],
-    );
+      // Validate token exists and is not expired — use FOR UPDATE to lock the row
+      const [tokenRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT b.candidate_id, b.onboarding_token_expires_at, c.email AS candidate_email, c.user_id AS existing_user_id
+         FROM ats_onboarding_bridge b
+         JOIN ats_candidate c ON c.id = b.candidate_id
+         WHERE b.onboarding_token = ?
+         FOR UPDATE`,
+        [onboardingToken],
+      );
+      if (!tokenRows.length) {
+        throw Object.assign(new Error('Invalid onboarding token'), { status: 400 });
+      }
+      const tokenRow = tokenRows[0];
+      if (new Date(tokenRow.onboarding_token_expires_at) < new Date()) {
+        throw Object.assign(new Error('Onboarding token expired'), { status: 410 });
+      }
+      if (tokenRow.candidate_email && normalizeEmail(tokenRow.candidate_email) !== normalizedEmail) {
+        throw Object.assign(new Error('Email must match your candidate registration email'), { status: 400 });
+      }
+      // Prevent re-registration if candidate already has a user_id
+      if (tokenRow.existing_user_id) {
+        throw Object.assign(new Error('This candidate has already completed registration'), { status: 409 });
+      }
 
-    return userId;
+      // Check for existing auth_user with FOR UPDATE to prevent race conditions
+      const [existingAuth] = await conn.execute<RowDataPacket[]>(
+        'SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1 FOR UPDATE',
+        [normalizedEmail]
+      );
+      if (existingAuth.length > 0) {
+        throw Object.assign(new Error('Email already registered'), { status: 409 });
+      }
+
+      // Insert new auth_user
+      await conn.execute<ResultSetHeader>(
+        'INSERT INTO auth_user (id, email, password_hash) VALUES (?, ?, ?)',
+        [userId, normalizedEmail, hash]
+      );
+
+      // Link auth user to candidate record
+      await conn.execute(
+        `UPDATE ats_candidate SET user_id = ?, updated_at = NOW() WHERE id = ?`,
+        [userId, tokenRow.candidate_id],
+      );
+
+      await conn.commit();
+      return userId;
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
   },
 
   async createPasswordResetTokenByUserId(userId: string, hours = RESET_EXPIRES_HOURS): Promise<string> {
@@ -972,8 +853,8 @@ export const authService = {
       // Table not yet migrated — allow one-time OTP without rate-limit until 303 is applied
     }
 
-    // Generate 6-digit OTP using cryptographically secure random
-    const otp = String(crypto.randomInt(100000, 1000000));
+    // Generate 6-digit OTP
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
     const otpHash = crypto
       .createHmac('sha256', OTP_HMAC_SECRET)
       .update(`${otp}:${userId}:${phoneOrEmail}`)

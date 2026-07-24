@@ -16,7 +16,7 @@
     "schema-audit:test": "node ./backend/node_modules/vitest/vitest.mjs run --config tools/schema-auditor/vitest.config.ts",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "echo 'WARNING: vite preview is for LOCAL testing only. Production uses nginx.' && vite preview",
+    "preview": "vite preview",
     "verify:routes": "node backend/node_modules/vitest/vitest.mjs run scripts/app-route-composition.test.tsx --config vite.config.ts --globals",
     "dev:frontend": "vite",
     "dev:backend": "cd backend && npm run dev",

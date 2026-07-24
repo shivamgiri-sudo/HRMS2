@@ -9,6 +9,8 @@ const DELAY_THRESHOLD_MINUTES = 120;         // Alert after 2 hours in called/in
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;   // Poll every 10 minutes
 const ALERT_COOLDOWN_MS  = 2 * 60 * 60 * 1000; // Re-alert cooldown: 2 hours per token
 
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 // ── In-Memory Dedup ────────────────────────────────────────────────────────────
 
 const alertedTokens = new Map<string, number>(); // tokenId → lastAlertTimestamp
@@ -191,5 +193,13 @@ async function checkDelays(): Promise<void> {
 export function startInterviewDelayAlertWorker(): void {
   console.log(`[InterviewDelayAlert] Starting — threshold: ${DELAY_THRESHOLD_MINUTES}min, interval: ${CHECK_INTERVAL_MS / 60000}min`);
   void checkDelays();
-  setInterval(() => { void checkDelays(); }, CHECK_INTERVAL_MS);
+  intervalRef = setInterval(() => { void checkDelays(); }, CHECK_INTERVAL_MS);
+}
+
+export function stopInterviewDelayAlertWorker(): void {
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[InterviewDelayAlert] Stopped");
 }

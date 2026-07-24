@@ -12,6 +12,8 @@ try {
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // Check every 6 hours
 
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 // ── Business Logic ───────────────────────────────────────────────────────────
 
 /**
@@ -193,9 +195,17 @@ export async function startWorker(): Promise<void> {
   await checkAndRun();
 
   // Then run on every 6-hour tick
-  setInterval(async () => {
+  intervalRef = setInterval(async () => {
     await checkAndRun();
   }, CHECK_INTERVAL_MS);
+}
+
+function stopWorker(): void {
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[LeaveMonthlyCreditWorker] Stopped");
 }
 
 // ── Start Worker ─────────────────────────────────────────────────────────────
@@ -207,4 +217,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startLeaveMonthlyWorker };
+export { startWorker as startLeaveMonthlyWorker, stopWorker as stopLeaveMonthlyWorker };

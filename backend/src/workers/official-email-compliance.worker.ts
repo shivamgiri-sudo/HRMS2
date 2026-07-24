@@ -66,3 +66,11 @@ export function startOfficialEmailComplianceScheduler(): void {
   }, millisecondsUntilNextOfficialEmailSweep());
   nextRun.unref();
 }
+
+export function stopOfficialEmailComplianceScheduler(): void {
+  if (nextRun) {
+    clearTimeout(nextRun);
+    nextRun = undefined;
+  }
+  console.log("[official-email] Stopped");
+}

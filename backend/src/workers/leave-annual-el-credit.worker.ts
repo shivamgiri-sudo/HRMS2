@@ -12,6 +12,8 @@ try {
 
 const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000; // Check every 12 hours
 
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 // ── Core Processing ──────────────────────────────────────────────────────────
 
 /**
@@ -151,9 +153,17 @@ export async function startWorker(): Promise<void> {
   await checkAndRunAnnualCredit();
 
   // Then run periodically every 12 hours
-  setInterval(async () => {
+  intervalRef = setInterval(async () => {
     await checkAndRunAnnualCredit();
   }, CHECK_INTERVAL_MS);
+}
+
+function stopWorker(): void {
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[AnnualLeaveWorker] Stopped");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -164,4 +174,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startAnnualLeaveWorker };
+export { startWorker as startAnnualLeaveWorker, stopWorker as stopAnnualLeaveWorker };

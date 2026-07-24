@@ -6,6 +6,8 @@ import { runFullSync } from "../modules/lms/lms.sync.service.js";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 // ── Schedule helpers ───────────────────────────────────────────────────────
 
 async function isScheduleEnabled(): Promise<boolean> {
@@ -62,7 +64,15 @@ async function tick(): Promise<void> {
 async function startWorker(): Promise<void> {
   console.log("[lms-worker] starting — will run every hour");
   tick(); // run immediately on startup
-  setInterval(tick, INTERVAL_MS);
+  intervalRef = setInterval(tick, INTERVAL_MS);
+}
+
+function stopWorker(): void {
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[lms-worker] Stopped");
 }
 
 // ── Entry Point ────────────────────────────────────────────────────────────
@@ -74,4 +84,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startLmsSyncWorker, tick as runLmsSync };
+export { startWorker as startLmsSyncWorker, stopWorker as stopLmsSyncWorker, tick as runLmsSync };

@@ -12,11 +12,6 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
-import {
-  setRefreshTokenCookie,
-  clearRefreshTokenCookie,
-  getRefreshTokenFromRequest,
-} from "./auth-cookie.js";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -38,6 +33,14 @@ const twoFactorLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 5,
   message: { success: false, message: "Too many verification attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const logoutLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,                   // 30 logout attempts per IP — generous but prevents abuse
+  message: { success: false, message: "Too many logout requests. Please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -147,7 +150,6 @@ async function isReportingDownline(requesterEmployeeId: string, targetEmployeeId
 
 // POST /api/auth/login — public (rate limited)
 // Accepts: { identifier: "email or employee code", password } OR legacy { email, password }
-// SECURITY: Refresh token is set as httpOnly cookie, NOT returned in response body
 router.post("/login", authLimiter, h(async (req, res) => {
   const identifier = req.body.identifier || req.body.email;
   const { password } = req.body;
@@ -155,104 +157,26 @@ router.post("/login", authLimiter, h(async (req, res) => {
 
   try {
     const tokens = await authService.login(identifier, password, req);
-
-    // SECURITY: Set refresh token as httpOnly cookie (if provided - not provided for 2FA pending)
-    if (tokens.refreshToken) {
-      setRefreshTokenCookie(res, tokens.refreshToken);
-    }
-
-    // Return response WITHOUT refresh token in body (security improvement)
-    // The refresh token is only accessible via httpOnly cookie
-    return res.json({
-      data: {
-        accessToken: tokens.accessToken,
-        // refreshToken intentionally omitted from response body
-        user: tokens.user,
-      }
-    });
+    return res.json({ data: tokens });
   } catch (error: unknown) {
     return res.status(401).json({ error: error instanceof Error ? error.message : "Authentication failed" });
   }
 }));
 
-// POST /api/auth/register — requires a valid invitation/onboarding token
-// SECURITY: Registration is NOT open. Users must have one of:
-// - A valid ATS onboarding token (from candidate flow)
-// - A valid HR invitation token
-// - A valid employee activation token
-// This prevents arbitrary account creation.
-router.post("/register", authLimiter, h(async (req, res) => {
-  const { email, password, onboardingToken, invitationToken, activationToken } = req.body;
+// POST /api/auth/register — public
+router.post("/register", h(async (req, res) => {
+  const { email, password, onboardingToken } = req.body;
   if (!email || !password || password.length < 8) {
     return res.status(400).json({ error: "email and password (min 8 chars) required" });
   }
 
-  // SECURITY: At least one valid token is required
-  const hasToken = onboardingToken || invitationToken || activationToken;
-  if (!hasToken) {
-    return res.status(403).json({
-      error: "Registration requires a valid invitation or onboarding token. Please contact HR.",
-      code: "INVITATION_REQUIRED",
-    });
-  }
-
   try {
     let userId: string;
-
     if (onboardingToken) {
-      // ATS candidate onboarding flow
       userId = await authService.registerFromATS(email, password, String(onboardingToken));
-    } else if (invitationToken) {
-      // HR invitation flow - validate invitation token
-      const tokenHash = crypto.createHash('sha256').update(String(invitationToken)).digest('hex');
-      const [inviteRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, email, consumed_at FROM auth_invitation
-         WHERE token_hash = ? AND expires_at > NOW()`,
-        [tokenHash]
-      );
-      if (!inviteRows.length) {
-        return res.status(403).json({ error: "Invalid or expired invitation token", code: "INVITATION_INVALID" });
-      }
-      if (inviteRows[0].consumed_at) {
-        return res.status(403).json({ error: "Invitation has already been used", code: "INVITATION_CONSUMED" });
-      }
-      // Verify email matches invitation (case-insensitive)
-      if (String(inviteRows[0].email).toLowerCase() !== String(email).toLowerCase()) {
-        return res.status(403).json({ error: "Email does not match invitation", code: "EMAIL_MISMATCH" });
-      }
-      // Mark invitation as consumed
-      await db.execute('UPDATE auth_invitation SET consumed_at = NOW() WHERE id = ?', [inviteRows[0].id]);
-      userId = await authService.register(email, password);
-    } else if (activationToken) {
-      // Employee activation flow - validate against employee_activation_tokens
-      const tokenHash = crypto.createHash('sha256').update(String(activationToken)).digest('hex');
-      const [activationRows] = await db.execute<RowDataPacket[]>(
-        `SELECT t.id, t.employee_id, t.consumed_at, e.email AS employee_email
-         FROM employee_activation_tokens t
-         JOIN employees e ON e.id = t.employee_id
-         WHERE t.token_hash = ? AND t.expires_at > NOW()`,
-        [tokenHash]
-      );
-      if (!activationRows.length) {
-        return res.status(403).json({ error: "Invalid or expired activation token", code: "ACTIVATION_INVALID" });
-      }
-      if (activationRows[0].consumed_at) {
-        return res.status(403).json({ error: "Activation token has already been used", code: "ACTIVATION_CONSUMED" });
-      }
-      // Verify email matches employee (case-insensitive)
-      if (String(activationRows[0].employee_email).toLowerCase() !== String(email).toLowerCase()) {
-        return res.status(403).json({ error: "Email does not match employee record", code: "EMAIL_MISMATCH" });
-      }
-      // Mark activation as consumed
-      await db.execute('UPDATE employee_activation_tokens SET consumed_at = NOW() WHERE id = ?', [activationRows[0].id]);
-      userId = await authService.register(email, password);
-      // Link user to employee
-      await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, activationRows[0].employee_id]);
     } else {
-      // Should not reach here due to hasToken check above
-      return res.status(403).json({ error: "Registration requires a valid token", code: "INVITATION_REQUIRED" });
+      userId = await authService.register(email, password);
     }
-
     return res.status(201).json({ ok: true, userId });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Registration failed";
@@ -325,74 +249,29 @@ router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin
 }));
 
 // POST /api/auth/refresh — public
-// SECURITY: Implements token rotation - each refresh returns a NEW refresh token.
-// The old token is marked as rotated (not deleted) for reuse detection.
-// If a rotated token is reused, the entire token family is revoked.
-// SECURITY: Refresh token is read from httpOnly cookie, NOT request body
 router.post("/refresh", h(async (req, res) => {
-  // SECURITY: Read refresh token from httpOnly cookie (with legacy body fallback)
-  const refreshToken = getRefreshTokenFromRequest(req);
-  if (!refreshToken) {
-    return res.status(400).json({ error: "Refresh token required (via cookie)" });
-  }
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ error: "refreshToken required" });
 
   try {
     const tokens = await authService.refreshAccess(refreshToken);
-
-    // SECURITY: Set rotated refresh token as httpOnly cookie
-    setRefreshTokenCookie(res, tokens.refreshToken);
-
-    // Return response WITHOUT refresh token in body
-    return res.json({
-      data: {
-        accessToken: tokens.accessToken,
-        // refreshToken intentionally omitted from response body
-      }
-    });
-  } catch (error: unknown) {
-    const err = error as { code?: string; message?: string };
-
-    // Clear cookie on auth failure
-    clearRefreshTokenCookie(res);
-
-    // Return specific error codes for client-side handling
-    if (err.code === 'TOKEN_REUSED') {
-      return res.status(401).json({
-        error: "Security: Token reuse detected. All sessions have been revoked.",
-        code: 'TOKEN_REUSED',
-        logoutRequired: true,
-      });
-    }
-    if (err.code === 'PASSWORD_CHANGED') {
-      return res.status(401).json({
-        error: "Session expired due to password change. Please log in again.",
-        code: 'PASSWORD_CHANGED',
-        logoutRequired: true,
-      });
-    }
-    if (err.code === 'USER_BLOCKED' || err.code === 'EMPLOYEE_INACTIVE') {
-      return res.status(401).json({
-        error: "Account is not active. Please contact HR.",
-        code: err.code,
-        logoutRequired: true,
-      });
-    }
+    return res.json({ data: tokens });
+  } catch {
     return res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 }));
 
-// POST /api/auth/logout — requires auth
-// SECURITY: Clears httpOnly refresh token cookie
-router.post("/logout", requireAuth, h(async (req, res) => {
-  // SECURITY: Read refresh token from httpOnly cookie (with legacy body fallback)
-  const refreshToken = getRefreshTokenFromRequest(req);
+// POST /api/auth/logout — public (rate limited)
+// Must work even with expired/invalid access token so users can always logout
+router.post("/logout", logoutLimiter, h(async (req, res) => {
+  const { refreshToken } = req.body;
+  // Always return success to prevent revealing whether a session existed
+  // This prevents enumeration attacks where an attacker probes for active sessions
   if (refreshToken) {
-    await authService.logout(refreshToken, req);
+    await authService.logout(refreshToken, req).catch(() => {
+      // Silently ignore errors - don't reveal session state
+    });
   }
-
-  // Always clear the refresh token cookie
-  clearRefreshTokenCookie(res);
-
   return res.json({ success: true });
 }));
 
@@ -466,7 +345,6 @@ router.post("/verify-otp-reset", authLimiter, h(async (req, res) => {
 }));
 
 // POST /api/auth/reset-password — public
-// SECURITY: Clears httpOnly cookie as password reset invalidates all sessions
 router.post("/reset-password", h(async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: "token and password required" });
@@ -474,19 +352,12 @@ router.post("/reset-password", h(async (req, res) => {
 
   try {
     await authService.resetPassword(token, password);
-
-    // SECURITY: Clear any existing refresh token cookie
-    // Password reset invalidates all existing sessions
-    clearRefreshTokenCookie(res);
-
     return res.json({ success: true });
   } catch (error: unknown) {
     return res.status(400).json({ error: error instanceof Error ? error.message : "Unknown error" });
   }
 }));
 
-// POST /api/auth/change-password — requires auth
-// SECURITY: Clears httpOnly cookie as password change invalidates all sessions
 router.post("/change-password", requireAuth, authLimiter, h(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) {
@@ -496,10 +367,6 @@ router.post("/change-password", requireAuth, authLimiter, h(async (req, res) => 
     return res.status(400).json({ error: "New password must be at least 8 characters" });
   }
   await authService.changePassword(req.authUser!.id, String(currentPassword), String(newPassword));
-
-  // SECURITY: Clear refresh token cookie as password change invalidates all sessions
-  clearRefreshTokenCookie(res);
-
   return res.json({ success: true });
 }));
 
@@ -519,46 +386,27 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req, res) => 
   }
   await verifyTwoFactorChallenge(req.authUser!.id, otp);
 
-  // Exchange the pre_auth token for full session (access + refresh tokens).
-  // SECURITY: Refresh token is ONLY created here, after 2FA verification.
+  // Exchange the pre_auth token for a full access token.
+  // The authorization header still carries the pre_auth token at this point.
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   let accessToken: string | null = null;
   try {
-    const exchanged = await authService.exchangePreAuthToken(preAuthToken, req);
+    const exchanged = await authService.exchangePreAuthToken(preAuthToken);
     accessToken = exchanged.accessToken;
-
-    // SECURITY: Set refresh token as httpOnly cookie
-    if (exchanged.refreshToken) {
-      setRefreshTokenCookie(res, exchanged.refreshToken);
-    }
   } catch {
     // If exchange fails (e.g. already-verified challenge, race), the client will
     // need to call POST /api/auth/2fa/exchange explicitly.
   }
 
-  // Return response WITHOUT refresh token in body
-  return res.json({
-    success: true,
-    twoFactorVerified: true,
-    ...(accessToken ? { accessToken } : {}),
-    // refreshToken intentionally omitted - set as httpOnly cookie
-  });
+  return res.json({ success: true, twoFactorVerified: true, ...(accessToken ? { accessToken } : {}) });
 }));
 
-// POST /api/auth/2fa/exchange — exchange a verified pre_auth token for full session
-// Separated out so clients can call this independently if /2fa/verify didn't return the tokens.
-// SECURITY: Refresh token is set as httpOnly cookie, NOT returned in response body
+// POST /api/auth/2fa/exchange — exchange a verified pre_auth token for a full access token
+// Separated out so clients can call this independently if /2fa/verify didn't return the token.
 router.post("/2fa/exchange", requireAuth, h(async (req, res) => {
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   try {
-    const { accessToken, refreshToken } = await authService.exchangePreAuthToken(preAuthToken, req);
-
-    // SECURITY: Set refresh token as httpOnly cookie
-    if (refreshToken) {
-      setRefreshTokenCookie(res, refreshToken);
-    }
-
-    // Return response WITHOUT refresh token in body
+    const { accessToken } = await authService.exchangePreAuthToken(preAuthToken);
     return res.json({ success: true, accessToken });
   } catch (error: unknown) {
     const status = typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode?: unknown }).statusCode === "number"
@@ -947,18 +795,14 @@ router.delete("/sessions/:sessionId", requireAuth, h(async (req, res) => {
 }));
 
 // DELETE /api/auth/sessions/all/others — Logout all other devices
-// DELETE /api/auth/sessions/all/others — logout all other devices
-// SECURITY: Reads current refresh token from httpOnly cookie
 router.delete("/sessions/all/others", requireAuth, h(async (req, res) => {
   const userId = req.authUser!.id;
-
-  // SECURITY: Read current refresh token from httpOnly cookie (with legacy fallback)
-  const currentRefreshToken = getRefreshTokenFromRequest(req) || req.headers['x-refresh-token'];
+  const currentRefreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
 
   if (!currentRefreshToken) {
     return res.status(400).json({
       success: false,
-      message: "Current refresh token required (via cookie) to identify this session"
+      message: "Current refresh token required to identify this session"
     });
   }
 

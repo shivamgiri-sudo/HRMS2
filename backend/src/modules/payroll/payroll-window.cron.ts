@@ -75,3 +75,11 @@ export function startPayrollWindowClosureScheduler(): void {
 
   console.log('[payroll-window-cron] scheduler started (daily)');
 }
+
+export function stopPayrollWindowClosureScheduler(): void {
+  if (_timer) {
+    clearInterval(_timer);
+    _timer = null;
+  }
+  console.log('[payroll-window-cron] Stopped');
+}

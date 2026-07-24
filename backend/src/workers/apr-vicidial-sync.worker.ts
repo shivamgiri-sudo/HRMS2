@@ -4,6 +4,8 @@ import mysql from 'mysql2/promise';
 
 const WORKER_NAME = 'apr-vicidial-sync';
 
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 // All vicidial_agent_log_* tables in dialer_db
 // event_time is stored in IST (DB server timezone = IST)
 const VICIDIAL_TABLES = [
@@ -321,10 +323,18 @@ export async function startAprVicidialSyncWorker(): Promise<void> {
   // Run every hour to keep APR data near real-time
   const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   console.log(`[${WORKER_NAME}] Scheduled hourly sync (every 60 min)`);
-  setInterval(
+  intervalRef = setInterval(
     () => runAprSync(0).catch(err =>
       console.error(`[${WORKER_NAME}] Hourly sync error:`, err.message)
     ),
     SYNC_INTERVAL_MS
   );
+}
+
+export function stopAprVicidialSyncWorker(): void {
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log(`[${WORKER_NAME}] Stopped`);
 }

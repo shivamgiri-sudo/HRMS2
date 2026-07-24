@@ -19,6 +19,9 @@ const STARTUP_DELAY_MS = 30 * 1000;
 const CANDIDATE_SCAN_LIMIT = 100;
 const MAX_ALERTS_PER_RUN = 10;
 
+let startupTimeoutRef: ReturnType<typeof setTimeout> | undefined;
+let intervalRef: ReturnType<typeof setInterval> | undefined;
+
 // ── In-Memory Alert Tracking ─────────────────────────────────────────────────
 
 const alertedCandidates = new Map<string, number>(); // candidateId → lastAlertTimestamp
@@ -146,15 +149,27 @@ function startWorker(): Promise<void> {
   console.log(`[SLABreachWorker] Check interval: ${CHECK_INTERVAL_MS / 1000} seconds`);
 
   // Let the API finish warming up before any external notification work begins.
-  setTimeout(() => {
+  startupTimeoutRef = setTimeout(() => {
     void processSLABreaches();
   }, STARTUP_DELAY_MS);
 
-  setInterval(() => {
+  intervalRef = setInterval(() => {
     void processSLABreaches();
   }, CHECK_INTERVAL_MS);
 
   return Promise.resolve();
+}
+
+function stopWorker(): void {
+  if (startupTimeoutRef) {
+    clearTimeout(startupTimeoutRef);
+    startupTimeoutRef = undefined;
+  }
+  if (intervalRef) {
+    clearInterval(intervalRef);
+    intervalRef = undefined;
+  }
+  console.log("[SLABreachWorker] Stopped");
 }
 
 // ── Start Worker ─────────────────────────────────────────────────────────────
@@ -167,4 +182,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export { startWorker as startSLABreachWorker, processSLABreaches };
+export { startWorker as startSLABreachWorker, stopWorker as stopSLABreachWorker, processSLABreaches };
