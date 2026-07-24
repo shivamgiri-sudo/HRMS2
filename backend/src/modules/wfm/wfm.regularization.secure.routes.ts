@@ -475,7 +475,7 @@ wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async
               CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
               cps.device_id
          FROM cosec_punch_sync cps
-         JOIN employees e ON (e.employee_code = cps.user_id OR e.biometric_code = cps.user_id)
+         JOIN employees e ON (e.employee_code = cps.user_id COLLATE utf8mb4_unicode_ci OR e.biometric_code = cps.user_id COLLATE utf8mb4_unicode_ci)
         WHERE e.id = ?
           AND (
             DATE(cps.punch_time) = ?
