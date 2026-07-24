@@ -1,0 +1,60 @@
+name: Finalize ATS KPI fix
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [agent/fix-ats-kpi-calculations]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-ats-kpi-calculations
+          fetch-depth: 0
+
+      - name: Apply validated KPI patch
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import textwrap
+          workflow = Path('.github/workflows/fix-ats-kpi-calculations.yml').read_text(encoding='utf-8')
+          start_marker = "          python <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = workflow.index(start_marker) + len(start_marker)
+          end = workflow.index(end_marker, start)
+          Path('/tmp/apply-kpi-fix.py').write_text(textwrap.dedent(workflow[start:end]), encoding='utf-8')
+          PY
+          python /tmp/apply-kpi-fix.py
+
+      - name: Validate source changes
+        run: |
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run typecheck
+          npm run build
+          (cd backend && npm install --ignore-scripts && npm run typecheck)
+          git diff --quiet -- backend/src/modules/ats/recruiter-hiring.service.ts && exit 1 || true
+          git diff --quiet -- src/pages/NativeATSHiringEntry.tsx && exit 1 || true
+
+      - name: Commit explicit source scope
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx
+          git rm -f --ignore-unmatch \
+            .github/kpi-fix-trigger.txt \
+            .github/workflows/fix-ats-kpi-calculations.yml \
+            .github/workflows/repair-ats-kpi-workflow.yml \
+            .github/workflows/complete-ats-kpi-fix.yml \
+            .github/workflows/finalize-ats-kpi-fix.yml
+          echo 'Staged files:'
+          git diff --cached --name-only
+          git commit -m 'fix(ats): correct KPI grid calculations'
+          git push origin HEAD:agent/fix-ats-kpi-calculations
