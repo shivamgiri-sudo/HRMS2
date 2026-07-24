@@ -27,6 +27,9 @@ interface LiveEmployee {
   designation: string | null;
 }
 
+interface BranchOption { id: string; branch_name: string; }
+interface ProcessOption { id: string; process_name: string; branch_id: string | null; }
+
 function minutesAgo(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (diff < 1) return "just now";
@@ -34,7 +37,7 @@ function minutesAgo(iso: string): string {
   return `${diff} min ago`;
 }
 
-// Fits map bounds to the given employees list
+// Auto-fit map bounds to the given employees list when they change
 function BoundsFitter({ employees }: { employees: LiveEmployee[] }) {
   const map = useMap();
   useEffect(() => {
@@ -47,7 +50,7 @@ function BoundsFitter({ employees }: { employees: LiveEmployee[] }) {
   return null;
 }
 
-// Exposes map instance to parent via ref callback
+// Captures the Leaflet map instance for programmatic flyTo
 function MapRefCapture({ onMap }: { onMap: (m: L.Map) => void }) {
   const map = useMap();
   useEffect(() => { onMap(map); }, [map]);
@@ -55,38 +58,55 @@ function MapRefCapture({ onMap }: { onMap: (m: L.Map) => void }) {
 }
 
 export default function LiveLocationMap() {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedId, setSelectedId]     = useState<string | null>(null);
+  const [searchQuery, setSearchQuery]   = useState("");
   const [branchFilter, setBranchFilter] = useState("");
   const [processFilter, setProcessFilter] = useState("");
-  const mapRef = useRef<L.Map | null>(null);
+  const mapRef     = useRef<L.Map | null>(null);
   const markerRefs = useRef<Record<string, L.Marker>>({});
 
-  const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
+  // Live location data — polls every 30s
+  const { data: liveData, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["live-location"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>(
-        "/api/location/live"
-      );
+      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>("/api/location/live");
       return res.data ?? [];
     },
     refetchInterval: 30_000,
     staleTime: 15_000,
   });
 
-  const employees = data ?? [];
+  // All active branches from DB — for the branch dropdown
+  const { data: branchData } = useQuery({
+    queryKey: ["org-branches-live-map"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: BranchOption[] }>("/api/org/branches?active_status=1&limit=500");
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
 
-  // Derived filter options from online employees
-  const branches = useMemo(
-    () => [...new Set(employees.map((e) => e.branch_name).filter(Boolean) as string[])].sort(),
-    [employees]
-  );
-  const processes = useMemo(() => {
-    const pool = branchFilter
-      ? employees.filter((e) => e.branch_name === branchFilter)
-      : employees;
-    return [...new Set(pool.map((e) => e.process_name).filter(Boolean) as string[])].sort();
-  }, [employees, branchFilter]);
+  // All active processes from DB — for the process dropdown
+  const { data: processData } = useQuery({
+    queryKey: ["org-processes-live-map"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ data: ProcessOption[] }>("/api/org/processes?active_status=1&limit=500");
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const employees  = liveData ?? [];
+  const allBranches = branchData ?? [];
+  const allProcesses = processData ?? [];
+
+  // Filter processes by selected branch (branch_id FK on process_master)
+  const filteredProcesses = useMemo(() => {
+    if (!branchFilter) return allProcesses;
+    const selectedBranch = allBranches.find((b) => b.branch_name === branchFilter);
+    if (!selectedBranch) return allProcesses;
+    return allProcesses.filter((p) => p.branch_id === selectedBranch.id);
+  }, [allProcesses, allBranches, branchFilter]);
 
   // Reset process filter when branch changes
   useEffect(() => { setProcessFilter(""); }, [branchFilter]);
@@ -110,7 +130,6 @@ export default function LiveLocationMap() {
     const map = mapRef.current;
     if (map) {
       map.flyTo([Number(emp.latitude), Number(emp.longitude)], 16, { duration: 1 });
-      // Open popup after fly completes (~1s)
       setTimeout(() => {
         const marker = markerRefs.current[emp.employee_id];
         if (marker) marker.openPopup();
@@ -122,7 +141,7 @@ export default function LiveLocationMap() {
     <DashboardLayout>
       <div className="flex flex-col" style={{ height: "calc(100vh - 64px)" }}>
 
-        {/* ── Top header bar ── */}
+        {/* ── Top header ── */}
         <div className="bg-white border-b px-5 py-3 shrink-0">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
@@ -151,20 +170,20 @@ export default function LiveLocationMap() {
           </div>
         </div>
 
-        {/* ── Main content: sidebar + map ── */}
+        {/* ── Body: sidebar + map ── */}
         <div className="flex flex-1 overflow-hidden">
 
           {/* ── Left sidebar ── */}
           <div className="w-72 shrink-0 flex flex-col border-r bg-gray-50 overflow-hidden">
 
-            {/* Filters */}
+            {/* Filters — always populated from DB, not from online employees */}
             <div className="p-3 border-b bg-white space-y-2">
-              {/* Search */}
+              {/* Name search */}
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search by name…"
+                  placeholder="Search by employee name…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-8 pr-7 py-1.5 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -179,33 +198,32 @@ export default function LiveLocationMap() {
                 )}
               </div>
 
-              {/* Branch filter */}
+              {/* Branch dropdown — all active branches from branch_master */}
               <select
                 value={branchFilter}
                 onChange={(e) => setBranchFilter(e.target.value)}
                 className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
               >
                 <option value="">All Branches</option>
-                {branches.map((b) => (
-                  <option key={b} value={b}>{b}</option>
+                {allBranches.map((b) => (
+                  <option key={b.id} value={b.branch_name}>{b.branch_name}</option>
                 ))}
               </select>
 
-              {/* Process filter */}
+              {/* Process dropdown — all active processes from process_master, filtered by branch */}
               <select
                 value={processFilter}
                 onChange={(e) => setProcessFilter(e.target.value)}
-                disabled={processes.length === 0}
-                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
               >
                 <option value="">All Processes</option>
-                {processes.map((p) => (
-                  <option key={p} value={p}>{p}</option>
+                {filteredProcesses.map((p) => (
+                  <option key={p.id} value={p.process_name}>{p.process_name}</option>
                 ))}
               </select>
             </div>
 
-            {/* Employee list */}
+            {/* Online employee list */}
             <div className="flex-1 overflow-y-auto">
               {isLoading && employees.length === 0 && (
                 <div className="flex items-center justify-center h-24 text-gray-400 text-sm">
@@ -217,7 +235,7 @@ export default function LiveLocationMap() {
                 <div className="flex flex-col items-center justify-center h-24 text-gray-400 text-xs px-4 text-center">
                   <MapPin className="w-6 h-6 mb-1" />
                   {employees.length === 0
-                    ? "No employees online in the last 5 min"
+                    ? "No employees online right now"
                     : "No match for current filters"}
                 </div>
               )}
@@ -227,14 +245,13 @@ export default function LiveLocationMap() {
                   key={emp.employee_id}
                   onClick={() => flyToEmployee(emp)}
                   className={`w-full text-left px-3 py-2.5 border-b border-gray-100 hover:bg-blue-50 transition-colors ${
-                    selectedId === emp.employee_id ? "bg-blue-50 border-l-2 border-l-blue-500" : ""
+                    selectedId === emp.employee_id
+                      ? "bg-blue-50 border-l-2 border-l-blue-500"
+                      : ""
                   }`}
                 >
                   <div className="flex items-start gap-2">
-                    <div
-                      className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-green-500"
-                      title="Online"
-                    />
+                    <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-green-500" />
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{emp.full_name}</p>
                       <p className="text-xs text-gray-500 truncate">
