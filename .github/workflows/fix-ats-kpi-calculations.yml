@@ -1,6 +1,13 @@
 name: Fix ATS KPI calculations
 
 on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
   push:
     branches:
       - agent/fix-ats-kpi-calculations
@@ -118,7 +125,7 @@ jobs:
               ? Math.round((numerator / denominator) * 1000) / 10
               : 0;
             metrics.contact_rate = rate(metrics.total_contacted, metrics.total_records);
-            metrics.contacted_pct = metrics.contact_rate; // backwards-compatible API field
+            metrics.contacted_pct = metrics.contact_rate;
             metrics.shortlist_rate = rate(metrics.shortlisted, metrics.total_contacted);
             metrics.walkin_rate = rate(metrics.walkins, metrics.total_contacted);
             metrics.selection_rate = rate(metrics.final_selected, metrics.walkins);
@@ -358,12 +365,13 @@ jobs:
           echo "$changed"
           test "$changed" = $'backend/src/modules/ats/recruiter-hiring.service.ts\nsrc/pages/NativeATSHiringEntry.tsx'
 
-      - name: Commit validated changes and remove temporary workflow
+      - name: Commit validated changes and remove temporary files
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm .github/workflows/fix-ats-kpi-calculations.yml
-          git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx .github/workflows/fix-ats-kpi-calculations.yml
+          rm .github/kpi-fix-trigger.txt
+          git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx .github/workflows/fix-ats-kpi-calculations.yml .github/kpi-fix-trigger.txt
           git commit -m "fix(ats): correct KPI grid calculations"
           git push origin HEAD:agent/fix-ats-kpi-calculations
