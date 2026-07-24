@@ -1345,12 +1345,14 @@ export default function NativeATSHiringEntry() {
               const funnelStage = (stage: string) => analytics.funnel.find((item) => item.stage === stage);
     const totalLogged = funnelStage("Logged")?.count ?? 0;
     const contactedCount = funnelStage("Contacted")?.count ?? 0;
+    const shortlistedCount = funnelStage("Shortlisted")?.count ?? 0;
     const walkinCount = funnelStage("Walked In")?.count ?? 0;
     const selCount = funnelStage("Selected")?.count ?? 0;
     const joinCount = funnelStage("Joined")?.count ?? 0;
     const stageRate = (numerator: number, denominator: number) => denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
     const contactRate = stageRate(contactedCount, totalLogged);
-    const walkinRate = stageRate(walkinCount, contactedCount);
+    const shortlistRate = stageRate(shortlistedCount, contactedCount);
+    const walkinRate = stageRate(walkinCount, shortlistedCount);
     const selectionRate = stageRate(selCount, walkinCount);
     const joinRate = stageRate(joinCount, selCount);
     const followupDueCount = analytics.followupDueCount ?? analytics.followupDue.length;
@@ -1421,10 +1423,11 @@ export default function NativeATSHiringEntry() {
               return (
                 <>
                   {/* ── KPI tiles ── */}
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-                    <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} sub="logged candidate records" color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
-                    <KpiTile label="Contacted" value={contactedCount.toLocaleString()} sub={`${contactRate}% of logged`} color="border-cyan-300" icon={<PhoneCall className="h-4 w-4 text-cyan-500" />} />
-                    <KpiTile label="Walk-ins" value={walkinCount.toLocaleString()} sub={`${walkinRate}% of contacted`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+                    <KpiTile label="Candidate Records" value={totalLogged.toLocaleString()} sub="base candidate entries" color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
+                    <KpiTile label="Contacted" value={contactedCount.toLocaleString()} sub={`${contactRate}% of candidate records`} color="border-cyan-300" icon={<PhoneCall className="h-4 w-4 text-cyan-500" />} />
+                    <KpiTile label="Shortlisted" value={shortlistedCount.toLocaleString()} sub={`${shortlistRate}% of contacted`} color="border-amber-300" icon={<Target className="h-4 w-4 text-amber-500" />} />
+                    <KpiTile label="Walk-ins" value={walkinCount.toLocaleString()} sub={`${walkinRate}% of shortlisted`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
                     <KpiTile label="Selected" value={selCount.toLocaleString()} sub={`${selectionRate}% of walk-ins`} color="border-emerald-300" icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} />
                     <KpiTile label="Joined" value={joinCount.toLocaleString()} sub={`${joinRate}% of selected`} color="border-violet-300" icon={<BadgeCheck className="h-4 w-4 text-violet-500" />} />
                     <KpiTile label="Follow-ups" value={followupDueCount.toLocaleString()} sub="due in the next 7 days" color={followupDueCount > 0 ? "border-amber-400" : "border-slate-200"} icon={<Bell className="h-4 w-4 text-amber-500" />} />

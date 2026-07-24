@@ -1726,6 +1726,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
       `SELECT
          COUNT(*)                                             AS logged,
          SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END)    AS contacted,
+         SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,
          SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END)    AS walkins,
          SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END)    AS selected,
          SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END)    AS joined
@@ -1854,6 +1855,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const s = summaryRows[0] ?? {};
   const logged    = Number(s.logged    ?? 0);
   const contacted = Number(s.contacted ?? 0);
+  const shortlisted = Number(s.shortlisted ?? 0);
   const walkins   = Number(s.walkins   ?? 0);
   const selected  = Number(s.selected  ?? 0);
   const joined    = Number(s.joined    ?? 0);
@@ -1861,6 +1863,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const funnel = [
     { stage: "Logged",    count: logged,    pct: 100           },
     { stage: "Contacted", count: contacted, pct: pct(contacted) },
+    { stage: "Shortlisted", count: shortlisted, pct: pct(shortlisted) },
     { stage: "Walked In", count: walkins,   pct: pct(walkins)   },
     { stage: "Selected",  count: selected,  pct: pct(selected)  },
     { stage: "Joined",    count: joined,    pct: pct(joined)    },
