@@ -1,0 +1,82 @@
+name: Align ATS KPI funnel stages v2
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [agent/fix-ats-kpi-calculations]
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-ats-kpi-calculations
+          fetch-depth: 0
+      - name: Align stages
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          backend = Path('backend/src/modules/ats/recruiter-hiring.service.ts')
+          text = backend.read_text(encoding='utf-8')
+          text, n = re.subn(
+              r'(\s+SUM\(CASE WHEN \$\{IS_CONTACTED\}\s+THEN 1 ELSE 0 END\)\s+AS contacted,\n)(\s+SUM\(CASE WHEN \$\{IS_WALKIN\})',
+              r'\1         SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,\n\2',
+              text,
+              count=1,
+          )
+          if n != 1: raise SystemExit('analytics shortlisted SQL insertion failed')
+
+          text, n = re.subn(
+              r'(\s+const contacted\s*=\s*Number\(s\.contacted\s*\?\?\s*0\);\n)(\s+const walkins)',
+              r'\1  const shortlisted = Number(s.shortlisted ?? 0);\n\2',
+              text,
+              count=1,
+          )
+          if n != 1: raise SystemExit('analytics shortlisted mapping failed')
+
+          old = '    { stage: "Contacted", count: contacted, pct: pct(contacted) },\n    { stage: "Walked In", count: walkins,   pct: pct(walkins)   },'
+          new = '    { stage: "Contacted", count: contacted, pct: pct(contacted) },\n    { stage: "Shortlisted", count: shortlisted, pct: pct(shortlisted) },\n    { stage: "Walked In", count: walkins, pct: pct(walkins) },'
+          if old not in text: raise SystemExit('analytics funnel stage marker missing')
+          text = text.replace(old, new, 1)
+          backend.write_text(text, encoding='utf-8')
+
+          frontend = Path('src/pages/NativeATSHiringEntry.tsx')
+          text = frontend.read_text(encoding='utf-8')
+          old = '              const contactedCount = funnelStage("Contacted")?.count ?? 0;\n              const walkinCount = funnelStage("Walked In")?.count ?? 0;'
+          new = '              const contactedCount = funnelStage("Contacted")?.count ?? 0;\n              const shortlistedCount = funnelStage("Shortlisted")?.count ?? 0;\n              const walkinCount = funnelStage("Walked In")?.count ?? 0;'
+          if old not in text: raise SystemExit('frontend stage lookup marker missing')
+          text = text.replace(old, new, 1)
+
+          old = '              const contactRate = stageRate(contactedCount, totalLogged);\n              const walkinRate = stageRate(walkinCount, contactedCount);'
+          new = '              const contactRate = stageRate(contactedCount, totalLogged);\n              const shortlistRate = stageRate(shortlistedCount, contactedCount);\n              const walkinRate = stageRate(walkinCount, shortlistedCount);'
+          if old not in text: raise SystemExit('frontend stage rate marker missing')
+          text = text.replace(old, new, 1)
+
+          text = text.replace('grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6', 'grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7', 1)
+          old = '                    <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} sub="logged candidate records" color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />\n                    <KpiTile label="Contacted" value={contactedCount.toLocaleString()} sub={`${contactRate}% of logged`} color="border-cyan-300" icon={<PhoneCall className="h-4 w-4 text-cyan-500" />} />\n                    <KpiTile label="Walk-ins" value={walkinCount.toLocaleString()} sub={`${walkinRate}% of contacted`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />'
+          new = '                    <KpiTile label="Candidate Records" value={totalLogged.toLocaleString()} sub="base candidate entries" color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />\n                    <KpiTile label="Contacted" value={contactedCount.toLocaleString()} sub={`${contactRate}% of candidate records`} color="border-cyan-300" icon={<PhoneCall className="h-4 w-4 text-cyan-500" />} />\n                    <KpiTile label="Shortlisted" value={shortlistedCount.toLocaleString()} sub={`${shortlistRate}% of contacted`} color="border-amber-300" icon={<Target className="h-4 w-4 text-amber-500" />} />\n                    <KpiTile label="Walk-ins" value={walkinCount.toLocaleString()} sub={`${walkinRate}% of shortlisted`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />'
+          if old not in text: raise SystemExit('frontend KPI tile marker missing')
+          text = text.replace(old, new, 1)
+          frontend.write_text(text, encoding='utf-8')
+          PY
+      - name: Validate and commit
+        run: |
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run typecheck
+          npm run build
+          (cd backend && npm install --ignore-scripts && npm run typecheck)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx
+          git rm -f --ignore-unmatch .github/workflows/align-ats-kpi-funnel.yml .github/workflows/align-ats-kpi-funnel-v2.yml
+          git commit -m 'fix(ats): align KPI funnel stages'
+          git push origin HEAD:agent/fix-ats-kpi-calculations
