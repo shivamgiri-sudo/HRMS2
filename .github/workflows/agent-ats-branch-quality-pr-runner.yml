@@ -1,0 +1,65 @@
+name: Validate ATS branch-stage data quality on PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out PR head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Apply raw data-quality remediation
+        run: python3 scripts/apply-ats-branch-data-quality-fix.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Frontend typecheck
+        run: npm run typecheck
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Check patch hygiene
+        run: git diff --check
+
+      - name: Commit validated data-quality remediation
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          rm -f .github/workflows/agent-ats-branch-quality-pr-runner.yml
+          rm -f scripts/apply-ats-branch-data-quality-fix.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/ats/recruiter-hiring.service.ts .github scripts
+          git commit -m "fix(ats): validate raw branch funnel stage flags"
+          git push origin "HEAD:${HEAD_BRANCH}"
