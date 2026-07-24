@@ -28,6 +28,7 @@ interface QueueToken {
   recruiter_id: string | null;
   recruiter_name: string | null;
   created_at: string;
+  arrival_time?: string | null;
   skilltest_typing?: number | null;
   skilltest_ai?: number | null;
   skilltest_result?: string | null;
@@ -85,10 +86,65 @@ const STATUS_PILLS: Array<{ value: QueueStatus | "all"; label: string; activeCla
   { value: "cancelled",    label: "Cancelled",    activeClass: "bg-gray-500 text-white border-gray-500" },
 ];
 
-function formatWaitTime(minutes: number | null): string {
-  if (!minutes) return "—";
+function formatMinutes(minutes: number): string {
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * Parse a MySQL DATETIME string that is in IST (returned as a plain string
+ * due to `timezone: "+05:30"` + `dateStrings: true` in the pool config).
+ * Appending the IST offset before parsing ensures Date always interprets it
+ * as IST regardless of the browser's local timezone.
+ */
+function parseIst(ts: string | null | undefined): number | null {
+  if (!ts) return null;
+  // "2026-07-24 14:30:00" → "2026-07-24T14:30:00+05:30"
+  return new Date(ts.replace(' ', 'T') + '+05:30').getTime();
+}
+
+function computeTimeDisplay(token: QueueToken): { label: string; value: string } {
+  const now = Date.now();
+  // arrival_time is always stored at token creation; created_at is the guaranteed fallback
+  const entryMs = parseIst(token.arrival_time) ?? parseIst(token.created_at);
+
+  if (token.queue_status === "waiting") {
+    if (token.estimated_wait_time != null && token.estimated_wait_time > 0) {
+      return { label: "Est. wait", value: formatMinutes(token.estimated_wait_time) };
+    }
+    if (!entryMs) return { label: "", value: "—" };
+    const elapsed = Math.floor((now - entryMs) / 60000);
+    return { label: "In queue", value: elapsed > 0 ? formatMinutes(elapsed) : "Just arrived" };
+  }
+
+  if (token.queue_status === "called") {
+    const startMs = parseIst(token.called_at) ?? entryMs;
+    if (!startMs) return { label: "", value: "—" };
+    const elapsed = Math.floor((now - startMs) / 60000);
+    return { label: "Since call", value: formatMinutes(Math.max(0, elapsed)) };
+  }
+
+  if (token.queue_status === "in_interview") {
+    const startMs = parseIst(token.interview_started_at) ?? parseIst(token.called_at) ?? entryMs;
+    if (!startMs) return { label: "", value: "—" };
+    const elapsed = Math.floor((now - startMs) / 60000);
+    return { label: "Interview time", value: formatMinutes(Math.max(0, elapsed)) };
+  }
+
+  if (token.queue_status === "completed") {
+    const startMs = parseIst(token.interview_started_at);
+    const endMs   = parseIst(token.interview_completed_at);
+    if (startMs && endMs) {
+      return { label: "Duration", value: formatMinutes(Math.max(0, Math.floor((endMs - startMs) / 60000))) };
+    }
+    // Fallback: total time from entry to completion
+    if (endMs && entryMs) {
+      return { label: "Total time", value: formatMinutes(Math.max(0, Math.floor((endMs - entryMs) / 60000))) };
+    }
+    return { label: "", value: "—" };
+  }
+
+  return { label: "", value: "—" };
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────────
@@ -252,7 +308,7 @@ export default function NativeWalkinQueueEnhanced() {
                   </div>
                   <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 text-blue-700 font-medium text-[11px] whitespace-nowrap">
                     <TrendingUp className="w-3 h-3" />
-                    <span>Avg Wait {formatWaitTime(metrics.average_wait_time || metrics.avg_wait_time)}</span>
+                    <span>Avg Wait {formatMinutes(metrics.average_wait_time || metrics.avg_wait_time || 0)}</span>
                   </div>
                 </>
               ) : (
@@ -389,8 +445,18 @@ export default function NativeWalkinQueueEnhanced() {
                           {STATUS_LABEL[token.queue_status] || token.queue_status}
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 text-sm text-gray-600 whitespace-nowrap">
-                        {formatWaitTime(token.estimated_wait_time)}
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        {(() => {
+                          const { label, value } = computeTimeDisplay(token);
+                          return value === "—" ? (
+                            <span className="text-gray-400 text-sm">—</span>
+                          ) : (
+                            <div>
+                              <span className="text-sm font-medium text-gray-800">{value}</span>
+                              {label && <p className="text-[10px] text-gray-400 leading-none mt-0.5">{label}</p>}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                         {(() => {
