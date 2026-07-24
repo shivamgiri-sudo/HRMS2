@@ -516,7 +516,7 @@ export default function AttendanceRegularization() {
       const res = await hrmsApi.get<{ success: boolean; data: AttendancePreview }>(
         `/api/wfm/regularizations/attendance-preview?${params.toString()}`
       );
-      return res.data.data;
+      return res.data;
     },
     retry: false,
   });
@@ -531,9 +531,9 @@ export default function AttendanceRegularization() {
         `/api/wfm/regularizations/date-range-preview?${params.toString()}`
       );
       // Auto-select all selectable dates
-      const selectableDates = res.data.data.days.filter((d) => d.selectable).map((d) => d.date);
+      const selectableDates = res.data.days.filter((d) => d.selectable).map((d) => d.date);
       setBatchSelectedDates(new Set(selectableDates));
-      return res.data.data;
+      return res.data;
     },
     retry: false,
   });

@@ -91,6 +91,7 @@ export const DISPUTE_TYPES = [
   'shift_mismatch',
   'cosec_sync_issue',
   'manual_punch_correction',
+  'work_from_home',
 ] as const;
 
 export type DisputeType = typeof DISPUTE_TYPES[number];
