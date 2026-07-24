@@ -1554,7 +1554,7 @@ export async function getHiringDashboard(userId: string, role: string | undefine
   metrics.contact_rate = rate(metrics.total_contacted, metrics.total_records);
   metrics.contacted_pct = metrics.contact_rate;
   metrics.shortlist_rate = rate(metrics.shortlisted, metrics.total_contacted);
-  metrics.walkin_rate = rate(metrics.walkins, metrics.total_contacted);
+  metrics.walkin_rate = rate(metrics.walkins, metrics.shortlisted);
   metrics.selection_rate = rate(metrics.final_selected, metrics.walkins);
   metrics.join_rate = rate(metrics.joined, metrics.final_selected);
 
