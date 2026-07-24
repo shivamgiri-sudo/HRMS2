@@ -1,16 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  Users, Clock, UserCheck, UserX, Search, Filter,
-  RefreshCw, Phone, TrendingUp, AlertCircle, Target, X
+  Users, Clock, UserCheck, Search,
+  RefreshCw, Phone, TrendingUp, AlertCircle, Target, X,
 } from "lucide-react";
 import { formatISTTime } from "@/lib/utils";
-import { useUserRole } from "@/hooks/useUserRole";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -46,25 +41,7 @@ interface QueueMetrics {
   total_in_interview: number;
   total_completed_today: number;
   average_wait_time: number;
-  average_interview_duration: number;
   avg_wait_time: number;
-  avg_interview_duration: number;
-}
-
-interface OpsRoundEntry {
-  candidate_id: string;
-  candidate_code: string;
-  candidate_name: string;
-  mobile: string;
-  current_stage: string;
-  applied_role: string | null;
-  branch_name: string | null;
-  skilltest_typing: number | null;
-  skilltest_result: string | null;
-  assessment_percentage: number | null;
-  typing_net_wpm: number | null;
-  typing_accuracy: number | null;
-  arrived_at: string | null;
 }
 
 interface OpenRequisition {
@@ -78,39 +55,32 @@ interface OpenRequisition {
   planned_batch_no: string | null;
 }
 
-const ACTIVE_DRIVE_KEY = 'hrms_active_drive_requisition';
+const ACTIVE_DRIVE_KEY = "hrms_active_drive_requisition";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const STATUS_STYLES: Record<QueueStatus, string> = {
-  waiting: "bg-amber-50 text-amber-700 border-amber-200",
-  called: "bg-blue-50 text-blue-700 border-blue-200",
+  waiting:      "bg-amber-50 text-amber-700 border-amber-200",
+  called:       "bg-blue-50 text-blue-700 border-blue-200",
   in_interview: "bg-purple-50 text-purple-700 border-purple-200",
-  completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  no_show: "bg-red-50 text-red-700 border-red-200",
-  cancelled: "bg-gray-50 text-gray-700 border-gray-200",
+  completed:    "bg-emerald-50 text-emerald-700 border-emerald-200",
+  no_show:      "bg-red-50 text-red-700 border-red-200",
+  cancelled:    "bg-gray-50 text-gray-700 border-gray-200",
 };
 
 const STATUS_LABEL: Record<QueueStatus, string> = {
-  waiting: "Waiting",
-  called: "Called",
+  waiting:      "Waiting",
+  called:       "Called",
   in_interview: "In Interview",
-  completed: "Completed",
-  no_show: "No Show",
-  cancelled: "Cancelled",
+  completed:    "Completed",
+  no_show:      "No Show",
+  cancelled:    "Cancelled",
 };
 
-function formatTime(iso: string | null): string {
-  if (!iso) return "-";
-  return formatISTTime(iso);
-}
-
 function formatWaitTime(minutes: number | null): string {
-  if (!minutes) return "-";
+  if (!minutes) return "—";
   if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return `${hours}h ${mins}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────────
@@ -130,7 +100,7 @@ export default function NativeWalkinQueueEnhanced() {
     return ist.toISOString().slice(0, 10);
   });
 
-  // Active drive context — persisted in localStorage so the recruiter doesn't lose it on refresh
+  // Active drive context — persisted in localStorage
   const [activeDrive, setActiveDrive] = useState<OpenRequisition | null>(() => {
     try {
       const saved = localStorage.getItem(ACTIVE_DRIVE_KEY);
@@ -144,46 +114,17 @@ export default function NativeWalkinQueueEnhanced() {
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Ops round tab
-  const { data: roleData } = useUserRole();
-  const roleKeys = roleData?.roleKeys ?? [];
-  const isOpsManager = roleKeys.includes('operations_manager');
-  const isRecruiterOrHR = roleKeys.some(r => ['admin', 'hr', 'super_admin', 'recruiter', 'manager'].includes(r));
-
-  const [activeTab, setActiveTab] = useState<'queue' | 'ops_round'>(
-    isOpsManager && !isRecruiterOrHR ? 'ops_round' : 'queue'
-  );
-  const [opsDate, setOpsDate] = useState<string>('');
-  const queryClient = useQueryClient();
-
-  const opsRoundQuery = useQuery({
-    queryKey: ['ops-round-queue', opsDate],
-    queryFn: async () => {
-      const params = opsDate ? `?date=${opsDate}` : '';
-      const resp = await hrmsApi.get<{ success: boolean; data: OpsRoundEntry[] }>(
-        `/api/ats/queue/ops-round${params}`
-      );
-      return resp.data.data ?? [];
-    },
-    enabled: activeTab === 'ops_round',
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-  });
-
   // ── Load Data ──────────────────────────────────────────────────────────────────
 
   const loadQueue = async (silent = false) => {
     if (!silent) setLoading(true);
     setError("");
-
     try {
-      // Build query params
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.append("status", statusFilter);
       if (branchFilter) params.append("branch", branchFilter);
       if (searchQuery) params.append("search", searchQuery);
       params.append("date", dateFilter);
-
       const res = await hrmsApi.get<{ success: boolean; data: QueueToken[] }>(
         `/api/ats/queue/live?${params.toString()}`
       );
@@ -198,7 +139,7 @@ export default function NativeWalkinQueueEnhanced() {
   const loadMetrics = async () => {
     try {
       const res = await hrmsApi.get<{ success: boolean; data: QueueMetrics }>(
-        '/api/ats/queue/metrics'
+        "/api/ats/queue/metrics"
       );
       setMetrics(res.data);
     } catch (err: any) {
@@ -211,15 +152,12 @@ export default function NativeWalkinQueueEnhanced() {
     loadMetrics();
     loadOpenRequisitions(branchFilter || undefined);
 
-    // Auto-refresh every 5 seconds
     intervalRef.current = setInterval(() => {
       loadQueue(true);
       loadMetrics();
     }, 5000);
 
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [statusFilter, branchFilter, searchQuery, dateFilter]);
 
   // ── Actions ────────────────────────────────────────────────────────────────────
@@ -228,7 +166,7 @@ export default function NativeWalkinQueueEnhanced() {
     try {
       const path = branch
         ? `/api/job-requisition/open-for-branch/${encodeURIComponent(branch)}`
-        : '/api/job-requisition?approval_status=approved&limit=50';
+        : "/api/job-requisition?approval_status=approved&limit=50";
       const res = await hrmsApi.get<{ success: boolean; data: OpenRequisition[] }>(path);
       setOpenRequisitions(res.data || []);
     } catch {
@@ -250,7 +188,7 @@ export default function NativeWalkinQueueEnhanced() {
 
   const handleCallNext = async (tokenId: string) => {
     try {
-      await hrmsApi.post('/api/ats/queue/call-next', { queue_id: tokenId });
+      await hrmsApi.post("/api/ats/queue/call-next", { queue_id: tokenId });
       await loadQueue(true);
     } catch (err: any) {
       alert(err.message || "Failed to call candidate");
@@ -259,7 +197,7 @@ export default function NativeWalkinQueueEnhanced() {
 
   const handleMarkNoShow = async (tokenId: string) => {
     try {
-      await hrmsApi.post('/api/ats/queue/mark-no-show', { queue_id: tokenId });
+      await hrmsApi.post("/api/ats/queue/mark-no-show", { queue_id: tokenId });
       await loadQueue(true);
     } catch (err: any) {
       alert(err.message || "Failed to mark no-show");
@@ -268,25 +206,24 @@ export default function NativeWalkinQueueEnhanced() {
 
   const handleUpdateStatus = async (tokenId: string, status: QueueStatus) => {
     try {
-      await hrmsApi.post('/api/ats/queue/update-status', {
-        queue_id: tokenId,
-        status,
-      });
+      await hrmsApi.post("/api/ats/queue/update-status", { queue_id: tokenId, status });
       await loadQueue(true);
     } catch (err: any) {
       alert(err.message || "Failed to update status");
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────────
+  // ── Derived ────────────────────────────────────────────────────────────────────
 
-  const branches = Array.from(new Set(tokens.map(t => t.branch_display_name || t.branch_name))).filter(Boolean);
+  const branches = Array.from(
+    new Set(tokens.map(t => t.branch_display_name || t.branch_name))
+  ).filter(Boolean);
 
   if (loading && !tokens.length) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-screen">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
         </div>
       </DashboardLayout>
     );
@@ -294,480 +231,306 @@ export default function NativeWalkinQueueEnhanced() {
 
   return (
     <DashboardLayout>
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'queue' | 'ops_round')}>
-        <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
-          <TabsList className="h-8">
-            {isRecruiterOrHR && <TabsTrigger value="queue" className="text-xs">Live Queue</TabsTrigger>}
-            <TabsTrigger value="ops_round" className="text-xs">Ops Round</TabsTrigger>
-          </TabsList>
-          {activeTab === 'ops_round' && (
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={opsDate}
-                onChange={e => setOpsDate(e.target.value)}
-                className="h-7 rounded border px-2 text-xs"
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => void queryClient.invalidateQueries({ queryKey: ['ops-round-queue'] })}
+      {/* Drive Picker Modal */}
+      {showDrivePicker && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h3 className="font-semibold text-gray-900">Select Today's Hiring Drive</h3>
+              <button onClick={() => setShowDrivePicker(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
+              {openRequisitions.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No approved active requisitions found.</p>
+              ) : (
+                openRequisitions.map((req) => (
+                  <button
+                    key={req.id}
+                    onClick={() => selectDrive(req)}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg border hover:border-blue-400 hover:bg-blue-50 transition-colors ${activeDrive?.id === req.id ? "border-emerald-400 bg-emerald-50" : "border-gray-200"}`}
+                  >
+                    <div className="font-medium text-sm text-gray-900">{req.designation_name}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {req.requisition_code}
+                      {req.process_name && ` | ${req.process_name}`}
+                      {req.planned_batch_name && ` | Batch: ${req.planned_batch_name}`}
+                      <span className="ml-1 text-blue-600">{req.open_positions} open</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+            <div className="p-4 border-t flex justify-between">
+              {activeDrive && (
+                <button onClick={clearDrive} className="text-sm text-red-500 hover:text-red-700">
+                  Clear drive selection
+                </button>
+              )}
+              <button
+                onClick={() => setShowDrivePicker(false)}
+                className="ml-auto px-4 py-2 text-sm border rounded hover:bg-gray-50"
               >
-                <RefreshCw className="h-3 w-3 mr-1" />
-                Refresh
-              </Button>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Page layout: compact top bar, then sticky-header table */}
+      <div className="flex flex-col bg-gray-50" style={{ height: "calc(100vh - 64px)" }}>
+
+        {/* ── Top Section ─────────────────────────────────────────────────────── */}
+        <div className="bg-white border-b px-4 pt-3 pb-2 shrink-0 space-y-2">
+
+          {/* Row 1: Title + Drive selector */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs text-gray-500 flex items-center gap-1 mb-0.5">
+                <Users className="w-3.5 h-3.5" />
+                ATS / Queue Management
+              </p>
+              <h1 className="text-lg font-bold text-gray-900 leading-tight">Live Walk-in Queue</h1>
+            </div>
+
+            {/* Drive selector — compact inline */}
+            <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${activeDrive ? "bg-emerald-50 border-emerald-300" : "bg-gray-50 border-gray-200"}`}>
+              <Target className={`w-4 h-4 shrink-0 ${activeDrive ? "text-emerald-600" : "text-gray-400"}`} />
+              {activeDrive ? (
+                <span className="text-emerald-800 font-medium max-w-xs truncate text-xs">
+                  {activeDrive.requisition_code} — {activeDrive.designation_name}
+                  {activeDrive.process_name && ` | ${activeDrive.process_name}`}
+                  <span className="ml-1.5 font-normal text-emerald-600">({activeDrive.open_positions} open)</span>
+                </span>
+              ) : (
+                <span className="text-gray-500 text-xs">No drive selected</span>
+              )}
+              <button
+                onClick={() => { void loadOpenRequisitions(branchFilter || undefined); setShowDrivePicker(true); }}
+                className="px-2.5 py-1 text-xs font-medium rounded border bg-white hover:bg-gray-50 border-gray-200 whitespace-nowrap"
+              >
+                {activeDrive ? "Change" : "Select Drive"}
+              </button>
+              {activeDrive && (
+                <button onClick={clearDrive} className="p-0.5 text-gray-400 hover:text-red-500">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Row 2: Metrics chips */}
+          {metrics && (
+            <div className="flex items-center gap-3 flex-wrap text-xs">
+              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1 text-amber-700 font-medium">
+                <Users className="w-3.5 h-3.5" />
+                <span>{metrics.total_waiting} In Queue</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-purple-50 border border-purple-200 rounded-full px-3 py-1 text-purple-700 font-medium">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{metrics.total_in_interview} In Progress</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1 text-emerald-700 font-medium">
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>{metrics.total_completed_today} Completed</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-blue-700 font-medium">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Avg Wait {formatWaitTime(metrics.average_wait_time || metrics.avg_wait_time)}</span>
+              </div>
+              <div className="ml-auto flex items-center gap-1 text-gray-400">
+                <RefreshCw className="w-3 h-3" />
+                <span>Auto-refresh 5s</span>
+              </div>
             </div>
           )}
+
+          {/* Row 3: Filters */}
+          <div className="flex items-center gap-2 flex-wrap pb-1">
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={e => setDateFilter(e.target.value)}
+              className="h-8 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as QueueStatus | "all")}
+              className="h-8 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            >
+              <option value="all">All Status</option>
+              <option value="waiting">Waiting</option>
+              <option value="called">Called</option>
+              <option value="in_interview">In Interview</option>
+              <option value="completed">Completed</option>
+              <option value="no_show">No Show</option>
+            </select>
+            <select
+              value={branchFilter}
+              onChange={e => setBranchFilter(e.target.value)}
+              className="h-8 rounded border border-gray-300 px-2 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            >
+              <option value="">All Branches</option>
+              {branches.map(branch => (
+                <option key={branch} value={branch}>{branch}</option>
+              ))}
+            </select>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Name or token..."
+                className="h-8 pl-8 pr-3 rounded border border-gray-300 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none w-48"
+              />
+            </div>
+          </div>
         </div>
 
-        {isRecruiterOrHR && (
-          <TabsContent value="queue" className="mt-0">
-            <div className="p-6 space-y-6">
-              {/* Header */}
-              <div>
-                <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
-                  <Users className="w-4 h-4" />
-                  <span>ATS / Queue Management</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900">Live Walk-in Queue</h1>
-                <p className="text-sm text-gray-600 mt-1">
-                  Real-time tracking of candidate walk-ins and interviews
-                </p>
-              </div>
-
-              {/* Active Drive Banner */}
-              <div className={`rounded-lg border px-4 py-3 flex items-center justify-between gap-3 ${activeDrive ? 'bg-emerald-50 border-emerald-300' : 'bg-amber-50 border-amber-300'}`}>
-                <div className="flex items-center gap-3 min-w-0">
-                  <Target className={`w-4 h-4 flex-shrink-0 ${activeDrive ? 'text-emerald-600' : 'text-amber-600'}`} />
-                  <div className="min-w-0">
-                    {activeDrive ? (
-                      <>
-                        <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Today's Hiring Drive</span>
-                        <div className="text-sm font-medium text-emerald-900 truncate">
-                          {activeDrive.requisition_code} — {activeDrive.designation_name}
-                          {activeDrive.process_name && ` | ${activeDrive.process_name}`}
-                          {activeDrive.planned_batch_name && ` | ${activeDrive.planned_batch_name}`}
-                          <span className="ml-2 text-xs text-emerald-600">({activeDrive.open_positions} open positions)</span>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">No Active Drive Selected</span>
-                        <div className="text-xs text-amber-700">Walk-ins won't be linked to any batch/requisition until you select one.</div>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => { void loadOpenRequisitions(branchFilter || undefined); setShowDrivePicker(true); }}
-                    className="px-3 py-1.5 text-xs font-medium rounded border bg-white hover:bg-gray-50"
-                  >
-                    {activeDrive ? 'Change' : 'Select Drive'}
-                  </button>
-                  {activeDrive && (
-                    <button onClick={clearDrive} className="p-1.5 text-gray-400 hover:text-red-500 rounded">
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Drive Picker Modal */}
-              {showDrivePicker && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-                  <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
-                    <div className="p-4 border-b flex items-center justify-between">
-                      <h3 className="font-semibold text-gray-900">Select Today's Hiring Drive</h3>
-                      <button onClick={() => setShowDrivePicker(false)} className="p-1 text-gray-400 hover:text-gray-600">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
-                      {openRequisitions.length === 0 ? (
-                        <p className="text-sm text-gray-500 text-center py-4">No approved active requisitions found.</p>
-                      ) : (
-                        openRequisitions.map((req) => (
-                          <button
-                            key={req.id}
-                            onClick={() => selectDrive(req)}
-                            className={`w-full text-left px-3 py-2.5 rounded-lg border hover:border-blue-400 hover:bg-blue-50 transition-colors ${activeDrive?.id === req.id ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200'}`}
-                          >
-                            <div className="font-medium text-sm text-gray-900">{req.designation_name}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">
-                              {req.requisition_code}
-                              {req.process_name && ` | ${req.process_name}`}
-                              {req.planned_batch_name && ` | Batch: ${req.planned_batch_name}`}
-                              <span className="ml-1 text-blue-600">{req.open_positions} open</span>
-                            </div>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                    <div className="p-4 border-t flex justify-between">
-                      {activeDrive && (
-                        <button onClick={clearDrive} className="text-sm text-red-500 hover:text-red-700">
-                          Clear drive selection
-                        </button>
-                      )}
-                      <button onClick={() => setShowDrivePicker(false)} className="ml-auto px-4 py-2 text-sm border rounded hover:bg-gray-50">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Metrics Cards */}
-              {metrics && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-600">In Queue</span>
-                      <Users className="w-5 h-5 text-amber-500" />
-                    </div>
-                    <p className="text-2xl font-bold text-gray-900">{metrics.total_waiting}</p>
-                    <p className="text-xs text-gray-500 mt-1">Waiting for interview</p>
-                  </div>
-
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-600">In Progress</span>
-                      <Clock className="w-5 h-5 text-purple-500" />
-                    </div>
-                    <p className="text-2xl font-bold text-gray-900">{metrics.total_in_interview}</p>
-                    <p className="text-xs text-gray-500 mt-1">Currently interviewing</p>
-                  </div>
-
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-600">Completed</span>
-                      <UserCheck className="w-5 h-5 text-green-500" />
-                    </div>
-                    <p className="text-2xl font-bold text-gray-900">{metrics.total_completed_today}</p>
-                    <p className="text-xs text-gray-500 mt-1">Today's interviews</p>
-                  </div>
-
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-600">Avg Wait</span>
-                      <TrendingUp className="w-5 h-5 text-blue-500" />
-                    </div>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {formatWaitTime(metrics.average_wait_time)}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">Average wait time</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Filters */}
-              <div className="bg-white border border-gray-200 rounded-lg p-4">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-                    <input
-                      type="date"
-                      value={dateFilter}
-                      onChange={(e) => setDateFilter(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value as QueueStatus | "all")}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="all">All Status</option>
-                      <option value="waiting">Waiting</option>
-                      <option value="called">Called</option>
-                      <option value="in_interview">In Interview</option>
-                      <option value="completed">Completed</option>
-                      <option value="no_show">No Show</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
-                    <select
-                      value={branchFilter}
-                      onChange={(e) => setBranchFilter(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">All Branches</option>
-                      {branches.map(branch => (
-                        <option key={branch} value={branch}>{branch}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Name or token..."
-                        className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Queue Table */}
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Token
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Candidate
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Role
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Branch
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Status
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Wait Time
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Typing
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Assessment
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Recruiter
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {tokens.map((token) => (
-                        <tr key={token.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-2">
-                              {token.position_in_queue && (
-                                <span className="w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold">
-                                  {token.position_in_queue}
-                                </span>
-                              )}
-                              <span className="font-mono text-sm font-medium text-gray-900">
-                                {token.token_number}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4">
-                            <div>
-                              <p className="text-sm font-medium text-gray-900">
-                                {token.candidate_name}
-                              </p>
-                              <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
-                                <Phone className="w-3 h-3" />
-                                {token.mobile}
-                              </p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-900">
-                            {token.applied_role}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600">
-                            {token.branch_display_name || token.branch_name}
-                          </td>
-                          <td className="px-4 py-4">
-                            <span className={`inline-flex px-2 py-1 text-xs font-medium rounded border ${STATUS_STYLES[token.queue_status] || STATUS_STYLES.waiting}`}>
-                              {STATUS_LABEL[token.queue_status] || token.queue_status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600">
-                            {formatWaitTime(token.estimated_wait_time)}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-700">
-                            {(() => {
-                              const wpm = token.typing_net_wpm ?? token.skilltest_typing;
-                              return wpm != null ? (
-                                <span className="font-medium">{Number(wpm).toFixed(0)} WPM</span>
-                              ) : <span className="text-gray-400">—</span>;
-                            })()}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-700">
-                            {(() => {
-                              const pct = token.assessment_percentage ?? token.skilltest_ai;
-                              const result = token.skilltest_result;
-                              if (pct == null) return <span className="text-gray-400">—</span>;
-                              const isPass = result?.toLowerCase() === 'pass';
-                              const isFail = result?.toLowerCase() === 'fail' || result?.toLowerCase() === 'rejected';
-                              return (
-                                <span className="flex items-center gap-1">
-                                  <span className="font-medium">{Number(pct).toFixed(1)}%</span>
-                                  {result && (
-                                    <span className={`inline-flex px-1.5 py-0.5 text-xs font-semibold rounded ${isPass ? 'bg-emerald-100 text-emerald-700' : isFail ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
-                                      {result}
-                                    </span>
-                                  )}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td className="px-4 py-4 text-sm text-gray-600">
-                            {token.recruiter_name || "-"}
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-2">
-                              {token.queue_status === "waiting" && (
-                                <button
-                                  onClick={() => handleCallNext(token.id)}
-                                  className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors"
-                                >
-                                  Call
-                                </button>
-                              )}
-                              {token.queue_status === "called" && (
-                                <button
-                                  onClick={() => handleUpdateStatus(token.id, "in_interview")}
-                                  className="px-3 py-1 bg-purple-600 text-white text-xs font-medium rounded hover:bg-purple-700 transition-colors"
-                                >
-                                  Start
-                                </button>
-                              )}
-                              {(token.queue_status === "waiting" || token.queue_status === "called") && (
-                                <button
-                                  onClick={() => handleMarkNoShow(token.id)}
-                                  className="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition-colors"
-                                >
-                                  No Show
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {tokens.length === 0 && (
-                    <div className="p-8 text-center">
-                      <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                      <p className="text-gray-600 font-medium">No candidates in queue</p>
-                      <p className="text-sm text-gray-500 mt-1">
-                        Queue will appear here when candidates register
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Auto-refresh indicator */}
-              <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                <RefreshCw className="w-4 h-4" />
-                <span>Auto-refreshing every 5 seconds</span>
-              </div>
-            </div>
-          </TabsContent>
-        )}
-
-        <TabsContent value="ops_round" className="mt-0 p-4">
-          {opsRoundQuery.isLoading && (
-            <div className="flex items-center justify-center py-12 text-sm text-slate-500">Loading...</div>
-          )}
-          {opsRoundQuery.isError && (
-            <div className="rounded border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-              Failed to load ops round candidates.
+        {/* ── Scrollable Table ─────────────────────────────────────────────────── */}
+        <div className="flex-1 overflow-auto p-4">
+          {error && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {error}
             </div>
           )}
-          {!opsRoundQuery.isLoading && !opsRoundQuery.isError && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-xs text-slate-500">
-                    <th className="pb-2 text-left font-medium">Candidate</th>
-                    <th className="pb-2 text-left font-medium">Applied Role</th>
-                    <th className="pb-2 text-left font-medium">Branch</th>
-                    <th className="pb-2 text-left font-medium">Assessment</th>
-                    <th className="pb-2 text-left font-medium">Typing</th>
-                    <th className="pb-2 text-left font-medium">R1 Result</th>
-                    <th className="pb-2 text-left font-medium">Stage</th>
-                    <th className="pb-2 text-left font-medium">Arrived</th>
+
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
+              <table className="w-full text-sm min-w-max">
+                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Token</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Candidate</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Role</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Branch</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Wait</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Typing</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Assessment</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Recruiter</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {(opsRoundQuery.data ?? []).length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
-                        No candidates at Ops Round stage{opsDate ? ` on ${opsDate}` : ' today'}.
+                <tbody className="divide-y divide-gray-100">
+                  {tokens.map((token) => (
+                    <tr key={token.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          {token.position_in_queue && (
+                            <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">
+                              {token.position_in_queue}
+                            </span>
+                          )}
+                          <span className="font-mono text-sm font-medium text-gray-900">
+                            {token.token_number}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-medium text-gray-900 whitespace-nowrap">{token.candidate_name}</p>
+                        <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                          <Phone className="w-3 h-3" />
+                          {token.mobile}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">{token.applied_role}</td>
+                      <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                        {token.branch_display_name || token.branch_name}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded border whitespace-nowrap ${STATUS_STYLES[token.queue_status] || STATUS_STYLES.waiting}`}>
+                          {STATUS_LABEL[token.queue_status] || token.queue_status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                        {formatWaitTime(token.estimated_wait_time)}
+                      </td>
+                      <td className="px-4 py-3 text-sm whitespace-nowrap">
+                        {(() => {
+                          const wpm =
+                            (token.typing_net_wpm != null && Number(token.typing_net_wpm) > 0)
+                              ? token.typing_net_wpm
+                              : (token.skilltest_typing != null && Number(token.skilltest_typing) > 0)
+                                ? token.skilltest_typing
+                                : null;
+                          return wpm != null
+                            ? <span className="font-medium text-gray-800">{Number(wpm).toFixed(0)} WPM</span>
+                            : <span className="text-gray-400">—</span>;
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 text-sm whitespace-nowrap">
+                        {(() => {
+                          const pct = token.assessment_percentage ?? token.skilltest_ai;
+                          const result = token.skilltest_result;
+                          if (pct == null) return <span className="text-gray-400">—</span>;
+                          const isPass = result?.toLowerCase() === "pass";
+                          const isFail = result?.toLowerCase() === "fail" || result?.toLowerCase() === "rejected";
+                          return (
+                            <span className="flex items-center gap-1">
+                              <span className="font-medium text-gray-800">{Number(pct).toFixed(1)}%</span>
+                              {result && (
+                                <span className={`inline-flex px-1.5 py-0.5 text-xs font-semibold rounded ${isPass ? "bg-emerald-100 text-emerald-700" : isFail ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"}`}>
+                                  {result}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                        {token.recruiter_name || "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          {token.queue_status === "waiting" && (
+                            <button
+                              onClick={() => handleCallNext(token.id)}
+                              className="px-2.5 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 transition-colors whitespace-nowrap"
+                            >
+                              Call
+                            </button>
+                          )}
+                          {token.queue_status === "called" && (
+                            <button
+                              onClick={() => handleUpdateStatus(token.id, "in_interview")}
+                              className="px-2.5 py-1 bg-purple-600 text-white text-xs font-medium rounded hover:bg-purple-700 transition-colors whitespace-nowrap"
+                            >
+                              Start
+                            </button>
+                          )}
+                          {(token.queue_status === "waiting" || token.queue_status === "called") && (
+                            <button
+                              onClick={() => handleMarkNoShow(token.id)}
+                              className="px-2.5 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition-colors whitespace-nowrap"
+                            >
+                              No Show
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
-                  ) : (
-                    (opsRoundQuery.data ?? []).map((c) => (
-                      <tr key={c.candidate_id} className="h-10">
-                        <td className="pr-4">
-                          <p className="font-medium text-slate-900">{c.candidate_name}</p>
-                          <p className="text-xs text-slate-400">{c.candidate_code}</p>
-                        </td>
-                        <td className="pr-4 text-slate-700">{c.applied_role ?? '—'}</td>
-                        <td className="pr-4 text-slate-700">{c.branch_name ?? '—'}</td>
-                        <td className="pr-4">
-                          {c.assessment_percentage != null ? (
-                            <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold ${c.skilltest_result?.toLowerCase() === 'selected' || (c.assessment_percentage >= 60) ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-                              {c.assessment_percentage.toFixed(1)}%
-                            </span>
-                          ) : c.skilltest_typing != null ? (
-                            <span className="text-slate-500 text-xs">{c.skilltest_typing}</span>
-                          ) : (
-                            <span className="text-slate-300 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="pr-4">
-                          {c.typing_net_wpm != null ? (
-                            <div>
-                              <span className="font-medium text-slate-800">{Math.round(c.typing_net_wpm)} WPM</span>
-                              {c.typing_accuracy != null && (
-                                <p className="text-xs text-slate-400">{c.typing_accuracy.toFixed(1)}% acc</p>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-slate-300 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="pr-4">
-                          {c.skilltest_result ? (
-                            <Badge variant="outline" className="text-xs">{c.skilltest_result}</Badge>
-                          ) : (
-                            <span className="text-slate-300 text-xs">—</span>
-                          )}
-                        </td>
-                        <td className="pr-4">
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{c.current_stage}</span>
-                        </td>
-                        <td className="text-xs text-slate-500">
-                          {c.arrived_at ? formatISTTime(c.arrived_at) : '—'}
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                  ))}
                 </tbody>
               </table>
+
+              {tokens.length === 0 && (
+                <div className="py-16 text-center">
+                  <AlertCircle className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-600 font-medium text-sm">No candidates in queue</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Queue will appear here when candidates register
+                  </p>
+                </div>
+              )}
             </div>
-          )}
-        </TabsContent>
-      </Tabs>
+          </div>
+        </div>
+      </div>
     </DashboardLayout>
   );
 }
