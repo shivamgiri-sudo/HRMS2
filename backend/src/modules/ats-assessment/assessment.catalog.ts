@@ -48,7 +48,7 @@ const choice = (
   prompt: string,
   options: string[],
   correctAnswer: string | string[],
-  marks = 6,
+  marks = 10,
   difficulty: DifficultyLevel = "intermediate",
   explanation?: string,
 ): AssessmentQuestionDefinition => ({
@@ -70,7 +70,7 @@ const written = (
   sectionTitle: string,
   prompt: string,
   keywords: string[],
-  marks = 16,
+  marks = 10,
 ): AssessmentQuestionDefinition => ({
   id,
   sectionKey,

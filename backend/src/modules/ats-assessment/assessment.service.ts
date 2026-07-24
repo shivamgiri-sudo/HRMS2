@@ -1564,11 +1564,12 @@ async function finalizeAssessment(
 
   for (const question of definition.questions) {
     const response = responseMap.get(question.id);
+    const answered = hasAnswer(answerValue(response));
     const score = scoreQuestion(question, response);
     awarded += score.awarded;
-    maximum += question.marks;
+    if (answered) maximum += question.marks;
     manualReviewRequired ||= score.manual;
-    addSectionScore(sections, question.sectionKey, question.sectionTitle, score.awarded, question.marks);
+    addSectionScore(sections, question.sectionKey, question.sectionTitle, score.awarded, answered ? question.marks : 0);
     await executor.execute(
       `UPDATE ats_assessment_response
        SET marks_awarded = ?, evaluation_notes = ?, evaluation_mode = ?
@@ -1577,14 +1578,15 @@ async function finalizeAssessment(
     );
   }
 
+  // Typing is scored separately — net_wpm and accuracy are the primary signals.
+  // It does NOT contribute to overall_score / percentage (MCQ score).
   let typingPassed: boolean | null = null;
   if (definition.typing.required) {
     const typingScore = Number(bestTyping?.score_percentage ?? 0);
     const typingMarks = round((typingScore / 100) * TYPING_WEIGHT_MARKS);
-    awarded += typingMarks;
-    maximum += TYPING_WEIGHT_MARKS;
     typingPassed = Boolean(bestTyping?.passed_benchmark);
     addSectionScore(sections, "typing", "Typing Test", typingMarks, TYPING_WEIGHT_MARKS);
+    // Note: typingMarks intentionally excluded from awarded/maximum (MCQ score)
   }
 
   finishSectionScores(sections);

@@ -129,56 +129,40 @@ export async function getAvailableSetNumbers(
   };
 }
 
+const QUESTIONS_PER_ASSESSMENT = 20;
+
 export async function selectRandomQuestionSet(
   process: AssessmentProcess,
   role: AssessmentRole,
-  questionsPerSection: number = 10,
+  _questionsPerSection: number = 10,
   excludeSets: number[] = [],
 ): Promise<{ setNumber: number; questions: AssessmentQuestionDefinition[] } | null> {
-  const { questionSets } = await getAvailableSetNumbers(process, role);
-  if (questionSets.length === 0) return null;
-
-  const availableSets = questionSets.filter((s) => !excludeSets.includes(s));
-  const targetSets = availableSets.length > 0 ? availableSets : questionSets;
-  const selectedSet = targetSets[Math.floor(Math.random() * targetSets.length)];
-
-  const [rows] = await db.execute<QuestionRow[]>(
+  // Pull all active questions for this process/role across all sets
+  const [allRows] = await db.execute<QuestionRow[]>(
     `SELECT *
      FROM ats_question_bank
      WHERE active_status = 1
-       AND set_number = ?
        AND (process_key = ? OR process_key = 'any')
        AND (role_key = ? OR role_key = 'any')
-     ORDER BY section_key, difficulty_level`,
-    [selectedSet, process, role],
+       ${excludeSets.length > 0 ? `AND set_number NOT IN (${excludeSets.map(() => "?").join(",")})` : ""}
+     ORDER BY section_key`,
+    [process, role, ...excludeSets],
   );
 
-  if (rows.length === 0) return null;
+  if (allRows.length === 0) return null;
 
-  const bySection = new Map<string, QuestionRow[]>();
-  for (const row of rows) {
-    const existing = bySection.get(row.section_key) ?? [];
-    existing.push(row);
-    bySection.set(row.section_key, existing);
-  }
-
-  const selectedQuestions: AssessmentQuestionDefinition[] = [];
-  const selectedIds: string[] = [];
-  const usedQuestionCodes = new Set<string>();
-
-  for (const [_section, sectionRows] of bySection) {
-    const shuffled = shuffleArray(sectionRows);
-    // Filter out any questions we've already selected (prevent duplicates across sections)
-    const available = shuffled.filter((r) => !usedQuestionCodes.has(r.question_code));
-    const selected = available.slice(0, questionsPerSection);
-
-    for (const row of selected) {
-      usedQuestionCodes.add(row.question_code);
-      selectedIds.push(row.id);
-      selectedQuestions.push(questionRowToDefinition(row));
+  // Shuffle and pick 20 — one per unique question code to avoid duplicates
+  const shuffled = shuffleArray(allRows);
+  const seen = new Set<string>();
+  const picked: QuestionRow[] = [];
+  for (const row of shuffled) {
+    if (!seen.has(row.question_code) && picked.length < QUESTIONS_PER_ASSESSMENT) {
+      seen.add(row.question_code);
+      picked.push(row);
     }
   }
 
+  const selectedIds = picked.map((r) => r.id);
   if (selectedIds.length > 0) {
     const placeholders = selectedIds.map(() => "?").join(",");
     await db.execute(
@@ -187,7 +171,8 @@ export async function selectRandomQuestionSet(
     );
   }
 
-  return { setNumber: selectedSet, questions: shuffleArray(selectedQuestions) };
+  // Use set_number 0 as a sentinel when pulling from mixed sets
+  return { setNumber: 0, questions: shuffleArray(picked.map(questionRowToDefinition)) };
 }
 
 export async function selectRandomPassage(
