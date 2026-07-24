@@ -82,6 +82,11 @@ type HiringDashboard = {
     total_records: number;
     total_contacted: number;
     contacted_pct: number;
+    contact_rate: number;
+    shortlist_rate: number;
+    walkin_rate: number;
+    selection_rate: number;
+    join_rate: number;
     not_contacted: number;
     shortlisted: number;
     recruiter_rejected: number;
@@ -125,6 +130,7 @@ type AnalyticsData = {
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
+  followupDueCount: number;
 };
 
 type AnalyticsResponse = { success: boolean; data: AnalyticsData };
@@ -276,18 +282,17 @@ function PipelineCell({ active, activeClass, inactiveLabel = "—" }: { active: 
 // ── Compact Metric Card ───────────────────────────────────────────────────────
 
 function MetricCard({
-  label, value, icon, unavailable,
+  label, value, icon, unavailable, sub,
 }: {
-  label: string; value: string | number; icon: ReactNode; unavailable?: boolean;
+  label: string; value: string | number; icon: ReactNode; unavailable?: boolean; sub?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
-      <div className={`rounded-lg p-1.5 ${unavailable ? "bg-slate-50 text-slate-300" : "bg-slate-100 text-slate-600"}`}>
-        {icon}
-      </div>
+    <div className="flex min-h-[78px] items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+      <div className={`rounded-lg p-1.5 ${unavailable ? "bg-slate-50 text-slate-300" : "bg-slate-100 text-slate-600"}`}>{icon}</div>
       <div className="min-w-0">
-        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 truncate">{label}</div>
+        <div className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</div>
         <div className={`text-xl font-black leading-tight ${unavailable ? "text-slate-300" : "text-slate-900"}`}>{value}</div>
+        {sub && !unavailable && <div className="mt-0.5 truncate text-[10px] font-medium text-slate-400">{sub}</div>}
       </div>
     </div>
   );
@@ -777,11 +782,10 @@ export default function NativeATSHiringEntry() {
     }
   };
 
-  // ── Totals for tab badge ──────────────────────────────────────────────────
-  const turnoutRate = dashboard?.metrics.total_records
-    ? Math.round((dashboard.metrics.walkins / dashboard.metrics.total_records) * 1000) / 10 : 0;
-  const selectedRate = dashboard?.metrics.total_records
-    ? Math.round((dashboard.metrics.final_selected / dashboard.metrics.total_records) * 1000) / 10 : 0;
+  // Header KPI rates use explicit business denominators.
+  const dashboardMetrics = dashboard?.metrics;
+  const dashboardRate = (key: "contact_rate" | "shortlist_rate" | "walkin_rate" | "selection_rate" | "join_rate") =>
+    Number(dashboardMetrics?.[key] ?? 0);
 
   if (loading) {
     return (
@@ -863,13 +867,13 @@ export default function NativeATSHiringEntry() {
         )}
 
         {/* ── Compact metric strip ── */}
-        <div className="grid grid-cols-3 gap-2 md:grid-cols-6">
-          <MetricCard label="Calls" value={dashboardFailed ? "—" : formatMetric(dashboard?.metrics.total_records ?? 0)} icon={<PhoneCall className="h-4 w-4" />} unavailable={dashboardFailed} />
-          <MetricCard label="Contacted" value={dashboardFailed ? "—" : `${formatMetric(dashboard?.metrics.total_contacted ?? 0)}`} icon={<BadgeCheck className="h-4 w-4" />} unavailable={dashboardFailed} />
-          <MetricCard label="Shortlisted" value={dashboardFailed ? "—" : formatMetric(dashboard?.metrics.shortlisted ?? 0)} icon={<Target className="h-4 w-4" />} unavailable={dashboardFailed} />
-          <MetricCard label="Turned Up" value={dashboardFailed ? "—" : `${formatMetric(dashboard?.metrics.walkins ?? 0)} (${turnoutRate}%)`} icon={<Users className="h-4 w-4" />} unavailable={dashboardFailed} />
-          <MetricCard label="Selected" value={dashboardFailed ? "—" : `${formatMetric(dashboard?.metrics.final_selected ?? 0)} (${selectedRate}%)`} icon={<UserRound className="h-4 w-4" />} unavailable={dashboardFailed} />
-          <MetricCard label="Joined" value={dashboardFailed ? "—" : formatMetric(dashboard?.metrics.joined ?? 0)} icon={<Clock3 className="h-4 w-4" />} unavailable={dashboardFailed} />
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+          <MetricCard label="Candidate Records" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.total_records ?? 0)} sub="Base entries · follow-up attempts excluded" icon={<PhoneCall className="h-4 w-4" />} unavailable={dashboardFailed} />
+          <MetricCard label="Contacted" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.total_contacted ?? 0)} sub={`${dashboardRate("contact_rate")}% of candidate records`} icon={<BadgeCheck className="h-4 w-4" />} unavailable={dashboardFailed} />
+          <MetricCard label="Shortlisted" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.shortlisted ?? 0)} sub={`${dashboardRate("shortlist_rate")}% of contacted`} icon={<Target className="h-4 w-4" />} unavailable={dashboardFailed} />
+          <MetricCard label="Walk-ins" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.walkins ?? 0)} sub={`${dashboardRate("walkin_rate")}% of contacted`} icon={<Users className="h-4 w-4" />} unavailable={dashboardFailed} />
+          <MetricCard label="Selected" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.final_selected ?? 0)} sub={`${dashboardRate("selection_rate")}% of walk-ins`} icon={<UserRound className="h-4 w-4" />} unavailable={dashboardFailed} />
+          <MetricCard label="Joined" value={dashboardFailed ? "—" : formatMetric(dashboardMetrics?.joined ?? 0)} sub={`${dashboardRate("join_rate")}% of selected`} icon={<Clock3 className="h-4 w-4" />} unavailable={dashboardFailed} />
         </div>
 
         {/* ── Session Context Panel (3 fields, no WP Group) ── */}
@@ -1338,13 +1342,20 @@ export default function NativeATSHiringEntry() {
             )}
 
             {analytics && (() => {
-              const totalLogged = analytics.funnel[0]?.count ?? 0;
-              const selPct      = analytics.funnel[3]?.pct ?? 0;
-              const joinPct     = analytics.funnel[4]?.pct ?? 0;
-              const selCount    = analytics.funnel[3]?.count ?? 0;
-              const joinCount   = analytics.funnel[4]?.count ?? 0;
+              const funnelStage = (stage: string) => analytics.funnel.find((item) => item.stage === stage);
+    const totalLogged = funnelStage("Logged")?.count ?? 0;
+    const contactedCount = funnelStage("Contacted")?.count ?? 0;
+    const walkinCount = funnelStage("Walked In")?.count ?? 0;
+    const selCount = funnelStage("Selected")?.count ?? 0;
+    const joinCount = funnelStage("Joined")?.count ?? 0;
+    const stageRate = (numerator: number, denominator: number) => denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+    const contactRate = stageRate(contactedCount, totalLogged);
+    const walkinRate = stageRate(walkinCount, contactedCount);
+    const selectionRate = stageRate(selCount, walkinCount);
+    const joinRate = stageRate(joinCount, selCount);
+    const followupDueCount = analytics.followupDueCount ?? analytics.followupDue.length;
 
-              // ApexCharts: outcome donut
+                  // ApexCharts: outcome donut
               const donutTotal   = analytics.byOutcome.reduce((a, b) => a + b.count, 0);
               const donutSeries  = analytics.byOutcome.map((o) => o.count);
               const donutLabels  = analytics.byOutcome.map((o) => o.label);
@@ -1410,25 +1421,20 @@ export default function NativeATSHiringEntry() {
               return (
                 <>
                   {/* ── KPI tiles ── */}
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                    <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
-                    <KpiTile label="Walk-ins" value={(analytics.funnel[2]?.count ?? 0).toLocaleString()} sub={`${analytics.funnel[2]?.pct ?? 0}% of logged`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
-                    <KpiTile label="Selected" value={selCount.toLocaleString()} sub={`${selPct}% selection rate`} color="border-emerald-300" icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} />
-                    <KpiTile label="Joined" value={joinCount.toLocaleString()} sub={`${joinPct}% join rate`} color="border-violet-300" icon={<BadgeCheck className="h-4 w-4 text-violet-500" />} />
-                    <KpiTile
-                      label="Follow-ups"
-                      value={analytics.followupDue.length}
-                      sub="due in 7 days"
-                      color={analytics.followupDue.length > 0 ? "border-amber-400" : "border-slate-200"}
-                      icon={<Bell className="h-4 w-4 text-amber-500" />}
-                    />
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                    <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} sub="logged candidate records" color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
+                    <KpiTile label="Contacted" value={contactedCount.toLocaleString()} sub={`${contactRate}% of logged`} color="border-cyan-300" icon={<PhoneCall className="h-4 w-4 text-cyan-500" />} />
+                    <KpiTile label="Walk-ins" value={walkinCount.toLocaleString()} sub={`${walkinRate}% of contacted`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
+                    <KpiTile label="Selected" value={selCount.toLocaleString()} sub={`${selectionRate}% of walk-ins`} color="border-emerald-300" icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} />
+                    <KpiTile label="Joined" value={joinCount.toLocaleString()} sub={`${joinRate}% of selected`} color="border-violet-300" icon={<BadgeCheck className="h-4 w-4 text-violet-500" />} />
+                    <KpiTile label="Follow-ups" value={followupDueCount.toLocaleString()} sub="due in the next 7 days" color={followupDueCount > 0 ? "border-amber-400" : "border-slate-200"} icon={<Bell className="h-4 w-4 text-amber-500" />} />
                   </div>
 
                   {/* ── Visual Hiring Funnel ── */}
                   <div className="rounded-2xl border border-slate-200 bg-white p-6">
                     <div className="mb-4 flex items-center justify-between">
                       <div className="text-sm font-black text-slate-900">Hiring Funnel</div>
-                      <div className="text-xs text-slate-400">Conversion at each stage</div>
+                      <div className="text-xs text-slate-400">Stage percentages below use total logged candidates</div>
                     </div>
                     {analytics.funnel.length === 0 ? (
                       <AnalyticsEmptyState label="No funnel data" />
@@ -1480,14 +1486,14 @@ export default function NativeATSHiringEntry() {
                           <div className="mt-4 flex flex-wrap items-center justify-center gap-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3">
                             <div className="text-center">
                               <div className="text-lg font-black text-emerald-600">
-                                {analytics.funnel[0].count > 0 ? Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 100) : 0}%
+                                {analytics.funnel[0].count > 0 ? Math.round((analytics.funnel[analytics.funnel.length - 1].count / analytics.funnel[0].count) * 1000) / 10 : 0}%
                               </div>
                               <div className="text-[10px] font-bold uppercase text-slate-400">Overall Conversion</div>
                             </div>
                             {analytics.funnel.map((s, i) => i > 0 && (
                               <div key={s.stage} className="text-center">
                                 <div className="text-sm font-black text-slate-700">
-                                  {analytics.funnel[i - 1].count > 0 ? Math.round((s.count / analytics.funnel[i - 1].count) * 100) : 0}%
+                                  {analytics.funnel[i - 1].count > 0 ? Math.round((s.count / analytics.funnel[i - 1].count) * 1000) / 10 : 0}%
                                 </div>
                                 <div className="text-[10px] text-slate-400">{analytics.funnel[i - 1].stage} → {s.stage}</div>
                               </div>
@@ -1517,7 +1523,7 @@ export default function NativeATSHiringEntry() {
                         {analytics.funnel.map((s, i) => {
                           if (i === 0) return null;
                           const prev = analytics.funnel[i - 1];
-                          const rate = prev.count > 0 ? Math.round((s.count / prev.count) * 100) : 0;
+                          const rate = prev.count > 0 ? Math.round((s.count / prev.count) * 1000) / 10 : 0;
                           const rateColor = rate >= 60 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
                             : rate >= 30 ? "text-amber-600 bg-amber-50 border-amber-200"
                             : "text-rose-600 bg-rose-50 border-rose-200";
