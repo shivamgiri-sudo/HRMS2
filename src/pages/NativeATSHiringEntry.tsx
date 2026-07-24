@@ -125,6 +125,7 @@ type AnalyticsData = {
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
+  followupDueCount: number;
 };
 
 type AnalyticsResponse = { success: boolean; data: AnalyticsData };
@@ -1338,11 +1339,26 @@ export default function NativeATSHiringEntry() {
             )}
 
             {analytics && (() => {
-              const totalLogged = analytics.funnel[0]?.count ?? 0;
-              const selPct      = analytics.funnel[3]?.pct ?? 0;
-              const joinPct     = analytics.funnel[4]?.pct ?? 0;
-              const selCount    = analytics.funnel[3]?.count ?? 0;
-              const joinCount   = analytics.funnel[4]?.count ?? 0;
+              // Funnel indices: 0=Logged 1=Contacted 2=Shortlisted 3=Walked In 4=Selected 5=Joined
+              const fLogged      = analytics.funnel[0]?.count ?? 0;
+              const fContacted   = analytics.funnel[1]?.count ?? 0;
+              const fShortlisted = analytics.funnel[2]?.count ?? 0;
+              const fWalkins     = analytics.funnel[3]?.count ?? 0;
+              const fSelected    = analytics.funnel[4]?.count ?? 0;
+              const fJoined      = analytics.funnel[5]?.count ?? 0;
+              const stagePct = (n: number, d: number) => d > 0 ? Math.round(n / d * 100) : 0;
+              // Stage rates (each vs its direct predecessor)
+              const contactRate    = stagePct(fContacted,   fLogged);
+              const shortlistRate  = stagePct(fShortlisted, fContacted);
+              const turnoutRate    = stagePct(fWalkins,     fShortlisted);
+              const selectionRate  = stagePct(fSelected,    fWalkins);
+              const joiningRate    = stagePct(fJoined,      fSelected);
+              // Legacy aliases used by lower chart sections
+              const totalLogged = fLogged;
+              const selCount    = fSelected;
+              const joinCount   = fJoined;
+              const selPct      = selectionRate;
+              const joinPct     = joiningRate;
 
               // ApexCharts: outcome donut
               const donutTotal   = analytics.byOutcome.reduce((a, b) => a + b.count, 0);
@@ -1410,16 +1426,54 @@ export default function NativeATSHiringEntry() {
               return (
                 <>
                   {/* ── KPI tiles ── */}
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                    <KpiTile label="Total Candidates" value={totalLogged.toLocaleString()} color="border-slate-300" icon={<Users className="h-4 w-4 text-slate-400" />} />
-                    <KpiTile label="Walk-ins" value={(analytics.funnel[2]?.count ?? 0).toLocaleString()} sub={`${analytics.funnel[2]?.pct ?? 0}% of logged`} color="border-blue-300" icon={<UserRound className="h-4 w-4 text-blue-500" />} />
-                    <KpiTile label="Selected" value={selCount.toLocaleString()} sub={`${selPct}% selection rate`} color="border-emerald-300" icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} />
-                    <KpiTile label="Joined" value={joinCount.toLocaleString()} sub={`${joinPct}% join rate`} color="border-violet-300" icon={<BadgeCheck className="h-4 w-4 text-violet-500" />} />
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7">
+                    <KpiTile
+                      label="Candidate Records"
+                      value={fLogged.toLocaleString()}
+                      sub="Base entries · follow-up attempts excluded"
+                      color="border-slate-300"
+                      icon={<Users className="h-4 w-4 text-slate-400" />}
+                    />
+                    <KpiTile
+                      label="Contacted"
+                      value={fContacted.toLocaleString()}
+                      sub={`${contactRate}% of candidate records`}
+                      color="border-blue-300"
+                      icon={<PhoneCall className="h-4 w-4 text-blue-500" />}
+                    />
+                    <KpiTile
+                      label="Shortlisted"
+                      value={fShortlisted.toLocaleString()}
+                      sub={`${shortlistRate}% of contacted`}
+                      color="border-sky-300"
+                      icon={<Target className="h-4 w-4 text-sky-500" />}
+                    />
+                    <KpiTile
+                      label="Walk-ins"
+                      value={fWalkins.toLocaleString()}
+                      sub={`${turnoutRate}% of shortlisted`}
+                      color="border-amber-300"
+                      icon={<UserRound className="h-4 w-4 text-amber-500" />}
+                    />
+                    <KpiTile
+                      label="Selected"
+                      value={fSelected.toLocaleString()}
+                      sub={`${selectionRate}% of walk-ins`}
+                      color="border-emerald-300"
+                      icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+                    />
+                    <KpiTile
+                      label="Joined"
+                      value={fJoined.toLocaleString()}
+                      sub={`${joiningRate}% of selected`}
+                      color="border-violet-300"
+                      icon={<BadgeCheck className="h-4 w-4 text-violet-500" />}
+                    />
                     <KpiTile
                       label="Follow-ups"
-                      value={analytics.followupDue.length}
+                      value={(analytics.followupDueCount ?? analytics.followupDue.length).toLocaleString()}
                       sub="due in 7 days"
-                      color={analytics.followupDue.length > 0 ? "border-amber-400" : "border-slate-200"}
+                      color={(analytics.followupDueCount ?? analytics.followupDue.length) > 0 ? "border-amber-400" : "border-slate-200"}
                       icon={<Bell className="h-4 w-4 text-amber-500" />}
                     />
                   </div>

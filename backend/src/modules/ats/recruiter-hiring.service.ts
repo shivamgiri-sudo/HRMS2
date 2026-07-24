@@ -1589,6 +1589,7 @@ export interface HiringActivityAnalytics {
   byDayOfWeek: { label: string; count: number }[];
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
+  followupDueCount: number;
 }
 
 export async function getHiringActivityAnalytics(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringActivityAnalytics> {
@@ -1661,10 +1662,12 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
 
   // Later stages imply every earlier funnel stage. This keeps historical and
   // backfilled records from producing impossible Selected > Walk-in funnels.
-  const IS_JOINED    = `arha.joined_flag = 1`;
-  const IS_SELECTED  = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;
-  const IS_WALKIN    = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;
-  const IS_CONTACTED = `(arha.contacted_flag = 1 OR ${IS_WALKIN})`;
+  // Shortlisted: candidate expressed interest (or is already at a later stage).
+  const IS_JOINED      = `arha.joined_flag = 1`;
+  const IS_SELECTED    = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;
+  const IS_WALKIN      = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;
+  const IS_SHORTLISTED = `(${IS_WALKIN} OR LOWER(COALESCE(arha.recruiter_remarks,'')) IN ('if interested','interested','will visit','expected walk-in','shortlisted'))`;
+  const IS_CONTACTED   = `(arha.contacted_flag = 1 OR ${IS_SHORTLISTED})`;
 
   // Build follow-up params reusing already-resolved branch
   const followupClauses: string[] = [
@@ -1700,14 +1703,16 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     dowRows,
     trendRows,
     followupRows,
+    followupCountRows,
   ] = await Promise.all([
     safe(() => db.execute<RowDataPacket[]>(
       `SELECT
-         COUNT(*)                                             AS logged,
-         SUM(CASE WHEN ${IS_CONTACTED} THEN 1 ELSE 0 END)    AS contacted,
-         SUM(CASE WHEN ${IS_WALKIN}    THEN 1 ELSE 0 END)    AS walkins,
-         SUM(CASE WHEN ${IS_SELECTED}  THEN 1 ELSE 0 END)    AS selected,
-         SUM(CASE WHEN ${IS_JOINED}    THEN 1 ELSE 0 END)    AS joined
+         COUNT(*)                                                AS logged,
+         SUM(CASE WHEN ${IS_CONTACTED}   THEN 1 ELSE 0 END)    AS contacted,
+         SUM(CASE WHEN ${IS_SHORTLISTED} THEN 1 ELSE 0 END)    AS shortlisted,
+         SUM(CASE WHEN ${IS_WALKIN}      THEN 1 ELSE 0 END)    AS walkins,
+         SUM(CASE WHEN ${IS_SELECTED}    THEN 1 ELSE 0 END)    AS selected,
+         SUM(CASE WHEN ${IS_JOINED}      THEN 1 ELSE 0 END)    AS joined
        FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
       params
     ), [] as RowDataPacket[]),
@@ -1821,22 +1826,30 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
         ORDER BY followup_date ASC LIMIT 50`,
       followupParams
     ), [] as RowDataPacket[]),
+    safe(() => db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM ats_recruiter_hiring_activity
+        WHERE ${followupClauses.join(" AND ")}`,
+      followupParams
+    ), [] as RowDataPacket[]),
   ]);
 
   // ── Map results ───────────────────────────────────────────────────────────
   const s = summaryRows[0] ?? {};
-  const logged    = Number(s.logged    ?? 0);
-  const contacted = Number(s.contacted ?? 0);
-  const walkins   = Number(s.walkins   ?? 0);
-  const selected  = Number(s.selected  ?? 0);
-  const joined    = Number(s.joined    ?? 0);
+  const logged      = Number(s.logged      ?? 0);
+  const contacted   = Number(s.contacted   ?? 0);
+  const shortlisted = Number(s.shortlisted ?? 0);
+  const walkins     = Number(s.walkins     ?? 0);
+  const selected    = Number(s.selected    ?? 0);
+  const joined      = Number(s.joined      ?? 0);
   const pct = (n: number) => logged ? Math.round(n / logged * 1000) / 10 : 0;
   const funnel = [
-    { stage: "Logged",    count: logged,    pct: 100           },
-    { stage: "Contacted", count: contacted, pct: pct(contacted) },
-    { stage: "Walked In", count: walkins,   pct: pct(walkins)   },
-    { stage: "Selected",  count: selected,  pct: pct(selected)  },
-    { stage: "Joined",    count: joined,    pct: pct(joined)    },
+    { stage: "Logged",      count: logged,      pct: 100             },
+    { stage: "Contacted",   count: contacted,   pct: pct(contacted)   },
+    { stage: "Shortlisted", count: shortlisted, pct: pct(shortlisted) },
+    { stage: "Walked In",   count: walkins,     pct: pct(walkins)     },
+    { stage: "Selected",    count: selected,    pct: pct(selected)    },
+    { stage: "Joined",      count: joined,      pct: pct(joined)      },
   ];
 
   const byOutcome   = (outcomeRows as any[]).map((r) => ({ label: String(r.label), count: Number(r.count) }));
@@ -1955,8 +1968,9 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     mobile: String(r.mobile ?? ""), followup_date: String(r.followup_date ?? ""),
     followup_reason: String(r.followup_reason ?? ""),
   }));
+  const followupDueCount = Number((followupCountRows as any[])[0]?.total ?? followupDue.length);
 
-  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue };
+  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue, followupDueCount };
 }
 
 export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {
