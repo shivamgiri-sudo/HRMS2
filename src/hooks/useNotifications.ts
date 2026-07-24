@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { playChime } from "./useSoundNotification";
+import { toast } from "sonner";
 
 export interface Notification {
   id: string;
@@ -63,6 +64,37 @@ function chimePriorityFrom(p: Notification["priority"]): "urgent" | "high" | "no
   if (p === "high") return "high";
   if (p === "normal") return "normal";
   return null; // "low" → no sound
+}
+
+const TOAST_DURATION: Record<"urgent" | "high" | "normal", number | undefined> = {
+  urgent: Infinity, // stays until manually dismissed
+  high: 8000,
+  normal: 5000,
+};
+
+const PRIORITY_ICON: Record<"urgent" | "high" | "normal", string> = {
+  urgent: "🔴",
+  high: "🟠",
+  normal: "⬤",
+};
+
+function showNotificationToast(n: Notification, isReminder: boolean): void {
+  const p = chimePriorityFrom(n.priority) ?? "normal";
+  const prefix = isReminder ? "Reminder: " : "";
+  const title = `${PRIORITY_ICON[p]}  ${prefix}${n.title}`;
+  const body = n.message || undefined;
+  const duration = TOAST_DURATION[p];
+  const action = n.link
+    ? { label: "View", onClick: () => { window.location.href = n.link!; } }
+    : undefined;
+
+  if (p === "urgent") {
+    toast.error(title, { description: body, duration, action });
+  } else if (p === "high") {
+    toast.warning(title, { description: body, duration, action });
+  } else {
+    toast(title, { description: body, duration, action });
+  }
 }
 
 function requestNotificationPermission() {
@@ -128,16 +160,13 @@ export const useNotifications = () => {
     // --- New notifications arrived ---
     if (prevCountRef.current >= 0 && currentCount > prevCountRef.current) {
       const newOnes = notifications.slice(0, currentCount - prevCountRef.current);
-      // Find highest priority among new items
       const priorities: Array<"urgent" | "high" | "normal"> = ["urgent", "high", "normal"];
       for (const p of priorities) {
         if (newOnes.some((n) => n.priority === p)) {
           playChime(p);
           const newest = newOnes[0];
-          fireBrowserNotification(
-            newest.title,
-            newest.message || `You have a new ${p} priority notification`,
-          );
+          fireBrowserNotification(newest.title, newest.message || `You have a new ${p} priority notification`);
+          showNotificationToast(newest, false);
           break;
         }
       }
@@ -162,9 +191,9 @@ export const useNotifications = () => {
       if (!cp) continue; // "low" — no repeat
       const intervalMs = REPEAT_INTERVAL[cp];
       const timerId = setInterval(() => {
-        // Re-check: if item has since been actioned, the timer will be cleared on next query cycle
         playChime(cp);
         fireBrowserNotification(n.title, n.message || "Reminder: unactioned notification");
+        showNotificationToast(n, true);
       }, intervalMs);
       repeatTimers.current.set(n.id, timerId);
     }
