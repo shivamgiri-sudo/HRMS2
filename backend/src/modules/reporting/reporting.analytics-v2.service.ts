@@ -92,7 +92,9 @@ export const reportingAnalyticsV2Service = {
     const newHires = monthlyBreakdown.reduce((sum, item) => sum + item.hires, 0);
     const terminations = monthlyBreakdown.reduce((sum, item) => sum + item.terminations, 0);
     const startOfYearHeadcount = employeeRows.filter((employee) => activeAsOf(employee, yearStart)).length;
-    const currentHeadcount = employeeRows.filter((employee) => activeAsOf(employee, today)).length;
+    // Use the base service's active_status-based currentHeadcount as the source of truth for
+    // the KPI card — it matches what every other employee list in the system shows.
+    const currentHeadcount = base.headcount.currentHeadcount;
 
     return {
       ...base,

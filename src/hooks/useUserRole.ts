@@ -166,7 +166,13 @@ export const useIsAdminOrHR = () => {
   const roleKeys = data?.roleKeys ?? [];
 
   return {
-    isAdminOrHR: roleKeys.includes("super_admin") || roleKeys.includes("admin") || roleKeys.includes("hr"),
+    isAdminOrHR:
+      roleKeys.includes("super_admin") ||
+      roleKeys.includes("admin") ||
+      roleKeys.includes("hr") ||
+      roleKeys.includes("wfm") ||
+      roleKeys.includes("payroll") ||
+      roleKeys.includes("operations_manager"),
     isLoading,
     error,
     role: data?.primaryRole ?? null,

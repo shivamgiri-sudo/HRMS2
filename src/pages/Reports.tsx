@@ -93,7 +93,7 @@ const Reports = () => {
           <ShieldAlert className="h-16 w-16 text-destructive" />
           <h2 className="text-2xl font-bold text-foreground">Access Denied</h2>
           <p className="text-muted-foreground">You don't have permission to access this page.</p>
-          <p className="text-sm text-muted-foreground">Only administrators and HR personnel can view reports.</p>
+          <p className="text-sm text-muted-foreground">Only administrators, HR, WFM, and Payroll personnel can view reports.</p>
         </div>
       </DashboardLayout>
     );
