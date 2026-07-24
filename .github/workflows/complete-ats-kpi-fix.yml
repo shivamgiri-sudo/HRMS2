@@ -1,0 +1,69 @@
+name: Complete ATS KPI fix
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [agent/fix-ats-kpi-calculations]
+
+permissions:
+  contents: write
+
+jobs:
+  complete:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-ats-kpi-calculations
+          fetch-depth: 0
+
+      - name: Extract and apply the validated patch
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import textwrap
+          workflow = Path('.github/workflows/fix-ats-kpi-calculations.yml').read_text(encoding='utf-8')
+          start_marker = "          python <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = workflow.index(start_marker) + len(start_marker)
+          end = workflow.index(end_marker, start)
+          script = textwrap.dedent(workflow[start:end])
+          Path('/tmp/apply-kpi-fix.py').write_text(script, encoding='utf-8')
+          PY
+          python /tmp/apply-kpi-fix.py
+
+      - name: Validate frontend
+        run: |
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run typecheck
+          npm run build
+
+      - name: Validate backend
+        working-directory: backend
+        run: |
+          npm install --ignore-scripts
+          npm run typecheck
+
+      - name: Commit only intended source files
+        run: |
+          git checkout -- package-lock.json backend/package-lock.json
+          changed=$(git diff --name-only)
+          echo "$changed"
+          test "$changed" = $'backend/src/modules/ats/recruiter-hiring.service.ts\nsrc/pages/NativeATSHiringEntry.tsx'
+          rm -f \
+            .github/workflows/fix-ats-kpi-calculations.yml \
+            .github/workflows/repair-ats-kpi-workflow.yml \
+            .github/workflows/complete-ats-kpi-fix.yml \
+            .github/kpi-fix-trigger.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/src/modules/ats/recruiter-hiring.service.ts src/pages/NativeATSHiringEntry.tsx \
+            .github/workflows/fix-ats-kpi-calculations.yml \
+            .github/workflows/repair-ats-kpi-workflow.yml \
+            .github/workflows/complete-ats-kpi-fix.yml \
+            .github/kpi-fix-trigger.txt
+          git commit -m 'fix(ats): correct KPI grid calculations'
+          git push origin HEAD:agent/fix-ats-kpi-calculations
