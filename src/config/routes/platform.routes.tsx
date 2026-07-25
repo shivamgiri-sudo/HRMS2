@@ -21,7 +21,7 @@ const NativeSupportCommandCenter    = lazy(() => import("@/pages/NativeSupportCo
 const NativeGrievanceCommandCenter  = lazy(() => import("@/pages/NativeGrievanceCommandCenter"));
 const NativeLetters                 = lazy(() => import("@/pages/NativeLetters"));
 const NativeLetterPreview           = lazy(() => import("@/pages/NativeLetterPreview"));
-const NativeAppointmentEsign          = lazy(() => import("@/pages/NativeAppointmentEsign"));
+const NativeAppointmentEsign        = lazy(() => import("@/pages/NativeAppointmentEsign"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
@@ -58,6 +58,7 @@ const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
 const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboard"));
 const BpoMasterReports              = lazy(() => import("@/pages/BpoMasterReports"));
+const BpoReportSourceValidation     = lazy(() => import("@/pages/BpoReportSourceValidation"));
 const NativeReportsControlRoom      = lazy(() => import("@/pages/NativeReportsCenterV3"));
 const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
@@ -87,6 +88,10 @@ const REPORT_ROLES = [
   'recruitment_hr','trainer','training','it','it_manager','security','security_head',
   'compliance','privacy_officer','facility_manager','visitor_security','visitor_reception',
   'branch_hr','hr_branch','team_leader','tl'
+];
+
+const REPORT_VALIDATION_ROLES = [
+  'super_admin','admin','ceo','coo','internal_auditor','compliance_head','it_manager','hr_head','finance_head'
 ];
 
 export const platformRouteElements = (
@@ -179,6 +184,7 @@ export const platformRouteElements = (
 
       {/* Reports */}
       <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoMasterReports /></Gate></ProtectedRoute>} />
+      <Route path="/reports/source-validation" element={<ProtectedRoute roles={REPORT_VALIDATION_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoReportSourceValidation /></Gate></ProtectedRoute>} />
       <Route path="/reports/control-room" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
       <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
 
