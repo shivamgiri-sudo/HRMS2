@@ -282,6 +282,9 @@ function createContext(
   if (sourceTable === "employees") {
     aliases.set("e", { table: "employees", columns: sourceColumns });
     employeeAvailable = true;
+    if (sourceColumns.has("id")) {
+      joins.push(`LEFT JOIN employees e ON e.${quote("id")} = src.${quote("id")}`);
+    }
   } else if (schema.tables.has("employees")) {
     const employeeColumns = schema.columns.get("employees") ?? new Map<string, string>();
     const sourceEmployeeId = firstColumn(sourceColumns, plan.employeeIdCandidates);
