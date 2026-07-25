@@ -125,7 +125,7 @@ describe("finance database and API contract", () => {
   it("provides duplicate, document and extraction controls for smart GRNs", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
     const routes = read("src/modules/finance/grn-smart.routes.ts");
-    expect(service).toContain("createHash(\"sha256\")");
+    expect(service).toContain('createHash("sha256")');
     expect(service).toContain("DUPLICATE_INVOICE");
     expect(service).toContain("DOCUMENT_AMOUNT_MATCH");
     expect(service).toContain("GoogleGenerativeAI");
@@ -182,6 +182,36 @@ describe("finance database and API contract", () => {
     expect(page).toContain("/transactions");
     expect(page).not.toContain("/update-payment");
     expect(page).not.toContain("/bulk-update");
+  });
+
+  it("registers the additive multi-LOB and vendor-payment bridge migrations", () => {
+    const manifest = read("src/db/runPendingMigrations.ts");
+    const sql421 = read("sql/421_process_lob_pnl_foundation.sql");
+    const sql422 = read("sql/422_vendor_payment_lob_bridge.sql");
+    expect(manifest).toContain('"421_process_lob_pnl_foundation.sql"');
+    expect(manifest).toContain('"422_vendor_payment_lob_bridge.sql"');
+    expect(sql421).toContain("CREATE TABLE IF NOT EXISTS process_lob_master");
+    expect(sql421).toContain("process_lob_monthly_plan");
+    expect(sql421).toContain("employee_lob_assignment");
+    expect(sql421).toContain("pnl_period_snapshot");
+    expect(sql421).toContain("ADD COLUMN process_lob_id");
+    expect(sql422).toContain("CREATE OR REPLACE VIEW vw_vendor_payment_lob_allocation");
+    expect(sql421).not.toMatch(/DROP\s+TABLE/i);
+    expect(sql422).not.toMatch(/DROP\s+TABLE/i);
+  });
+
+  it("requires non-overridable LOB attribution before smart-GRN submission", () => {
+    const validation = read("src/modules/finance/grn-validation-control.service.ts");
+    const attribution = read("src/modules/finance/grn-lob-attribution.service.ts");
+    const routes = read("src/modules/process-pnl/process-lob.routes.ts");
+    expect(validation).toContain('NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"])');
+    expect(validation).toContain("a.process_lob_id IS NULL");
+    expect(validation).toContain("Every process-linked allocation has an approved LOB mapping");
+    expect(attribution).toContain("FOR UPDATE");
+    expect(attribution).toContain("process has");
+    expect(attribution).toContain("Select the exact LOB before submission");
+    expect(routes).toContain('"/grn-attribution/pending"');
+    expect(routes).toContain('"/grn-attribution/:grnId"');
   });
 
   it("treats branch roles as scoped and finance leadership as global", () => {
