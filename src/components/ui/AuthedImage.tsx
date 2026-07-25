@@ -8,6 +8,13 @@ interface AuthedImageProps {
   loading?: "eager" | "lazy";
 }
 
+// Categories served publicly — no auth header needed, plain <img> works
+const PUBLIC_CATEGORIES = ["/api/files/company-feed/"];
+
+function isPublicUrl(src: string): boolean {
+  return PUBLIC_CATEGORIES.some((prefix) => src.includes(prefix));
+}
+
 function getToken(): string | null {
   return localStorage.getItem("hrms_access_token");
 }
@@ -19,7 +26,7 @@ function resolveUrl(src: string): string {
   return `${HRMS_BASE}${src}`;
 }
 
-export function AuthedImage({ src, alt, className, loading = "lazy" }: AuthedImageProps) {
+function AuthedImagePrivate({ src, alt, className, loading = "lazy" }: AuthedImageProps) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [errored, setErrored] = useState(false);
   const prevUrl = useRef<string | null>(null);
@@ -82,4 +89,18 @@ export function AuthedImage({ src, alt, className, loading = "lazy" }: AuthedIma
       className={className}
     />
   );
+}
+
+export function AuthedImage({ src, alt, className, loading = "lazy" }: AuthedImageProps) {
+  if (isPublicUrl(src)) {
+    return (
+      <img
+        src={resolveUrl(src)}
+        alt={alt}
+        loading={loading}
+        className={className}
+      />
+    );
+  }
+  return <AuthedImagePrivate src={src} alt={alt} className={className} loading={loading} />;
 }

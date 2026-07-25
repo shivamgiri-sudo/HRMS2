@@ -292,14 +292,26 @@ router.post(
   })
 );
 
+// Public categories — no auth required (approved published content only)
+const PUBLIC_FILE_CATEGORIES = new Set(["company-feed"]);
+
 // GET /api/files/:category/:filename — serve file
 // Accepts either: session JWT (requireAuth) OR ?token=<short-lived-download-token>
+// Public categories (company-feed) skip auth so <img> tags render without fetch tricks.
 router.get(
   "/:category/:filename",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const safe = (req.params.category.replace(/[^a-zA-Z0-9_-]/g, "")) || "misc";
     const safeFile = path.basename(req.params.filename);
     const filePath = path.join(UPLOADS_ROOT, safe, safeFile);
+
+    // Public categories skip auth entirely — serve directly
+    if (PUBLIC_FILE_CATEGORIES.has(safe)) {
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: "File not found" });
+      }
+      return res.sendFile(filePath);
+    }
 
     let actorUserId: string | undefined;
     let actorRole: string | undefined;
