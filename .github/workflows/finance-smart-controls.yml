@@ -11,11 +11,14 @@ on:
       - "src/components/finance/**"
       - "src/hooks/useBranchBudget.ts"
       - "src/hooks/useBudgetCoverage.ts"
+      - "src/hooks/useProcessLobPnl.ts"
       - "backend/src/modules/finance/**"
       - "backend/src/modules/process-pnl/**"
       - "backend/src/db/runFinance**"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/sql/41*.sql"
       - "backend/sql/420*.sql"
+      - "backend/sql/421*.sql"
       - ".github/workflows/finance-smart-controls.yml"
 
 permissions:
@@ -46,10 +49,22 @@ jobs:
         run: npm --prefix backend ci
 
       - name: Frontend typecheck
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm run typecheck > /tmp/frontend-typecheck.log 2>&1; then
+            tail -n 120 /tmp/frontend-typecheck.log
+            exit 1
+          fi
 
       - name: Backend typecheck
-        run: npm --prefix backend run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm --prefix backend run typecheck > /tmp/backend-typecheck.log 2>&1; then
+            tail -n 160 /tmp/backend-typecheck.log
+            exit 1
+          fi
 
       - name: Finance calculations and contracts
         run: >-
@@ -57,6 +72,7 @@ jobs:
           src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
+          src/modules/process-pnl/__tests__/process-lob.test.ts
           src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts
           src/modules/finance/__tests__/finance.schema-contract.test.ts
           src/modules/finance/__tests__/budget-coverage.contract.test.ts
