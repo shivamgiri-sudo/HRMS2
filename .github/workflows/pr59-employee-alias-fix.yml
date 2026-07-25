@@ -1,0 +1,58 @@
+name: PR59 Employee Source Alias Fix
+
+on:
+  push:
+    branches:
+      - agent/deep-section-reports
+    paths:
+      - .github/workflows/pr59-employee-alias-fix.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pr59-employee-alias-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deep-section-reports
+          fetch-depth: 0
+
+      - name: Define employee alias for employee-base reports
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/src/modules/reporting/bpo-master-report.service.ts')
+          text = path.read_text()
+          old = '''  if (sourceTable === "employees") {
+              aliases.set("e", { table: "employees", columns: sourceColumns });
+              employeeAvailable = true;
+            } else if (schema.tables.has("employees")) {'''
+          new = '''  if (sourceTable === "employees") {
+              aliases.set("e", { table: "employees", columns: sourceColumns });
+              employeeAvailable = true;
+              if (sourceColumns.has("id")) {
+                joins.push(`LEFT JOIN employees e ON e.${quote("id")} = src.${quote("id")}`);
+              }
+            } else if (schema.tables.has("employees")) {'''
+          if text.count(old) != 1:
+            raise SystemExit(f'employee alias replacement mismatch: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          rm .github/workflows/pr59-employee-alias-fix.yml
+
+      - name: Commit alias fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/reporting/bpo-master-report.service.ts .github/workflows/pr59-employee-alias-fix.yml
+          git commit -m "fix(reports): define employee alias for snapshot master reports"
+          git push origin HEAD:agent/deep-section-reports
