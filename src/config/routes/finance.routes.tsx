@@ -15,6 +15,7 @@ const BranchBudgetManagementPage   = lazy(() => import("@/pages/finance/BranchBu
 const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
 const ProcessPnlDetailPage         = lazy(() => import("@/pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage  = lazy(() => import("@/pages/finance/ProcessPnlConfigurationPage"));
+const ProcessLobManagementPage     = lazy(() => import("@/pages/finance/ProcessLobManagementPage"));
 const PnlPeriodClosePage           = lazy(() => import("@/pages/finance/PnlPeriodClosePage"));
 const MyExpenses                   = lazy(() => import("@/pages/expenses/MyExpenses"));
 const NewExpenseClaim              = lazy(() => import("@/pages/expenses/NewExpenseClaim"));
@@ -38,6 +39,7 @@ export const financeRouteElements = (
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><BranchBudgetManagementPage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><ProcessPnlPage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><ProcessLobManagementPage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl/period-close"  element={<ProtectedRoute roles={pnlRoles}><PnlPeriodClosePage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlRoles}><ProcessPnlDetailPage /></ProtectedRoute>} />
 
