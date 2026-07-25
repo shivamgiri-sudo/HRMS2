@@ -7,6 +7,7 @@ import { getUserRoleKeys } from "../../shared/roleResolver.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as repository from "./visitor.repository.js";
 import { canTransitionVisit, type ActorScope, type CreateVisitInput, type VisitListFilters, type VisitStatus } from "./visitor.types.js";
+import { inboxService } from "../inbox/inbox.service.js";
 
 const UNRESTRICTED_ROLES = new Set(["super_admin", "admin", "ho_hr", "hr_admin", "security_head"]);
 const BRANCH_SECURITY_ROLES = new Set(["visitor_security", "visitor_reception", "branch_head", "branch_hr", "hr_branch"]);
@@ -98,6 +99,33 @@ async function createVisit(input: CreateVisitInput, req: Request, consent?: { co
     metadata: { visit_number: number, branch_id: input.branch_id, source_channel: input.source_channel },
     req,
   });
+
+  // Notify host employee if one was resolved
+  if (host?.id) {
+    const [hostUserRows] = await db.execute<RowDataPacket[]>(
+      "SELECT user_id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
+      [host.id],
+    );
+    const hostUserId = (hostUserRows[0] as any)?.user_id as string | undefined;
+    if (hostUserId) {
+      const visitorName = input.visitor?.full_name ?? "A visitor";
+      const company = input.visitor?.company_name;
+      const startLabel = input.scheduled_start
+        ? new Date(input.scheduled_start).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })
+        : "soon";
+      inboxService.createItem({
+        user_id: hostUserId,
+        type: "visitor_approval_needed",
+        title: `Visitor approval needed: ${visitorName}`,
+        description: `${visitorName}${company ? ` (${company})` : ""} wants to visit you on ${startLabel}. Please approve or reject from the Visitor Approvals page.`,
+        entity_type: "visitor_visit",
+        entity_id: visitId,
+        action_url: "/visitor-management/approvals",
+        priority: "normal",
+      } as any).catch(() => {});
+    }
+  }
+
   return { id: visitId, visit_number: number, tracking_token: trackingToken, status: "pending_approval" as const };
 }
 
@@ -153,6 +181,24 @@ export const visitorService = {
       req,
     });
     return { requested: true };
+  },
+
+  async searchPublicHosts(q: string, branchId?: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.employee_code, desig.designation_name,
+              dept.dept_name AS department_name,
+              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name
+       FROM employees e
+       LEFT JOIN designation_master desig ON desig.id = e.designation_id
+       LEFT JOIN department_master dept ON dept.id = e.department_id
+       WHERE e.active_status = 1
+         AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
+         AND (UPPER(e.employee_code) LIKE UPPER(?) OR LOWER(CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) LIKE LOWER(?))
+         ${branchId ? "AND e.branch_id = ?" : ""}
+       LIMIT 10`,
+      branchId ? [`%${q}%`, `%${q}%`, branchId] : [`%${q}%`, `%${q}%`],
+    );
+    return rows;
   },
 
   async getScope(userId: string) {

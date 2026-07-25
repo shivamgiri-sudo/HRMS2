@@ -31,6 +31,8 @@ const PortalLogin          = lazy(() => import("@/pages/portal/PortalLogin"));
 
 const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocumentEsignReviewPage"));
 const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfComplianceReviewPage"));
+const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
+const VisitorStatusPage   = lazy(() => import("@/pages/VisitorStatusPage"));
 
 export const publicRouteElements = (
   <>
@@ -83,5 +85,10 @@ export const publicRouteElements = (
       {/* Token-gated document review flows (token in URL, no session required) */}
       <Route path="/employee/joining-documents/esign/:token" element={<EmployeeDocumentEsignReviewPage />} />
       <Route path="/employee/epf-compliance/review/:token"   element={<EmployeeEpfComplianceReviewPage />} />
+
+      {/* Visitor management — public unauthenticated surfaces */}
+      <Route path="/visitor-register"        element={<VisitorSelfRegister />} />
+      <Route path="/visitor-status/:token"   element={<VisitorStatusPage />} />
+      <Route path="/visitor-status"          element={<VisitorStatusPage />} />
   </>
 );
