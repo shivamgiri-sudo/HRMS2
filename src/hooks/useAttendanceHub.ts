@@ -84,6 +84,8 @@ export interface RunningSalary {
   pf_employee: number;
   esic_employee: number;
   professional_tax: number;
+  esic_applicable?: boolean;
+  gross_monthly?: number;
 }
 
 export interface PayslipSummary {

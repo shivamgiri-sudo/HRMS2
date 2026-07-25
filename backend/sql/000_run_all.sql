@@ -345,6 +345,9 @@ SOURCE sql/510_portal_superadmin_user.sql;
 -- ── Report query performance indexes (540) ────────────────────────────────────
 SOURCE sql/540_report_performance_indexes.sql;
 
+-- ── Employee FULLTEXT search index (541) ──────────────────────────────────────
+SOURCE sql/541_employee_fulltext_search_index.sql;
+
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
 SOURCE sql/999_create_missing_engagement_tables.sql;

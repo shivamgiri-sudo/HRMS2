@@ -393,8 +393,14 @@ export const wfmService = {
         [input.status, reviewerId, input.reviewerNote ?? null, id]
       );
 
-      // If approved AND requested_status is set, apply it to attendance_daily_record atomically
-      if (input.status === 'approved' && reg.requested_status) {
+      // If approved, apply correction to attendance_daily_record atomically.
+      // Exception-type regularizations (work_from_home, week_off_worked, holiday_worked) have
+      // requested_status=NULL — they always resolve to 'present' with lwp_value=0.
+      const EXCEPTION_DISPUTE_TYPES = ['work_from_home', 'week_off_worked', 'holiday_worked'];
+      const effectiveRequestedStatus = reg.requested_status ||
+        (EXCEPTION_DISPUTE_TYPES.includes(reg.dispute_type as string) ? 'present' : null);
+
+      if (input.status === 'approved' && effectiveRequestedStatus) {
         const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
 
         // Capture before-state for audit trail
@@ -416,7 +422,7 @@ export const wfmService = {
                   clock_in_time  = IF(? IS NOT NULL, TIMESTAMP(record_date, ?), clock_in_time),
                   clock_out_time = IF(? IS NOT NULL, TIMESTAMP(record_date, ?), clock_out_time)
             WHERE employee_id = ? AND record_date = ?`,
-          [reg.requested_status, lwpMap[reg.requested_status] ?? 0,
+          [effectiveRequestedStatus, lwpMap[effectiveRequestedStatus] ?? 0,
            reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
            id,
            existing?.attendance_status ?? null,

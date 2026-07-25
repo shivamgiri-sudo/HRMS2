@@ -771,8 +771,17 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
   if (departmentId)  { conds.push("e.department_id = ?");      params.push(departmentId); }
   if (designationId) { conds.push("e.designation_id = ?");     params.push(designationId); }
   if (search) {
-    conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ? OR e.official_email LIKE ?)");
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    const isCodeSearch = /^MAS/i.test(search.trim());
+    if (isCodeSearch) {
+      // Employee code searches: use prefix match (indexed, fast)
+      conds.push("e.employee_code LIKE ?");
+      params.push(`${search.trim().toUpperCase()}%`);
+    } else {
+      // Name/email searches: MATCH...AGAINST uses FULLTEXT index (ft_emp_search)
+      // Fallback to LIKE if FULLTEXT not available (handled by MySQL gracefully)
+      conds.push("(MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE) OR e.employee_code LIKE ?)");
+      params.push(`${search.trim()}*`, `%${search.trim()}%`);
+    }
   }
   if (scoped.sql && scoped.sql !== "1=1") {
     conds.push(`(${scoped.sql.replace(/^WHERE\s+/i, "").trim()})`);

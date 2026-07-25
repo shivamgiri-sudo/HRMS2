@@ -46,16 +46,24 @@ function RunningMonthCard({ employeeId }: { employeeId: string }) {
         ))}
       </div>
       <div className="grid grid-cols-3 gap-3 text-center border-t border-indigo-100 pt-3 mt-3">
-        {[
-          { label: "PF (Employee)", value: INR(rs.pf_employee) },
-          { label: "ESIC", value: INR(rs.esic_employee) },
-          { label: "Prof. Tax", value: INR(rs.professional_tax) },
-        ].map(item => (
-          <div key={item.label}>
-            <p className="text-sm font-semibold text-slate-700">{item.value}</p>
-            <p className="text-[10px] text-slate-500 mt-0.5">{item.label}</p>
-          </div>
-        ))}
+        <div>
+          <p className="text-sm font-semibold text-slate-700">{INR(rs.pf_employee)}</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">PF (Employee)</p>
+        </div>
+        <div>
+          {rs.esic_applicable === false ? (
+            <p className="text-xs font-medium text-slate-400 italic">Not applicable</p>
+          ) : (
+            <p className="text-sm font-semibold text-slate-700">{INR(rs.esic_employee)}</p>
+          )}
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            ESIC{rs.esic_applicable === false ? " (above ceiling)" : ""}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-700">{INR(rs.professional_tax)}</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Prof. Tax</p>
+        </div>
       </div>
     </div>
   );

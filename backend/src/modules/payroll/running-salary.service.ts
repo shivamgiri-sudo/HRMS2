@@ -26,6 +26,8 @@ export async function computeRunningSalary(
   pf_employee: number;
   esic_employee: number;
   professional_tax: number;
+  esic_applicable: boolean;
+  gross_monthly: number;
 }> {
   // Use IST date so month boundaries align with stored dates (DB datetimes are UTC-shifted)
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -295,6 +297,8 @@ export async function computeRunningSalary(
     pf_employee: Math.round(earnedCalc.pf_employee * 100) / 100,
     esic_employee: Math.round(earnedCalc.esic_employee * 100) / 100,
     professional_tax: Math.round(earnedCalc.professional_tax * 100) / 100,
+    esic_applicable: !esicOptOut && monthlyGross <= esicWageLimit,
+    gross_monthly: Math.round(monthlyGross * 100) / 100,
   };
 }
 
@@ -336,5 +340,7 @@ function _zeroResult() {
     pf_employee: 0,
     esic_employee: 0,
     professional_tax: 0,
+    esic_applicable: false as boolean,
+    gross_monthly: 0,
   };
 }
