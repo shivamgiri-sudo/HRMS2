@@ -11,8 +11,10 @@ import {
 } from "../finance/finance-access-scope.js";
 import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
 import { bpoPnlRouter } from "./bpo-pnl.routes.js";
+import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService } from "./branch-budget.service.js";
+import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 
@@ -119,9 +121,7 @@ router.get(
     const data = await branchBudgetService.availableLines({
       branchId,
       processId: req.query.processId ? String(req.query.processId) : undefined,
-      costCentreId: req.query.costCentreId
-        ? String(req.query.costCentreId)
-        : undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       period: req.query.period ? String(req.query.period) : undefined,
     });
     res.json({ success: true, data });
@@ -157,11 +157,7 @@ router.post(
   h(async (req, res) => {
     const user = actor(req);
     await scopedBudget(req, req.params.id);
-    const data = await branchBudgetService.submit(
-      req.params.id,
-      user.id,
-      user.role
-    );
+    const data = await branchBudgetService.submit(req.params.id, user.id, user.role);
     res.json({ success: true, data });
   })
 );
@@ -173,10 +169,7 @@ router.post(
   h(async (req, res) => {
     const user = actor(req);
     const budget = await scopedBudget(req, req.params.id);
-    const decision = String(req.body?.decision ?? "") as
-      | "approve"
-      | "reject"
-      | "revision";
+    const decision = String(req.body?.decision ?? "") as "approve" | "reject" | "revision";
     if (!["approve", "reject", "revision"].includes(decision)) {
       throw new Error("Invalid budget decision");
     }
@@ -199,6 +192,7 @@ router.post(
 
 router.use(requireRole(...PNL_READ_ROLES));
 router.use("/pnl/bpo", bpoPnlRouter);
+router.use("/pnl/lobs", processLobRouter);
 router.use("/", pnlBulkUploadRouter);
 
 function readFilters(req: AuthenticatedRequest, scopedBranchId?: string | null) {
@@ -222,11 +216,13 @@ async function scopedFilters(req: AuthenticatedRequest) {
   return readFilters(req, branchId);
 }
 
+// Canonical endpoints: summary/trend/export/close all use the same allocation-aware engine.
 router.get("/pnl/summary", h(async (req, res) => {
-  const data = await processPnlService.getSummary(await scopedFilters(req));
+  const data = await canonicalPnlService.getSummary(await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
+// Keep the legacy process list contract for existing detail-page consumers.
 router.get("/pnl/processes", h(async (req, res) => {
   const data = await processPnlService.listProcesses(await scopedFilters(req));
   res.json({ success: true, data });
@@ -263,8 +259,9 @@ router.get("/pnl/processes/:processId/indirect-allocation", h(async (req, res) =
 }));
 
 router.get("/pnl/processes/:processId/trend", h(async (req, res) => {
-  const data = await processPnlService.getTrend(req.params.processId, await scopedFilters(req));
-  res.json({ success: true, data });
+  const filters = await scopedFilters(req);
+  const data = await canonicalPnlService.getProcessTrend(req.params.processId, filters);
+  res.json({ success: true, data: { period: filters.period, ...data } });
 }));
 
 router.get("/pnl/processes/:processId/reconciliation", h(async (req, res) => {
@@ -279,6 +276,11 @@ router.get("/pnl/processes/:processId/ledger", h(async (req, res) => {
 
 router.get("/pnl/processes/:processId/detail", h(async (req, res) => {
   const data = await processPnlService.getDetailBundle(req.params.processId, await scopedFilters(req));
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/processes/:processId/canonical-detail", h(async (req, res) => {
+  const data = await canonicalPnlService.getProcessDetail(req.params.processId, await scopedFilters(req));
   res.json({ success: true, data });
 }));
 
@@ -318,7 +320,7 @@ router.get("/pnl/config/adjustments", h(async (req, res) => {
 }));
 
 router.get("/pnl/period-close", h(async (req, res) => {
-  const data = await processPnlGovernanceService.getPeriodClose(
+  const data = await canonicalPnlService.getPeriodClose(
     req.query.period ? String(req.query.period) : undefined,
     req.userRoles,
     req.authUser.role
@@ -327,7 +329,7 @@ router.get("/pnl/period-close", h(async (req, res) => {
 }));
 
 router.get("/pnl/export", h(async (req, res) => {
-  const csv = await processPnlService.exportCsv(await scopedFilters(req));
+  const csv = await canonicalPnlService.exportCsv(await scopedFilters(req));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",
@@ -357,10 +359,7 @@ router.post("/pnl/adjustments", requireWriteAccess, requireRole(...PNL_WRITE_ROL
 }));
 
 router.post("/pnl/adjustments/:adjustmentId/approve", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.approveAdjustment(
-    req.params.adjustmentId,
-    req.authUser.id
-  );
+  const data = await processPnlGovernanceService.approveAdjustment(req.params.adjustmentId, req.authUser.id);
   res.json({ success: true, data });
 }));
 
@@ -383,7 +382,7 @@ router.post("/pnl/adjustments/:adjustmentId/reverse", requireWriteAccess, requir
 }));
 
 router.post("/pnl/recalculate", requireWriteAccess, requireRole(...PNL_WRITE_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.recalculate(
+  const data = await canonicalPnlService.recalculate(
     req.body?.period ? String(req.body.period) : undefined
   );
   res.json({ success: true, data });
@@ -401,10 +400,7 @@ router.post("/pnl/period/:periodId/signoff", requireWriteAccess, requireRole(...
 }));
 
 router.post("/pnl/period/:periodId/lock", requireWriteAccess, requireRole(...PNL_SIGNOFF_ROLES), h(async (req, res) => {
-  const data = await processPnlGovernanceService.lockPeriod(
-    req.params.periodId,
-    req.authUser.id
-  );
+  const data = await canonicalPnlService.lockPeriod(req.params.periodId, req.authUser.id);
   res.json({ success: true, data });
 }));
 
