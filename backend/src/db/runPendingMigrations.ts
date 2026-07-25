@@ -351,6 +351,7 @@ const MIGRATION_MANIFEST: string[] = [
   "418_grn_allocation_pnl_attribution.sql",
   "419_grn_validation_override_control.sql",
   "420_grn_validation_schema_hardening.sql",
+  "421_process_lob_pnl_foundation.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
   "502_designation_bgv_requirements.sql",
