@@ -59,4 +59,11 @@ describe("BPO master report verified source contracts", () => {
     expect(dynamicIndex).toBeGreaterThan(validationIndex);
     expect(routes).toContain("validateAllBpoMasterReports");
   });
+
+  it("treats canonical P&L coverage as structural rather than data-value dependent", () => {
+    const canonical = source("../bpo-master-canonical-adapters.ts");
+    expect(canonical).toContain("function mappedKeys");
+    expect(canonical).toContain("availableKeys: mappedKeys(code, period)");
+    expect(canonical).not.toContain("value !== null && value !== undefined");
+  });
 });
