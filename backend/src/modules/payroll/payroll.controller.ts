@@ -160,7 +160,7 @@ export const payrollController = {
     const limit = parseInt(req.query.limit as string) || 50;
     const search = (req.query.search as string) || undefined;
     const data = await payrollService.listLines(req.params.id, page, limit, search);
-    res.json({ data });
+    res.json({ success: true, data });
   },
 
   async updateLine(req: Request, res: Response) {

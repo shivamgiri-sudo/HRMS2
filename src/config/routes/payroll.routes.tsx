@@ -3,6 +3,8 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { PayslipViewer } from "@/components/profile/PayslipViewer";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
@@ -45,10 +47,26 @@ const NativePayrollHOQueues     = lazy(() => import("@/pages/NativePayrollHOQueu
 const NativeChequeNameValidation = lazy(() => import("@/pages/NativeChequeNameValidation"));
 const NativeSalaryIncrement     = lazy(() => import("@/pages/NativeSalaryIncrement"));
 
+function PayslipCenterRoute() {
+  const { primaryRole, employeeId, employeeName, employeeCode } = useWorkforceAccess();
+  if (primaryRole === "employee" && employeeId) {
+    return (
+      <DashboardLayout>
+        <PayslipViewer
+          employeeId={employeeId}
+          employeeName={employeeName ?? ""}
+          employeeCode={employeeCode ?? ""}
+        />
+      </DashboardLayout>
+    );
+  }
+  return <NativePayslipCenter />;
+}
+
 export const payrollRouteElements = (
   <>
       <Route path="/payroll" element={<ProtectedRoute><Gate pageCode="PAYROLL"><Payroll /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/payslips"       element={<ProtectedRoute><Gate pageCode="PAYROLL_PAYSLIPS"><NativePayslipCenter /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/payslips"       element={<ProtectedRoute><PayslipCenterRoute /></ProtectedRoute>} />
       <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
       <Route path="/payroll/full-final"     element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
       <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />

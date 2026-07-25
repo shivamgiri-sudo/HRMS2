@@ -261,7 +261,7 @@ export function PayrollTable({
         lwpDays: Number(full?.lwp_days ?? record.lwpDays ?? 0),
         totalDaysInMonth: Number(full?.working_days ?? record.workingDays ?? 30),
         basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
-        pf, esic, pt, tds, lwpDeduction: 0, loan, adDed, otherDed,
+        pf, esic, pt, tds, lwpDeduction: Number(full?.lwp_deduction ?? 0), loan, adDed, otherDed,
         employerPf: Number(full?.pf_employer ?? 0),
         employerEsic: Number(full?.esic_employer ?? 0),
         grossSalary: Number(full?.gross_salary ?? record.grossSalary ?? 0),

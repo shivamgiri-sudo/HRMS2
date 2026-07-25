@@ -629,10 +629,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('draft')
-        AND (
-          spr.run_month < DATE_FORMAT(CURDATE(), '%Y-%m')
-          OR srd.cheque_no IS NOT NULL
-        )
+        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed')
       ORDER BY spr.run_month DESC`,
     [callerEmp.id, `${year}-%`]
   );

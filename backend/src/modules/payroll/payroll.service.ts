@@ -398,25 +398,49 @@ export const payrollService = {
 
   async listLines(runId: string, page: number = 1, limit: number = 50, search?: string): Promise<{ lines: SalaryPrepLine[]; total: number; page: number; limit: number }> {
     const offset = (page - 1) * limit;
-    let query = "SELECT * FROM salary_prep_line WHERE run_id = ?";
+
+    const baseSelect = `
+      SELECT
+        spl.*,
+        spl.gross_salary     AS gross_pay,
+        spl.net_salary       AS net_pay,
+        spl.professional_tax AS pt_amount,
+        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+        sp.id AS payslip_id,
+        CASE
+          WHEN sp.acknowledged_at IS NOT NULL THEN 'acknowledged'
+          WHEN sp.id IS NOT NULL              THEN 'generated'
+          ELSE NULL
+        END AS payslip_status
+      FROM salary_prep_line spl
+      LEFT JOIN employees e        ON e.id = spl.employee_id
+      LEFT JOIN salary_payslip sp  ON sp.prep_line_id = spl.id
+      WHERE spl.run_id = ?`;
+
     const params: any[] = [runId];
 
+    let whereExtra = "";
     if (search) {
-      query += " AND (employee_code LIKE ? OR employee_name LIKE ? OR employee_id LIKE ?)";
+      whereExtra += " AND (spl.employee_code LIKE ? OR CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR spl.employee_id LIKE ?)";
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    query += " ORDER BY employee_code ASC LIMIT ? OFFSET ?";
+    const query = baseSelect + whereExtra + " ORDER BY spl.employee_code ASC LIMIT ? OFFSET ?";
     params.push(limit, offset);
 
     const [rows] = await db.execute<RowDataPacket[]>(query, params);
 
-    let countQuery = "SELECT COUNT(*) as total FROM salary_prep_line WHERE run_id = ?";
     const countParams: any[] = [runId];
+    let countExtra = "";
     if (search) {
-      countQuery += " AND (employee_code LIKE ? OR employee_name LIKE ? OR employee_id LIKE ?)";
+      countExtra += " AND (spl.employee_code LIKE ? OR CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) LIKE ? OR spl.employee_id LIKE ?)";
       countParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM salary_prep_line spl
+      LEFT JOIN employees e ON e.id = spl.employee_id
+      WHERE spl.run_id = ?` + countExtra;
     const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
     const total = (countRows as any[])[0]?.total ?? 0;
 
