@@ -57,7 +57,8 @@ const NativeBadges                  = lazy(() => import("@/pages/NativeBadges"))
 const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
 const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboard"));
-const NativeReportsCenter           = lazy(() => import("@/pages/NativeReportsCenterV3"));
+const BpoMasterReports              = lazy(() => import("@/pages/BpoMasterReports"));
+const NativeReportsControlRoom      = lazy(() => import("@/pages/NativeReportsCenterV3"));
 const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
@@ -177,7 +178,8 @@ export const platformRouteElements = (
       <Route path="/engagement/leaderboard"      element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
 
       {/* Reports */}
-      <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsCenter /></Gate></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoMasterReports /></Gate></ProtectedRoute>} />
+      <Route path="/reports/control-room" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
       <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
 
       {/* Communication */}
