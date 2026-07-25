@@ -3,7 +3,7 @@ import {
   getBpoMasterReport,
 } from "./bpo-master-report-registry.js";
 import { runVerifiedWorkforceAdapter } from "./bpo-master-verified-workforce-adapters.js";
-import { runVerifiedBusinessAdapter } from "./bpo-master-verified-business-adapters.js";
+import { runSafeVerifiedBusinessAdapter } from "./bpo-master-verified-business-safe-adapters.js";
 import { runSafeGovernanceBpoMasterAdapter } from "./bpo-master-governance-safe-adapters.js";
 import { runCanonicalBpoMasterAdapter } from "./bpo-master-canonical-adapters.js";
 import type { BranchScope } from "./reporting.scope.js";
@@ -148,7 +148,7 @@ export const bpoMasterReportV2Service = {
     const workforce = await runVerifiedWorkforceAdapter(code, filters, branchScope);
     if (workforce) return responseFromAdapter(definition, filters, workforce);
 
-    const business = await runVerifiedBusinessAdapter(code, filters, branchScope);
+    const business = await runSafeVerifiedBusinessAdapter(code, filters, branchScope);
     if (business) return responseFromAdapter(definition, filters, business);
 
     const canonical = await runCanonicalBpoMasterAdapter(code, {
