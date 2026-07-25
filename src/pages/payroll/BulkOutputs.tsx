@@ -55,7 +55,7 @@ export default function BulkOutputs() {
   const { data: runsData } = useQuery({
     queryKey: ["payroll-runs-for-bulk"],
     queryFn: () => hrmsApi.get<{ success: boolean; data: RunSummary[] }>(
-      "/payroll/runs?limit=24"
+      "/api/payroll/runs?limit=24"
     ).then(r => r.data),
   });
 
@@ -64,7 +64,7 @@ export default function BulkOutputs() {
   const { data: summaryData, refetch: refetchSummary } = useQuery({
     queryKey: ["bulk-payslip-summary", selectedRun],
     queryFn: () => hrmsApi.get<{ success: boolean; data: BulkSummary }>(
-      `/payroll/runs/${selectedRun}/bulk-payslip-summary`
+      `/api/payroll/runs/${selectedRun}/bulk-payslip-summary`
     ).then(r => r.data),
     enabled: !!selectedRun,
   });
@@ -72,7 +72,7 @@ export default function BulkOutputs() {
   const { data: jobData } = useQuery({
     queryKey: ["bulk-generate-status", selectedRun],
     queryFn: () => hrmsApi.get<{ success: boolean; data: GenerateJobStatus }>(
-      `/payroll/runs/${selectedRun}/bulk-generate-status`
+      `/api/payroll/runs/${selectedRun}/bulk-generate-status`
     ).then(r => r.data),
     enabled: !!selectedRun && pollingEnabled,
     refetchInterval: pollingEnabled ? 2000 : false,
@@ -87,7 +87,7 @@ export default function BulkOutputs() {
   }
 
   const generateMut = useMutation({
-    mutationFn: () => hrmsApi.post(`/payroll/runs/${selectedRun}/bulk-generate-payslips`, {}),
+    mutationFn: () => hrmsApi.post(`/api/payroll/runs/${selectedRun}/bulk-generate-payslips`, {}),
     onSuccess: () => {
       toast({ title: "Bulk generation started" });
       setPollingEnabled(true);
@@ -96,7 +96,7 @@ export default function BulkOutputs() {
   });
 
   const emailMut = useMutation({
-    mutationFn: () => hrmsApi.post(`/payroll/runs/${selectedRun}/email-payslips`, {}),
+    mutationFn: () => hrmsApi.post(`/api/payroll/runs/${selectedRun}/email-payslips`, {}),
     onSuccess: (res: any) => {
       const cnt = res.data?.data?.emailed ?? 0;
       toast({ title: `${cnt} payslips marked as emailed` });

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import api from "@/lib/axios";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 interface PayrollRun {
   id: string;
@@ -46,14 +46,14 @@ export default function DisbursalManagement() {
 
   const { data: runsData } = useQuery<{ data: PayrollRun[] }>({
     queryKey: ["payroll-runs-list"],
-    queryFn: () => api.get("/api/payroll/runs?limit=50").then((r) => r.data),
+    queryFn: () => hrmsApi.get<{ data: PayrollRun[] }>("/api/payroll/runs?limit=50").then((r) => r.data),
   });
   const runs = runsData?.data ?? [];
 
   const { data: disbData, isLoading: disbLoading } = useQuery<{ data: DisbursalRow[] }>({
     queryKey: ["disbursal", selectedRunId],
     queryFn: () =>
-      api.get(`/api/payroll/runs/${selectedRunId}/disbursal`).then((r) => r.data),
+      hrmsApi.get<{ data: DisbursalRow[] }>(`/api/payroll/runs/${selectedRunId}/disbursal`).then((r) => r.data),
     enabled: !!selectedRunId,
   });
   const disbRows = disbData?.data ?? [];
@@ -61,30 +61,26 @@ export default function DisbursalManagement() {
 
   const uploadMutation = useMutation({
     mutationFn: (rows: object[]) =>
-      api
-        .post(`/api/payroll/runs/${selectedRunId}/disbursal-upload`, { rows })
-        .then((r) => r.data),
+      hrmsApi.post(`/api/payroll/runs/${selectedRunId}/disbursal-upload`, { rows }),
     onSuccess: (data: any) => {
-      toast.success(data.message ?? "Upload successful");
+      toast.success(data?.message ?? "Upload successful");
       qc.invalidateQueries({ queryKey: ["disbursal", selectedRunId] });
       setCsvText("");
     },
     onError: (e: any) =>
-      toast.error(e?.response?.data?.message ?? "Upload failed"),
+      toast.error(e?.message ?? "Upload failed"),
   });
 
   const markDisbursedMutation = useMutation({
     mutationFn: () =>
-      api
-        .patch(`/api/payroll/runs/${selectedRunId}/status`, { status: "disbursed" })
-        .then((r) => r.data),
+      hrmsApi.patch(`/api/payroll/runs/${selectedRunId}/status`, { status: "disbursed" }),
     onSuccess: () => {
       toast.success("Run marked as disbursed");
       qc.invalidateQueries({ queryKey: ["payroll-runs-list"] });
       qc.invalidateQueries({ queryKey: ["disbursal", selectedRunId] });
     },
     onError: (e: any) =>
-      toast.error(e?.response?.data?.message ?? "Failed to mark disbursed"),
+      toast.error(e?.message ?? "Failed to mark disbursed"),
   });
 
   function handleCsvUpload() {
