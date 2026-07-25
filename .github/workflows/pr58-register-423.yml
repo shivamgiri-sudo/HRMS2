@@ -1,0 +1,48 @@
+name: PR58 Register Migration 423
+
+on:
+  push:
+    branches:
+      - agent/finance-pnl-lob-refactor
+    paths:
+      - .github/workflows/pr58-register-423.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/finance-pnl-lob-refactor
+          fetch-depth: 0
+
+      - name: Register migration 423
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          file = Path('backend/src/db/runPendingMigrations.ts')
+          text = file.read_text()
+          marker = '  "422_vendor_payment_lob_bridge.sql",\n'
+          insertion = marker + '  "423_cost_centre_lob_compatibility.sql",\n'
+          if '"423_cost_centre_lob_compatibility.sql"' in text:
+              pass
+          elif text.count(marker) == 1:
+              text = text.replace(marker, insertion, 1)
+          else:
+              raise SystemExit(f'Migration 422 insertion marker count: {text.count(marker)}')
+          file.write_text(text)
+          PY
+          rm .github/workflows/pr58-register-423.yml
+
+      - name: Commit manifest update
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/db/runPendingMigrations.ts .github/workflows/pr58-register-423.yml
+          git commit -m "fix(finance): register cost-centre LOB compatibility migration"
+          git push origin HEAD:agent/finance-pnl-lob-refactor
