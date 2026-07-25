@@ -8,6 +8,7 @@ import {
   type BpoMasterFormat,
 } from "./bpo-master-report-catalog.js";
 import { runCanonicalBpoMasterAdapter } from "./bpo-master-canonical-adapters.js";
+import { runWorkforceBpoMasterAdapter } from "./bpo-master-workforce-adapters.js";
 
 interface ColumnRow extends RowDataPacket {
   table_name: string;
@@ -572,6 +573,42 @@ export const bpoMasterReportService = {
     const definition = getBpoMasterReport(code);
     if (!definition) throw Object.assign(new Error("BPO master report not found"), { statusCode: 404 });
     const filters = normalizeFilters(inputFilters);
+    const workforce = await runWorkforceBpoMasterAdapter(code, {
+      month: filters.month,
+      from: filters.from,
+      to: filters.to,
+      branchId: filters.branchId,
+      processId: filters.processId,
+      employeeCode: filters.employeeCode,
+      limit: filters.limit,
+      offset: filters.offset,
+    }, branchScope);
+    if (workforce) {
+      const availableSet = new Set(workforce.availableKeys);
+      const available = definition.columns
+        .filter((column) => availableSet.has(column.key))
+        .map((column) => column.key);
+      const unavailable = definition.columns
+        .filter((column) => !availableSet.has(column.key))
+        .map((column) => column.key);
+      return {
+        definition,
+        generatedAt: new Date().toISOString(),
+        sourceState: "available" as const,
+        sourceTable: workforce.sourceTable,
+        rows: workforce.rows,
+        totalCount: workforce.totalCount,
+        filters,
+        coverage: {
+          available,
+          unavailable,
+          percentage: definition.columns.length
+            ? Number(((available.length / definition.columns.length) * 100).toFixed(1))
+            : 100,
+        },
+        message: null,
+      };
+    }
     const canonical = await runCanonicalBpoMasterAdapter(code, {
       month: filters.month,
       branchId: filters.branchId,
