@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
 
+const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
+
 async function activeOverrides(grnId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT validation_code, override_reason, approved_by, approved_at
@@ -17,6 +19,7 @@ async function activeOverrides(grnId: string) {
 async function applyOverridesToLatestResults(grnId: string) {
   const overrides = await activeOverrides(grnId);
   for (const [code, override] of overrides.entries()) {
+    if (NON_OVERRIDABLE_VALIDATIONS.has(code)) continue;
     await db.execute(
       `UPDATE grn_validation_result
           SET validation_status = 'overridden', is_blocking = 0,
@@ -40,8 +43,44 @@ async function applyOverridesToLatestResults(grnId: string) {
   return rows as any[];
 }
 
+async function addLobAttributionValidation(grnId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.sequence_no, a.process_id, a.process_lob_id, pm.process_name
+       FROM grn_cost_allocation a
+       LEFT JOIN process_master pm ON pm.id = a.process_id
+      WHERE a.grn_request_id = ?
+        AND a.process_id IS NOT NULL
+        AND a.process_lob_id IS NULL
+      ORDER BY a.sequence_no`,
+    [grnId]
+  );
+  const missing = rows.map((row) => ({
+    sequenceNo: Number(row.sequence_no),
+    processId: String(row.process_id),
+    processName: row.process_name ? String(row.process_name) : null,
+  }));
+  await db.execute(
+    `INSERT INTO grn_validation_result
+      (id, grn_request_id, validation_code, severity, validation_status,
+       is_blocking, message, details_json)
+     VALUES (?, ?, 'LOB_ATTRIBUTION', ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      grnId,
+      missing.length ? "error" : "info",
+      missing.length ? "failed" : "passed",
+      missing.length ? 1 : 0,
+      missing.length
+        ? `${missing.length} process-linked allocation(s) require an exact LOB mapping`
+        : "Every process-linked allocation has an approved LOB mapping",
+      JSON.stringify({ missing }),
+    ]
+  );
+}
+
 async function effectiveValidation(grnId: string) {
   const fresh = await grnSmartService.revalidate(grnId);
+  await addLobAttributionValidation(grnId);
   const results = await applyOverridesToLatestResults(grnId);
   const blocking = results.filter(
     (item) => Number(item.is_blocking) === 1 && String(item.validation_status) === "failed"
@@ -81,6 +120,9 @@ export const grnValidationControlService = {
   ) {
     const normalizedCode = validationCode.trim().toUpperCase();
     if (!normalizedCode) throw new Error("Validation code is required");
+    if (NON_OVERRIDABLE_VALIDATIONS.has(normalizedCode)) {
+      throw new Error(`${normalizedCode} is a structural attribution control and cannot be overridden`);
+    }
     if (!reason.trim() || reason.trim().length < 10) {
       throw new Error("A detailed override reason of at least 10 characters is required");
     }
