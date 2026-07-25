@@ -1,0 +1,56 @@
+name: PR58 One-Time Surgical Autofix
+
+on:
+  push:
+    branches:
+      - agent/finance-pnl-lob-refactor
+    paths:
+      - .github/workflows/pr58-one-time-autofix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/finance-pnl-lob-refactor
+          fetch-depth: 0
+
+      - name: Apply exact guarded replacements
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service = Path('backend/src/modules/process-pnl/process-lob.service.ts')
+          text = service.read_text()
+          old = '    const rows = lobs.map((lob) => {'
+          new = '    const rows: Array<Record<string, unknown> & { rowType: "lob" | "unallocated"; processLobId: string | null }> = lobs.map((lob) => {'
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected exactly one LOB rows declaration, found {text.count(old)}')
+          service.write_text(text.replace(old, new, 1))
+
+          manifest = Path('backend/src/db/runPendingMigrations.ts')
+          text = manifest.read_text()
+          old = '  "421_process_lob_pnl_foundation.sql",\n  "500_ai_provider_foundation.sql",'
+          new = '  "421_process_lob_pnl_foundation.sql",\n  "422_vendor_payment_lob_bridge.sql",\n  "500_ai_provider_foundation.sql",'
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected exactly one migration insertion point, found {text.count(old)}')
+          manifest.write_text(text.replace(old, new, 1))
+          PY
+
+          rm .github/workflows/pr58-one-time-autofix.yml
+
+      - name: Commit surgical changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/process-pnl/process-lob.service.ts \
+                  backend/src/db/runPendingMigrations.ts \
+                  .github/workflows/pr58-one-time-autofix.yml
+          git commit -m "fix(finance): type LOB reconciliation rows and register payment bridge"
+          git push origin HEAD:agent/finance-pnl-lob-refactor
