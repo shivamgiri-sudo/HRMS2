@@ -19,7 +19,8 @@ async function effectiveLobs(
   effectiveDate: string
 ) {
   const [rows] = await connection.execute<RowDataPacket[]>(
-    `SELECT id, lob_code, lob_name, approval_status, active_status
+    `SELECT id, process_id, lob_code, lob_name, approval_status, active_status,
+            effective_from, effective_to
        FROM process_lob_master
       WHERE process_id = ?
         AND active_status = 1
@@ -88,6 +89,85 @@ async function resolveLob(
 }
 
 export const grnLobAttributionService = {
+  async listPending(limit = 100) {
+    const safeLimit = Math.min(200, Math.max(1, Number(limit) || 100));
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT g.id, g.grn_number, g.vendor_name, g.bill_date, g.service_period_end,
+              g.amount_with_tax, g.amount, g.status, b.branch_name,
+              COUNT(a.id) allocation_count,
+              SUM(CASE WHEN a.process_id IS NOT NULL AND a.process_lob_id IS NULL THEN 1 ELSE 0 END) missing_lob_count,
+              GROUP_CONCAT(DISTINCT pm.process_name ORDER BY pm.process_name SEPARATOR ', ') process_names
+         FROM grn_request g
+         JOIN grn_cost_allocation a ON a.grn_request_id = g.id
+         LEFT JOIN branch_master b ON b.id = g.branch_id
+         LEFT JOIN process_master pm ON pm.id = a.process_id
+        WHERE g.status = 'draft'
+        GROUP BY g.id, g.grn_number, g.vendor_name, g.bill_date, g.service_period_end,
+                 g.amount_with_tax, g.amount, g.status, b.branch_name
+       HAVING missing_lob_count > 0
+        ORDER BY g.created_at DESC
+        LIMIT ${safeLimit}`
+    );
+    return rows;
+  },
+
+  async getWorkspace(grnId: string) {
+    const [grnRows] = await db.execute<RowDataPacket[]>(
+      `SELECT g.id, g.grn_number, g.vendor_name, g.bill_date, g.service_period_start,
+              g.service_period_end, g.amount_with_tax, g.amount, g.status,
+              b.branch_name
+         FROM grn_request g
+         LEFT JOIN branch_master b ON b.id = g.branch_id
+        WHERE g.id = ?
+        LIMIT 1`,
+      [grnId]
+    );
+    const grn = grnRows[0];
+    if (!grn) throw Object.assign(new Error("GRN not found"), { statusCode: 404 });
+    const effectiveDate = dateOnly(grn.service_period_end) ?? dateOnly(grn.bill_date);
+    if (!effectiveDate) {
+      throw Object.assign(new Error("GRN service period or bill date is required"), { statusCode: 400 });
+    }
+    const [allocations] = await db.execute<RowDataPacket[]>(
+      `SELECT a.id, a.sequence_no, a.budget_line_id, a.process_id, a.process_lob_id,
+              a.cost_centre_id, a.pnl_cost_amount, a.amount_with_tax,
+              b.process_lob_id AS budget_process_lob_id,
+              b.item_name, b.head, b.sub_head,
+              pm.process_name, l.lob_code, l.lob_name,
+              ccm.cost_centre_name
+         FROM grn_cost_allocation a
+         JOIN finance_budget_line b ON b.id = a.budget_line_id
+         LEFT JOIN process_master pm ON pm.id = a.process_id
+         LEFT JOIN process_lob_master l ON l.id = a.process_lob_id
+         LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+        WHERE a.grn_request_id = ?
+        ORDER BY a.sequence_no`,
+      [grnId]
+    );
+    const processIds = [...new Set(
+      allocations
+        .map((row) => row.process_id ? String(row.process_id) : null)
+        .filter((value): value is string => Boolean(value))
+    )];
+    let lobs: RowDataPacket[] = [];
+    if (processIds.length) {
+      const placeholders = processIds.map(() => "?").join(",");
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, process_id, lob_code, lob_name, effective_from, effective_to
+           FROM process_lob_master
+          WHERE process_id IN (${placeholders})
+            AND active_status = 1
+            AND approval_status = 'approved'
+            AND effective_from <= ?
+            AND (effective_to IS NULL OR effective_to >= ?)
+          ORDER BY process_id, lob_code`,
+        [...processIds, effectiveDate, effectiveDate]
+      );
+      lobs = rows;
+    }
+    return { grn, effectiveDate, allocations, lobs };
+  },
+
   async apply(
     grnId: string,
     input: GrnLobAllocationInput[],
@@ -171,8 +251,7 @@ export const grnLobAttributionService = {
         });
       }
 
-      const processRows = rows.filter((row) => row.process_id);
-      const unmapped = processRows.filter((row, index) => !changes[index]?.processLobId);
+      const unmapped = changes.filter((change) => change.processId && !change.processLobId);
       if (unmapped.length) {
         throw Object.assign(new Error("Every process-linked GRN allocation must have a LOB"), { statusCode: 400 });
       }
