@@ -1,14 +1,19 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import {
+  addScopedEmployeeFilters,
+  reportCatalogAccessMiddleware,
+  reportScopeMiddleware,
+} from "./reporting-access.js";
 import { db } from "../../db/mysql.js";
 
 export const reportSuiteHighRiskRouter = Router();
 reportSuiteHighRiskRouter.use(requireAuth);
+reportSuiteHighRiskRouter.use(reportScopeMiddleware);
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const roles = requireRole("admin", "hr", "finance", "payroll", "wfm", "manager", "ceo");
+const roles = reportCatalogAccessMiddleware;
 // Include all post-calculation statuses so reports show data regardless of approval stage
 // "draft" is excluded — draft runs have no calculated lines yet
 const PAYROLL_STATUSES = ["processing", "reviewed", "calculated", "approved", "locked", "disbursed", "finalized", "released", "paid"];
@@ -25,13 +30,6 @@ function limitParam(value: unknown) {
   const n = Number(value ?? 5000);
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 20000) : 5000;
 }
-function addEmployeeFilters(query: any, clauses: string[], params: unknown[], alias = "e") {
-  if (query.branchId) { clauses.push(`${alias}.branch_id = ?`); params.push(String(query.branchId)); }
-  if (query.departmentId) { clauses.push(`${alias}.department_id = ?`); params.push(String(query.departmentId)); }
-  if (query.processId) { clauses.push(`${alias}.process_id = ?`); params.push(String(query.processId)); }
-  if (query.costCentreId) { clauses.push(`${alias}.cost_centre_id = ?`); params.push(String(query.costCentreId)); }
-  if (query.managerId) { clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`); params.push(String(query.managerId), String(query.managerId)); }
-}
 function payrollStatusClause(alias = "spr") {
   return `LOWER(${alias}.status) IN (${PAYROLL_STATUSES.map(() => "?").join(",")})`;
 }
@@ -45,7 +43,7 @@ reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) =>
   const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
   const clauses: string[] = [];
   const filterParams: unknown[] = [];
-  addEmployeeFilters(req.query, clauses, filterParams);
+  addScopedEmployeeFilters(req, clauses, filterParams);
   clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
   filterParams.push(from, to, from, to);
   const sql = `SELECT e.employee_code,
@@ -66,7 +64,7 @@ reportSuiteHighRiskRouter.get("/employee-movement", roles, h(async (req, res) =>
 reportSuiteHighRiskRouter.get("/leave-balance", roles, h(async (req, res) => {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  addEmployeeFilters(req.query, clauses, params);
+  addScopedEmployeeFilters(req, clauses, params);
   clauses.push("lbl.balance_year = ?");
   params.push(Number(req.query.year ?? new Date().getFullYear()));
   if (String(req.query.includeInactive ?? "0") !== "1") clauses.push("e.active_status = 1");
@@ -93,7 +91,7 @@ reportSuiteHighRiskRouter.get("/leave-balance", roles, h(async (req, res) => {
 reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  addEmployeeFilters(req.query, clauses, params);
+  addScopedEmployeeFilters(req, clauses, params);
   clauses.push("spr.run_month = ?"); params.push(monthParam(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
   const sql = `SELECT spr.run_month, spr.status AS run_status,
@@ -117,7 +115,7 @@ reportSuiteHighRiskRouter.get("/payroll-register", roles, h(async (req, res) => 
 reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  addEmployeeFilters(req.query, clauses, params);
+  addScopedEmployeeFilters(req, clauses, params);
   clauses.push("spr.run_month = ?"); params.push(monthParam(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
   const sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -143,7 +141,7 @@ reportSuiteHighRiskRouter.get("/payroll-variance", roles, h(async (req, res) => 
 reportSuiteHighRiskRouter.get("/payslip-status", roles, h(async (req, res) => {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  addEmployeeFilters(req.query, clauses, params);
+  addScopedEmployeeFilters(req, clauses, params);
   clauses.push("spr.run_month = ?"); params.push(monthParam(req.query.month));
   clauses.push(payrollStatusClause("spr")); params.push(...PAYROLL_STATUSES);
   const sql = `SELECT spr.run_month, spr.status AS run_status,
