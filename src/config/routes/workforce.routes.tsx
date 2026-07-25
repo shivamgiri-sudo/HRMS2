@@ -66,6 +66,7 @@ export const workforceRouteElements = (
       {/* Leave */}
       <Route path="/leaves"       element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
       <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />
+      <Route path="/leave/requests"  element={<Navigate to="/leaves" replace />} />
       <Route path="/leave-types"  element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
       <Route path="/maternity-leave" element={<ProtectedRoute roles={['admin','hr']}><NativeMaternityLeave /></ProtectedRoute>} />
 

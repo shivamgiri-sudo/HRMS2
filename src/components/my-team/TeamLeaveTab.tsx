@@ -86,7 +86,7 @@ export default function TeamLeaveTab() {
     setSubmitting(true);
     try {
       await hrmsApi.patch(`/api/leave/requests/${reviewTarget.id}/review`, {
-        action: reviewTarget.action,
+        status: reviewTarget.action,
         remarks: remarks.trim() || undefined,
       });
       toast({
