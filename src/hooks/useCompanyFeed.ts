@@ -54,6 +54,10 @@ export interface CompanyPost {
   created_at: string;
   updated_at: string;
   media: CompanyPostMedia[];
+  like_count: number;
+  dislike_count: number;
+  comment_count: number;
+  my_reaction: "like" | "dislike" | null;
 }
 
 export interface CompanyPostCreatorAccessRow {
@@ -118,6 +122,37 @@ export interface CompanyFeedPageResult {
   total: number;
   page: number;
   limit: number;
+}
+
+export interface CommentItem {
+  id: string;
+  post_id: string;
+  user_id: string;
+  author_name: string | null;
+  author_code: string | null;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommentListResult {
+  comments: CommentItem[];
+  total: number;
+}
+
+export interface ReactToPostPayload {
+  postId: string;
+  reaction: "like" | "dislike";
+}
+
+export interface AddCommentPayload {
+  postId: string;
+  body: string;
+}
+
+export interface DeleteCommentPayload {
+  postId: string;
+  commentId: string;
 }
 
 interface CompanyFeedApiResponse<T> {
@@ -194,6 +229,7 @@ export const companyFeedQueryKeys = {
   manage: (params?: CompanyFeedQueryParams) =>
     ["company-feed", "manage", buildQueryString(params)] as const,
   creators: () => ["company-feed", "creators"] as const,
+  comments: (postId: string) => ["company-feed", "comments", postId] as const,
 };
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -381,6 +417,107 @@ export function useRevokeCompanyPostCreator() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: companyFeedQueryKeys.creators() });
+    },
+  });
+}
+
+export function useReactToPost() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ postId, reaction }: ReactToPostPayload) => {
+      const res = await hrmsApi.post<{ success: boolean; error?: string }>(
+        `/api/engagement/company-posts/${postId}/react`,
+        { reaction },
+      );
+      if (!res?.success) throw new Error(res?.error ?? "Request failed");
+      return null;
+    },
+    onMutate: async ({ postId, reaction }) => {
+      await queryClient.cancelQueries({ queryKey: ["company-feed", "feed"] });
+      const previousData = queryClient.getQueriesData({ queryKey: ["company-feed", "feed"] });
+      queryClient.setQueriesData(
+        { queryKey: ["company-feed", "feed"] },
+        (old: CompanyFeedPageResult | undefined) => {
+          if (!old) return old;
+          return {
+            ...old,
+            posts: old.posts.map((p) => {
+              if (p.id !== postId) return p;
+              const prevReaction = p.my_reaction;
+              const isSame = prevReaction === reaction;
+              const newLikeCount = p.like_count + (reaction === "like" ? (isSame ? -1 : 1) : (prevReaction === "like" ? -1 : 0));
+              const newDislikeCount = p.dislike_count + (reaction === "dislike" ? (isSame ? -1 : 1) : (prevReaction === "dislike" ? -1 : 0));
+              return {
+                ...p,
+                my_reaction: isSame ? null : reaction,
+                like_count: Math.max(0, newLikeCount),
+                dislike_count: Math.max(0, newDislikeCount),
+              };
+            }),
+          };
+        },
+      );
+      return { previousData };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousData) {
+        for (const [queryKey, data] of context.previousData) {
+          queryClient.setQueryData(queryKey, data);
+        }
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["company-feed", "feed"] });
+    },
+  });
+}
+
+export function useComments(postId: string, enabled = true) {
+  return useQuery({
+    queryKey: companyFeedQueryKeys.comments(postId),
+    queryFn: async () => {
+      const res = await hrmsApi.get<CommentListResult & { success: boolean; error?: string }>(
+        `/api/engagement/company-posts/${postId}/comments`,
+      );
+      if (!res?.success) throw new Error(res?.error ?? "Request failed");
+      return { comments: res.comments ?? [], total: res.total ?? 0 };
+    },
+    enabled: enabled && !!postId,
+    staleTime: 15_000,
+  });
+}
+
+export function useAddComment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ postId, body }: AddCommentPayload) => {
+      const res = await hrmsApi.post<{ success: boolean; data: CommentItem; error?: string }>(
+        `/api/engagement/company-posts/${postId}/comments`,
+        { body },
+      );
+      if (!res?.success) throw new Error(res?.error ?? "Request failed");
+      return res.data;
+    },
+    onSuccess: (_data, { postId }) => {
+      void queryClient.invalidateQueries({ queryKey: companyFeedQueryKeys.comments(postId) });
+      void queryClient.invalidateQueries({ queryKey: ["company-feed", "feed"] });
+    },
+  });
+}
+
+export function useDeleteComment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ postId, commentId }: DeleteCommentPayload) => {
+      const res = await hrmsApi.delete<{ success: boolean; error?: string }>(
+        `/api/engagement/company-posts/${postId}/comments/${commentId}`,
+      );
+      if (!res?.success) throw new Error(res?.error ?? "Request failed");
+      return null;
+    },
+    onSuccess: (_data, { postId }) => {
+      void queryClient.invalidateQueries({ queryKey: companyFeedQueryKeys.comments(postId) });
+      void queryClient.invalidateQueries({ queryKey: ["company-feed", "feed"] });
     },
   });
 }

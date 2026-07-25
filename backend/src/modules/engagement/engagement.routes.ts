@@ -144,6 +144,10 @@ router.get("/company-posts/manage", h(companyPosts.listManage));
 router.post("/company-posts/:id/approve", h(companyPosts.approve));
 router.post("/company-posts/:id/reject", h(companyPosts.reject));
 router.delete("/company-posts/:id", h(companyPosts.remove));
+router.post("/company-posts/:id/react", h(companyPosts.react));
+router.get("/company-posts/:id/comments", h(companyPosts.listComments));
+router.post("/company-posts/:id/comments", h(companyPosts.addComment));
+router.delete("/company-posts/:id/comments/:cid", h(companyPosts.removeComment));
 
 router.get("/company-post-creators", requireRole("super_admin"), h(companyPosts.listCreators));
 router.post("/company-post-creators/:employeeId/grant", requireRole("super_admin"), h(companyPosts.grantCreator));

@@ -58,6 +58,10 @@ export interface CompanyPostDTO {
   deleted_at: string | null;
   deleted_by: string | null;
   active_status: boolean;
+  like_count: number;
+  dislike_count: number;
+  comment_count: number;
+  my_reaction: 'like' | 'dislike' | null;
   created_at: string;
   updated_at: string;
   media: CompanyPostMediaDTO[];
@@ -117,6 +121,22 @@ export interface GrantCompanyPostCreatorDTO {
 
 export interface RevokeCompanyPostCreatorDTO {
   employee_id: string;
+}
+
+export interface CommentDTO {
+  id: string;
+  post_id: string;
+  user_id: string;
+  author_name: string | null;
+  author_code: string | null;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommentListResult {
+  comments: CommentDTO[];
+  total: number;
 }
 
 export type CreateCompanyPostInput = CreateCompanyPostDTO;

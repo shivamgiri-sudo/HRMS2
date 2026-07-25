@@ -6,21 +6,22 @@ import {
   ChevronRight,
   Clock3,
   Megaphone,
+  MessageCircle,
+  ThumbsUp,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AuthedImage } from "@/components/ui/AuthedImage";
 import { useCompanyFeed, type CompanyPost } from "@/hooks/useCompanyFeed";
-import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
+import { getCompanyFeedImageUrl, formatRelativeTime } from "@/lib/companyFeedUtils";
+
+function isNewPost(post: CompanyPost): boolean {
+  const dateStr = post.approved_at ?? post.created_at;
+  if (!dateStr) return false;
+  return Date.now() - new Date(dateStr).getTime() < 24 * 60 * 60 * 1000;
+}
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "Recently";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Recently";
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(date);
+  return formatRelativeTime(value);
 }
 
 function PostImageCarousel({ post }: { post: CompanyPost }) {
@@ -88,6 +89,7 @@ function PostCard({ post }: { post: CompanyPost }) {
   const timestamp = formatTimestamp(post.approved_at ?? post.submitted_at ?? post.created_at);
   const authorLabel = post.author_name ?? "Company Update";
   const authorCode = post.author_code ? `@${post.author_code}` : "";
+  const isNew = isNewPost(post);
 
   return (
     <article className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]">
@@ -102,9 +104,16 @@ function PostCard({ post }: { post: CompanyPost }) {
       <div className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
-              <Megaphone className="h-3 w-3" />
-              MCN Broadcast
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
+                <Megaphone className="h-3 w-3" />
+                MCN
+              </div>
+              {isNew && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--success-500,#3BAD49)] px-2 py-0.5 text-[10px] font-semibold text-white animate-pulse">
+                  New
+                </span>
+              )}
             </div>
             <p className="mt-1.5 truncate text-xs font-semibold text-slate-900">{authorLabel}</p>
             {authorCode && <p className="truncate text-[11px] text-slate-400">{authorCode}</p>}
@@ -121,6 +130,24 @@ function PostCard({ post }: { post: CompanyPost }) {
           <p className="text-[13px] leading-6 text-slate-700 line-clamp-3">
             {post.content_text.trim()}
           </p>
+        )}
+
+        {/* Engagement counts */}
+        {((post.like_count ?? 0) > 0 || (post.comment_count ?? 0) > 0) && (
+          <div className="flex items-center gap-3 pt-1">
+            {(post.like_count ?? 0) > 0 && (
+              <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                <ThumbsUp className="h-3 w-3" />
+                {post.like_count}
+              </span>
+            )}
+            {(post.comment_count ?? 0) > 0 && (
+              <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                <MessageCircle className="h-3 w-3" />
+                {post.comment_count}
+              </span>
+            )}
+          </div>
         )}
       </div>
     </article>

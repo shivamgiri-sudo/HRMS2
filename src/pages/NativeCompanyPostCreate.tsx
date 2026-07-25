@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
-  ImagePlus,
+  CheckCircle2,
+  Image as ImageIcon,
   Loader2,
-  PenSquare,
   RefreshCcw,
   Send,
   ShieldCheck,
+  Upload,
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -22,6 +23,7 @@ import {
 } from "@/hooks/useCompanyFeed";
 import { useToast } from "@/hooks/use-toast";
 import { apiUrl } from "@/lib/apiBase";
+import { formatRelativeTime } from "@/lib/companyFeedUtils";
 import { getAuthToken } from "@/lib/hrmsApi";
 
 type DraftImage = {
@@ -34,90 +36,55 @@ type DraftImage = {
 };
 
 const MAX_ATTACHMENTS = 4;
+const MAX_CHARS = 2000;
 
 function isCreatorAccessError(message: string | undefined): boolean {
   return /creator access|required|no active company post creator access/i.test(message ?? "");
-}
-
-const STATUS_BORDER_MAP: Record<string, string> = {
-  approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  pending_approval: "border-amber-200 bg-amber-50 text-amber-700",
-  borderline_flagged: "border-orange-200 bg-orange-50 text-orange-700",
-  rejected: "border-rose-200 bg-rose-50 text-rose-700",
-  auto_rejected: "border-rose-200 bg-rose-50 text-rose-700",
-};
-
-function statusBadgeClass(status: string): string {
-  return STATUS_BORDER_MAP[status] ?? "border-slate-200 bg-slate-100 text-slate-600";
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return "Just now";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Recently";
-
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
 }
 
 async function uploadImage(file: File): Promise<string> {
   const token = getAuthToken();
   const formData = new FormData();
   formData.append("file", file);
-
   const response = await fetch(apiUrl("/api/engagement/company-posts/upload"), {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: formData,
   });
-
-  const payload = (await response.json().catch(() => null)) as
-    | {
-        success?: boolean;
-        message?: string;
-        error?: string;
-        data?: { file_id?: string };
-      }
-    | null;
-
-  if (!response.ok) {
-    throw new Error(payload?.error ?? payload?.message ?? "Image upload failed.");
-  }
-
+  const payload = (await response.json().catch(() => null)) as {
+    success?: boolean; message?: string; error?: string; data?: { file_id?: string };
+  } | null;
+  if (!response.ok) throw new Error(payload?.error ?? payload?.message ?? "Image upload failed.");
   const fileId = payload?.data?.file_id;
-  if (!fileId) {
-    throw new Error("Upload completed without a file reference.");
-  }
-
+  if (!fileId) throw new Error("Upload completed without a file reference.");
   return fileId;
 }
 
-function EmptyState({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description: string;
-  action?: React.ReactNode;
-}) {
+// Circular progress ring for character counter
+function CharRing({ value, max }: { value: number; max: number }) {
+  const r = 10;
+  const circ = 2 * Math.PI * r;
+  const pct = Math.min(value / max, 1);
+  const danger = value > max * 0.9;
+  const warn = value > max * 0.7;
+  const color = danger ? "#E8231A" : warn ? "#f59e0b" : "#1B6AB5";
   return (
-    <div className="rounded-[1.5rem] border border-dashed border-slate-300 bg-slate-50/80 p-6 text-center">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[color:var(--brand-600)] shadow-[var(--shadow-xs)]">
-        <PenSquare className="h-5 w-5" />
-      </div>
-      <h3 className="mt-4 font-['Fira_Sans'] text-xl font-semibold tracking-[-0.03em] text-slate-950">
-        {title}
-      </h3>
-      <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
-      {action ? <div className="mt-4">{action}</div> : null}
-    </div>
+    <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+      <circle cx="14" cy="14" r={r} fill="none" stroke="#e2e8f0" strokeWidth="2.5" />
+      <circle
+        cx="14" cy="14" r={r} fill="none" stroke={color} strokeWidth="2.5"
+        strokeDasharray={`${circ} ${circ}`}
+        strokeDashoffset={circ - pct * circ}
+        strokeLinecap="round"
+        transform="rotate(-90 14 14)"
+        style={{ transition: "stroke-dashoffset 0.15s ease, stroke 0.15s ease" }}
+      />
+      {value > max * 0.7 && (
+        <text x="14" y="18" textAnchor="middle" fontSize="7" fill={color} fontWeight="600">
+          {max - value}
+        </text>
+      )}
+    </svg>
   );
 }
 
@@ -130,548 +97,321 @@ export default function NativeCompanyPostCreate() {
   const [draftImages, setDraftImages] = useState<DraftImage[]>([]);
   const [submitError, setSubmitError] = useState<string>("");
   const [formKey, setFormKey] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
   const draftImagesRef = useRef<DraftImage[]>([]);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => { draftImagesRef.current = draftImages; }, [draftImages]);
   useEffect(() => {
-    draftImagesRef.current = draftImages;
-  }, [draftImages]);
-
-  useEffect(() => {
-    return () => {
-      for (const image of draftImagesRef.current) {
-        URL.revokeObjectURL(image.previewUrl);
-      }
-    };
+    return () => { for (const img of draftImagesRef.current) URL.revokeObjectURL(img.previewUrl); };
   }, []);
 
   const creatorDenied = myPostsQuery.isError && isCreatorAccessError(myPostsQuery.error?.message);
-  const creatorError =
-    myPostsQuery.isError && !creatorDenied
-      ? myPostsQuery.error?.message || "Creator workspace could not be loaded."
-      : "";
-
+  const creatorError = myPostsQuery.isError && !creatorDenied ? myPostsQuery.error?.message || "Creator workspace could not be loaded." : "";
   const myPosts = myPostsQuery.data?.posts ?? [];
 
-  const awaitingCount = useMemo(
-    () =>
-      myPosts.filter(
-        (post) => post.status === "pending_approval" || post.status === "borderline_flagged",
-      ).length,
-    [myPosts],
-  );
-
-  const publishedCount = useMemo(
-    () => myPosts.filter((post) => post.status === "approved").length,
-    [myPosts],
-  );
+  const awaitingCount = useMemo(() => myPosts.filter((p) => p.status === "pending_approval" || p.status === "borderline_flagged").length, [myPosts]);
+  const publishedCount = useMemo(() => myPosts.filter((p) => p.status === "approved").length, [myPosts]);
 
   const canSubmit = content.trim().length > 0 || draftImages.length > 0;
   const isSubmitting = createPost.isPending;
 
   function addFiles(fileList: FileList | null) {
     if (!fileList) return;
-
     const all = Array.from(fileList);
-    const incoming = all.filter((file) => file.type.startsWith("image/"));
-    if (incoming.length === 0) {
-      toast({
-        title: "Images only",
-        description: "Please select image files for company feed attachments.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const oversized = incoming.filter((file) => file.size > 10 * 1024 * 1024);
-    if (oversized.length > 0) {
-      toast({
-        title: "File too large",
-        description: `${oversized.map((f) => f.name).join(", ")} exceed${oversized.length === 1 ? "s" : ""} the 10 MB limit.`,
-        variant: "destructive",
-      });
-      return;
-    }
-
+    const incoming = all.filter((f) => f.type.startsWith("image/"));
+    if (incoming.length === 0) { toast({ title: "Images only", variant: "destructive" }); return; }
+    const oversized = incoming.filter((f) => f.size > 10 * 1024 * 1024);
+    if (oversized.length > 0) { toast({ title: "File too large", description: `Max 10 MB per image.`, variant: "destructive" }); return; }
     const slotsLeft = Math.max(0, MAX_ATTACHMENTS - draftImages.length);
-    if (slotsLeft === 0) {
-      toast({
-        title: "Attachment limit reached",
-        description: "A post can carry up to four images.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const selected = incoming.slice(0, slotsLeft).map((file, index) => ({
-      id: `${Date.now()}-${index}-${file.name}`,
-      file,
-      previewUrl: URL.createObjectURL(file),
-      uploadState: "ready" as const,
+    if (slotsLeft === 0) { toast({ title: "Max 4 images", variant: "destructive" }); return; }
+    const selected = incoming.slice(0, slotsLeft).map((file, i) => ({
+      id: `${Date.now()}-${i}-${file.name}`, file, previewUrl: URL.createObjectURL(file), uploadState: "ready" as const,
     }));
-
-    if (incoming.length > slotsLeft) {
-      toast({
-        title: "Only the first four images were kept",
-        description: "Remove an attachment if you want to replace it.",
-      });
-    }
-
-    setDraftImages((current) => [...current, ...selected]);
+    if (incoming.length > slotsLeft) toast({ title: `Only first ${slotsLeft} image${slotsLeft !== 1 ? "s" : ""} kept` });
+    setDraftImages((cur) => [...cur, ...selected]);
   }
 
   function removeImage(imageId: string) {
-    setDraftImages((current) => {
-      const match = current.find((image) => image.id === imageId);
-      if (match) URL.revokeObjectURL(match.previewUrl);
-      return current.filter((image) => image.id !== imageId);
-    });
+    setDraftImages((cur) => { const m = cur.find((i) => i.id === imageId); if (m) URL.revokeObjectURL(m.previewUrl); return cur.filter((i) => i.id !== imageId); });
   }
 
   async function ensureUploads(): Promise<Array<{ file_id: string; media_type: "image"; sort_order: number }>> {
     const uploaded: Array<{ file_id: string; media_type: "image"; sort_order: number }> = [];
-
     for (let index = 0; index < draftImages.length; index += 1) {
       const image = draftImages[index];
-
       if (!image.uploadedFileId) {
-        setDraftImages((current) =>
-          current.map((item) =>
-            item.id === image.id ? { ...item, uploadState: "uploading", error: undefined } : item,
-          ),
-        );
-
+        setDraftImages((cur) => cur.map((item) => item.id === image.id ? { ...item, uploadState: "uploading", error: undefined } : item));
         try {
           const fileId = await uploadImage(image.file);
           uploaded.push({ file_id: fileId, media_type: "image", sort_order: index + 1 });
-          setDraftImages((current) =>
-            current.map((item) =>
-              item.id === image.id
-                ? { ...item, uploadState: "uploaded", uploadedFileId: fileId, error: undefined }
-                : item,
-            ),
-          );
-          continue;
+          setDraftImages((cur) => cur.map((item) => item.id === image.id ? { ...item, uploadState: "uploaded", uploadedFileId: fileId, error: undefined } : item));
         } catch (error) {
           const message = error instanceof Error ? error.message : "Image upload failed.";
-          setDraftImages((current) =>
-            current.map((item) =>
-              item.id === image.id ? { ...item, uploadState: "failed", error: message } : item,
-            ),
-          );
+          setDraftImages((cur) => cur.map((item) => item.id === image.id ? { ...item, uploadState: "failed", error: message } : item));
           throw new Error(message);
         }
+      } else {
+        uploaded.push({ file_id: image.uploadedFileId, media_type: "image", sort_order: index + 1 });
       }
-
-      uploaded.push({
-        file_id: image.uploadedFileId,
-        media_type: "image",
-        sort_order: index + 1,
-      });
     }
-
     return uploaded;
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitError("");
-
-    if (!canSubmit) {
-      setSubmitError("Write some copy or attach at least one image before submitting.");
-      return;
-    }
-
+    if (!canSubmit) { setSubmitError("Write some copy or attach at least one image before submitting."); return; }
     try {
       const media = await ensureUploads();
-      const result = await createPost.mutateAsync({
-        content_text: content.trim() || undefined,
-        media,
-      });
-
-      const outcome =
-        result.status === "auto_rejected"
-          ? "The post was auto-rejected by content policy."
-          : result.status === "borderline_flagged"
-            ? "The post was sent to moderation review."
-            : "The post was submitted for approval.";
-
-      toast({
-        title: "Creator studio updated",
-        description: outcome,
-      });
-
-      for (const image of draftImages) {
-        URL.revokeObjectURL(image.previewUrl);
-      }
-
-      setContent("");
-      setDraftImages([]);
-      setSubmitError("");
-      setFormKey((k) => k + 1);
+      const result = await createPost.mutateAsync({ content_text: content.trim() || undefined, media });
+      const outcome = result.status === "auto_rejected" ? "The post was auto-rejected by content policy."
+        : result.status === "borderline_flagged" ? "The post was sent to moderation review."
+        : "The post was submitted for approval.";
+      toast({ title: "Creator studio updated", description: outcome });
+      for (const img of draftImages) URL.revokeObjectURL(img.previewUrl);
+      setContent(""); setDraftImages([]); setSubmitError(""); setFormKey((k) => k + 1);
       void myPostsQuery.refetch();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to submit company post.";
       setSubmitError(message);
-      toast({
-        title: "Submission failed",
-        description: message,
-        variant: "destructive",
-      });
+      toast({ title: "Submission failed", description: message, variant: "destructive" });
     }
+  }
+
+  // Drag and drop handlers
+  function handleDragOver(e: React.DragEvent) { e.preventDefault(); setIsDragging(true); }
+  function handleDragLeave() { setIsDragging(false); }
+  function handleDrop(e: React.DragEvent) { e.preventDefault(); setIsDragging(false); addFiles(e.dataTransfer.files); }
+
+  if (myPostsQuery.isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 space-y-4">
+          <div className="h-8 w-48 skeleton" />
+          <div className="h-64 w-full rounded-2xl skeleton" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (creatorDenied) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-start justify-between border-b px-4 h-12 shrink-0">
+          <div className="flex items-center gap-2">
+            <Link to="/engagement/company-feed"><Button variant="ghost" size="sm" className="h-6 px-2 text-xs">← Feed</Button></Link>
+            <h1 className="text-sm font-semibold">New Post</h1>
+          </div>
+        </div>
+        <main className="p-6">
+          <Card className="rounded-2xl border-[color:var(--brand-100)] bg-white shadow-[var(--shadow-md)]">
+            <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
+              <div className="space-y-4">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Creator access required
+                </div>
+                <h2 className="text-2xl font-bold text-slate-950">This studio is for assigned creators only.</h2>
+                <p className="text-sm leading-7 text-slate-600">Super Admin assigns posting rights separately. Once access is granted, this page turns into the live submission workspace.</p>
+                <div className="flex flex-wrap gap-3">
+                  <Button asChild><Link to="/engagement/company-feed">Open company feed</Link></Button>
+                  <Button asChild variant="outline"><Link to="/engagement">Back to engagement hub</Link></Button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-3 text-sm leading-6 text-slate-600">
+                <p className="font-semibold text-slate-800">How it works:</p>
+                <p>Assigned creators submit text or image-backed updates for moderation.</p>
+                <p>HR Head, Admin, and Super Admin publish and delete posts.</p>
+                <p>Policy-violating content is auto-rejected before reaching the feed.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+      </DashboardLayout>
+    );
   }
 
   return (
     <DashboardLayout>
       <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
         <div className="flex items-center gap-2">
-          <Link to="/engagement/company-feed">
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">← Feed</Button>
-          </Link>
+          <Link to="/engagement/company-feed"><Button variant="ghost" size="sm" className="h-6 px-2 text-xs">← Feed</Button></Link>
           <h1 className="text-sm font-semibold">New Post</h1>
         </div>
       </div>
-      <main className="space-y-8 p-4 sm:p-6 lg:p-8">
-        {myPostsQuery.isLoading ? (
-          <div key="loading" className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
-            <div className="space-y-4 rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-[var(--shadow-sm)]">
-              <div className="h-8 w-48 skeleton" />
-              <div className="h-48 w-full rounded-[1.25rem] skeleton" />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="h-24 rounded-[1.25rem] skeleton" />
-                <div className="h-24 rounded-[1.25rem] skeleton" />
-              </div>
-            </div>
-            <div className="space-y-4">
-              <div className="h-48 rounded-[1.75rem] skeleton" />
-              <div className="h-56 rounded-[1.75rem] skeleton" />
-            </div>
-          </div>
-        ) : creatorDenied ? (
-          <Card key="denied" className="rounded-[1.9rem] border-[color:var(--brand-100)] bg-white shadow-[var(--shadow-md)]">
-            <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
-              <div className="space-y-4">
-                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  Creator access required
-                </div>
-                <div className="space-y-3">
-                  <h2 className="font-['Fira_Sans'] text-3xl font-semibold tracking-[-0.04em] text-slate-950">
-                    This studio opens only for assigned company feed creators.
-                  </h2>
-                  <p className="max-w-2xl text-sm leading-7 text-slate-600">
-                    Super Admin assigns posting rights separately. Once access is granted, this page
-                    turns into the live submission workspace and your moderation history appears here.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button asChild>
-                    <Link to="/engagement/company-feed">Open company feed</Link>
-                  </Button>
-                  <Button asChild variant="outline">
-                    <Link to="/engagement">Back to engagement hub</Link>
-                  </Button>
-                </div>
-              </div>
 
-              <div className="rounded-[1.6rem] border border-slate-200 bg-slate-50/90 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
-                  What happens next
-                </p>
-                <div className="mt-4 space-y-4 text-sm leading-6 text-slate-600">
-                  <p>Assigned creators can submit text-only or image-backed updates for moderation.</p>
-                  <p>HR Head, Admin, and Super Admin remain the only publish and delete authorities.</p>
-                  <p>Policy-violating content is rejected before it reaches the employee feed.</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ) : creatorError ? (
-          <Card key="error" className="rounded-[1.75rem] border-rose-200 bg-rose-50/80 shadow-[var(--shadow-sm)]">
-            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-600 shadow-[var(--shadow-xs)]">
-                  <AlertCircle className="h-4.5 w-4.5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-rose-900">Creator studio is unavailable</p>
-                  <p className="mt-1 text-sm text-rose-700">{creatorError}</p>
-                </div>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="border-rose-200 bg-white text-rose-800 hover:bg-rose-100"
-                onClick={() => {
-                  void myPostsQuery.refetch();
-                }}
-              >
-                <RefreshCcw className="mr-2 h-4 w-4" />
-                Retry
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div key="composer" className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_24rem]">
-            <section id="creator-composer" className="space-y-5">
-              <Card className="rounded-[1.85rem] border-slate-200 bg-white shadow-[var(--shadow-md)]">
-                <CardContent className="space-y-6 p-5 sm:p-6">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[color:var(--brand-700)]">
-                        Draft composer
-                      </p>
-                      <h2 className="mt-2 font-['Fira_Sans'] text-2xl font-semibold tracking-[-0.03em] text-slate-950">
-                        Prepare a clean post for moderation
-                      </h2>
-                      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                        Keep the message factual, internal, and publication-ready. Images are optional,
-                        and the review queue decides what becomes visible to all employees.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 sm:min-w-[14rem]">
-                      <div className="rounded-[1rem] border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Awaiting review
-                        </p>
-                        <p className="mt-2 text-2xl font-bold tracking-[-0.03em] text-slate-950">
-                          {awaitingCount}
-                        </p>
-                      </div>
-                      <div className="rounded-[1rem] border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          Published
-                        </p>
-                        <p className="mt-2 text-2xl font-bold tracking-[-0.03em] text-slate-950">
-                          {publishedCount}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <form key={formKey} className="space-y-6" onSubmit={handleSubmit}>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label htmlFor="company-post-copy">Post copy</Label>
-                        <span className={`text-xs tabular-nums ${content.length > 1900 ? "text-amber-600" : "text-slate-400"}`}>
-                          {content.length} / 2000
-                        </span>
-                      </div>
-                      <Textarea
-                        id="company-post-copy"
-                        value={content}
-                        maxLength={2000}
-                        onChange={(event) => setContent(event.target.value)}
-                        placeholder="Share a townhall highlight, operations update, employee moment, or compliance-safe internal announcement."
-                        className="min-h-[220px] rounded-[1.4rem] border-slate-200 bg-slate-50/60 px-4 py-3 text-[15px] leading-7 text-slate-700"
-                        data-gramm="false"
-                        data-gramm_editor="false"
-                        data-enable-grammarly="false"
-                      />
-                      <p className="text-xs text-slate-500">
-                        Keep it concise and professional. Policy checks run before any approver sees it.
-                      </p>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <Label htmlFor="company-post-images">Images</Label>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Supports JPG, PNG, GIF up to 10 MB. Up to four images per post.
-                          </p>
-                        </div>
-                        <input
-                          id="company-post-images"
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          className="hidden"
-                          onChange={(event) => {
-                            addFiles(event.target.files);
-                            event.currentTarget.value = "";
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="rounded-xl"
-                          onClick={() => {
-                            document.getElementById("company-post-images")?.click();
-                          }}
-                        >
-                          <ImagePlus className="h-4 w-4" />
-                          Add images
-                        </Button>
-                      </div>
-
-                      {draftImages.length === 0 ? (
-                        <EmptyState
-                          title="No images attached"
-                          description="This post can go out as text-only, or you can add up to four supporting images before submission."
-                        />
-                      ) : (
-                        <div className="grid gap-4 md:grid-cols-2">
-                          {draftImages.map((image) => (
-                            <div
-                              key={image.id}
-                              className="overflow-hidden rounded-[1.4rem] border border-slate-200 bg-slate-50/90"
-                            >
-                              <div className="relative aspect-video max-h-24 overflow-hidden bg-slate-200">
-                                <img
-                                  src={image.previewUrl}
-                                  alt={image.file.name}
-                                  className="h-full w-full object-cover"
-                                />
-                                <button
-                                  type="button"
-                                  className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-950/75 text-white transition hover:bg-slate-950"
-                                  onClick={() => removeImage(image.id)}
-                                  aria-label={`Remove ${image.file.name}`}
-                                >
-                                  <X className="h-4 w-4" />
-                                </button>
-                              </div>
-                              <div className="space-y-2 p-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="truncate text-sm font-semibold text-slate-900">
-                                      {image.file.name}
-                                    </p>
-                                    <p className="text-xs text-slate-500">
-                                      {(image.file.size / 1024 / 1024).toFixed(2)} MB
-                                    </p>
-                                  </div>
-                                  <span
-                                    className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                                      image.uploadState === "uploaded"
-                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                        : image.uploadState === "failed"
-                                          ? "border-rose-200 bg-rose-50 text-rose-700"
-                                          : image.uploadState === "uploading"
-                                            ? "border-amber-200 bg-amber-50 text-amber-700"
-                                            : "border-slate-200 bg-white text-slate-600"
-                                    }`}
-                                  >
-                                    {image.uploadState === "uploaded"
-                                      ? "Ready"
-                                      : image.uploadState === "failed"
-                                        ? "Upload failed"
-                                        : image.uploadState === "uploading"
-                                          ? "Uploading"
-                                          : "Local preview"}
-                                  </span>
-                                </div>
-                                {image.error ? (
-                                  <p className="text-xs text-rose-600">{image.error}</p>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {submitError ? (
-                      <div className="rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                        {submitError}
-                      </div>
-                    ) : null}
-
-                    <div className="flex flex-col gap-3 rounded-[1.5rem] border border-slate-200 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="text-sm leading-6 text-slate-600">
-                        <p className="font-semibold text-slate-900">Submission lane</p>
-                        <p>
-                          After submission, the post may go straight to approval, route to moderation review,
-                          or auto-reject if policy-violating content is detected.
-                        </p>
-                      </div>
-                      <Button
-                        type="submit"
-                        disabled={!canSubmit || isSubmitting}
-                        className="rounded-[1rem] bg-[color:var(--brand-600)] hover:bg-[color:var(--brand-700)]"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Submitting
-                          </>
-                        ) : (
-                          <>
-                            <Send className="h-4 w-4" />
-                            Submit for review
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </form>
-                </CardContent>
-              </Card>
-            </section>
-
-            <aside className="space-y-5">
-              <div className="border rounded-lg p-3 text-xs text-slate-500">
-                Posts are reviewed before publishing. Max 2000 chars. Images: JPG/PNG, max 4.
-              </div>
-
-              <Card className="rounded-[1.75rem] border-slate-200 bg-white shadow-[var(--shadow-sm)]">
-                <CardContent className="space-y-4 p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[color:var(--brand-700)]">
-                        My latest submissions
-                      </p>
-                    </div>
-                    <Button asChild variant="ghost" className="rounded-xl px-0 text-[color:var(--brand-700)]">
-                      <Link to="/engagement/company-feed">Open feed</Link>
-                    </Button>
-                  </div>
-
-                  {myPosts.length === 0 ? (
-                    <EmptyState
-                      title="No submissions yet"
-                      description="Your first creator draft will start the moderation history for this workspace."
-                    />
-                  ) : (
-                    <div className="space-y-3">
-                      {myPosts.slice(0, 3).map((post) => {
-                        const statusMeta = getStatusMeta(post.status);
-                        return (
-                          <div
-                            key={post.id}
-                            className="rounded-[1.2rem] border border-slate-200 bg-slate-50/90 p-4"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="space-y-2">
-                                <span
-                                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusBadgeClass(post.status)}`}
-                                >
-                                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                                  {statusMeta.label}
-                                </span>
-                                <p className="line-clamp-2 text-sm leading-6 text-slate-700">
-                                  {post.content_text?.trim() || "Image-led post"}
-                                </p>
-                              </div>
-                              <span className="shrink-0 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
-                                {formatDateTime(post.submitted_at ?? post.created_at)}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {(myPostsQuery.data?.total ?? 0) > 3 && (
-                        <p className="pt-1 text-center text-xs text-slate-500">
-                          Showing 3 of {myPostsQuery.data?.total} posts
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </aside>
+      <main className="p-4 sm:p-6 lg:p-8">
+        {creatorError && (
+          <div className="mb-4 flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+            <p className="flex-1 text-sm text-rose-700">{creatorError}</p>
+            <Button variant="outline" size="sm" className="border-rose-200 text-rose-700 hover:bg-rose-100" onClick={() => void myPostsQuery.refetch()}>
+              <RefreshCcw className="mr-1 h-3.5 w-3.5" /> Retry
+            </Button>
           </div>
         )}
+
+        <div key={formKey} className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_22rem]">
+          {/* Composer */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[var(--shadow-md)]">
+            {/* Gradient top strip */}
+            <div className="h-1.5 w-full" style={{ background: "linear-gradient(90deg, var(--sidebar-canvas) 0%, var(--brand-500) 55%, rgba(232,35,26,0.82) 100%)" }} />
+
+            <form className="space-y-5 p-5 sm:p-6" onSubmit={handleSubmit}>
+              {/* Copy section */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="post-copy" className="text-sm font-semibold">Post copy</Label>
+                  <CharRing value={content.length} max={MAX_CHARS} />
+                </div>
+                <Textarea
+                  id="post-copy"
+                  value={content}
+                  maxLength={MAX_CHARS}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder="Share a townhall highlight, operations update, employee moment, or compliance-safe internal announcement…"
+                  className="min-h-[180px] rounded-xl border-slate-200 bg-slate-50/60 px-4 py-3 text-[15px] leading-7 text-slate-700 focus:bg-white resize-none"
+                  data-gramm="false"
+                />
+              </div>
+
+              {/* Drag-drop image zone */}
+              <div>
+                <Label className="text-sm font-semibold mb-2 block">Images ({draftImages.length} / {MAX_ATTACHMENTS})</Label>
+                <div
+                  ref={dropZoneRef}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`flex min-h-[80px] items-center justify-center rounded-xl border-2 border-dashed transition-colors ${
+                    isDragging ? "border-[color:var(--brand-400)] bg-[color:var(--brand-50)]" : "border-slate-200 bg-slate-50/60"
+                  } ${draftImages.length >= MAX_ATTACHMENTS ? "opacity-50 pointer-events-none" : "cursor-pointer hover:border-[color:var(--brand-300)] hover:bg-[color:var(--brand-50)/40]"}`}
+                  onClick={() => { if (draftImages.length < MAX_ATTACHMENTS) document.getElementById("post-images-input")?.click(); }}
+                >
+                  <input
+                    id="post-images-input"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ""; }}
+                  />
+                  <div className="flex flex-col items-center gap-1.5 py-4 text-center">
+                    <Upload className="h-6 w-6 text-slate-400" />
+                    <p className="text-sm text-slate-500">
+                      {isDragging ? "Drop images here" : "Drag & drop or click to add images"}
+                    </p>
+                    <p className="text-[11px] text-slate-400">JPG, PNG, WebP — max 10 MB each</p>
+                  </div>
+                </div>
+
+                {/* Image strip */}
+                {draftImages.length > 0 && (
+                  <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+                    {draftImages.map((img) => (
+                      <div key={img.id} className="relative w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                        <img src={img.previewUrl} alt={img.file.name} className="aspect-square w-full object-cover" />
+                        {/* State overlay */}
+                        {img.uploadState === "uploading" && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-white/70 rounded-xl">
+                            <Loader2 className="h-4 w-4 animate-spin text-[color:var(--brand-600)]" />
+                          </div>
+                        )}
+                        {img.uploadState === "uploaded" && (
+                          <div className="absolute bottom-1.5 right-1.5">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600 drop-shadow-sm" />
+                          </div>
+                        )}
+                        {img.uploadState === "failed" && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-rose-50/80 rounded-xl">
+                            <AlertCircle className="h-4 w-4 text-rose-600" />
+                          </div>
+                        )}
+                        {/* Remove */}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeImage(img.id); }}
+                          aria-label={`Remove ${img.file.name}`}
+                          className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-950/70 text-white hover:bg-slate-950 transition"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        {/* Filename */}
+                        <div className="border-t border-slate-200 bg-white px-1.5 py-1">
+                          <p className="truncate text-[10px] text-slate-600">{img.file.name}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {submitError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {submitError}
+                </div>
+              )}
+
+              {/* Submit */}
+              <Button
+                type="submit"
+                disabled={!canSubmit || isSubmitting}
+                className="w-full rounded-xl py-3 text-sm font-semibold bg-[color:var(--brand-600)] hover:bg-[color:var(--brand-700)]"
+              >
+                {isSubmitting ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting…</>
+                ) : (
+                  <><Send className="mr-2 h-4 w-4" /> Submit for review</>
+                )}
+              </Button>
+            </form>
+          </div>
+
+          {/* Sidebar */}
+          <aside className="space-y-4">
+            {/* Stats */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-slate-200 bg-white p-3 text-center shadow-[var(--shadow-sm)]">
+                <p className="text-xl font-bold tabular-nums text-slate-950">{awaitingCount}</p>
+                <p className="text-[11px] text-slate-500">Awaiting review</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3 text-center shadow-[var(--shadow-sm)]">
+                <p className="text-xl font-bold tabular-nums text-slate-950">{publishedCount}</p>
+                <p className="text-[11px] text-slate-500">Published</p>
+              </div>
+            </div>
+
+            {/* Policy reminder */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-600 space-y-2">
+              <p className="font-semibold text-slate-800">Submission policy</p>
+              <p>All posts go through moderation before publishing. Policy-violating content is auto-rejected.</p>
+              <p>Max 2000 characters. Up to 4 images (JPG/PNG/WebP, max 10 MB each).</p>
+            </div>
+
+            {/* My latest submissions */}
+            {myPosts.length > 0 && (
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[var(--shadow-sm)]">
+                <div className="border-b border-slate-100 px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">My latest submissions</p>
+                </div>
+                <div className="p-3 space-y-2">
+                  {myPosts.slice(0, 4).map((post) => {
+                    const meta = getStatusMeta(post.status);
+                    return (
+                      <div key={post.id} className="rounded-xl border border-slate-100 bg-slate-50/80 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className={`text-[10px] font-semibold ${meta.color}`}>{meta.label}</span>
+                          <span className="text-[10px] text-slate-400">{formatRelativeTime(post.submitted_at ?? post.created_at)}</span>
+                        </div>
+                        <p className="line-clamp-2 text-[12px] leading-5 text-slate-600">{post.content_text?.trim() || "Image-led post"}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
       </main>
     </DashboardLayout>
   );
