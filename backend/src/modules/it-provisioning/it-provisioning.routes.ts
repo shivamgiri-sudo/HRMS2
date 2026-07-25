@@ -21,6 +21,7 @@ import {
   getProvisioningStats,
   OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
 import { parseAdEventLog } from './ad-log-parser.js';
 import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
 
@@ -622,6 +623,148 @@ router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'
     []
   );
   return res.json({ success: true, data: summary });
+}));
+
+// ── POST /api/it-provisioning/bulk-sync ──────────────────────────────────────
+// Upserts existing IT data (email, domain, asset) onto employee records.
+// Works whether or not a provisioning task exists — handles both:
+//   a) employees with a pending IT task  → marks it actioned
+//   b) employees already provisioned / no task → just updates employee record
+router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rows = req.body.rows as Array<{
+    employee_code: string;
+    official_email?: string;
+    domain_account?: string;
+    asset_tag?: string;
+    biometric_enrolled?: string;
+    id_card_printed?: string;
+  }>;
+  if (!Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ success: false, message: 'rows array required' });
+  }
+
+  const results: {
+    employee_code: string;
+    employee_name?: string;
+    status: 'updated' | 'task_completed' | 'skipped' | 'error';
+    actions: string[];
+    message?: string;
+  }[] = [];
+
+  for (const row of rows) {
+    const empCode = String(row.employee_code ?? '').trim();
+    const actions: string[] = [];
+    try {
+      if (!empCode) {
+        results.push({ employee_code: '', status: 'skipped', actions, message: 'Missing employee_code' });
+        continue;
+      }
+
+      // Look up the employee
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.official_email,
+                CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name
+           FROM employees e WHERE e.employee_code = ? AND e.active_status = 1 LIMIT 1`,
+        [empCode],
+      );
+      const emp = (empRows as any[])[0];
+      if (!emp) {
+        results.push({ employee_code: empCode, status: 'error', actions, message: 'Employee not found or inactive' });
+        continue;
+      }
+
+      const officialEmail  = String(row.official_email  ?? '').trim() || null;
+      const domainAccount  = String(row.domain_account  ?? '').trim() || null;
+      const assetTag       = String(row.asset_tag       ?? '').trim() || null;
+      const bioEnrolled    = String(row.biometric_enrolled ?? '').trim().toLowerCase();
+      const idCardPrinted  = String(row.id_card_printed  ?? '').trim().toLowerCase();
+
+      // 1. Update employees.official_email if provided and different
+      if (officialEmail && officialEmail !== emp.official_email) {
+        await db.execute(
+          `UPDATE employees SET official_email = ?, updated_at = NOW() WHERE id = ?`,
+          [officialEmail, emp.id],
+        );
+        actions.push(`official_email set to ${officialEmail}`);
+      }
+
+      // 2. Find any provisioning task for this employee
+      const [taskRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, task_code, status FROM it_provisioning_request
+          WHERE employee_id = ? AND task_code = 'IT_EMAIL_DOMAIN_ASSET'
+          ORDER BY created_at DESC LIMIT 1`,
+        [emp.id],
+      );
+      const task = (taskRows as any[])[0];
+
+      let taskStatus: 'updated' | 'task_completed' | 'skipped' | 'error' = 'updated';
+
+      if (task) {
+        // Persist structured fields on the provisioning task row
+        const fieldsToSet: string[] = [];
+        const fieldVals: unknown[] = [];
+        if (officialEmail)  { fieldsToSet.push('official_email = ?');  fieldVals.push(officialEmail); }
+        if (domainAccount)  { fieldsToSet.push('domain_account = ?');  fieldVals.push(domainAccount); }
+        if (assetTag)       { fieldsToSet.push('asset_tag = ?');       fieldVals.push(assetTag); }
+        if (bioEnrolled === '1' || bioEnrolled === 'yes' || bioEnrolled === 'true') {
+          fieldsToSet.push('biometric_enrolled = 1');
+        }
+        if (idCardPrinted === '1' || idCardPrinted === 'yes' || idCardPrinted === 'true') {
+          fieldsToSet.push('id_card_printed = 1');
+        }
+        if (fieldsToSet.length) {
+          fieldVals.push(task.id);
+          await db.execute(
+            `UPDATE it_provisioning_request SET ${fieldsToSet.join(', ')}, updated_at = NOW() WHERE id = ?`,
+            fieldVals,
+          );
+          if (domainAccount) actions.push(`domain_account set to ${domainAccount}`);
+          if (assetTag)      actions.push(`asset_tag set to ${assetTag}`);
+        }
+
+        // If task is still pending, mark it actioned
+        if (task.status === 'pending' || task.status === 'pending_unassigned') {
+          if (!officialEmail || !domainAccount) {
+            actions.push('task NOT completed — official_email and domain_account both required');
+          } else {
+            await actionProvisioningRequest({
+              requestId: task.id,
+              actionedBy: req.authUser!.id,
+              evidenceNote: `Bulk sync: email=${officialEmail}, domain=${domainAccount}${assetTag ? `, asset=${assetTag}` : ''}`,
+            });
+            actions.push('provisioning task marked completed');
+            taskStatus = 'task_completed';
+          }
+        } else {
+          actions.push(`provisioning task already ${task.status} — data updated only`);
+        }
+      } else {
+        // No task — just log what was done
+        if (domainAccount) actions.push(`domain_account noted (${domainAccount}) — no provisioning task to update`);
+        if (assetTag)      actions.push(`asset_tag noted (${assetTag}) — no provisioning task to update`);
+      }
+
+      if (actions.length === 0) actions.push('no changes — all fields already match');
+
+      await logSensitiveAction({
+        actor_user_id: req.authUser!.id,
+        action_type: 'it_bulk_sync',
+        module_key: 'it_provisioning',
+        entity_type: 'employee',
+        entity_id: emp.id,
+        change_summary: { employee_code: empCode, official_email: officialEmail, domain_account: domainAccount, asset_tag: assetTag },
+      });
+
+      results.push({ employee_code: empCode, employee_name: emp.employee_name, status: taskStatus, actions });
+    } catch (err: unknown) {
+      results.push({ employee_code: empCode, status: 'error', actions, message: (err as Error)?.message ?? 'Unknown error' });
+    }
+  }
+
+  const completed = results.filter(r => r.status === 'task_completed').length;
+  const updated   = results.filter(r => r.status === 'updated').length;
+  const errors    = results.filter(r => r.status === 'error').length;
+  return res.json({ success: true, processed: results.length, completed, updated, errors, results });
 }));
 
 // ── IT Dashboard Summary (comprehensive) ─────────────────────────────────────
