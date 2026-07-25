@@ -42,8 +42,8 @@ export function HrAdminLayout() {
   });
 
   const { data: summaryData } = useQuery({
-    queryKey: ["dashboard-summary-hr"],
-    queryFn: () => hrmsApi.get("/api/dashboards/hr/summary"),
+    queryKey: ["dashboard-summary", "HR_DASHBOARD"],
+    queryFn: () => hrmsApi.get("/api/dashboards/HR_DASHBOARD/summary"),
   });
 
   const { data: atsData } = useQuery({

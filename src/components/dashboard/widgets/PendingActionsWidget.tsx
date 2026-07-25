@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { hrmsApi } from "@/lib/hrmsApi";
+import type { DashboardCode } from "../../../../backend/src/shared/dashboardAccessRegistry";
 
 const ACTION_CATEGORIES = [
   { key: "leave_pending",     label: "Leave Approvals",     icon: Calendar,   href: "/leaves",      color: "bg-blue-100 text-blue-600"   },
@@ -13,10 +14,14 @@ const ACTION_CATEGORIES = [
   { key: "payroll_approvals", label: "Payroll Approvals",   icon: DollarSign, href: "/payroll",     color: "bg-amber-100 text-amber-600"  },
 ];
 
-export function PendingActionsWidget() {
+interface PendingActionsWidgetProps {
+  dashboardCode: DashboardCode;
+}
+
+export function PendingActionsWidget({ dashboardCode }: PendingActionsWidgetProps) {
   const { data, isLoading } = useQuery<any>({
-    queryKey: ["dashboard-pending-actions"],
-    queryFn: () => hrmsApi.get("/api/dashboards/hr/summary"),
+    queryKey: ["dashboard-pending-actions", dashboardCode],
+    queryFn: () => hrmsApi.get(`/api/dashboards/${dashboardCode}/summary`),
     staleTime: 1000 * 60 * 2,
   });
 

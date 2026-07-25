@@ -1715,6 +1715,40 @@ export default function NativeATSRecruiterWorkspace() {
                 </div>
               )}
 
+              {/* Follow-up */}
+              <div className="form-section sec-orange">
+                <div className="sec-title" style={{ color: "#b45309" }}>Follow-up</div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.followupRequired}
+                    onChange={(e) => updateForm({ followupRequired: e.target.checked })}
+                  />
+                  Follow-up required
+                </label>
+                {form.followupRequired && (
+                  <div className="rw-grid rw-2">
+                    <div>
+                      <label>Follow-up Date *</label>
+                      <input
+                        type="date"
+                        value={form.followupDate}
+                        onChange={(e) => updateForm({ followupDate: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label>Follow-up Reason *</label>
+                      <input
+                        type="text"
+                        value={form.followupReason}
+                        onChange={(e) => updateForm({ followupReason: e.target.value })}
+                        placeholder="Reason for follow-up"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Offer Details */}
               {form.finalDecision === "Selected" && (
                 <div className="form-section sec-selected">

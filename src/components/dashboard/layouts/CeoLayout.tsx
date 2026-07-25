@@ -44,8 +44,8 @@ export function CeoLayout() {
   });
 
   const { data: summaryData } = useQuery<any>({
-    queryKey: ["dashboard-summary-hr"],
-    queryFn: () => hrmsApi.get("/api/dashboards/hr/summary"),
+    queryKey: ["dashboard-summary", "CEO_DASHBOARD"],
+    queryFn: () => hrmsApi.get("/api/dashboards/CEO_DASHBOARD/summary"),
     staleTime: 1000 * 60 * 3,
   });
 
@@ -101,7 +101,7 @@ export function CeoLayout() {
       <KpiRow tiles={metricTiles} />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <AiBriefingPanel dashboardCode="hr" title="Executive AI Briefing" subtitle="AI-analyzed live workforce data" />
+          <AiBriefingPanel dashboardCode="CEO_DASHBOARD" title="Executive AI Briefing" subtitle="AI-analyzed live workforce data" />
           <MovementChart />
         </div>
         <div className="space-y-6">

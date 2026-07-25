@@ -4,25 +4,46 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { hrmsApi } from "@/lib/hrmsApi";
 
+import type { DashboardCode } from "../../../../backend/src/shared/dashboardAccessRegistry";
+
 interface AiBriefingPanelProps {
-  dashboardCode?: string;
+  dashboardCode: DashboardCode;
   title?: string;
   subtitle?: string;
 }
 
+interface InsightItem {
+  item_type: string;
+  priority: string;
+  count: number;
+  overdue: number;
+}
+
+interface InsightGroup {
+  count: number;
+  items: InsightItem[];
+}
+
+interface GoodBadInsightsResponse {
+  data: {
+    good: InsightGroup;
+    bad: InsightGroup;
+  };
+}
+
 export function AiBriefingPanel({
-  dashboardCode = "hr",
+  dashboardCode,
   title = "AI Briefing",
   subtitle = "AI-analyzed insights based on live data",
 }: AiBriefingPanelProps) {
-  const { data, isLoading } = useQuery<any>({
+  const { data, isLoading } = useQuery<GoodBadInsightsResponse>({
     queryKey: ["dashboard-good-bad-insights", dashboardCode],
     queryFn: () => hrmsApi.get(`/api/dashboards/${dashboardCode}/good-bad-insights`),
     staleTime: 1000 * 60 * 5,
   });
 
-  const good: string[] = data?.data?.good ?? [];
-  const bad: string[] = data?.data?.bad ?? [];
+  const good = data?.data?.good.items ?? [];
+  const bad = data?.data?.bad.items ?? [];
   const hasData = good.length > 0 || bad.length > 0;
 
   return (
@@ -60,7 +81,9 @@ export function AiBriefingPanel({
                   {good.map((item, i) => (
                     <li key={i} className="flex items-start gap-2">
                       <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
-                      <p className="text-xs text-slate-600 leading-relaxed">{item}</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        {item.count} {item.priority} {item.item_type.replace(/_/g, " ")}{item.count === 1 ? "" : "s"}
+                      </p>
                     </li>
                   ))}
                 </ul>
@@ -76,7 +99,9 @@ export function AiBriefingPanel({
                   {bad.map((item, i) => (
                     <li key={i} className="flex items-start gap-2">
                       <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
-                      <p className="text-xs text-slate-600 leading-relaxed">{item}</p>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        {item.count} overdue {item.priority} {item.item_type.replace(/_/g, " ")}{item.count === 1 ? "" : "s"}
+                      </p>
                     </li>
                   ))}
                 </ul>

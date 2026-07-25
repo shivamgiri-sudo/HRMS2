@@ -2,13 +2,22 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CalendarCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useUserRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { canAccessDashboard } from "../../../../backend/src/shared/dashboardAccessRegistry";
 
 export function MyAttendanceWidget() {
+  const { data: roleData, isLoading: roleLoading } = useUserRole();
+  const canLoadSelfAttendance = canAccessDashboard(
+    "EMPLOYEE_SELF_DASHBOARD",
+    roleData?.roleKeys ?? [],
+  );
+
   // Use employee dashboard summary — has att metric
   const { data, isLoading } = useQuery<any>({
     queryKey: ["dashboard-employee-summary"],
     queryFn: () => hrmsApi.get("/api/dashboards/employee/summary"),
+    enabled: !roleLoading && canLoadSelfAttendance,
     staleTime: 1000 * 60 * 5,
   });
 
@@ -44,8 +53,13 @@ export function MyAttendanceWidget() {
       </div>
 
       <div className="p-4 space-y-4">
-        {isLoading ? (
+        {roleLoading || isLoading ? (
           <Skeleton className="h-20 w-full rounded-lg" />
+        ) : !canLoadSelfAttendance ? (
+          <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-4">
+            <p className="text-sm font-semibold text-slate-700">Attendance is available from My Dashboard.</p>
+            <p className="mt-1 text-xs text-slate-500">Open your employee workspace to view month-to-date attendance.</p>
+          </div>
         ) : (
           <>
             <div className="flex items-end gap-3">

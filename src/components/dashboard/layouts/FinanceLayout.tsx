@@ -36,8 +36,8 @@ export function FinanceLayout() {
   const { firstName } = useDashboardUser();
 
   const { data: summaryData } = useQuery<any>({
-    queryKey: ["dashboard-summary-hr"],
-    queryFn: () => hrmsApi.get("/api/dashboards/hr/summary"),
+    queryKey: ["dashboard-summary", "PAYROLL_HR_DASHBOARD"],
+    queryFn: () => hrmsApi.get("/api/dashboards/PAYROLL_HR_DASHBOARD/summary"),
     staleTime: 1000 * 60 * 3,
   });
 
@@ -350,7 +350,7 @@ export function FinanceLayout() {
 
         {/* AI Alerts */}
         <AiBriefingPanel
-          dashboardCode="hr"
+          dashboardCode="PAYROLL_HR_DASHBOARD"
           title="Payroll AI Readiness Check"
           subtitle="AI analyzed current payroll data for this cycle"
         />

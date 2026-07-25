@@ -3,15 +3,22 @@ import { Umbrella, FileText, Clock, BookOpen, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
+import { useUserRole } from "@/hooks/useUserRole";
 import { LeaveBalanceTable } from "../widgets/LeaveBalanceTable";
 import { useDashboardUser } from "../widgets/useDashboardUser";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { canAccessDashboard } from "../../../../backend/src/shared/dashboardAccessRegistry";
 
 export function EmployeeLayout() {
   const { firstName } = useDashboardUser();
   const { data: profile } = useEmployeeProfile();
+  const { data: roleData, isLoading: roleLoading } = useUserRole();
   const employeeId = profile?.id ?? "";
+  const canLoadSelfDashboard = canAccessDashboard(
+    "EMPLOYEE_SELF_DASHBOARD",
+    roleData?.roleKeys ?? [],
+  );
 
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -42,6 +49,7 @@ export function EmployeeLayout() {
   const { data: empSummary } = useQuery<any>({
     queryKey: ["dashboard-employee-summary"],
     queryFn: () => hrmsApi.get("/api/dashboards/employee/summary"),
+    enabled: !roleLoading && canLoadSelfDashboard,
     staleTime: 1000 * 60 * 5,
   });
 

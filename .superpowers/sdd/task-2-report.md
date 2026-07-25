@@ -1,79 +1,27 @@
-# Task 2 Implementation Report
+# Task 2 Report
 
-## Status
-DONE
+- Status: DONE
+- Files changed:
+  - `src/components/dashboard/layouts/OpsLayout.tsx`
+  - `src/components/dashboard/layouts/ManagerLayout.tsx`
+  - `src/components/dashboard/layouts/HrAdminLayout.tsx`
+  - `src/components/dashboard/layouts/FinanceLayout.tsx`
+  - `src/components/dashboard/layouts/CeoLayout.tsx`
+  - `src/components/dashboard/widgets/AiBriefingPanel.tsx`
+  - `src/components/dashboard/widgets/PendingActionsWidget.tsx`
+  - `.superpowers/sdd/task-2-report.md`
+- Shared data-wiring changes:
+  - Each layout now requests its own canonical, access-gated dashboard summary endpoint: `WFM_ATTENDANCE_DASHBOARD`, `MANAGEMENT_DASHBOARD`, `HR_DASHBOARD`, `PAYROLL_HR_DASHBOARD`, or `CEO_DASHBOARD`.
+  - `AiBriefingPanel` and `PendingActionsWidget` now require an explicit `DashboardCode`; neither can silently default to HR data.
+- Verification:
+  - `npm run typecheck` — passed (exit 0).
+  - `npm run build` — passed (exit 0); Vite reported existing chunk-size warnings only.
+  - `rg -n '/api/dashboards/hr/summary' src` — no occurrences.
+  - `rg -n 'dashboardCode="hr"|dashboardCode = "hr"|dashboardCode\?:' src/components/dashboard` — no occurrences.
+  - `rg -n 'AiBriefingPanel|PendingActionsWidget' src/components/dashboard/layouts src/components/dashboard/widgets` — confirmed all `AiBriefingPanel` consumers supply a canonical code; `PendingActionsWidget` has no current consumer and requires one when introduced.
+- Concerns: No remaining routed-dashboard HR-summary mismatch was identified in the scoped shared data wiring. The five inspected layouts are legacy/deprecated alongside their modern routed pages, but they now preserve dashboard-code access gating if rendered.
 
-## What I Did
-- Created test file with 5 test cases (3 parseKeyDocuments + 2 calculateTrackerSummary)
-- Implemented parseKeyDocuments (tests: 3/3 passing)
-- Implemented calculateTrackerSummary (tests: 5/5 passing - includes previous tests)
-- Implemented getJoiningDocumentsTracker (no unit tests per plan, integration-level function)
-- Fixed TypeScript compilation issue with branch_id access (getEmployeeForUser returns limited fields)
+## Reviewer fix
 
-## Commits
-- 34aeb010: test(backend): Add parseKeyDocuments tests (3/5)
-- b5c59b08: feat(backend): Implement calculateTrackerSummary (5/5 tests passing)
-- 29394055: feat(backend): Implement getJoiningDocumentsTracker core function
-
-## Tests Run
-Command: `cd backend && npm test -- ats.joiningDocumentsTracker.service.test.ts`
-Result: 5/5 tests passing
-- parseKeyDocuments: 3 tests (valid string, null input, empty string)
-- calculateTrackerSummary: 2 tests (4 employees with mixed stats, empty array)
-
-## TypeScript Compilation
-Command: `cd backend && npm run build`
-Result: No errors in ats.joiningDocumentsTracker.service.ts
-- Fixed branch_id access issue by querying employees table separately
-- All pre-existing TypeScript errors in other files remain (not introduced by this task)
-
-## Implementation Details
-
-### parseKeyDocuments
-- Parses GROUP_CONCAT string format: `CODE:status:verification||CODE:status:verification`
-- Handles null and empty string gracefully
-- Converts string 'null' to actual null for verification_status
-
-### calculateTrackerSummary
-- Categorizes employees into 5 stages:
-  - complete (100%)
-  - pending_verification (75-99%)
-  - in_progress (1-74%)
-  - not_started (0%)
-- Counts overdue (overdue_count > 0) and needs_correction (needs_correction_count > 0)
-- Returns zero-initialized object for empty input
-
-### getJoiningDocumentsTracker
-- Branch Head scoping: auto-filters by actor's branch_id
-- Dynamic WHERE clause construction for all filters
-- SQL query features:
-  - LEFT JOINs: branches, processes, checklist, auth_user (assigned HR)
-  - GROUP_CONCAT for key documents (4 key types: APPOINTMENT_LETTER, ID_PROOF, BANK_DETAILS, ADDRESS_PROOF)
-  - Aggregations: total_documents, verified_count, needs_correction_count, overdue_count
-  - HAVING clause for overdue_only filter
-  - ORDER BY date_of_joining DESC
-  - LIMIT 500
-- Calls parseKeyDocuments and calculateTrackerSummary before returning
-
-## Self-Review
-Implementation follows TDD methodology strictly:
-1. Write test first (verified failure)
-2. Implement function (verified pass)
-3. Commit after passing tests
-4. Repeat for next function
-
-Code quality:
-- TypeScript strict mode compliant
-- Proper type interfaces for all data structures
-- DRY: helper functions reused by main function
-- YAGNI: no extra features beyond plan spec
-
-## Concerns
-None. All tests passing, TypeScript compiles without errors for this service, ready for Task 3 (route integration).
-
-## Fix Applied (post-review)
-- Fix 1: Branch head fallthrough closed — empty result returned when branch_id unresolvable
-- Fix 2: Comment added for unimplemented status/document_code filters
-- Tests after fix: 5/5 passing
-- Build: clean (no new errors in ats.joiningDocumentsTracker.service.ts; pre-existing errors in other modules unchanged)
-- Commit: dc046254
+- `AiBriefingPanel` now reads the `/good-bad-insights` response as `good.items` and `bad.items`, matching the endpoint's `{ count, items }` groups, and renders the returned work-item summaries.
+- Verification: `npm run typecheck` — passed (exit 0).

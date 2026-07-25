@@ -21,8 +21,8 @@ export function OpsLayout() {
   });
 
   const { data: summaryData } = useQuery<any>({
-    queryKey: ["dashboard-summary-hr"],
-    queryFn: () => hrmsApi.get("/api/dashboards/hr/summary"),
+    queryKey: ["dashboard-summary", "WFM_ATTENDANCE_DASHBOARD"],
+    queryFn: () => hrmsApi.get("/api/dashboards/WFM_ATTENDANCE_DASHBOARD/summary"),
     staleTime: 1000 * 60 * 3,
   });
 
@@ -308,7 +308,7 @@ export function OpsLayout() {
 
         {/* AI Briefing */}
         <AiBriefingPanel
-          dashboardCode="hr"
+          dashboardCode="WFM_ATTENDANCE_DASHBOARD"
           title="Workforce AI Analysis"
           subtitle="Real-time workforce insights and anomalies"
         />

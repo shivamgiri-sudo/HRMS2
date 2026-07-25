@@ -28,7 +28,7 @@ export function ManagerLayout() {
   const { data: kpiData } = useQuery<any>({ queryKey: ["team-kpi"], queryFn: () => hrmsApi.get("/api/management/team-kpi"), staleTime: 60000 * 5 });
   const { data: coachData } = useQuery<any>({ queryKey: ["coaching"], queryFn: () => hrmsApi.get("/api/management/coaching"), staleTime: 60000 * 5 });
   const { data: alertsData } = useQuery<any>({ queryKey: ["mgr-alerts"], queryFn: () => hrmsApi.get("/api/management/alerts"), staleTime: 60000 * 2 });
-  const { data: summaryData } = useQuery<any>({ queryKey: ["dashboard-summary-hr"], queryFn: () => hrmsApi.get("/api/dashboards/hr/summary"), staleTime: 60000 * 3 });
+  const { data: summaryData } = useQuery<any>({ queryKey: ["dashboard-summary", "MANAGEMENT_DASHBOARD"], queryFn: () => hrmsApi.get("/api/dashboards/MANAGEMENT_DASHBOARD/summary"), staleTime: 60000 * 3 });
   const { data: leaveReqs } = useQuery<any>({ queryKey: ["leave-requests-all"], queryFn: () => hrmsApi.get("/api/leave/requests"), staleTime: 60000 * 5 });
   const { data: atsData } = useQuery<any>({ queryKey: ["ats-stats"], queryFn: () => hrmsApi.get("/api/ats/stats"), staleTime: 60000 * 5 });
   const { data: actionsData } = useQuery<any>({ queryKey: ["my-actions"], queryFn: () => hrmsApi.get("/api/engagement-intelligence/actions"), staleTime: 60000 * 5 });
