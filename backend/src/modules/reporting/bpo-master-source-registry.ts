@@ -17,6 +17,7 @@ export interface SourceFieldLineage {
 }
 
 interface SchemaColumnRow extends RowDataPacket {
+  current_schema: string;
   table_schema: string;
   table_name: string;
   column_name: string;
@@ -25,6 +26,7 @@ interface SchemaColumnRow extends RowDataPacket {
 
 interface SchemaSnapshot {
   loadedAt: number;
+  currentSchema: string;
   tables: Map<string, Map<string, SourceColumn>>;
 }
 
@@ -34,10 +36,7 @@ let snapshotPromise: Promise<SchemaSnapshot> | null = null;
 function parseTableRef(tableRef: string) {
   const separator = tableRef.indexOf(".");
   if (separator < 0) return { schema: "__CURRENT__", table: tableRef };
-  return {
-    schema: tableRef.slice(0, separator),
-    table: tableRef.slice(separator + 1),
-  };
+  return { schema: tableRef.slice(0, separator), table: tableRef.slice(separator + 1) };
 }
 
 function key(schema: string, table: string) {
@@ -56,11 +55,12 @@ async function loadSnapshot(): Promise<SchemaSnapshot> {
   }
 
   snapshotPromise = db.execute<SchemaColumnRow[]>(
-    `SELECT table_schema, table_name, column_name, data_type
+    `SELECT DATABASE() AS current_schema, table_schema, table_name, column_name, data_type
        FROM information_schema.columns
       WHERE table_schema IN (DATABASE(), 'db_audit')
-      ORDER BY table_schema, table_name, ordinal_position`
+      ORDER BY CASE WHEN table_schema = DATABASE() THEN 0 ELSE 1 END, table_schema, table_name, ordinal_position`
   ).then(([rows]) => {
+    const currentSchema = String(rows[0]?.current_schema ?? "mas_hrms");
     const tables = new Map<string, Map<string, SourceColumn>>();
     for (const row of rows) {
       const tableKey = key(row.table_schema, row.table_name);
@@ -72,7 +72,7 @@ async function loadSnapshot(): Promise<SchemaSnapshot> {
         dataType: row.data_type,
       });
     }
-    return { loadedAt: Date.now(), tables };
+    return { loadedAt: Date.now(), currentSchema, tables };
   }).catch((error) => {
     snapshotPromise = null;
     throw error;
@@ -89,13 +89,11 @@ async function resolveTable(tableRef: string) {
     return columns ? { schema: parsed.schema, table: parsed.table, columns } : null;
   }
 
-  for (const [tableKey, columns] of snapshot.tables.entries()) {
-    const [, tableName] = tableKey.split(".", 2);
-    if (tableName === parsed.table.toLowerCase()) {
-      const first = columns.values().next().value as SourceColumn | undefined;
-      if (first) return { schema: first.schema, table: first.table, columns };
-    }
-  }
+  const currentColumns = snapshot.tables.get(key(snapshot.currentSchema, parsed.table));
+  if (currentColumns) return { schema: snapshot.currentSchema, table: parsed.table, columns: currentColumns };
+
+  const auditColumns = snapshot.tables.get(key("db_audit", parsed.table));
+  if (auditColumns) return { schema: "db_audit", table: parsed.table, columns: auditColumns };
   return null;
 }
 
