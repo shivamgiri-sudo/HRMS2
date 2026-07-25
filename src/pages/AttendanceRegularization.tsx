@@ -802,21 +802,19 @@ export default function AttendanceRegularization() {
                   {requestCategory === "exception" ? "Exception Details" : "Correction Details"}
                 </h2>
               </div>
-              {requestCategory !== "exception" && (
-                <button
-                  type="button"
-                  onClick={() => { setBatchMode((v) => !v); setBatchRangeQueried(false); setBatchSelectedDates(new Set()); }}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
-                    batchMode
-                      ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-                  )}
-                >
-                  <Layers className="h-3.5 w-3.5" />
-                  {batchMode ? "Batch ON — click to disable" : "Multi-date / Batch"}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => { setBatchMode((v) => !v); setBatchRangeQueried(false); setBatchSelectedDates(new Set()); }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                  batchMode
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                )}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                {batchMode ? "Batch ON — click to disable" : "Multi-date / Batch"}
+              </button>
             </div>
 
             <Form {...form}>
