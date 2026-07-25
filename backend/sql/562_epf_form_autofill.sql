@@ -23,6 +23,11 @@ UPDATE employee_joining_document_template
    AND template_version = 'v1';
 
 -- 2. Add EPF_NOMINATION_FORM2 template (idempotent)
+-- NOTE: requires_hr_upload = 1 (HR uploads manually) because universalDigitalFormFill
+-- does not yet have AcroForm field mappings for EPF Form 2 nominee data.
+-- The correct source table is employee_epf_nominee (not employee_epf_compliance_nominees).
+-- TODO: add Form 2 field mappings in universalDigitalFormFill.service.ts and switch
+-- requires_hr_upload to 0 in a follow-up migration.
 INSERT IGNORE INTO employee_joining_document_template (
   document_code,
   document_name,
@@ -38,9 +43,9 @@ INSERT IGNORE INTO employee_joining_document_template (
   'EPF Form 2 — Nomination & Declaration',
   'statutory',
   'v1',
-  0,         -- auto-generated, not candidate e-sign
-  0,         -- auto-generated, not HR upload
-  1,         -- HR must verify after generation
+  0,         -- not candidate e-sign
+  1,         -- HR uploads manually until auto-fill mappings are built
+  1,         -- HR must verify after upload
   1,         -- mandatory
   1
 );

@@ -301,6 +301,7 @@ export interface BulkRemindResult {
   success: true;
   sent: number;
   failed: number;
+  skipped: number;
   errors: Array<{ employee_id: string; employee_code: string; error: string }>;
 }
 
@@ -324,11 +325,12 @@ export async function sendBulkReminders(
     success: true,
     sent: 0,
     failed: 0,
+    skipped: 0,
     errors: [],
   };
 
   const [employees] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code, full_name, official_email, mobile
+    `SELECT id, employee_code, full_name, official_email, personal_email, mobile
      FROM employees
      WHERE id IN (?) AND active_status = 1`,
     [employeeIds]
@@ -339,9 +341,11 @@ export async function sendBulkReminders(
     employee_code: string;
     full_name: string;
     official_email: string | null;
+    personal_email: string | null;
     mobile: string | null;
   }>) {
-    if (!emp.official_email) {
+    const toEmail = emp.official_email ?? emp.personal_email;
+    if (!toEmail) {
       result.failed++;
       result.errors.push({
         employee_id: emp.id,
@@ -356,15 +360,20 @@ export async function sendBulkReminders(
       const [docRows] = await db.execute<RowDataPacket[]>(
         `SELECT document_name FROM employee_joining_document_checklist
          WHERE employee_id = ? AND status NOT IN ('verified','signed','completed')
-         ORDER BY sequence`,
+         ORDER BY created_at ASC`,
         [emp.id]
       );
       const pendingDocs = (docRows as any[]).map((r: any) => String(r.document_name));
       void customMessage; // reserved for future custom message override
+      if (pendingDocs.length === 0) {
+        // All documents already complete — skip sending a redundant reminder
+        result.skipped++;
+        continue;
+      }
       await sendJoiningDocReminderEmail({
-        to: emp.official_email,
+        to: toEmail,
         employeeName: emp.full_name,
-        pendingDocuments: pendingDocs.length > 0 ? pendingDocs : ['Joining documents'],
+        pendingDocuments: pendingDocs,
         employeeId: emp.id,
       });
       result.sent++;

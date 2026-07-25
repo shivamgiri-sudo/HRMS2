@@ -1079,13 +1079,14 @@ export async function createJoiningDocumentEsignRequest(params: {
   await db.execute(
     `INSERT INTO employee_joining_document_public_token
        (id, checklist_id, employee_id, candidate_id, document_code, public_token, public_token_hash, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, 'active', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
     [
       randomUUID(),
       checklist.id,
       checklist.employee_id,
       checklist.candidate_id ?? null,
       checklist.document_code,
+      publicToken,
       publicTokenHash,
       nowPlusDays(7),
       params.actorUserId,
@@ -1215,6 +1216,8 @@ export async function createJoiningDocumentEsignRequest(params: {
           html: emailHtml,
         });
       }
+    } else {
+      console.warn(`[joining-docs] eSign link not emailed — employee ${params.employeeId} has no personal_email or official_email on record`);
     }
   } catch (emailErr) {
     console.warn("[joining-docs] Non-fatal: eSign email delivery failed:", emailErr);

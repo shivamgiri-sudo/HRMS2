@@ -363,6 +363,10 @@ export async function dispatchJoinProvisioningTasks(params: {
           action_url: '/profile',
           priority: 'high',
         });
+      } else {
+        // Employee has no user_id yet (ATS-created employees before first login).
+        // In-app notification cannot be delivered until user_id is assigned.
+        console.warn(`[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo inbox notification deferred until account is activated`);
       }
       // Email notification
       const toEmail = emp.personal_email || emp.official_email || emp.email;
