@@ -24,7 +24,11 @@
     "performance:preview": "tsx scripts/performance-source-preview.ts",
     "performance:activation-check": "tsx scripts/performance-activation-check.ts",
     "performance:configure-connectors": "tsx scripts/performance-configure-connectors.ts",
-    "performance:safe-sync": "tsx scripts/performance-safe-sync.ts"
+    "performance:safe-sync": "tsx scripts/performance-safe-sync.ts",
+    "ncosec:audit": "tsx scripts/ncosec-attendance-gap-audit.ts",
+    "ncosec:reconcile": "tsx scripts/ncosec-attendance-reconcile.ts",
+    "apr:reconcile": "tsx scripts/apr-payroll-reconcile.ts",
+    "payroll:recalculate-affected": "tsx scripts/payroll-recalculate-affected.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -43,6 +47,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^8.5.2",
+    "geoip-lite": "^2.0.3",
     "handlebars": "^4.7.9",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.3",
