@@ -202,6 +202,14 @@ async function buildRegularizationDecisionSupport(row: RowDataPacket) {
     riskScore += 50;
   }
 
+  // FIX: Check for APR vs Biometric mismatch
+  if (Number(row.mismatch_flag ?? 0) === 1) {
+    const bioStatus = String(row.biometric_status ?? "unknown");
+    const aprStatus = String(row.apr_status ?? "unknown");
+    flags.push(`Source mismatch: Biometric=${bioStatus}, APR=${aprStatus}`);
+    riskScore += 15;
+  }
+
   const riskLevel = riskScore >= 60 ? "high" : riskScore >= 30 ? "medium" : "low";
   return {
     riskScore,
@@ -221,6 +229,9 @@ async function buildRegularizationDecisionSupport(row: RowDataPacket) {
       rosterShiftEnd: row.shift_end_time ?? null,
       duplicateRequests: Number(row.same_day_request_count ?? 0),
       recentRequests: Number(row.recent_request_count ?? 0),
+      mismatchFlag: Number(row.mismatch_flag ?? 0),
+      biometricStatus: row.biometric_status ?? null,
+      aprStatus: row.apr_status ?? null,
     },
   };
 }
@@ -258,6 +269,9 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
             adr.clock_out_time AS last_punch,
             adr.biometric_minutes,
             adr.raw_minutes,
+            adr.mismatch_flag,
+            adr.biometric_status,
+            adr.apr_status,
             COALESCE(ibd.total_punches, CASE WHEN adr.clock_in_time IS NULL THEN 0 WHEN adr.clock_out_time IS NULL THEN 1 ELSE 2 END) AS total_punches,
             wra.roster_status,
             wra.shift_start_time,
@@ -370,6 +384,30 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
       },
       req,
     });
+
+    // FIX: Apply correction to attendance_daily_record immediately upon approval
+    // This ensures the calendar and payroll see the approved status right away
+    try {
+      const { attendanceEngineService } = await import('./attendance-engine.service.js');
+      const targetStatus = pre.requested_status || pre.new_status || 'present';
+      const targetLwp = targetStatus === 'present' ? 0 : targetStatus === 'half_day' ? 0.5 : 1.0;
+
+      await attendanceEngineService.correctDailyRecord(
+        pre.employee_id,
+        String(pre.session_date).slice(0, 10),
+        {
+          attendanceStatus: targetStatus as any,
+          lwpValue: targetLwp,
+          overrideReason: `Regularization approved: ${pre.dispute_type || 'punch correction'}${reviewerNote ? ' - ' + reviewerNote : ''}`,
+          isLocked: true,
+          regularizationId
+        },
+        req.authUser.id
+      );
+    } catch (error) {
+      // Log but don't fail approval if ADR update fails
+      console.error('[REGULARIZATION] Failed to update ADR after approval:', error);
+    }
   }
 
   return { httpStatus: 200, payload: { success: true, data: { ...data, decision_support: decisionSupport }, message: `Regularization ${status}` } };

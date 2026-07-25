@@ -888,5 +888,90 @@ router.post('/clock-out', h(async (req: AuthenticatedRequest, res: Response) => 
   res.json({ success: true, data: out });
 }));
 
+// FIX: POST /engine/trigger-batch - Manual trigger for attendance engine (Admin/WFM only)
+// Allows admin to manually run the attendance engine for a specific date
+router.post('/engine/trigger-batch', requireRole('admin', 'wfm', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const date = req.body.date || new Date().toISOString().slice(0, 10);
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid date format. Use YYYY-MM-DD.'
+    });
+  }
+
+  console.log(`[AttendanceEngine] Manual trigger by user ${req.authUser!.id} for date: ${date}`);
+
+  try {
+    const result = await attendanceEngineService.processDateBatch(date);
+    return res.json({
+      success: true,
+      data: result,
+      message: `Processed ${result.processed} employees, skipped ${result.skipped}, failed ${result.failed}`
+    });
+  } catch (error) {
+    console.error('[AttendanceEngine] Manual trigger failed:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Engine processing failed',
+      details: error instanceof Error ? error.message : String(error)
+    });
+  }
+}));
+
+// FIX: POST /:employeeId/:date/unlock - Unlock attendance record (Admin/WFM only)
+// Allows admin to unlock a locked attendance record for re-processing
+router.post('/:employeeId/:date/unlock', requireRole('admin', 'wfm', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, date } = req.params;
+
+  if (!employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid employeeId or date format'
+    });
+  }
+
+  // Check if record exists
+  const [checkRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, is_locked, attendance_status, override_reason
+     FROM attendance_daily_record
+     WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+    [employeeId, date]
+  );
+
+  if ((checkRows as RowDataPacket[]).length === 0) {
+    return res.status(404).json({
+      success: false,
+      error: 'Attendance record not found'
+    });
+  }
+
+  const record = checkRows[0] as any;
+  const wasLocked = Number(record.is_locked) === 1;
+
+  // Unlock the record
+  await db.execute(
+    `UPDATE attendance_daily_record
+     SET is_locked = 0,
+         updated_at = NOW()
+     WHERE employee_id = ? AND record_date = ?`,
+    [employeeId, date]
+  );
+
+  console.log(`[AttendanceEngine] Record unlocked by user ${req.authUser!.id}: ${employeeId}/${date} (was_locked=${wasLocked})`);
+
+  return res.json({
+    success: true,
+    message: wasLocked ? 'Record unlocked successfully' : 'Record was already unlocked',
+    data: {
+      employeeId,
+      date,
+      wasLocked,
+      previousStatus: record.attendance_status,
+      canReprocess: true
+    }
+  });
+}));
+
 export { router as attendanceEngineRouter };
 

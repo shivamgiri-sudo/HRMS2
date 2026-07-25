@@ -1228,6 +1228,42 @@ export default function AttendanceRegularization() {
                         </div>
                       </div>
                     )}
+
+                    {/* Batch reason field - shown when dates are selected */}
+                    {batchSelectedDates.size > 0 && (
+                      <div className="mt-3">
+                        <FormField
+                          control={form.control}
+                          name="reason"
+                          render={({ field }) => {
+                            const len = field.value?.length ?? 0;
+                            return (
+                              <FormItem>
+                                <FormLabel className="text-xs">
+                                  Reason for Selected Dates <span className="text-rose-500">*</span>
+                                </FormLabel>
+                                <FormControl>
+                                  <Textarea
+                                    placeholder="Explain why these dates need regularization (required for batch submission)"
+                                    className="min-h-[64px] text-sm"
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <div className="flex items-center justify-between gap-3">
+                                  <FormDescription className="text-xs">
+                                    This reason will apply to all {batchSelectedDates.size} selected dates.
+                                  </FormDescription>
+                                  <span className={cn("text-xs tabular-nums", len > 450 ? "font-semibold text-rose-500" : "text-slate-400")}>
+                                    {len}/500
+                                  </span>
+                                </div>
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
