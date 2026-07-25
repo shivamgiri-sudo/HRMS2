@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { BPO_MASTER_REPORTS, getBpoMasterReport } from "./bpo-master-report-registry.js";
 import { bpoMasterReportV2Service } from "./bpo-master-report-v2.service.js";
+import { validateAllBpoMasterReports } from "./bpo-master-validation.service.js";
 import { resolveBranchScope } from "./reporting.scope.js";
 
 export const bpoMasterReportRouter = Router();
@@ -59,10 +60,7 @@ bpoMasterReportRouter.get("/", h(async (req, res) => {
   const roles = rolesFor(req);
   const data = BPO_MASTER_REPORTS
     .filter((report) => canView(roles, report.viewRoles))
-    .map((report) => ({
-      ...report,
-      canExport: canExport(roles, report.exportRoles),
-    }));
+    .map((report) => ({ ...report, canExport: canExport(roles, report.exportRoles) }));
   return res.json({
     success: true,
     data,
@@ -77,6 +75,29 @@ bpoMasterReportRouter.get("/", h(async (req, res) => {
       roles,
     },
   });
+}));
+
+bpoMasterReportRouter.get("/validation/source-accuracy", h(async (req, res) => {
+  const roles = rolesFor(req);
+  const validationRoles = ["super_admin", "admin", "ceo", "coo", "internal_auditor", "compliance_head", "it_manager", "hr_head", "finance_head"];
+  if (!canView(roles, validationRoles)) {
+    return res.status(403).json({ success: false, message: "Source accuracy validation requires audit or senior governance access" });
+  }
+  const branchScope = await resolveBranchScope(req.authUser.id);
+  const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+  if (requestedBranchId && !branchScope.isSuperAdmin && branchScope.branchIds.length > 0 && !branchScope.branchIds.includes(requestedBranchId)) {
+    return res.status(403).json({ success: false, message: "Requested branch is outside your authorised reporting scope" });
+  }
+  const data = await validateAllBpoMasterReports({
+    month: req.query.month ? String(req.query.month) : undefined,
+    from: req.query.from ? String(req.query.from) : undefined,
+    to: req.query.to ? String(req.query.to) : undefined,
+    branchId: requestedBranchId,
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+    employeeCode: req.query.employeeCode ? String(req.query.employeeCode) : undefined,
+    clientId: req.query.clientId ? String(req.query.clientId) : undefined,
+  }, branchScope);
+  return res.json({ success: true, data });
 }));
 
 bpoMasterReportRouter.get("/:code", h(async (req, res) => {
@@ -95,12 +116,7 @@ bpoMasterReportRouter.get("/:code", h(async (req, res) => {
 
   const branchScope = await resolveBranchScope(req.authUser.id);
   const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
-  if (
-    requestedBranchId
-    && !branchScope.isSuperAdmin
-    && branchScope.branchIds.length > 0
-    && !branchScope.branchIds.includes(requestedBranchId)
-  ) {
+  if (requestedBranchId && !branchScope.isSuperAdmin && branchScope.branchIds.length > 0 && !branchScope.branchIds.includes(requestedBranchId)) {
     return res.status(403).json({ success: false, message: "Requested branch is outside your authorised reporting scope" });
   }
 
@@ -126,12 +142,5 @@ bpoMasterReportRouter.get("/:code", h(async (req, res) => {
       })
     : result.rows;
 
-  return res.json({
-    success: true,
-    data: {
-      ...result,
-      rows: responseRows,
-      sensitiveDataMasked: !exportAllowed,
-    },
-  });
+  return res.json({ success: true, data: { ...result, rows: responseRows, sensitiveDataMasked: !exportAllowed } });
 }));
