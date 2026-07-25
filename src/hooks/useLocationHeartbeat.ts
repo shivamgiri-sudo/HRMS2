@@ -4,7 +4,9 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
-const MAX_ACCURACY_METERS = 50; // only accept GPS-quality readings (≤50m)
+// Relaxed to 500m — office/building GPS commonly reads 100–300m. Strict 50m
+// filter caused latestPosRef to stay null and nothing ever posted indoors.
+const MAX_ACCURACY_METERS = 500;
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();
@@ -61,7 +63,10 @@ export function useLocationHeartbeat() {
       () => { /* permission denied or unavailable — silent */ },
       {
         enableHighAccuracy: true,
-        maximumAge: 0,        // always get a fresh GPS fix, never serve stale cache
+        // Allow cached positions up to 2 minutes old — prevents indoor GPS
+        // timeout (was 0, meaning forced fresh fix every call, which fails
+        // silently when the device can't get a lock within timeout seconds)
+        maximumAge: 120_000,
         timeout: 20_000,
       },
     );
@@ -78,20 +83,37 @@ export function useLocationHeartbeat() {
       }
     }, HEARTBEAT_INTERVAL_MS);
 
-    // When user switches back to tab: post immediately if stale
-    function onVisible() {
-      if (document.visibilityState !== "visible") return;
+    // On hide: send a keepalive beacon immediately so the server has a fresh
+    // captured_at before the browser throttles/freezes our timers.
+    // On show: post immediately if the last heartbeat is stale (tab was
+    // backgrounded for > 1 minute and the interval may have been suspended).
+    function onVisibilityChange() {
       const pos = latestPosRef.current;
       if (!pos) return;
-      const now = Date.now();
-      if (now - lastPostRef.current >= HEARTBEAT_INTERVAL_MS) {
-        void postLocation(pos.latitude, pos.longitude, pos.accuracy);
+      if (document.visibilityState === "hidden") {
+        // keepalive: true keeps the request alive after the page is hidden
+        const token = localStorage.getItem("hrms_access_token");
+        if (!token) return;
+        try {
+          fetch("/api/location/heartbeat", {
+            method: "POST",
+            keepalive: true,
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ latitude: pos.latitude, longitude: pos.longitude, accuracy: pos.accuracy }),
+          }).catch(() => {});
+          lastPostRef.current = Date.now();
+        } catch { /* ignore */ }
+      } else {
+        const now = Date.now();
+        if (now - lastPostRef.current >= HEARTBEAT_INTERVAL_MS) {
+          void postLocation(pos.latitude, pos.longitude, pos.accuracy);
+        }
       }
     }
-    document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;

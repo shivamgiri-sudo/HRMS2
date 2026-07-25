@@ -93,10 +93,11 @@ router.get("/live", requireRole("super_admin"), h(async (_req: AuthenticatedRequ
        ell.full_name,
        ell.branch_name,
        ell.process_name,
-       ell.designation
+       ell.designation,
+       TIMESTAMPDIFF(MINUTE, ell.captured_at, NOW()) AS minutes_ago
      FROM employee_live_location ell
-     WHERE ell.captured_at >= NOW() - INTERVAL 5 MINUTE
-     ORDER BY ell.full_name ASC`,
+     WHERE ell.captured_at >= NOW() - INTERVAL 30 MINUTE
+     ORDER BY ell.captured_at DESC`,
   );
 
   return res.json({ success: true, data: rows });

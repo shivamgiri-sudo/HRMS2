@@ -345,8 +345,8 @@ export default function LiveLocationMap() {
             {!isLoading && !isError && employees.length === 0 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 z-[500] pointer-events-none">
                 <MapPin className="w-10 h-10 mb-2" />
-                <p className="text-sm font-medium">No employees online in the last 5 minutes</p>
-                <p className="text-xs mt-1">Employees send a heartbeat every 30 seconds when logged in</p>
+                <p className="text-sm font-medium">No employees online in the last 30 minutes</p>
+                <p className="text-xs mt-1">Employees send a heartbeat every 60 seconds when logged in</p>
               </div>
             )}
 
