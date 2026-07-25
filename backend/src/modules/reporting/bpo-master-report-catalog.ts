@@ -127,7 +127,7 @@ export const BPO_MASTER_REPORTS: BpoMasterReportDefinition[] = [
     description: "One employee-month report covering organisation, productivity, quality, attendance, behaviour, training, feedback, PIP, incentives and trend.",
     rowGrain: "ONE ROW PER EMPLOYEE PER REPORT MONTH",
     primaryKey: ["EMPLOYEE_CODE", "REPORT_MONTH"],
-    viewRoles: [...new Set([...OPERATIONS, ...HR, ...QUALITY, "employee"])],
+    viewRoles: [...new Set([...OPERATIONS, ...HR, ...QUALITY])],
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "operations_manager", "manager", "process_manager", "branch_head", "quality"],
     dateStandard: "DD-MMM-YYYY",
     employeeCodePolicy: "MANDATORY",

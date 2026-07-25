@@ -474,7 +474,7 @@ export const DEEP_REPORT_PACKS: DeepReportPack[] = [
     shortName: "Performance",
     description: "Goals, KPI scorecards, feedback, review cycles, PIP, capability and career progression.",
     businessOwner: "HR / Operations",
-    viewRoles: [...new Set([...HR, ...OPERATIONS, "employee"])],
+    viewRoles: [...new Set([...HR, ...OPERATIONS])],
     exportRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager"],
     relatedRoutes: [
       { label: "Performance Dashboard", path: "/performance-dashboard" },
@@ -650,7 +650,7 @@ export const DEEP_REPORT_PACKS: DeepReportPack[] = [
     shortName: "Engagement",
     description: "Kudos, badges, surveys, company feed, employee experience cases, communication reach and engagement participation.",
     businessOwner: "HR / People Experience",
-    viewRoles: [...new Set([...HR, ...MANAGEMENT, "employee"])],
+    viewRoles: [...new Set([...HR, ...MANAGEMENT])],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
     relatedRoutes: [
       { label: "People Experience", path: "/people-experience/command-center" },
