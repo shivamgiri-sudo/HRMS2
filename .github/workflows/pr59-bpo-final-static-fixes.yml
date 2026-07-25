@@ -1,0 +1,139 @@
+name: PR59 BPO Final Static Fixes
+
+on:
+  push:
+    branches:
+      - agent/deep-section-reports
+    paths:
+      - .github/workflows/pr59-bpo-final-static-fixes.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pr59-bpo-final-static-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deep-section-reports
+          fetch-depth: 0
+
+      - name: Apply guarded static fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service = Path('backend/src/modules/reporting/bpo-master-report.service.ts')
+          text = service.read_text()
+          old = '''  if (filters.month) {
+              if (context.monthExpression) {
+                clauses.push(`SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7) = ?`);
+                params.push(filters.month);
+              } else if (context.dateExpression) {
+                clauses.push(`DATE_FORMAT(${context.dateExpression},'%Y-%m') = ?`);
+                params.push(filters.month);
+              }
+            } else if (context.dateExpression) {
+              if (filters.from) {
+                clauses.push(`DATE(${context.dateExpression}) >= ?`);
+                params.push(filters.from);
+              }
+              if (filters.to) {
+                clauses.push(`DATE(${context.dateExpression}) <= ?`);
+                params.push(filters.to);
+              }
+            }'''
+          new = '''  const snapshotReport = [
+              "bpo-employee-performance-360-master",
+              "bpo-hr-workforce-lifecycle-master",
+            ].includes(context.reportCode);
+            if (!snapshotReport) {
+              if (filters.month) {
+                if (context.monthExpression) {
+                  clauses.push(`SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7) = ?`);
+                  params.push(filters.month);
+                } else if (context.dateExpression) {
+                  clauses.push(`DATE_FORMAT(${context.dateExpression},'%Y-%m') = ?`);
+                  params.push(filters.month);
+                }
+              } else if (context.dateExpression) {
+                if (filters.from) {
+                  clauses.push(`DATE(${context.dateExpression}) >= ?`);
+                  params.push(filters.from);
+                }
+                if (filters.to) {
+                  clauses.push(`DATE(${context.dateExpression}) <= ?`);
+                  params.push(filters.to);
+                }
+              }
+            }'''
+          if text.count(old) != 1:
+            raise SystemExit(f'snapshot filter replacement mismatch: {text.count(old)}')
+          service.write_text(text.replace(old, new, 1))
+
+          page = Path('src/pages/BpoMasterReports.tsx')
+          page_text = page.read_text()
+          freeze = '''      sheet["!freeze"] = { xSplit: 2, ySplit: 1 } as never;\n'''
+          if page_text.count(freeze) != 1:
+            raise SystemExit(f'worksheet freeze removal mismatch: {page_text.count(freeze)}')
+          page.write_text(page_text.replace(freeze, '', 1))
+
+          route = Path('backend/src/modules/reporting/bpo-master-report.routes.ts')
+          route_text = route.read_text()
+          old_route = '''  if (!exportAllowed && result.rows.length) {
+              const sensitiveKeys = new Set(definition.columns.filter((column) => column.sensitive).map((column) => column.key));
+              result.rows = result.rows.map((row) => {
+                const masked = { ...row };
+                for (const key of sensitiveKeys) masked[key] = maskSensitiveValue(masked[key]);
+                return masked;
+              });
+            }
+
+            return res.json({
+              success: true,
+              data: {
+                ...result,
+                sensitiveDataMasked: !exportAllowed,
+              },
+            });'''
+          new_route = '''  const responseRows = !exportAllowed && result.rows.length
+              ? result.rows.map((row) => {
+                  const sensitiveKeys = new Set(definition.columns.filter((column) => column.sensitive).map((column) => column.key));
+                  const masked = { ...row };
+                  for (const key of sensitiveKeys) masked[key] = maskSensitiveValue(masked[key]);
+                  return masked;
+                })
+              : result.rows;
+
+            return res.json({
+              success: true,
+              data: {
+                ...result,
+                rows: responseRows,
+                sensitiveDataMasked: !exportAllowed,
+              },
+            });'''
+          if route_text.count(old_route) != 1:
+            raise SystemExit(f'sensitive response replacement mismatch: {route_text.count(old_route)}')
+          route.write_text(route_text.replace(old_route, new_route, 1))
+          PY
+
+          rm .github/workflows/pr59-bpo-final-static-fixes.yml
+
+      - name: Commit static fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/reporting/bpo-master-report.service.ts \
+                  backend/src/modules/reporting/bpo-master-report.routes.ts \
+                  src/pages/BpoMasterReports.tsx \
+                  .github/workflows/pr59-bpo-final-static-fixes.yml
+          git commit -m "fix(reports): correct snapshot filtering and response typing"
+          git push origin HEAD:agent/deep-section-reports
