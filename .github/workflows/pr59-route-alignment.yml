@@ -1,0 +1,62 @@
+name: PR59 Report Route Alignment
+
+on:
+  push:
+    branches:
+      - agent/deep-section-reports
+    paths:
+      - .github/workflows/pr59-route-alignment.yml
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deep-section-reports
+          fetch-depth: 0
+
+      - name: Align report links and visitor roles
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          packs = Path('backend/src/modules/reporting/deep-report-packs.ts')
+          text = packs.read_text()
+          replacements = {
+            '{ label: "Performance Dashboard", path: "/performance-dashboard" }': '{ label: "Performance Hub", path: "/performance-hub" }',
+            '{ label: "Training", path: "/training" }': '{ label: "LMS Coordinator", path: "/lms/coordinator" }',
+            '{ label: "IT Dashboard", path: "/it-dashboard" }': '{ label: "IT Dashboard", path: "/it/dashboard" }',
+            'viewRoles: ["super_admin", "admin", "security", "security_head", "branch_head", "hr", "facility_manager"],': 'viewRoles: ["super_admin", "admin", "security", "security_head", "visitor_security", "visitor_reception", "branch_head", "branch_hr", "hr_branch", "hr", "facility_manager"],',
+          }
+          for old, new in replacements.items():
+            if text.count(old) != 1:
+              raise SystemExit(f'Pack replacement mismatch for {old}: {text.count(old)}')
+            text = text.replace(old, new, 1)
+          packs.write_text(text)
+
+          routes = Path('src/config/routes/platform.routes.tsx')
+          route_text = routes.read_text()
+          old = "'compliance','privacy_officer','facility_manager','team_leader','tl'"
+          new = "'compliance','privacy_officer','facility_manager','visitor_security','visitor_reception','branch_hr','hr_branch','team_leader','tl'"
+          if route_text.count(old) != 1:
+            raise SystemExit(f'Report role insertion mismatch: {route_text.count(old)}')
+          routes.write_text(route_text.replace(old, new, 1))
+          PY
+
+          rm .github/workflows/pr59-route-alignment.yml
+
+      - name: Commit route alignment
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/reporting/deep-report-packs.ts \
+                  src/config/routes/platform.routes.tsx \
+                  .github/workflows/pr59-route-alignment.yml
+          git commit -m "fix(reports): align module links and visitor access roles"
+          git push origin HEAD:agent/deep-section-reports
