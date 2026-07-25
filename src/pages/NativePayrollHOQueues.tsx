@@ -1899,14 +1899,17 @@ function AdvanceRequestsTab() {
   const isHRorFinance = roleKeys.some((r) => ["payroll_head", "finance", "admin", "super_admin"].includes(r));
   const [requestForm, setRequestForm] = useState({ amount: "", purpose: "Personal", recovery_months: "3" });
   const [statusFilter, setStatusFilter] = useState("pending");
+  const [advPage, setAdvPage] = useState(1);
+  const ADV_LIMIT = 25;
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const { data: advancesRaw } = useQuery({
-    queryKey: ["advances"],
-    queryFn: () => hrmsApi.get("/api/payroll/advances").then((r) => r.data),
+  const { data: advancesResp } = useQuery({
+    queryKey: ["advances", advPage],
+    queryFn: () => hrmsApi.get<{ success: boolean; data: any[]; total: number }>(`/api/payroll/advances?page=${advPage}&limit=${ADV_LIMIT}`),
   });
-  const advances = (advancesRaw as any[]) ?? [];
+  const advances = advancesResp?.data ?? [];
+  const advancesTotal = advancesResp?.total ?? 0;
 
   const requestMut = useMutation({
     mutationFn: (payload: object) => hrmsApi.post("/api/payroll/advances", payload),
@@ -2052,6 +2055,18 @@ function AdvanceRequestsTab() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {/* Advances pagination */}
+        {advancesTotal > ADV_LIMIT && (
+          <div className="flex items-center justify-between mt-3 px-1">
+            <span className="text-xs text-muted-foreground">
+              {advancesTotal} total · page {advPage} of {Math.ceil(advancesTotal / ADV_LIMIT)}
+            </span>
+            <div className="flex gap-2">
+              <button className="text-xs border rounded px-3 py-1 disabled:opacity-40" disabled={advPage <= 1} onClick={() => setAdvPage(p => p - 1)}>Previous</button>
+              <button className="text-xs border rounded px-3 py-1 disabled:opacity-40" disabled={advPage >= Math.ceil(advancesTotal / ADV_LIMIT)} onClick={() => setAdvPage(p => p + 1)}>Next</button>
+            </div>
           </div>
         )}
       </div>

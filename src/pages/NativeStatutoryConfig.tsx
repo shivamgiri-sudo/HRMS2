@@ -379,7 +379,7 @@ function MinimumWagesSection({ isSuperAdmin, onToast }: { isSuperAdmin: boolean;
     if (!editingId) return;
     setSaving(true);
     try {
-      await apiPatch(`/api/payroll/minimum-wages/${editingId}`, editData);
+      await apiPatch(`/api/payroll-masters/minimum-wages/${editingId}`, editData);
       onToast("Minimum wage updated.", "success");
       setEditingId(null);
       void load();
@@ -394,7 +394,7 @@ function MinimumWagesSection({ isSuperAdmin, onToast }: { isSuperAdmin: boolean;
     if (!newRow.state || !newRow.monthly_rate) return;
     setSaving(true);
     try {
-      await apiPost("/api/payroll/minimum-wages", newRow);
+      await apiPost("/api/payroll-masters/minimum-wages", newRow);
       onToast("Minimum wage entry added.", "success");
       setShowAdd(false);
       setNewRow({ state: "", skill_category: "unskilled", daily_rate: "", monthly_rate: "", effective_from: "" });

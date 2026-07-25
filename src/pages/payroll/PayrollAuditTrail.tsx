@@ -121,18 +121,18 @@ export default function PayrollAuditTrail() {
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["payroll-audit-trail", params.toString()],
     queryFn: () => hrmsApi.get<{ success: boolean; data: AuditEntry[]; total: number; page: number; limit: number }>(
-      `/payroll/audit-trail?${params.toString()}`
+      `/api/payroll/audit-trail?${params.toString()}`
     ).then(r => r.data),
   });
 
   const { data: eventTypesData } = useQuery({
     queryKey: ["payroll-audit-event-types"],
-    queryFn: () => hrmsApi.get<{ success: boolean; data: string[] }>("/payroll/audit-trail/event-types").then(r => r.data),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: string[] }>("/api/payroll/audit-trail/event-types").then(r => r.data),
   });
 
   const { data: runsData } = useQuery({
     queryKey: ["payroll-audit-runs"],
-    queryFn: () => hrmsApi.get<{ success: boolean; data: RunOption[] }>("/payroll/audit-trail/runs").then(r => r.data),
+    queryFn: () => hrmsApi.get<{ success: boolean; data: RunOption[] }>("/api/payroll/audit-trail/runs").then(r => r.data),
   });
 
   const entries: AuditEntry[] = data?.data ?? [];

@@ -67,7 +67,7 @@ payrollVarianceRouter.get(
          e.employee_code,
          COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
          b.branch_name,
-         d.department_name,
+         d.dept_name AS department_name,
          dm.designation_name,
          spl.basic,
          spl.gross_salary,

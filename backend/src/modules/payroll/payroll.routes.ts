@@ -601,9 +601,13 @@ router.get("/advances",
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT sal.id, sal.employee_id, sal.advance_amount, sal.advance_date,
+      `SELECT sal.id, sal.employee_id,
+              sal.advance_amount AS amount,
+              sal.advance_date,
               sal.status, sal.approved_by, sal.approved_at, sal.rejection_reason,
-              sal.recovery_month, sal.created_at,
+              sal.recovery_month AS recovery_months,
+              sal.notes AS purpose,
+              sal.created_at,
               e.employee_code,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name
          FROM salary_advance_log sal

@@ -484,8 +484,10 @@ export default function ReimbursementManagement() {
   const [rejectTargetId, setRejectTargetId] = useState<string>("");
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  // ------ Filters ------
+  // ------ Filters & pagination ------
   const [queueMonthFilter, setQueueMonthFilter] = useState("");
+  const [queuePage, setQueuePage] = useState(1);
+  const QUEUE_LIMIT = 25;
   const [processedMonthFilter, setProcessedMonthFilter] = useState("");
   const [processedRunIdFilter, setProcessedRunIdFilter] = useState("");
 
@@ -510,12 +512,13 @@ export default function ReimbursementManagement() {
     isLoading: allLoading,
     refetch: refetchAll,
   } = useQuery<ClaimsListResponse>({
-    queryKey: ["all-reimbursements", queueMonthFilter],
+    queryKey: ["all-reimbursements", queueMonthFilter, queuePage],
     queryFn: () => {
       const params = new URLSearchParams();
       if (queueMonthFilter) params.set("claim_month", queueMonthFilter);
-      const q = params.toString();
-      return hrmsApi.get<ClaimsListResponse>(`/api/payroll/reimbursements${q ? `?${q}` : ""}`);
+      params.set("page", String(queuePage));
+      params.set("limit", String(QUEUE_LIMIT));
+      return hrmsApi.get<ClaimsListResponse>(`/api/payroll/reimbursements?${params.toString()}`);
     },
     enabled: isApprover,
   });
@@ -714,7 +717,7 @@ export default function ReimbursementManagement() {
                     type="month"
                     className="w-36 h-8 text-sm"
                     value={queueMonthFilter}
-                    onChange={(e) => setQueueMonthFilter(e.target.value)}
+                    onChange={(e) => { setQueueMonthFilter(e.target.value); setQueuePage(1); }}
                   />
                   {queueMonthFilter && (
                     <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => setQueueMonthFilter("")}>
@@ -792,6 +795,18 @@ export default function ReimbursementManagement() {
                   </TableBody>
                 </Table>
               </div>
+              {/* Pagination for approvals queue */}
+              {(allData?.total ?? 0) > QUEUE_LIMIT && (
+                <div className="flex items-center justify-between mt-3 px-1">
+                  <span className="text-xs text-slate-500">
+                    {allData?.total ?? 0} total · page {queuePage} of {Math.ceil((allData?.total ?? 0) / QUEUE_LIMIT)}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" disabled={queuePage <= 1} onClick={() => setQueuePage(p => p - 1)}>Previous</Button>
+                    <Button size="sm" variant="outline" disabled={queuePage >= Math.ceil((allData?.total ?? 0) / QUEUE_LIMIT)} onClick={() => setQueuePage(p => p + 1)}>Next</Button>
+                  </div>
+                </div>
+              )}
             </TabsContent>
           )}
 
