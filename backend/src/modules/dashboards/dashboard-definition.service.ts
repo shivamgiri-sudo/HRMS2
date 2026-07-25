@@ -130,6 +130,11 @@ export function getDashboardMetricKeys(code: DashboardCode): readonly MetricKey[
   return DASHBOARD_METRICS[code];
 }
 
+export function isMetricConfiguredForDashboard(code: DashboardCode, metricCode: string): boolean {
+  const normalizedMetricCode = String(metricCode).trim().toUpperCase();
+  return DASHBOARD_METRICS[code].some((key) => METRICS[key].code === normalizedMetricCode);
+}
+
 export async function executeDashboardMetrics(
   code: DashboardCode,
   scope: DashboardScope,

@@ -37,6 +37,8 @@ export interface ReferenceDashboardData {
   devices: JsonRecord;
   opsPulse: JsonRecord;
   managerLeaves: JsonRecord[];
+  managerInsights: JsonRecord;
+  managerAccountability: JsonRecord[];
   quality: JsonRecord;
   orgKpi: JsonRecord;
   itProvisioning?: JsonRecord;

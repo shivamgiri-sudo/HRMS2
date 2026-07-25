@@ -137,9 +137,19 @@ export const jobRequisitionService = {
         COALESCE(cand.interviewed_candidates, 0) AS interviewed_candidates,
         COALESCE(cand.selected_candidates, 0) AS selected_candidates,
         COALESCE(cand.rejected_candidates, 0) AS rejected_candidates,
-        COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates
+        COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates,
+        COALESCE(req_emp.full_name, req_emp.first_name) AS requester_name,
+        req_emp.designation AS requester_designation,
+        req_u.role AS requester_role,
+        COALESCE(apr_emp.full_name, apr_emp.first_name) AS approver_name,
+        apr_emp.designation AS approver_designation,
+        apr_u.role AS approver_role
        FROM job_requisition jr
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
+       LEFT JOIN auth_user req_u ON req_u.id = jr.requested_by
+       LEFT JOIN employees req_emp ON req_emp.user_id = jr.requested_by AND req_emp.active_status = 1
+       LEFT JOIN auth_user apr_u ON apr_u.id = jr.approved_by
+       LEFT JOIN employees apr_emp ON apr_emp.user_id = jr.approved_by AND apr_emp.active_status = 1
        LEFT JOIN (
          SELECT
            requisition_id,
@@ -188,9 +198,19 @@ export const jobRequisitionService = {
         COALESCE(cand.interviewed_candidates, 0) AS interviewed_candidates,
         COALESCE(cand.selected_candidates, 0) AS selected_candidates,
         COALESCE(cand.rejected_candidates, 0) AS rejected_candidates,
-        COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates
+        COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates,
+        COALESCE(req_emp.full_name, req_emp.first_name) AS requester_name,
+        req_emp.designation AS requester_designation,
+        req_u.role AS requester_role,
+        COALESCE(apr_emp.full_name, apr_emp.first_name) AS approver_name,
+        apr_emp.designation AS approver_designation,
+        apr_u.role AS approver_role
        FROM job_requisition jr
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
+       LEFT JOIN auth_user req_u ON req_u.id = jr.requested_by
+       LEFT JOIN employees req_emp ON req_emp.user_id = jr.requested_by AND req_emp.active_status = 1
+       LEFT JOIN auth_user apr_u ON apr_u.id = jr.approved_by
+       LEFT JOIN employees apr_emp ON apr_emp.user_id = jr.approved_by AND apr_emp.active_status = 1
        LEFT JOIN (
          SELECT
            requisition_id,
@@ -703,13 +723,25 @@ export const jobRequisitionService = {
   /**
    * Get dashboard metrics
    */
-  async getDashboardMetrics(filters: { branch_id?: string; from_date?: string; to_date?: string } = {}): Promise<RequisitionDashboardMetrics> {
+  async getDashboardMetrics(filters: { branch_id?: string; branch_name?: string; approval_status?: string; priority?: string; from_date?: string; to_date?: string } = {}): Promise<RequisitionDashboardMetrics> {
     const conditions: string[] = ["active_status = 1"];
     const params: unknown[] = [];
 
     if (filters.branch_id) {
       conditions.push("branch_id = ?");
       params.push(filters.branch_id);
+    }
+    if (filters.branch_name) {
+      conditions.push("branch_name = ?");
+      params.push(filters.branch_name);
+    }
+    if (filters.approval_status) {
+      conditions.push("approval_status = ?");
+      params.push(filters.approval_status);
+    }
+    if (filters.priority) {
+      conditions.push("priority = ?");
+      params.push(filters.priority);
     }
     if (filters.from_date) {
       conditions.push("DATE(created_at) >= ?");

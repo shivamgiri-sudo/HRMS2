@@ -33,9 +33,12 @@ jobRequisitionRouter.get(
   requireAuth,
   requireRole("super_admin", "hr", "recruitment_hr", "branch_head", "operations_manager", "process_manager", "management"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { branch_id, from_date, to_date } = req.query;
+    const { branch_id, branch_name, approval_status, priority, from_date, to_date } = req.query;
     const metrics = await jobRequisitionService.getDashboardMetrics({
       branch_id: branch_id as string | undefined,
+      branch_name: branch_name as string | undefined,
+      approval_status: approval_status as string | undefined,
+      priority: priority as string | undefined,
       from_date: from_date as string | undefined,
       to_date: to_date as string | undefined,
     });

@@ -1,48 +1,44 @@
-# Task 4 Implementation Report
+# Task 4 Report
 
 ## Status
-DONE
 
-## What I Did
+DONE_WITH_CONCERNS
 
-Added two bulk action functions to `ats.joiningDocumentsTracker.service.ts`:
-- `sendBulkReminders`: iterates over the given employee IDs, fetches their email from the employees table, and calls `sendRejectedEmail` (reusing the existing ATS email service). Employees with no email are recorded as failed. Returns `BulkRemindResult` with sent/failed counts and per-employee errors.
-- `bulkGenerateChecklists`: iterates over employee IDs, checks whether a checklist already exists in `employee_joining_document_checklist`, skips if so, otherwise calls `generateJoiningDocumentChecklist`. Returns `BulkGenerateResult` with generated/skipped counts and per-employee errors.
+## Files changed
 
-Added two route handlers to `ats.joiningDocumentsTracker.routes.ts`:
-- `POST /bulk-remind` — validates `employee_ids` array, calls `sendBulkReminders`, returns result.
-- `POST /bulk-generate-checklist` — validates `employee_ids` array, calls `bulkGenerateChecklists`, returns result.
+- `src/components/dashboard/ScopedFilterBar.tsx`
+- `src/components/dashboard/DashboardDrilldownDrawer.tsx`
+- `src/pages/dashboards/ReferenceRoleDashboard.tsx`
+- `src/pages/dashboards/reference/HrReferenceLayout.tsx`
+- `src/pages/dashboards/reference/WfmAttendanceReferenceLayout.tsx`
+- `src/tests/role-dashboard-live-data.contract.test.ts`
+- `backend/src/modules/dashboards/dashboard-definition.service.ts`
+- `backend/src/modules/dashboards/dashboard.routes.ts`
+- `backend/src/modules/dashboards/__tests__/dashboard-metric-contract.test.ts`
+- `docs/dashboard-audit/2026-07-25-role-dashboard-verification-log.md`
 
-Both imports (`sendRejectedEmail`, `generateJoiningDocumentChecklist`) were also added to the service file.
+## Findings
 
-## Commits (test first, then impl)
+- Routed HR, WFM, and WFM Attendance variants resolve to their registry dashboard codes for summary calls.
+- HR and WFM Attendance lacked the shared scoped filter controls. They now use the dashboard-scoped `/filters` contract through `ScopedFilterBar`; errors are rendered rather than silently falling back to empty/unscoped options.
+- The drilldown drawer received `{ success, data }` responses but rendered the outer object, causing a false empty state. It now renders `data` and retains the existing visible error state on failure.
+- Backend drilldown and trend routes previously accepted any metric alongside an entitled dashboard code. They now reject a metric that is not configured for the requested dashboard before querying, while preserving existing entitlement and scope enforcement.
+- Metric bundles remain correct: HR = onboarding/TAT/resignation/compliance, WFM = headcount/attendance, WFM Attendance = attendance.
 
-- `9b677a0d`: test(backend): add failing tests for bulk remind and generate checklist
-- `640b06f0`: feat(backend): implement bulk remind and generate checklist endpoints
+## Verification commands and exact results
 
-## Tests Run
+- `node backend/node_modules/vitest/vitest.mjs run src/tests/role-dashboard-live-data.contract.test.ts --config vite.config.ts --globals --exclude .worktrees/** -t "uses dashboard-scoped filters|unwraps drilldown API envelopes"`
+  - Passed: 1 file; 2 tests passed; 26 skipped.
+- `npm --prefix backend test -- --run src/modules/dashboards/__tests__/dashboard-metric-contract.test.ts`
+  - Passed: 1 file; 7 tests passed.
+- `npm run typecheck`
+  - Passed: exit 0.
+- `npm --prefix backend run typecheck`
+  - Passed: exit 0.
+- `git diff --check`
+  - Passed: exit 0; only CRLF-to-LF normalization warnings were printed.
 
-Command: `cd backend && npm test -- joiningDocumentsTracker`
+## Concerns
 
-Result: 2 test files, 28 tests — all passed (2.24s)
-
-## Build
-
-Command: `cd backend && npm run build`
-
-Result: Compiled with pre-existing errors only (none in joiningDocumentsTracker files). Zero errors introduced by this task's changes.
-
-## Self-Review
-
-- Both functions use `db.execute` with parameterized queries — no SQL injection risk.
-- Error handling is per-item (loop continues on failure), consistent with test expectations.
-- `customMessage` parameter is accepted but not yet wired into email template (marked with `void` comment as reserved for future custom reminder template).
-- `actorUserId` is accepted but reserved for future audit logging (marked with `void` comment).
-- Route validation returns `400` for missing/empty `employee_ids` as required by tests.
-- No new TypeScript errors introduced.
-
-## Fix Applied (post-review)
-- Fix: bulkGenerateChecklists now batch-fetches existing checklists in one query
-- Performance: Reduced from O(n) database queries to O(2) (one fetch employees, one batch fetch existing)
-- Tests after fix: 28/28 passing
-- Commit: `fa46964e` (perf: batch-fetch existing checklists in bulkGenerateChecklists)
+- No authenticated live browser/API environment was available, so verification is source and targeted-test based.
+- The full frontend contract test with `.worktrees` excluded still fails one unrelated IT provisioning assertion (`ItManagerReferenceLayout.tsx` contains `?? 0`), outside Task 4. Without excluding `.worktrees`, two unrelated incomplete worktree test suites also fail.

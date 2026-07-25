@@ -308,7 +308,12 @@ router.get(
     // Public categories skip auth entirely — serve directly
     if (PUBLIC_FILE_CATEGORIES.has(safe)) {
       if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: "File not found" });
+        res
+          .status(200)
+          .type("image/svg+xml")
+          .set("Cache-Control", "public, max-age=300")
+          .send(`<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360" role="img" aria-label="Image unavailable"><rect width="640" height="360" fill="#f1f5f9"/><path d="M236 212l52-64 45 52 28-32 43 44H236z" fill="#cbd5e1"/><circle cx="392" cy="130" r="26" fill="#cbd5e1"/><text x="320" y="264" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">Image unavailable</text></svg>`);
+        return;
       }
       return res.sendFile(filePath);
     }

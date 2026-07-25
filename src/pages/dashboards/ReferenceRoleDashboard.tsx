@@ -302,6 +302,26 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  const managerInsightsQuery = useQuery({
+    queryKey: ["reference-dashboard-manager-insights", code],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/dashboards/${code}/good-bad-insights`,
+    ))),
+    enabled: accessGranted && variant === "manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const managerAccountabilityQuery = useQuery({
+    queryKey: ["reference-dashboard-manager-accountability", code],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/dashboards/${code}/owner-accountability`,
+    ))),
+    enabled: accessGranted && variant === "manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
   const executiveQualityQuery = useExecutiveQualitySummary(
     30,
     accessGranted && ["ceo", "super_admin"].includes(variant),
@@ -379,7 +399,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(["wfm", "wfm_attendance", "manager", "operations"].includes(variant) ? [biometricQuery] : []),
     ...(["wfm", "wfm_attendance"].includes(variant) ? [devicesQuery] : []),
     ...(["wfm", "wfm_attendance", "manager", "ceo", "super_admin", "operations", "quality"].includes(variant) ? [pulseQuery] : []),
-    ...(variant === "manager" ? [managerLeavesQuery] : []),
+    ...(variant === "manager" ? [managerLeavesQuery, managerInsightsQuery, managerAccountabilityQuery] : []),
     ...(["ceo", "super_admin"].includes(variant) ? [executiveQualityQuery] : []),
     ...(["ceo", "super_admin", "manager"].includes(variant) ? [orgKpiQuery] : []),
     ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
@@ -448,6 +468,8 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     devices: devicesQuery.data ?? {},
     opsPulse: pulseQuery.data ?? {},
     managerLeaves: managerLeavesQuery.data ?? [],
+    managerInsights: managerInsightsQuery.data ?? {},
+    managerAccountability: asArray(managerAccountabilityQuery.data?.accountability),
     quality: mergedQuality,
     orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
     itProvisioning: itProvisioningQuery.data ?? {},
@@ -471,12 +493,13 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     return parts.length > 0 ? `${parts.join(". ")}. Available dashboard data is still shown.` : null;
   }, [employeeSourceErrors, networkErrorCount, unavailableMetrics]);
 
-  const filterControl = ["wfm", "ceo", "quality", "operations", "manager", "super_admin"].includes(variant) ? (
+  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <ScopedFilterBar
         onBranchChange={setBranchId}
         onProcessChange={setProcessId}
         onDateRangeChange={() => {}}
+        dashboardCode={code}
         showDateRange={false}
         className="border-0 bg-transparent p-0 shadow-none"
       />
@@ -514,8 +537,8 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}
-        {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} /> : null}
-        {variant === "hr" ? <HrReferenceLayout data={data} /> : null}
+        {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "hr" ? <HrReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "ceo" ? <CeoReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "payroll" ? <PayrollReferenceLayout data={data} /> : null}
         {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} /> : null}

@@ -36,6 +36,7 @@ export interface ScopedFilterBarProps {
   showBranch?: boolean;
   showProcess?: boolean;
   showDateRange?: boolean;
+  dashboardCode?: string;
   className?: string;
 }
 
@@ -46,12 +47,14 @@ export function ScopedFilterBar({
   showBranch = true,
   showProcess = true,
   showDateRange = true,
+  dashboardCode,
   className,
 }: ScopedFilterBarProps) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [processes, setProcesses] = useState<Process[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [loadingProcesses, setLoadingProcesses] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selectedBranch, setSelectedBranch] = useState<string>("");
   const [selectedProcess, setSelectedProcess] = useState<string>("");
@@ -61,19 +64,36 @@ export function ScopedFilterBar({
   useEffect(() => {
     if (!showBranch && !showProcess) return;
     setLoadingBranches(true);
-    hrmsApi.get("/api/org/branches")
+    setLoadError(null);
+    const url = dashboardCode
+      ? `/api/dashboards/${dashboardCode}/filters`
+      : "/api/org/branches";
+    hrmsApi.get(url)
       .then((json) => {
-        const list: Branch[] = Array.isArray(json)
-          ? json
-          : json.branches ?? json.data ?? [];
+        const payload = dashboardCode ? json.data ?? json : json;
+        const list: Branch[] = Array.isArray(payload)
+          ? payload
+          : payload.branches ?? payload.data ?? [];
         setBranches(list);
+        if (dashboardCode) {
+          const processList: Process[] = Array.isArray(payload.processes) ? payload.processes : [];
+          setProcesses(processList.map((process) => ({
+            ...process,
+            branch_id: process.branch_id ?? (process as Process & { branchId?: string }).branchId,
+          })));
+        }
       })
-      .catch(() => setBranches([]))
+      .catch((error) => {
+        setBranches([]);
+        setProcesses([]);
+        setLoadError(error instanceof Error ? error.message : "Unable to load scoped filters.");
+      })
       .finally(() => setLoadingBranches(false));
-  }, [showBranch, showProcess]);
+  }, [dashboardCode, showBranch, showProcess]);
 
   useEffect(() => {
     if (!showProcess) return;
+    if (dashboardCode) return;
     setLoadingProcesses(true);
     const url = selectedBranch
       ? `/api/org/processes?branch_id=${selectedBranch}`
@@ -87,7 +107,11 @@ export function ScopedFilterBar({
       })
       .catch(() => setProcesses([]))
       .finally(() => setLoadingProcesses(false));
-  }, [showProcess, selectedBranch]);
+  }, [dashboardCode, showProcess, selectedBranch]);
+
+  const visibleProcesses = selectedBranch
+    ? processes.filter((process) => !process.branch_id || process.branch_id === selectedBranch)
+    : processes;
 
   function handleBranchChange(value: string) {
     const normalized = value === ALL_VALUE ? "" : value;
@@ -142,6 +166,8 @@ export function ScopedFilterBar({
         )
       )}
 
+      {loadError ? <p className="text-xs text-red-600" role="alert">Scoped filters unavailable: {loadError}</p> : null}
+
       {showProcess && (
         loadingProcesses ? (
           <Skeleton className="h-9 w-36" />
@@ -152,7 +178,7 @@ export function ScopedFilterBar({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL_VALUE}>All Processes</SelectItem>
-              {processes.map((p) => (
+              {visibleProcesses.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}
                 </SelectItem>

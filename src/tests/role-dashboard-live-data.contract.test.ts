@@ -179,6 +179,8 @@ describe("role dashboard live-data contracts", () => {
 
   it("routes dedicated operational dashboards through the reference data pipeline", () => {
     for (const file of [
+      "src/pages/dashboards/HrDashboard.tsx",
+      "src/pages/dashboards/WfmDashboard.tsx",
       "src/pages/dashboards/QualityDashboardRole.tsx",
       "src/pages/dashboards/OperationsDashboardRole.tsx",
       "src/pages/dashboards/RecruiterDashboard.tsx",
@@ -188,6 +190,22 @@ describe("role dashboard live-data contracts", () => {
       expect(source).toContain("ReferenceRoleDashboard");
       expect(source).not.toContain("RoleDashboardV3");
     }
+  });
+
+  it("uses dashboard-scoped filters for HR and both WFM dashboard variants", () => {
+    const dashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
+    const filters = read("src/components/dashboard/ScopedFilterBar.tsx");
+
+    expect(dashboard).toContain('["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin"].includes(variant)');
+    expect(dashboard).toContain("dashboardCode={code}");
+    expect(filters).toContain("dashboardCode?: string");
+    expect(filters).toContain("/api/dashboards/${dashboardCode}/filters");
+  });
+
+  it("unwraps drilldown API envelopes instead of silently rendering empty records", () => {
+    const drawer = read("src/components/dashboard/DashboardDrilldownDrawer.tsx");
+
+    expect(drawer).toContain("setData(json.data ?? json)");
   });
 
   it("mounts the self-service LMS integration route before the legacy LMS router", () => {

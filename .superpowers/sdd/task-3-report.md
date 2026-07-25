@@ -1,54 +1,31 @@
-# Task 3 Implementation Report
+# Task 3 Report
 
-## Status
-DONE
+- Status: DONE_WITH_CONCERNS
 
-## What I Did
+## Files changed
 
-1. **Read task spec** from `docs/superpowers/plans/2026-07-06-joining-documents-tracker.md` Task 3 section.
-2. **Inspected existing patterns** in `backend/src/modules/ats/ats.routes.ts` to match:
-   - `h()` wrapper pattern for async handlers
-   - `requireAuth` + `requireRole` middleware usage
-   - `AuthenticatedRequest` import from `../../middleware/authMiddleware.js`
-3. **Wrote failing test first** (`ats.joiningDocumentsTracker.routes.test.ts`) — 4 tests covering:
-   - 200 response with mock tracker data
-   - Query param forwarding (branch_id, process_id, search, overdue_only, completion_min/max)
-   - `overdue_only=false` parsed as boolean false
-   - 500 response on service error
-4. **Confirmed tests FAIL** (module not found error — expected).
-5. **Committed test-only commit** (hash: 4ab8a72b).
-6. **Implemented** `ats.joiningDocumentsTracker.routes.ts` with:
-   - `joiningDocumentsTrackerRouter` export
-   - `requireAuth` + `requireRole(['admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head'])` middleware
-   - `GET /` handler parsing all 9 query params from `TrackerQueryParams`
-   - `h()` async wrapper consistent with existing route pattern
-7. **Mounted** tracker router at `/joining-documents-tracker` in `ats.routes.ts`.
-8. **Confirmed tests PASS** — all 4 passing.
-9. **Verified TypeScript** — no errors in new files (pre-existing errors in unrelated modules).
-10. **Committed implementation** (hash: bdb81f38).
+- `src/components/dashboard/widgets/MyAttendanceWidget.tsx`
+- `src/pages/dashboards/ReferenceRoleDashboard.tsx`
+- `src/pages/dashboards/reference-dashboard-model.ts`
+- `src/pages/dashboards/reference/ManagerReferenceLayout.tsx`
+- `src/pages/dashboards/__tests__/employee-manager-dashboard-contract.test.ts`
+- `docs/dashboard-audit/2026-07-25-role-dashboard-verification-log.md`
+- `.superpowers/sdd/task-3-report.md`
 
-## Commits (in order — test commit must be first)
+## Findings
 
-- `4ab8a72b`: test(ats): add failing tests for GET /joining-documents-tracker route
-- `bdb81f38`: feat(backend): add GET /api/ats/joining-documents-tracker endpoint
+- The employee summary route is fixed-dashboard protected and self-scoped; it fails visibly with `EMPLOYEE_MAPPING_UNAVAILABLE` if no authenticated employee mapping exists.
+- The shared attendance widget read `half_day`, while the employee summary emits `halfDay`, and it converted absent/failed metrics to zeroes. It now uses `halfDay` and renders explicit error/unavailable states.
+- The manager route already used `MANAGEMENT_DASHBOARD` summary, but did not request or render its good/bad-insights or owner-accountability endpoints. It now does, under the same manager entitlement.
+- The dynamic dashboard router parameter already applies entitlement checks. Manager summary metrics use the existing `TEAM_ONLY` dashboard scope; no backend change was warranted.
 
-## Tests Run
+## Verification commands and results
 
-Command: `cd backend && npm test -- ats.joiningDocumentsTracker.routes.test.ts`
+- `node backend/node_modules/vitest/vitest.mjs run src/pages/dashboards/__tests__/employee-manager-dashboard-contract.test.ts --config vite.config.ts --globals` — passed: 1 file, 2 tests.
+- `npm run typecheck` — passed (exit 0).
+- `npm --prefix backend run typecheck` — passed (exit 0).
+- `npm --prefix backend test -- --run src/modules/dashboards/__tests__/dashboard-access-registry.test.ts src/modules/dashboards/__tests__/dashboard-error-semantics.test.ts` — passed: 2 files, 10 tests.
 
-Result: **4 passed, 0 failed**
+## Concerns
 
-```
-Test Files  1 passed (1)
-     Tests  4 passed (4)
-  Duration  1.52s
-```
-
-## Self-Review
-
-- TDD order enforced: test commit before implementation commit ✓
-- TypeScript strict mode: no errors in new files ✓
-- Role authorization: `requireRole('admin', 'super_admin', 'hr', 'payroll_hr', 'branch_head')` ✓
-- YAGNI: only GET endpoint implemented (Task 3 scope only, no bulk actions) ✓
-- Pattern consistency: `h()` wrapper, `AuthenticatedRequest`, same import paths as existing routes ✓
-- Note: `AuthenticatedRequest` type is imported from `../../middleware/authMiddleware.js` (not `../../types/express.js` as the plan suggested — the actual codebase uses `authMiddleware.js` as the source of truth for this type)
+- No live authenticated browser/API session was available, so the task was verified with source contracts, targeted tests, and type checks rather than a runtime manager/employee session.

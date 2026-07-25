@@ -32,7 +32,7 @@ import {
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 
-export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+export function WfmAttendanceReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: React.ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
   const active = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
@@ -65,7 +65,7 @@ export function WfmAttendanceReferenceLayout({ data }: { data: ReferenceDashboar
       <ReferenceHeader
         title="WFM / Attendance Dashboard"
         subtitle="Monitor workforce attendance, schedules and compliance in real time"
-        right={productHeaderControls}
+        right={filters ?? productHeaderControls}
       />
 
       <ReferenceMetricGrid

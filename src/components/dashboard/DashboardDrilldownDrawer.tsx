@@ -49,7 +49,7 @@ export function DashboardDrilldownDrawer({
       })
       .then((json) => {
         if (!cancelled) {
-          setData(json);
+          setData(json.data ?? json);
         }
       })
       .catch((err) => {

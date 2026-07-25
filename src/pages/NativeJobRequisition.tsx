@@ -39,6 +39,12 @@ interface JobRequisition {
   handover_status?: 'not_ready' | 'ready' | 'handed_over';
   handover_at?: string | null;
   requested_by_name: string | null;
+  requester_name: string | null;
+  requester_designation: string | null;
+  requester_role: string | null;
+  approver_name: string | null;
+  approver_designation: string | null;
+  approver_role: string | null;
   owner_recruiter_name: string | null;
   aging_days: number;
   derived_status: string;
@@ -246,6 +252,7 @@ export default function NativeJobRequisition() {
 
   useEffect(() => {
     loadRequisitions();
+    loadMetrics({ status: statusFilter, priority: priorityFilter, branch: branchFilter });
   }, [searchTerm, statusFilter, priorityFilter, branchFilter]);
 
   useEffect(() => {
@@ -299,10 +306,15 @@ export default function NativeJobRequisition() {
     }
   };
 
-  const loadMetrics = async () => {
+  const loadMetrics = async (opts?: { status?: string; priority?: string; branch?: string }) => {
     try {
+      const p = new URLSearchParams();
+      if (opts?.status) p.append('approval_status', opts.status);
+      if (opts?.priority) p.append('priority', opts.priority);
+      if (opts?.branch) p.append('branch_name', opts.branch);
+      const qs = p.toString() ? `?${p.toString()}` : '';
       const res = await hrmsApi.get<{ success: boolean; data: DashboardMetrics }>(
-        '/api/job-requisition/dashboard'
+        `/api/job-requisition/dashboard${qs}`
       );
       if (res.data) {
         const m = res.data as any;
@@ -844,6 +856,13 @@ export default function NativeJobRequisition() {
                         <td className="px-4 py-3">
                           <div className="text-sm font-medium text-gray-900">{req.designation_name}</div>
                           {req.department_name && <div className="text-xs text-gray-400">{req.department_name}</div>}
+                          {(req.requester_name || req.requested_by_name) && (
+                            <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5" title="Raised by">
+                              <FileText className="w-3 h-3 text-slate-400" />
+                              {req.requester_name || req.requested_by_name}
+                              {req.requester_designation && <span className="text-slate-400">· {req.requester_designation}</span>}
+                            </div>
+                          )}
                           {req.owner_recruiter_name && (
                             <div className="text-xs text-blue-500 flex items-center gap-1 mt-0.5">
                               <UserCheck className="w-3 h-3" />{req.owner_recruiter_name}
@@ -1277,6 +1296,28 @@ export default function NativeJobRequisition() {
                   <DetailItem label="Headcount" value={`${selectedRequisition.fulfilled_headcount}/${selectedRequisition.requested_headcount} (${selectedRequisition.open_positions} open)`} />
                   <DetailItem label="Employment Type" value={selectedRequisition.employment_type.replace(/_/g, ' ')} />
                   <DetailItem label="Priority" value={<span className={`px-2 py-0.5 rounded text-xs ${PRIORITY_COLORS[selectedRequisition.priority]}`}>{selectedRequisition.priority}</span>} />
+                  <DetailItem
+                    label="Raised By"
+                    value={
+                      <span>
+                        {selectedRequisition.requester_name || selectedRequisition.requested_by_name || '—'}
+                        {selectedRequisition.requester_designation && <span className="text-gray-400 ml-1">· {selectedRequisition.requester_designation}</span>}
+                        {selectedRequisition.requester_role && <span className="text-gray-400 ml-1">({selectedRequisition.requester_role.replace(/_/g, ' ')})</span>}
+                      </span>
+                    }
+                  />
+                  {selectedRequisition.approver_name && (
+                    <DetailItem
+                      label="Approved By"
+                      value={
+                        <span>
+                          {selectedRequisition.approver_name}
+                          {selectedRequisition.approver_designation && <span className="text-gray-400 ml-1">· {selectedRequisition.approver_designation}</span>}
+                          {selectedRequisition.approver_role && <span className="text-gray-400 ml-1">({selectedRequisition.approver_role.replace(/_/g, ' ')})</span>}
+                        </span>
+                      }
+                    />
+                  )}
                   {selectedRequisition.owner_recruiter_name && (
                     <DetailItem label="Assigned Recruiter" value={selectedRequisition.owner_recruiter_name} />
                   )}
@@ -1366,10 +1407,13 @@ export default function NativeJobRequisition() {
                       <div className="flex items-center justify-center py-8">
                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                       </div>
-                    ) : selectedCandidates.length === 0 ? (
+                    ) : selectedOnlyCandidates.length === 0 ? (
                       <div className="text-center py-8 text-gray-500">
                         <UserCheck className="w-10 h-10 mx-auto mb-2 text-gray-300" />
-                        <p className="text-sm">No candidates linked to this requisition yet.</p>
+                        <p className="text-sm font-medium">No selected candidates yet.</p>
+                        {selectedCandidates.filter(c => c.outcome === 'in_progress').length > 0 && (
+                          <p className="text-xs text-gray-400 mt-1">{selectedCandidates.filter(c => c.outcome === 'in_progress').length} candidate(s) still in pipeline.</p>
+                        )}
                       </div>
                     ) : (
                       <div>
@@ -1381,20 +1425,18 @@ export default function NativeJobRequisition() {
                         <div className="overflow-x-auto rounded-lg border">
                           <table className="w-full text-sm">
                             <thead>
-                              <tr className="bg-gray-50 text-left border-b">
+                              <tr className="bg-emerald-50 text-left border-b">
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-500">#</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-500">Candidate</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-500">Contact</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-500">Recruiter</th>
-                                <th className="px-3 py-2 text-xs font-semibold text-gray-500">Outcome</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-500">Date of Selection</th>
-                                <th className="px-3 py-2 text-xs font-semibold text-gray-500">Linked On</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-500">Remarks</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {selectedCandidates.map((c, i) => (
-                                <tr key={c.id} className={`border-t hover:bg-gray-50 ${c.outcome === 'selected' ? 'bg-emerald-50/40' : c.outcome === 'rejected' ? 'bg-red-50/30' : ''}`}>
+                              {selectedOnlyCandidates.map((c, i) => (
+                                <tr key={c.id} className="border-t hover:bg-emerald-50/40 bg-emerald-50/20">
                                   <td className="px-3 py-2.5 text-gray-400 text-xs">{i + 1}</td>
                                   <td className="px-3 py-2.5">
                                     <div className="font-medium text-gray-900">{c.candidate_name}</div>
@@ -1416,21 +1458,8 @@ export default function NativeJobRequisition() {
                                       </span>
                                     ) : <span className="text-gray-300">—</span>}
                                   </td>
-                                  <td className="px-3 py-2.5">
-                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                                      c.outcome === 'selected' ? 'bg-emerald-100 text-emerald-700' :
-                                      c.outcome === 'rejected' ? 'bg-red-100 text-red-700' :
-                                      c.outcome === 'offered' ? 'bg-cyan-100 text-cyan-700' :
-                                      'bg-gray-100 text-gray-600'
-                                    }`}>
-                                      {c.outcome.replace(/_/g, ' ')}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-2.5 text-sm text-gray-600">
+                                  <td className="px-3 py-2.5 text-sm text-emerald-700 font-medium">
                                     {c.date_of_selection ? c.date_of_selection.slice(0, 10) : <span className="text-gray-300">—</span>}
-                                  </td>
-                                  <td className="px-3 py-2.5 text-xs text-gray-500">
-                                    {c.linked_at ? c.linked_at.slice(0, 10) : '—'}
                                   </td>
                                   <td className="px-3 py-2.5 text-xs text-gray-500 max-w-[140px] truncate" title={c.remarks || ''}>
                                     {c.remarks || '—'}

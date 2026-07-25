@@ -15,7 +15,7 @@ import {
   type DashboardCode,
 } from "../../shared/dashboardAccessRegistry.js";
 import { getDrilldown } from "./dashboard-drilldown.service.js";
-import { executeDashboardMetrics } from "./dashboard-definition.service.js";
+import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashboard-definition.service.js";
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
 
 const router = Router();
@@ -71,6 +71,12 @@ async function requestedScope(req: AuthenticatedRequest) {
     String(req.query.processId ?? ""),
   );
   return { user, context, scope };
+}
+
+function requireDashboardMetric(dashboardCode: DashboardCode, metricCode: string): void {
+  if (!isMetricConfiguredForDashboard(dashboardCode, metricCode)) {
+    throw dashboardAccessError("Metric is not configured for this dashboard", 404);
+  }
 }
 
 // Specific routes must be registered before /:dashboardCode/* routes.
@@ -265,12 +271,16 @@ router.get("/:dashboardCode/good-bad-insights", h(async (req: AuthenticatedReque
 }));
 
 router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: AuthenticatedRequest, res: any) => {
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  requireDashboardMetric(dashboardCode, req.params.metricCode);
   const { scope } = await requestedScope(req);
   const result = await getDrilldown(req.params.metricCode, scope, req.query as Record<string, unknown>);
   return res.json({ success: true, data: result });
 }));
 
 router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: AuthenticatedRequest, res: any) => {
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  requireDashboardMetric(dashboardCode, req.params.metricCode);
   const { context, scope } = await requestedScope(req);
   const scoped = buildScopeWhere(scope, "branch_id", "process_id");
   const [rows] = await db.execute<RowDataPacket[]>(

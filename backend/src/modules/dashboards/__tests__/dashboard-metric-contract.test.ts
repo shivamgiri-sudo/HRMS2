@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,6 +9,7 @@ import {
 import {
   adaptLegacyMetric,
   getDashboardMetricKeys,
+  isMetricConfiguredForDashboard,
 } from "../dashboard-definition.service.js";
 
 const scope = {
@@ -111,5 +114,25 @@ describe("role-specific metric execution definitions", () => {
 
   it("returns no generic business bundle for Super Admin", () => {
     expect(getDashboardMetricKeys("SUPER_ADMIN_DASHBOARD")).toEqual([]);
+  });
+
+  it("accepts drilldown and trend metrics only when they belong to the requested dashboard", () => {
+    expect(isMetricConfiguredForDashboard("HR_DASHBOARD", "ONBOARDING")).toBe(true);
+    expect(isMetricConfiguredForDashboard("WFM_DASHBOARD", "ATTENDANCE")).toBe(true);
+    expect(isMetricConfiguredForDashboard("WFM_ATTENDANCE_DASHBOARD", "ATTENDANCE")).toBe(true);
+    expect(isMetricConfiguredForDashboard("HR_DASHBOARD", "HEADCOUNT")).toBe(false);
+    expect(isMetricConfiguredForDashboard("WFM_DASHBOARD", "ONBOARDING")).toBe(false);
+  });
+
+  it("enforces dashboard/metric pairing before drilldown and trend queries", () => {
+    const routes = readFileSync(resolve(process.cwd(), "src/modules/dashboards/dashboard.routes.ts"), "utf8");
+    const drilldown = routes.slice(
+      routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/drilldown"'),
+      routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/trend"'),
+    );
+    const trend = routes.slice(routes.indexOf('router.get("/:dashboardCode/metric/:metricCode/trend"'));
+
+    expect(drilldown).toContain("requireDashboardMetric(dashboardCode, req.params.metricCode)");
+    expect(trend).toContain("requireDashboardMetric(dashboardCode, req.params.metricCode)");
   });
 });

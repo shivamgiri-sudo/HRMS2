@@ -14,7 +14,7 @@ export function MyAttendanceWidget() {
   );
 
   // Use employee dashboard summary — has att metric
-  const { data, isLoading } = useQuery<any>({
+  const { data, isLoading, isError } = useQuery<any>({
     queryKey: ["dashboard-employee-summary"],
     queryFn: () => hrmsApi.get("/api/dashboards/employee/summary"),
     enabled: !roleLoading && canLoadSelfAttendance,
@@ -24,10 +24,11 @@ export function MyAttendanceWidget() {
   const metrics = data?.data?.metrics ?? {};
   const attValue = metrics.att?.value;
   const attDetail = metrics.att?.detail ?? {};
-  const present = attDetail.present ?? 0;
-  const absent = attDetail.absent ?? 0;
-  const halfDay = attDetail.half_day ?? 0;
-  const attendancePct = typeof attValue === "number" ? attValue : 0;
+  const hasAttendanceMetric = typeof attValue === "number" && Number.isFinite(attValue);
+  const present = typeof attDetail.present === "number" ? attDetail.present : null;
+  const absent = typeof attDetail.absent === "number" ? attDetail.absent : null;
+  const halfDay = typeof attDetail.halfDay === "number" ? attDetail.halfDay : null;
+  const attendancePct = hasAttendanceMetric ? attValue : null;
 
   const stats = [
     { label: "Present",  value: present,  color: "text-emerald-600", bg: "bg-emerald-50 border-emerald-100" },
@@ -35,7 +36,7 @@ export function MyAttendanceWidget() {
     { label: "Absent",   value: absent,   color: "text-red-500",     bg: "bg-red-50 border-red-100"        },
   ];
 
-  const barWidth = Math.min(attendancePct, 100);
+  const barWidth = Math.min(Math.max(attendancePct ?? 0, 0), 100);
 
   return (
     <div className="dashboard-card h-full">
@@ -60,11 +61,21 @@ export function MyAttendanceWidget() {
             <p className="text-sm font-semibold text-slate-700">Attendance is available from My Dashboard.</p>
             <p className="mt-1 text-xs text-slate-500">Open your employee workspace to view month-to-date attendance.</p>
           </div>
+        ) : isError ? (
+          <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-4">
+            <p className="text-sm font-semibold text-red-700">Unable to load attendance.</p>
+            <p className="mt-1 text-xs text-red-600">Please retry from My Dashboard.</p>
+          </div>
+        ) : !hasAttendanceMetric ? (
+          <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-4">
+            <p className="text-sm font-semibold text-slate-700">Attendance data is unavailable.</p>
+            <p className="mt-1 text-xs text-slate-500">No month-to-date attendance summary was returned.</p>
+          </div>
         ) : (
           <>
             <div className="flex items-end gap-3">
               <span className="dash-metric text-[32px]">
-                {attendancePct > 0 ? `${attendancePct.toFixed(1)}%` : "—"}
+                {`${attendancePct.toFixed(1)}%`}
               </span>
               <div className="mb-1.5 flex-1">
                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -79,7 +90,7 @@ export function MyAttendanceWidget() {
             <div className="grid grid-cols-3 gap-2">
               {stats.map((s) => (
                 <div key={s.label} className={`rounded-lg border px-2.5 py-2 ${s.bg}`}>
-                  <p className={`dash-metric text-[17px] ${s.color}`}>{s.value}</p>
+                  <p className={`dash-metric text-[17px] ${s.color}`}>{s.value ?? "—"}</p>
                   <p className="dash-label mt-0.5">{s.label}</p>
                 </div>
               ))}

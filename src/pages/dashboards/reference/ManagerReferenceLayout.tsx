@@ -57,6 +57,9 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
   const employeesOnLeaveToday = countEmployeesOnLeaveOnDate(data.managerLeaves, today);
   const pendingLeaves = statusCount(data.managerLeaves, "pending");
   const rejectedLeaves = statusCount(data.managerLeaves, "rejected");
+  const positiveInsights = arrayAt(data.managerInsights, "good", "items");
+  const overdueInsights = arrayAt(data.managerInsights, "bad", "items");
+  const accountabilityRows = data.managerAccountability;
   const interventionRows = arrayAt(data.opsPulse, "intervention_flags");
   const teamRows = arrayAt(data.workforce, "team_members").length ? arrayAt(data.workforce, "team_members") : arrayAt(data.workforce, "team");
   const performanceTrend = arrayAt(data.orgKpi, "trend").slice(-10).flatMap((row) => {
@@ -186,6 +189,30 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
             <ReferenceListRow icon={TriangleAlert} title="Employees with attendance warnings" value={late} tone="red" href="/attendance" />
             <ReferenceListRow icon={TriangleAlert} title="Projects with deadline risk" value={asNumber(data.workforce.projects_at_risk)} tone="red" href="/work-inbox" />
             <ReferenceListRow icon={TriangleAlert} title="Overdue tasks" value={overdue} tone="red" href="/work-inbox" />
+          </div>
+        </ReferencePanel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ReferencePanel title="Work Queue Insights" bodyClassName="p-0">
+          <div className="divide-y divide-[#edf1f6]">
+            {positiveInsights.slice(0, 3).map((row, index) => (
+              <ReferenceListRow key={`good-${index}`} icon={CheckCircle2} title={String(row.item_type ?? "On-track work")} subtitle={String(row.priority ?? "Normal priority")} value={asNumber(row.count)} tone="green" href="/work-inbox" />
+            ))}
+            {overdueInsights.slice(0, 3).map((row, index) => (
+              <ReferenceListRow key={`bad-${index}`} icon={TriangleAlert} title={String(row.item_type ?? "Overdue work")} subtitle={`${formatValue(asNumber(row.overdue))} overdue`} value={asNumber(row.count)} tone="red" href="/work-inbox" />
+            ))}
+            {!positiveInsights.length && !overdueInsights.length ? <div className="px-4 py-10 text-center text-xs text-[#94a3b8]">No work queue insights available</div> : null}
+          </div>
+        </ReferencePanel>
+
+        <ReferencePanel title="Owner Accountability" bodyClassName="p-0">
+          <div className="divide-y divide-[#edf1f6]">
+            {accountabilityRows.slice(0, 5).map((row, index) => {
+              const overdueCount = asNumber(row.overdue);
+              return <ReferenceListRow key={String(row.role ?? index)} icon={Users} title={String(row.role ?? "Assigned role")} subtitle={`${formatValue(asNumber(row.completed))} completed of ${formatValue(asNumber(row.total))}`} value={overdueCount} tone={overdueCount !== null && overdueCount > 0 ? "red" : "green"} href="/work-inbox" />;
+            })}
+            {!accountabilityRows.length ? <div className="px-4 py-10 text-center text-xs text-[#94a3b8]">No accountable work items available</div> : null}
           </div>
         </ReferencePanel>
       </div>
