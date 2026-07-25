@@ -88,4 +88,11 @@ describe("BPO master report catalog", () => {
       expect(report?.exportRoles.length).toBeGreaterThan(0);
     }
   });
+
+  it("does not expose management-grade master reports to the general employee role", () => {
+    for (const report of BPO_MASTER_REPORTS) {
+      expect(report.viewRoles).not.toContain("employee");
+      expect(report.exportRoles).not.toContain("employee");
+    }
+  });
 });
