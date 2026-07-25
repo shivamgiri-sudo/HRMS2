@@ -229,7 +229,7 @@ async function requestBlob(path: string): Promise<Blob> {
 }
 
 export const hrmsApi = {
-  get: <T>(path: string) => request<T>("GET", path),
+  get: <T>(path: string, timeoutMs?: number) => request<T>("GET", path, undefined, timeoutMs),
   post: <T>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),

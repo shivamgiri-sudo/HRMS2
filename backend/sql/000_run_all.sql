@@ -342,6 +342,9 @@ SOURCE sql/508_ats_onboarding_bridge_code_columns.sql;
 SOURCE sql/509_portal_client_master_fixes.sql;
 SOURCE sql/510_portal_superadmin_user.sql;
 
+-- ── Report query performance indexes (540) ────────────────────────────────────
+SOURCE sql/540_report_performance_indexes.sql;
+
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
 SOURCE sql/999_create_missing_engagement_tables.sql;

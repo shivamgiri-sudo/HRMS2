@@ -303,9 +303,6 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               ORDER BY mapping_status DESC, employee_name`;
       break;
     case "attendance-daily": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
@@ -356,8 +353,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                   GROUP BY employee_id, session_date
                ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, b.branch_name, employee_name
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
       break;
     }
     case "attendance-summary": {
@@ -379,9 +375,6 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
     }
     case "biometric-reconciliation": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
@@ -417,8 +410,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN integration_biometric_daily ibd ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, reconciliation_status DESC
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY adr.record_date DESC, reconciliation_status DESC`;
       break;
     }
     case "leave-balance":
@@ -777,9 +769,6 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "shift-adherence-detail": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
@@ -840,8 +829,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                   GROUP BY employee_id, session_date
                ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
               WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
       break;
     }
 
@@ -849,9 +837,6 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // Any API call to this code returns a redirect hint, not data.
 
     case "overtime-summary": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
@@ -890,16 +875,12 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
                        b.branch_name, p.process_name, d.dept_name, dm.designation_name
               HAVING overtime_hours > 0
-              ORDER BY overtime_hours DESC
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY overtime_hours DESC`;
       params.push(month);
       break;
     }
 
     case "habitual-absentee-list": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       const threshold = Number(req.query.threshold ?? 3);
       addEmployeeFilters(req.query, clauses, params);
@@ -927,16 +908,12 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
                        b.branch_name, p.process_name, d.dept_name, dm.designation_name
               HAVING absent_days >= ?
-              ORDER BY absent_days DESC
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY absent_days DESC`;
       params.push(threshold);
       break;
     }
 
     case "daily-shrinkage-report": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       addEmployeeFilters(req.query, clauses, params);
@@ -958,46 +935,43 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
               GROUP BY adr.record_date, b.branch_name, p.process_name
-              ORDER BY adr.record_date DESC, total_shrinkage_pct DESC
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY adr.record_date DESC, total_shrinkage_pct DESC`;
       break;
     }
 
     case "monthly-shrinkage-trend": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       addEmployeeFilters(req.query, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
-                    COUNT(DISTINCT adr.record_date) AS working_days,
-                    COUNT(*) AS total_employee_days,
-                    SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
-                    SUM(adr.attendance_status = 'absent') AS absent_days,
-                    SUM(adr.attendance_status = 'leave_approved') AS leave_days,
-                    ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
-                    ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct,
-                    ROUND(AVG(
-                      (COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100
-                    ) OVER (PARTITION BY b.branch_name, p.process_name ORDER BY DATE_FORMAT(adr.record_date,'%Y-%m') ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS three_month_avg_shrinkage
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-              WHERE ${clauses.join(" AND ")}
-              GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
-              ORDER BY month DESC, total_shrinkage_pct DESC
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+      // Derived table required — MySQL forbids window functions over aggregates in the same SELECT level.
+      sql = `SELECT *, ROUND(AVG(total_shrinkage_pct) OVER (
+                    PARTITION BY branch_name, process_name
+                    ORDER BY month
+                    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+                  ), 2) AS three_month_avg_shrinkage
+               FROM (
+                 SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, b.branch_name, p.process_name,
+                        COUNT(DISTINCT adr.record_date) AS working_days,
+                        COUNT(*) AS total_employee_days,
+                        SUM(adr.attendance_status IN ('present','half_day')) AS present_days,
+                        SUM(adr.attendance_status = 'absent') AS absent_days,
+                        SUM(adr.attendance_status = 'leave_approved') AS leave_days,
+                        ROUND((COUNT(*) - SUM(adr.attendance_status IN ('present','half_day'))) / NULLIF(COUNT(*), 0) * 100, 2) AS total_shrinkage_pct,
+                        ROUND(SUM(adr.attendance_status = 'absent') / NULLIF(COUNT(*), 0) * 100, 2) AS unplanned_shrinkage_pct
+                   FROM attendance_daily_record adr
+                   JOIN employees e ON e.id = adr.employee_id
+                   LEFT JOIN branch_master b ON b.id = e.branch_id
+                   LEFT JOIN process_master p ON p.id = e.process_id
+                  WHERE ${clauses.join(" AND ")}
+                  GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), b.branch_name, p.process_name
+               ) base_data
+               ORDER BY month DESC, total_shrinkage_pct DESC`;
       break;
     }
 
     case "punch-raw-export": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
       clauses.push("ibd.activity_date BETWEEN ? AND ?"); params.push(from, to);
@@ -1019,8 +993,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
               WHERE ${clauses.join(" AND ")}
-              ORDER BY ibd.activity_date DESC, ibd.employee_code
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY ibd.activity_date DESC, ibd.employee_code`;
       break;
     }
 
@@ -2218,9 +2191,6 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "regularization-summary": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
@@ -2252,15 +2222,11 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
                LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
               WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.session_date DESC, employee_name
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY arr.session_date DESC, employee_name`;
       break;
     }
 
     case "attendance-dispute-summary": {
-      const isExport = isExportRequest(req.query);
-      const limit = limitParam(req.query.limit, isExport);
-      const offset = Number(req.query.offset ?? 0);
       const month = monthParam(req.query.month);
       addEmployeeFilters(req.query, clauses, params);
       if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
@@ -2300,8 +2266,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
                LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
                LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
               WHERE ${clauses.join(" AND ")}
-              ORDER BY arr.session_date DESC, employee_name
-              ${limit > 0 ? `LIMIT ${limit} OFFSET ${offset}` : ""}`;
+              ORDER BY arr.session_date DESC, employee_name`;
       break;
     }
 
