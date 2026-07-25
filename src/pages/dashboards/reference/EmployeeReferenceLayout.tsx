@@ -23,6 +23,7 @@ import {
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asNumber, formatValue, stringAt } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
 
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
   const attendance = data.employee.attendance;
@@ -81,7 +82,8 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   };
 
   return (
-    <div className="reference-dashboard-page">
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="reference-dashboard-page min-w-0">
       <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
 
       <ReferencePanel title="My Attendance This Month" bodyClassName="p-3">
@@ -175,6 +177,13 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
           <ReferenceQuickLink icon={FolderOpen} title="View Documents" subtitle="Access your documents" href="/profile" tone="violet" />
         </div>
       </ReferencePanel>
+    </div>
+
+    <aside className="hidden xl:block">
+      <div className="sticky top-4">
+        <CompanyFeedSidePanel />
+      </div>
+    </aside>
     </div>
   );
 }

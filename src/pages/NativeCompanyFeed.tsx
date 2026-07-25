@@ -19,7 +19,7 @@ import {
   getStatusMeta,
   type CompanyPost,
 } from "@/hooks/useCompanyFeed";
-import { apiUrl } from "@/lib/apiBase";
+import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
 
 const MODERATOR_ROLES = new Set(["hr_head", "admin", "super_admin"]);
 
@@ -50,10 +50,6 @@ const STATUS_CLASS_MAP: Record<string, string> = {
 
 function statusBadgeClass(status: string): string {
   return STATUS_CLASS_MAP[status] ?? "border-slate-200 bg-slate-100 text-slate-600";
-}
-
-function getCompanyFeedImageUrl(fileId: string): string {
-  return apiUrl(`/api/files/company-feed/${fileId}`);
 }
 
 function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?: boolean }) {

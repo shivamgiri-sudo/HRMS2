@@ -1,5 +1,11 @@
 import ReferenceRoleDashboard from "./ReferenceRoleDashboard";
+import { CompanyFeedLoginPopup } from "@/components/CompanyFeedLoginPopup";
 
 export default function EmployeeSelfDashboard() {
-  return <ReferenceRoleDashboard variant="employee" />;
+  return (
+    <>
+      <CompanyFeedLoginPopup />
+      <ReferenceRoleDashboard variant="employee" />
+    </>
+  );
 }
