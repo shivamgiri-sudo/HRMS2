@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   BPO_MASTER_REPORTS,
-  assertBpoMasterReportCatalog,
-} from "../bpo-master-report-catalog.js";
+  assertBpoMasterReportRegistry,
+} from "../bpo-master-report-registry.js";
 
 const EXPECTED_CODES = [
   "bpo-operations-productivity-master",
@@ -16,27 +16,27 @@ const EXPECTED_CODES = [
   "bpo-recruitment-training-readiness-master",
   "bpo-admin-asset-facility-master",
   "bpo-management-executive-master",
+  "bpo-audit-compliance-control-master",
+  "bpo-interview-to-exit-journey-ledger",
+  "bpo-report-data-lineage-reconciliation-master",
 ];
 
-const GOVERNED_ADAPTER_CODES = [
-  "bpo-operations-productivity-master",
-  "bpo-employee-performance-360-master",
-  "bpo-client-sla-delivery-master",
-  "bpo-wfm-attendance-shrinkage-master",
-  "bpo-hr-workforce-lifecycle-master",
-  "bpo-payroll-statutory-master",
-  "bpo-finance-pnl-profitability-master",
-  "bpo-management-executive-master",
+const GOVERNED_ADAPTER_CODES = [...EXPECTED_CODES];
+
+const GOVERNANCE_CODES = [
+  "bpo-audit-compliance-control-master",
+  "bpo-interview-to-exit-journey-ledger",
+  "bpo-report-data-lineage-reconciliation-master",
 ];
 
-describe("BPO master report catalog", () => {
-  it("contains the complete limited set of comprehensive BPO master reports", () => {
-    expect(BPO_MASTER_REPORTS).toHaveLength(11);
+describe("BPO master report registry", () => {
+  it("contains the complete comprehensive BPO master report set", () => {
+    expect(BPO_MASTER_REPORTS).toHaveLength(14);
     expect(BPO_MASTER_REPORTS.map((report) => report.code).sort()).toEqual(EXPECTED_CODES.sort());
   });
 
-  it("passes the runtime catalog assertion", () => {
-    expect(() => assertBpoMasterReportCatalog()).not.toThrow();
+  it("passes the combined runtime registry assertion", () => {
+    expect(() => assertBpoMasterReportRegistry()).not.toThrow();
   });
 
   it("requires employee code and report date in every report", () => {
@@ -77,6 +77,8 @@ describe("BPO master report catalog", () => {
       "bpo-client-sla-delivery-master",
       "bpo-finance-pnl-profitability-master",
       "bpo-management-executive-master",
+      "bpo-audit-compliance-control-master",
+      "bpo-report-data-lineage-reconciliation-master",
     ];
     for (const code of aggregateCodes) {
       const report = BPO_MASTER_REPORTS.find((item) => item.code === code);
@@ -84,7 +86,7 @@ describe("BPO master report catalog", () => {
     }
   });
 
-  it("protects sensitive HR, payroll, finance and compliance data", () => {
+  it("protects sensitive HR, payroll, finance, candidate, audit and compliance data", () => {
     const sensitiveDomains = [
       "bpo-hr-workforce-lifecycle-master",
       "bpo-payroll-statutory-master",
@@ -92,6 +94,8 @@ describe("BPO master report catalog", () => {
       "bpo-quality-risk-compliance-master",
       "bpo-recruitment-training-readiness-master",
       "bpo-admin-asset-facility-master",
+      "bpo-audit-compliance-control-master",
+      "bpo-interview-to-exit-journey-ledger",
     ];
     for (const code of sensitiveDomains) {
       const report = BPO_MASTER_REPORTS.find((item) => item.code === code);
@@ -107,8 +111,16 @@ describe("BPO master report catalog", () => {
     }
   });
 
-  it("uses governed multi-source adapters for the highest-value BPO domains", () => {
-    expect(GOVERNED_ADAPTER_CODES).toHaveLength(8);
+  it("has a governed adapter path for every master report", () => {
+    expect(GOVERNED_ADAPTER_CODES).toHaveLength(14);
     for (const code of GOVERNED_ADAPTER_CODES) expect(EXPECTED_CODES).toContain(code);
+  });
+
+  it("adds audit, complete journey and data-lineage control ledgers", () => {
+    for (const code of GOVERNANCE_CODES) {
+      const report = BPO_MASTER_REPORTS.find((item) => item.code === code);
+      expect(report).toBeDefined();
+      expect(report?.controlNotes.some((note) => /source|record|lineage|accuracy/i.test(note))).toBe(true);
+    }
   });
 });
