@@ -1,15 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const mocks = vi.hoisted(() => {
+  const connExecute = vi.fn().mockResolvedValue([[], []]);
+  return {
+    connExecute,
+    conn: {
+      beginTransaction: vi.fn().mockResolvedValue(undefined),
+      execute: connExecute,
+      commit: vi.fn().mockResolvedValue(undefined),
+      rollback: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn(),
+    },
+  };
+});
+
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    getConnection: vi.fn().mockResolvedValue(mocks.conn),
+  },
   pingDb: vi.fn(),
 }));
 vi.mock("../src/modules/engagement/badge.service.js", () => ({ queueAutoAwards: vi.fn() }));
+vi.mock("../src/modules/payroll/payroll-targeted-recalculation.service.js", () => ({
+  recalculateOpenPayrollForEmployee: vi.fn().mockResolvedValue({ status: "recalculated", runId: "run-1", message: "ok" }),
+  queuePayrollRecalculation: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { db } from "../src/db/mysql.js";
-import { wfmService } from "../src/modules/wfm/wfm.service.js";
+import {
+  fallbackMinutesForRegularizedStatus,
+  isAprRegularizationReason,
+  wfmService,
+} from "../src/modules/wfm/wfm.service.js";
+import { recalculateOpenPayrollForEmployee } from "../src/modules/payroll/payroll-targeted-recalculation.service.js";
 
 const exec = db.execute as ReturnType<typeof vi.fn>;
+const recalc = recalculateOpenPayrollForEmployee as ReturnType<typeof vi.fn>;
 
 const fakeShift = {
   id: "shift-1", shift_code: "GEN", shift_name: "General",
@@ -35,6 +62,12 @@ const fakeReg = {
 beforeEach(() => {
   vi.clearAllMocks();
   exec.mockReset().mockResolvedValue([[], []]);
+  recalc.mockClear();
+  mocks.connExecute.mockReset().mockResolvedValue([[], []]);
+  mocks.conn.beginTransaction.mockClear();
+  mocks.conn.commit.mockClear();
+  mocks.conn.rollback.mockClear();
+  mocks.conn.release.mockClear();
 });
 
 // ─── Shifts ──────────────────────────────────────────────────────────────────
@@ -153,8 +186,11 @@ describe("wfmService.listSessions", () => {
 
 describe("wfmService.submitRegularization", () => {
   it("creates regularization request", async () => {
+    exec.mockResolvedValueOnce([[], []]); // duplicate check
     exec.mockResolvedValueOnce([[{ branch_id: null }], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    exec.mockResolvedValueOnce([[], []]); // inbox employee lookup
+    exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[fakeReg], []]);
     const r = await wfmService.submitRegularization(
       { employeeId: "emp-1", sessionDate: "2026-05-20", reason: "Was present" }, "emp-1"
@@ -173,10 +209,84 @@ describe("wfmService.reviewRegularization", () => {
 
   it("approves regularization", async () => {
     exec.mockResolvedValueOnce([[fakeReg], []]); // get
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
+    mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // regularization status UPDATE
+    exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]); // re-fetch
     const r = await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
+  });
+
+  it("creates and locks ADR when approved APR regularization has no existing ADR", async () => {
+    exec.mockResolvedValueOnce([[
+      {
+        ...fakeReg,
+        requested_status: "present",
+        reason_code: "DIALLER_NOT_LOGGED",
+      },
+    ], []]);
+    mocks.connExecute
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]) // regularization status UPDATE
+      .mockResolvedValueOnce([[], []]) // existing ADR lookup
+      .mockResolvedValueOnce([[{ apr_minutes: 0 }], []]) // APR minutes lookup
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // ADR upsert
+    exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
+    exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]);
+
+    await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
+
+    const adrUpsertCall = mocks.connExecute.mock.calls.find(([sql]) =>
+      String(sql).includes("INSERT INTO attendance_daily_record")
+    );
+    expect(adrUpsertCall).toBeTruthy();
+    expect(adrUpsertCall?.[1]).toContain("apr_regularization");
+    expect(adrUpsertCall?.[1]).toContain(480);
+    expect(mocks.conn.commit).toHaveBeenCalledTimes(1);
+    expect(recalc).toHaveBeenCalledWith(expect.objectContaining({
+      employeeId: "emp-1",
+      payrollMonth: "2026-05",
+      sourceEventType: "attendance_regularization",
+      sourceEventId: "reg-1",
+    }));
+  });
+
+  it("rejects approval when ADR is locked by another correction", async () => {
+    exec.mockResolvedValueOnce([[
+      {
+        ...fakeReg,
+        requested_status: "present",
+        reason_code: "DIALLER_NOT_LOGGED",
+      },
+    ], []]);
+    mocks.connExecute
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[
+        {
+          attendance_status: "absent",
+          lwp_value: 1,
+          is_locked: 1,
+          regularization_id: "other-reg",
+          override_by: null,
+        },
+      ], []]);
+
+    await expect(
+      wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1")
+    ).rejects.toThrow("already locked by another correction");
+    expect(mocks.conn.rollback).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("APR regularization helpers", () => {
+  it("recognizes APR regularization reasons", () => {
+    expect(isAprRegularizationReason("DIALLER_NOT_LOGGED")).toBe(true);
+    expect(isAprRegularizationReason("dialler_not_logged")).toBe(true);
+    expect(isAprRegularizationReason("LATE_ARRIVAL_VALID")).toBe(false);
+  });
+
+  it("uses payroll-safe fallback minutes for approved statuses", () => {
+    expect(fallbackMinutesForRegularizedStatus("present")).toBe(480);
+    expect(fallbackMinutesForRegularizedStatus("half_day")).toBe(240);
+    expect(fallbackMinutesForRegularizedStatus("absent")).toBe(0);
   });
 });
 

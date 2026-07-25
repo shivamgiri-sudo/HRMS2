@@ -66,6 +66,10 @@ const envSchema = z.object({
   NCOSEC_SYNC_CRON: z.string().default("0 */5 * * * *"),
   NCOSEC_SYNC_INTERVAL_MS: z.coerce.number().int().min(60000).default(300000),
   NCOSEC_SYNC_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(1),
+  NCOSEC_RECONCILIATION_ENABLED: z.string().default("true"),
+  NCOSEC_RECONCILIATION_AUTO_FIX: z.string().default("false"),
+  NCOSEC_RECONCILIATION_HOUR: z.coerce.number().int().min(0).max(23).default(2),
+  NCOSEC_RECONCILIATION_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(1),
 
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
   JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
@@ -260,4 +264,6 @@ export const env = {
   OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
   SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
   LUCKPAY_PROVIDER_ENABLED: parsed.data.LUCKPAY_PROVIDER_ENABLED === "true",
+  NCOSEC_RECONCILIATION_ENABLED: parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
+  NCOSEC_RECONCILIATION_AUTO_FIX: parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",
 };

@@ -31,6 +31,26 @@ const DEFAULT_ATTENDANCE_POLICY = {
   overtime_multiplier: 1.5,
 };
 
+const APR_REGULARIZATION_REASON_CODES = new Set([
+  "DIALLER_NOT_LOGGED",
+  "SYSTEM_OUTAGE",
+  "BIOMETRIC_MISMATCH",
+  "INCORRECT_CAMPAIGN",
+  "APPROVED_INTERNAL_WORK",
+  "TRAINING_OFFLINE",
+  "WFH_NOT_CAPTURED",
+]);
+
+export function isAprRegularizationReason(reasonCode?: string | null): boolean {
+  return APR_REGULARIZATION_REASON_CODES.has(String(reasonCode ?? "").trim().toUpperCase());
+}
+
+export function fallbackMinutesForRegularizedStatus(status?: string | null): number {
+  if (status === "present") return 480;
+  if (status === "half_day") return 240;
+  return 0;
+}
+
 export const wfmService = {
   // ─── Attendance Policy ─────────────────────────────────────────────────────
 
@@ -405,43 +425,91 @@ export const wfmService = {
 
         // Capture before-state for audit trail
         const [existingRows] = (await conn.execute(
-          `SELECT attendance_status, lwp_value
+          `SELECT attendance_status, lwp_value, raw_minutes, dialler_minutes,
+                  is_locked, regularization_id, override_by
              FROM attendance_daily_record
             WHERE employee_id = ? AND record_date = ? LIMIT 1`,
           [reg.employee_id, reg.session_date]
         )) as [RowDataPacket[], unknown];
         const existing = (existingRows as RowDataPacket[])[0] as any;
 
+        if (
+          existing &&
+          Number(existing.is_locked ?? 0) === 1 &&
+          (
+            (existing.regularization_id && existing.regularization_id !== id) ||
+            (existing.override_by && existing.override_by !== reviewerId)
+          )
+        ) {
+          throw new Error(
+            `Attendance record is already locked by another correction for employee ${reg.employee_id} on ${reg.session_date}.`
+          );
+        }
+
+        const [aprRows] = (await conn.execute(
+          `SELECT ROUND(COALESCE(SUM(TIME_TO_SEC(Net_Login)), 0) / 60) AS apr_minutes
+             FROM apr
+            WHERE UserID = (SELECT employee_code FROM employees WHERE id = ? LIMIT 1)
+              AND ReportDate = ?`,
+          [reg.employee_id, reg.session_date]
+        )) as [RowDataPacket[], unknown];
+        const aprMinutes = Number((aprRows[0] as any)?.apr_minutes ?? 0);
+        const regularizedMinutes = Number(existing?.raw_minutes ?? existing?.dialler_minutes ?? 0)
+          || aprMinutes
+          || fallbackMinutesForRegularizedStatus(effectiveRequestedStatus);
+        const sourceSystem = isAprRegularizationReason(reg.reason_code) ? "apr_regularization" : "regularization";
+
         const [adrResult] = await conn.execute(
-          `UPDATE attendance_daily_record
-              SET attendance_status = ?, lwp_value = ?,
-                  override_by = ?, override_reason = ?,
-                  regularization_id = ?, is_locked = 1, processed_at = NOW(),
-                  old_attendance_status = ?, old_lwp_value = ?,
-                  status_change_reason = ?, status_changed_by = ?, status_changed_at = NOW(),
-                  clock_in_time  = IF(? IS NOT NULL, TIMESTAMP(record_date, ?), clock_in_time),
-                  clock_out_time = IF(? IS NOT NULL, TIMESTAMP(record_date, ?), clock_out_time)
-            WHERE employee_id = ? AND record_date = ?`,
-          [effectiveRequestedStatus, lwpMap[effectiveRequestedStatus] ?? 0,
-           reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
-           id,
+          `INSERT INTO attendance_daily_record
+             (id, employee_id, record_date, attendance_source, source_system, source_record_date,
+              source_reference, dialler_minutes, raw_minutes, attendance_status, lwp_value,
+              late_mark, late_by_minutes, regularization_id, override_by, override_reason,
+              is_locked, processed_at, created_by, old_attendance_status, old_lwp_value,
+              status_change_reason, status_changed_by, status_changed_at, clock_in_time, clock_out_time)
+           VALUES
+             (UUID(), ?, ?, 'dialler', ?, ?, ?, ?, ?, ?, ?,
+              0, 0, ?, ?, ?, 1, NOW(), ?,
+              ?, ?, ?, ?, NOW(),
+              IF(? IS NOT NULL, TIMESTAMP(?, ?), NULL),
+              IF(? IS NOT NULL, TIMESTAMP(?, ?), NULL))
+           ON DUPLICATE KEY UPDATE
+              attendance_source = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'dialler', attendance_source),
+              source_system = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(source_system), source_system),
+              source_record_date = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(source_record_date), source_record_date),
+              source_reference = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(source_reference), source_reference),
+              dialler_minutes = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(dialler_minutes), dialler_minutes),
+              raw_minutes = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(raw_minutes), raw_minutes),
+              attendance_status = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(attendance_status), attendance_status),
+              lwp_value = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(lwp_value), lwp_value),
+              override_by = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(override_by), override_by),
+              override_reason = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(override_reason), override_reason),
+              regularization_id = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(regularization_id), regularization_id),
+              is_locked = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 1, is_locked),
+              processed_at = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), NOW(), processed_at),
+              old_attendance_status = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(old_attendance_status), old_attendance_status),
+              old_lwp_value = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(old_lwp_value), old_lwp_value),
+              status_change_reason = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(status_change_reason), status_change_reason),
+              status_changed_by = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(status_changed_by), status_changed_by),
+              status_changed_at = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), NOW(), status_changed_at),
+              clock_in_time = IF((is_locked = 0 OR regularization_id = VALUES(regularization_id)) AND VALUES(clock_in_time) IS NOT NULL, VALUES(clock_in_time), clock_in_time),
+              clock_out_time = IF((is_locked = 0 OR regularization_id = VALUES(regularization_id)) AND VALUES(clock_out_time) IS NOT NULL, VALUES(clock_out_time), clock_out_time)`,
+          [
+           reg.employee_id, reg.session_date,
+           sourceSystem, reg.session_date, reg.reason_code ?? id,
+           regularizedMinutes, regularizedMinutes,
+           effectiveRequestedStatus, lwpMap[effectiveRequestedStatus] ?? 0,
+           id, reviewerId, `Regularization approved: ${reg.reason_code ?? reg.reason}`,
+           reviewerId,
            existing?.attendance_status ?? null,
            existing?.lwp_value ?? null,
            `Regularization approved: ${reg.reason_code ?? reg.reason}`,
            reviewerId,
-           reg.new_punch_in ?? null, reg.new_punch_in ?? null,
-           reg.new_punch_out ?? null, reg.new_punch_out ?? null,
-           reg.employee_id, reg.session_date]
+           reg.new_punch_in ?? null, reg.session_date, reg.new_punch_in ?? null,
+           reg.new_punch_out ?? null, reg.session_date, reg.new_punch_out ?? null]
         ) as any;
 
         if ((adrResult as any).affectedRows === 0) {
-          // No ADR row exists — rollback so regularization status is NOT changed without attendance correction
-          await conn.rollback();
-          conn.release();
-          throw new Error(
-            `No attendance_daily_record found for employee ${reg.employee_id} on ${reg.session_date}. ` +
-            `Create the attendance record first before approving this regularization.`
-          );
+          throw new Error(`Attendance record could not be corrected for employee ${reg.employee_id} on ${reg.session_date}.`);
         }
       }
 
@@ -507,6 +575,34 @@ export const wfmService = {
         sendSMS(phone, key, vars).catch(() => {});
       }
     } catch { /* non-fatal */ }
+
+    if (input.status === 'approved') {
+      try {
+        const { recalculateOpenPayrollForEmployee } = await import('../payroll/payroll-targeted-recalculation.service.js');
+        await recalculateOpenPayrollForEmployee({
+          employeeId: reg.employee_id,
+          payrollMonth: String(reg.session_date).slice(0, 7),
+          sourceEventType: 'attendance_regularization',
+          sourceEventId: id,
+          reason: `Approved attendance regularization ${id}`,
+          actorUserId: reviewerId,
+        });
+      } catch (err: any) {
+        try {
+          const { queuePayrollRecalculation } = await import('../payroll/payroll-targeted-recalculation.service.js');
+          await queuePayrollRecalculation({
+            employeeId: reg.employee_id,
+            payrollMonth: String(reg.session_date).slice(0, 7),
+            sourceEventType: 'attendance_regularization',
+            sourceEventId: id,
+            reason: `Approved regularization payroll recalculation failed: ${err?.message ?? String(err)}`,
+            requestedBy: reviewerId,
+          });
+        } catch {
+          // Non-fatal: attendance approval is committed; payroll readiness will surface stale lines.
+        }
+      }
+    }
 
     return this.getRegularization(id);
   },

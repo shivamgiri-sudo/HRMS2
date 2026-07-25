@@ -137,14 +137,34 @@ router.post(
     }).filter(Boolean);
 
     const lockedSet = new Set<string>();
+    const protectedReasonByKey = new Map<string, string>();
     if (lockChecks.length > 0) {
       const [lockedRows] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_id, DATE_FORMAT(record_date,'%Y-%m-%d') AS record_date
-         FROM attendance_daily_record
-         WHERE (employee_id, record_date) IN (${lockChecks.join(',')}) AND is_locked=1`,
+        `SELECT adr.employee_id,
+                DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS record_date,
+                adr.is_locked,
+                adr.regularization_id,
+                adr.override_by,
+                ar.id AS approved_regularization_id
+         FROM attendance_daily_record adr
+         LEFT JOIN attendance_regularization ar
+           ON ar.employee_id = adr.employee_id
+          AND ar.session_date = adr.record_date
+          AND ar.status = 'approved'
+         WHERE (adr.employee_id, adr.record_date) IN (${lockChecks.join(',')})
+           AND (adr.is_locked=1 OR adr.regularization_id IS NOT NULL OR adr.override_by IS NOT NULL OR ar.id IS NOT NULL)`,
       );
       for (const r of lockedRows as any[]) {
-        lockedSet.add(`${r.employee_id}:${r.record_date}`);
+        const key = `${r.employee_id}:${r.record_date}`;
+        lockedSet.add(key);
+        protectedReasonByKey.set(
+          key,
+          r.approved_regularization_id || r.regularization_id
+            ? 'Approved regularization already controls payroll attendance for this date'
+            : r.override_by
+              ? 'Manual attendance override already controls payroll attendance for this date'
+              : 'Attendance record is locked for payroll'
+        );
       }
     }
 
@@ -167,6 +187,11 @@ router.post(
       const lockKey = `${emp.employee_id}:${row.attendance_date}`;
       if (lockedSet.has(lockKey)) {
         skippedLocked++;
+        rowErrors.push({
+          row: row.rowNum,
+          employee_code: row.employee_code,
+          reason: protectedReasonByKey.get(lockKey) ?? 'Attendance record is locked for payroll',
+        });
         continue;
       }
 

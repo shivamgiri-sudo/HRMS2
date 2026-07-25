@@ -24,6 +24,7 @@ import { assertRunEditable } from "./payrollWindowGuard.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
+import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
@@ -213,6 +214,24 @@ router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "pay
   return c.listPayrollRecords(req, res);
 }));
 router.get("/overview", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getPayrollOverview));
+
+router.get(
+  "/attendance-control-tower",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await payrollAttendanceControlService.getControlTower({
+      runMonth: typeof req.query.runMonth === "string" ? req.query.runMonth : undefined,
+      runId: typeof req.query.runId === "string" ? req.query.runId : undefined,
+      from: typeof req.query.from === "string" ? req.query.from : undefined,
+      to: typeof req.query.to === "string" ? req.query.to : undefined,
+      issueType: typeof req.query.issueType === "string" ? req.query.issueType : undefined,
+      search: typeof req.query.search === "string" ? req.query.search : undefined,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    return res.json({ success: true, data });
+  }),
+);
 
 // ─── Cascading filter options for payroll workspace dropdowns ──
 router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {

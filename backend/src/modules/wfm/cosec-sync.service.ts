@@ -6,6 +6,7 @@ import { attendanceEngineService } from "./attendance-engine.service.js";
 import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { logger } from "../../lib/logger.js";
+import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
 
 export type PunchGroup = {
   cosecUserId: string;
@@ -284,7 +285,11 @@ function tagIST(val: string): string {
   return val; // pass bare string through unchanged
 }
 
-async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmapped"> {
+function assessmentModeForPunchDate(punchDate: string, syncToDate: string): PunchAssessmentMode {
+  return punchDate < defaultToDate() || punchDate < syncToDate ? "historical" : "live";
+}
+
+async function migratePunchGroup(group: PunchGroup, mode: PunchAssessmentMode): Promise<"migrated" | "unmapped"> {
   const employee = await resolveEmployee(group.cosecUserId);
   if (!employee) return "unmapped";
 
@@ -293,6 +298,7 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
     lastPunch: group.lastPunch,
     totalPunches: group.totalPunches,
     workingMinutes: group.workingMinutes,
+    mode,
   });
   const rawMinutes = Math.round(assessed.effectiveWorkingMinutes);
   const firstPunchIST = tagIST(assessed.effectivePunchIn ?? group.firstPunch);
@@ -370,6 +376,19 @@ async function migratePunchGroup(group: PunchGroup): Promise<"migrated" | "unmap
       WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
     [firstPunchIST, lastPunchIST, employee.employee_id, group.punchDate],
   );
+  if (assessed.reviewRequired) {
+    await db.execute(
+      `UPDATE attendance_daily_record
+          SET mismatch_flag = 1,
+              status_change_reason = ?
+        WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
+      [
+        `COSEC ${mode} review: ${assessed.reason}; punches=${assessed.effectivePunchCount}; source_span_minutes=${Math.round(group.workingMinutes ?? 0)}; applied_minutes=${rawMinutes}`,
+        employee.employee_id,
+        group.punchDate,
+      ],
+    );
+  }
   await attendanceEngineService.checkAndNotifyBiometricMismatch(employee.employee_id, group.punchDate, attendance);
 
   return "migrated";
@@ -630,7 +649,7 @@ export const cosecSyncService = {
               result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
             }
           } else {
-            const status = await migratePunchGroup(group);
+            const status = await migratePunchGroup(group, assessmentModeForPunchDate(group.punchDate, to));
             if (status === "migrated") result.migratedDays += 1;
             else result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
           }

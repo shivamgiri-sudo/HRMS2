@@ -10,6 +10,7 @@ import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
+import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
@@ -38,6 +39,7 @@ function startServer() {
       startTenureBadgeScheduler();
       startCommunicationCleanup();
       startAttendanceEngineScheduler();
+      startAttendanceReconciliationWorker();
       legacySyncWorker.start();
       startAccessExpiryScheduler();
       startITProvisioningLockScheduler();
@@ -49,7 +51,7 @@ function startServer() {
       startRetentionCron();
       startAtsRemindersScheduler();
       console.log(
-        "[schedulers] tenure, communication, attendance, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync, breach-sla, privacy-retention, ats-reminders started"
+        "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync, breach-sla, privacy-retention, ats-reminders started"
       );
 
       if (!WORKERS_EXTERNAL) {

@@ -193,6 +193,7 @@ describe("Worker Distributed Safety", () => {
         "kpi-daily-sync",
         "apr-vicidial-sync",
         "cosec-sync",
+        "ncosec-attendance-reconciliation",
       ];
 
       expect(criticalWorkers).toContain("payroll-nightly-recalc");

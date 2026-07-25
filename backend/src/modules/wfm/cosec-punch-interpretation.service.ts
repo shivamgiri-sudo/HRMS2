@@ -7,8 +7,11 @@ export type AggregatePunchAssessment = {
   effectiveWorkingMinutes: number;
   elapsedSeconds: number;
   state: "NO_PUNCH" | "PUNCHED_IN" | "PUNCHED_OUT";
-  reason: "no_punch" | "single_punch" | "duplicate_window" | "odd_punch_count" | "valid_out";
+  reason: "no_punch" | "single_punch" | "duplicate_window" | "odd_punch_count" | "historical_odd_punch_span" | "valid_out";
+  reviewRequired: boolean;
 };
+
+export type PunchAssessmentMode = "live" | "historical";
 
 function toTime(value: string | null | undefined) {
   if (!value) return Number.NaN;
@@ -20,11 +23,13 @@ export function assessAggregatePunches(input: {
   lastPunch: string | null | undefined;
   totalPunches: number | null | undefined;
   workingMinutes: number | null | undefined;
+  mode?: PunchAssessmentMode;
 }): AggregatePunchAssessment {
   const firstPunch = input.firstPunch?.trim() || null;
   const lastPunch = input.lastPunch?.trim() || null;
   const totalPunches = Math.max(0, Math.floor(Number(input.totalPunches ?? 0) || 0));
   const workingMinutes = Math.max(0, Number(input.workingMinutes ?? 0) || 0);
+  const mode = input.mode ?? "live";
 
   if (!firstPunch) {
     return {
@@ -35,6 +40,7 @@ export function assessAggregatePunches(input: {
       elapsedSeconds: 0,
       state: "NO_PUNCH",
       reason: "no_punch",
+      reviewRequired: false,
     };
   }
 
@@ -47,6 +53,7 @@ export function assessAggregatePunches(input: {
       elapsedSeconds: 0,
       state: "PUNCHED_IN",
       reason: "single_punch",
+      reviewRequired: true,
     };
   }
 
@@ -65,6 +72,7 @@ export function assessAggregatePunches(input: {
       elapsedSeconds,
       state: "PUNCHED_IN",
       reason: "duplicate_window",
+      reviewRequired: true,
     };
   }
 
@@ -73,6 +81,20 @@ export function assessAggregatePunches(input: {
     // inside. Never treat this as a completed exit; doing so caused break-desk
     // to show "Shift Completed" mid-shift when the last NCOSEC swipe happened
     // to push the span past 9 h (e.g. cafeteria/door re-entry at end of day).
+    if (mode === "historical") {
+      const spanMinutes = workingMinutes > 0 ? workingMinutes : Math.round(elapsedSeconds / 60);
+      return {
+        effectivePunchIn: firstPunch,
+        effectivePunchOut: lastPunch,
+        effectivePunchCount: totalPunches,
+        effectiveWorkingMinutes: spanMinutes,
+        elapsedSeconds,
+        state: "PUNCHED_OUT",
+        reason: "historical_odd_punch_span",
+        reviewRequired: true,
+      };
+    }
+
     return {
       effectivePunchIn: firstPunch,
       effectivePunchOut: null,
@@ -81,6 +103,7 @@ export function assessAggregatePunches(input: {
       elapsedSeconds,
       state: "PUNCHED_IN",
       reason: "odd_punch_count",
+      reviewRequired: true,
     };
   }
 
@@ -92,5 +115,6 @@ export function assessAggregatePunches(input: {
     elapsedSeconds,
     state: "PUNCHED_OUT",
     reason: "valid_out",
+    reviewRequired: false,
   };
 }

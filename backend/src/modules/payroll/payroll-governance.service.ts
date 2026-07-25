@@ -21,6 +21,22 @@ function monthRange(runMonth: string) {
   };
 }
 
+function todayIstDate() {
+  const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  return nowIst.toISOString().slice(0, 10);
+}
+
+function readinessEndDate(monthEnd: string) {
+  const today = todayIstDate();
+  if (today <= monthEnd) {
+    const yesterday = new Date(`${today}T00:00:00.000Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const completedDate = yesterday.toISOString().slice(0, 10);
+    return completedDate < monthEnd ? completedDate : monthEnd;
+  }
+  return monthEnd;
+}
+
 async function getRun(runId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1`,
@@ -31,7 +47,15 @@ async function getRun(runId: string) {
   return run;
 }
 
-function runEmployeeScopeSql(run: any) {
+async function runHasPrepLines(runId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS count FROM salary_prep_line WHERE run_id = ?`,
+    [runId],
+  );
+  return Number((rows[0] as any)?.count ?? 0) > 0;
+}
+
+function runEmployeeScopeSql(run: any, restrictToRunLines = false) {
   const clauses = [
     "e.active_status = 1",
     "LOWER(COALESCE(e.employment_status, 'active')) = 'active'",
@@ -52,6 +76,10 @@ function runEmployeeScopeSql(run: any) {
     clauses.push("e.process_id IN (SELECT id FROM process_master WHERE process_name = ?)");
     params.push(run.process_filter);
   }
+  if (restrictToRunLines) {
+    clauses.push("EXISTS (SELECT 1 FROM salary_prep_line spl_scope WHERE spl_scope.run_id = ? AND spl_scope.employee_id = e.id)");
+    params.push(run.id);
+  }
 
   return { where: clauses.join(" AND "), params, range };
 }
@@ -66,10 +94,26 @@ async function countIssue(sql: string, params: unknown[], code: string, severity
   return { code, severity, count, message, sample: sample as Array<Record<string, unknown>> };
 }
 
+function monthCalendarSql() {
+  return `
+    SELECT DATE_ADD(?, INTERVAL n DAY) AS record_date
+      FROM (
+        SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+        UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9
+        UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12 UNION ALL SELECT 13 UNION ALL SELECT 14
+        UNION ALL SELECT 15 UNION ALL SELECT 16 UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19
+        UNION ALL SELECT 20 UNION ALL SELECT 21 UNION ALL SELECT 22 UNION ALL SELECT 23 UNION ALL SELECT 24
+        UNION ALL SELECT 25 UNION ALL SELECT 26 UNION ALL SELECT 27 UNION ALL SELECT 28 UNION ALL SELECT 29
+        UNION ALL SELECT 30
+      ) days
+     WHERE n <= DATEDIFF(?, ?)`;
+}
+
 export const payrollGovernanceService = {
   async readiness(runId: string) {
     const run = await getRun(runId);
-    const { where, params, range } = runEmployeeScopeSql(run);
+    const { where, params, range } = runEmployeeScopeSql(run, await runHasPrepLines(run.id));
+    const effectiveEnd = readinessEndDate(range.end);
     const issues: PayrollReadinessIssue[] = [];
 
     const eligibleSql = `
@@ -77,6 +121,7 @@ export const payrollGovernanceService = {
              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name
         FROM employees e
        WHERE ${where}`;
+    const calendarSql = monthCalendarSql();
 
     const checks: Array<Promise<PayrollReadinessIssue | null>> = [
       countIssue(
@@ -104,8 +149,8 @@ export const payrollGovernanceService = {
           )`,
         params,
         "MISSING_VERIFIED_BANK",
-        "blocker",
-        "Employees missing verified primary bank account",
+        "warning",
+        "Employees missing verified primary bank account; resolve before disbursement",
       ),
       countIssue(
         `${eligibleSql}
@@ -114,10 +159,152 @@ export const payrollGovernanceService = {
              WHERE adr.employee_id = e.id
                AND adr.record_date BETWEEN ? AND ?
           )`,
-        [...params, range.start, range.end],
+        [...params, range.start, effectiveEnd],
         "NO_ATTENDANCE_RECORDS",
         "blocker",
         "Employees missing attendance_daily_record rows for the payroll month",
+      ),
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                GROUP_CONCAT(DATE_FORMAT(cal.record_date, '%Y-%m-%d') ORDER BY cal.record_date SEPARATOR ', ') AS missing_dates
+           FROM employees e
+           JOIN (${calendarSql}) cal
+             ON cal.record_date BETWEEN COALESCE(e.salary_start_date, e.date_of_joining, ?)
+                                    AND COALESCE(e.date_of_exit, e.date_of_leaving, e.resignation_date, ?)
+          WHERE ${where}
+            AND NOT EXISTS (
+              SELECT 1 FROM attendance_daily_record adr
+               WHERE adr.employee_id = e.id
+                 AND adr.record_date = cal.record_date
+            )
+          GROUP BY e.id, e.employee_code, employee_name`,
+        [range.start, effectiveEnd, range.start, range.start, effectiveEnd, ...params],
+        "PARTIAL_ATTENDANCE_DAYS_MISSING",
+        "blocker",
+        "Eligible employees have one or more missing attendance_daily_record dates in the payroll month",
+      ),
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+                adr.attendance_status,
+                GREATEST(COALESCE(ibd.biometric_minutes, 0), COALESCE(was.total_login_minutes, 0)) AS biometric_minutes
+           FROM employees e
+           JOIN attendance_daily_record adr
+             ON adr.employee_id = e.id
+           LEFT JOIN integration_biometric_daily ibd
+             ON ibd.employee_code = e.employee_code
+            AND ibd.activity_date = adr.record_date
+           LEFT JOIN wfm_attendance_session was
+             ON was.employee_id = e.id
+            AND was.session_date = adr.record_date
+          WHERE ${where}
+            AND adr.record_date BETWEEN ? AND ?
+            AND adr.attendance_status = 'missing_punch'
+            AND GREATEST(COALESCE(ibd.biometric_minutes, 0), COALESCE(was.total_login_minutes, 0)) > 0`,
+        [...params, range.start, effectiveEnd],
+        "MISSING_PUNCH_WITH_BIOMETRIC_EVIDENCE",
+        "blocker",
+        "Attendance is marked missing_punch even though biometric evidence has usable minutes",
+      ),
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                DATE_FORMAT(apr_days.report_date, '%Y-%m-%d') AS record_date,
+                apr_days.apr_minutes
+           FROM employees e
+           JOIN (
+             SELECT UserID, ReportDate AS report_date, ROUND(SUM(TIME_TO_SEC(Net_Login)) / 60) AS apr_minutes
+               FROM apr
+              WHERE ReportDate BETWEEN ? AND ?
+              GROUP BY UserID, ReportDate
+           ) apr_days
+             ON apr_days.UserID = e.employee_code
+          WHERE ${where}
+            AND NOT EXISTS (
+              SELECT 1 FROM attendance_daily_record adr
+               WHERE adr.employee_id = e.id
+                 AND adr.record_date = apr_days.report_date
+            )`,
+        [range.start, effectiveEnd, ...params],
+        "APR_MISSING_ATTENDANCE_DAILY_RECORD",
+        "blocker",
+        "APR source rows exist but attendance_daily_record is missing for the employee/date",
+      ),
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+                apr_days.apr_minutes,
+                adr.raw_minutes,
+                adr.dialler_minutes,
+                adr.attendance_status,
+                adr.source_system
+           FROM employees e
+           JOIN (
+             SELECT UserID, ReportDate AS report_date, ROUND(SUM(TIME_TO_SEC(Net_Login)) / 60) AS apr_minutes
+               FROM apr
+              WHERE ReportDate BETWEEN ? AND ?
+              GROUP BY UserID, ReportDate
+           ) apr_days
+             ON apr_days.UserID = e.employee_code
+           JOIN attendance_daily_record adr
+             ON adr.employee_id = e.id
+            AND adr.record_date = apr_days.report_date
+          WHERE ${where}
+            AND adr.attendance_source = 'dialler'
+            AND COALESCE(adr.is_locked, 0) = 0
+            AND adr.override_by IS NULL
+            AND adr.regularization_id IS NULL
+            AND (
+              ABS(COALESCE(adr.raw_minutes, 0) - apr_days.apr_minutes) > 1
+              OR adr.source_system <> 'apr.ReportDate'
+            )`,
+        [range.start, effectiveEnd, ...params],
+        "APR_ATTENDANCE_DAILY_RECORD_MISMATCH",
+        "blocker",
+        "APR source minutes/source do not match unlocked attendance_daily_record rows",
+      ),
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                DATE_FORMAT(ar.session_date, '%Y-%m-%d') AS record_date,
+                ar.id AS regularization_id
+           FROM employees e
+           JOIN attendance_regularization ar
+             ON ar.employee_id = e.id
+            AND ar.status = 'approved'
+            AND ar.session_date BETWEEN ? AND ?
+          WHERE ${where}
+            AND NOT EXISTS (
+              SELECT 1 FROM attendance_daily_record adr
+               WHERE adr.employee_id = ar.employee_id
+                 AND adr.record_date = ar.session_date
+                 AND adr.regularization_id = ar.id
+                 AND adr.is_locked = 1
+            )`,
+        [range.start, effectiveEnd, ...params],
+        "APPROVED_REGULARIZATION_MISSING_ADR",
+        "blocker",
+        "Approved attendance regularization is missing from locked attendance_daily_record",
+      ),
+      countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                DATE_FORMAT(ari.issue_date, '%Y-%m-%d') AS issue_date,
+                ari.source_payload_json
+           FROM employees e
+           JOIN attendance_reconciliation_issue ari
+             ON ari.employee_id = e.id
+            AND ari.issue_date BETWEEN ? AND ?
+            AND ari.issue_type = 'salary_payable_days_mismatch'
+            AND ari.resolved_at IS NULL
+          WHERE ${where}`,
+        [range.start, effectiveEnd, ...params],
+        "SALARY_PAYABLE_DAYS_MISMATCH",
+        "blocker",
+        "Salary prep final payable days do not match recomputed attendance_daily_record payable days",
       ),
       countIssue(
         `${eligibleSql}
@@ -127,7 +314,7 @@ export const payrollGovernanceService = {
                AND adr.record_date BETWEEN ? AND ?
                AND adr.attendance_status = 'unreconciled'
           )`,
-        [...params, range.start, range.end],
+        [...params, range.start, effectiveEnd],
         "UNRECONCILED_ATTENDANCE",
         "blocker",
         "Employees with unreconciled attendance in payroll month",
@@ -140,7 +327,7 @@ export const payrollGovernanceService = {
                AND adr.record_date BETWEEN ? AND ?
                AND adr.is_locked = 0
           )`,
-        [...params, range.start, range.end],
+        [...params, range.start, effectiveEnd],
         "ATTENDANCE_NOT_LOCKED",
         "warning",
         "Employees have attendance rows not locked/frozen for payroll",
@@ -228,7 +415,7 @@ export const payrollGovernanceService = {
       throw new Error(`Cannot freeze attendance. Resolve blockers first: ${hardBlockers.map((issue) => issue.code).join(", ")}`);
     }
 
-    const { where, params, range } = runEmployeeScopeSql(run);
+    const { where, params, range } = runEmployeeScopeSql(run, await runHasPrepLines(run.id));
     const [result] = await db.execute<any>(
       `UPDATE attendance_daily_record adr
          JOIN employees e ON e.id = adr.employee_id
