@@ -7,6 +7,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { AuthedImage } from "@/components/ui/AuthedImage";
 import { useCompanyFeed, type CompanyPost } from "@/hooks/useCompanyFeed";
 import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
 
@@ -40,7 +41,7 @@ function PostSlide({ post }: { post: CompanyPost }) {
       {images.length > 0 && (
         <div className="relative overflow-hidden bg-slate-900">
           <div className="aspect-video w-full overflow-hidden">
-            <img
+            <AuthedImage
               src={getCompanyFeedImageUrl(images[imgIdx].file_id)}
               alt={`Announcement image ${imgIdx + 1} of ${images.length}`}
               loading="eager"

@@ -8,6 +8,7 @@ import {
   Megaphone,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { AuthedImage } from "@/components/ui/AuthedImage";
 import { useCompanyFeed, type CompanyPost } from "@/hooks/useCompanyFeed";
 import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
 
@@ -33,7 +34,7 @@ function PostImageCarousel({ post }: { post: CompanyPost }) {
   return (
     <div className="relative overflow-hidden rounded-xl">
       <div className="aspect-video w-full overflow-hidden rounded-xl bg-slate-100">
-        <img
+        <AuthedImage
           src={getCompanyFeedImageUrl(images[idx].file_id)}
           alt={`Post image ${idx + 1} of ${images.length}`}
           loading="lazy"
