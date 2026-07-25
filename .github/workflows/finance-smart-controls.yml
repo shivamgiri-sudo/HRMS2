@@ -58,6 +58,7 @@ jobs:
           fi
 
       - name: Backend typecheck
+        id: backend-typecheck
         shell: bash
         run: |
           set -o pipefail
@@ -65,6 +66,15 @@ jobs:
             tail -n 160 /tmp/backend-typecheck.log
             exit 1
           fi
+
+      - name: Upload backend typecheck diagnostics
+        if: failure() && steps.backend-typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-typecheck-diagnostics
+          path: /tmp/backend-typecheck.log
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Finance calculations and contracts
         run: >-
