@@ -815,7 +815,7 @@ router.get('/it-dashboard-summary', requireRole('admin', 'super_admin', 'it', 'b
     ),
 
     db.execute<RowDataPacket[]>(
-      `SELECT t.id, t.ticket_number, t.subject, t.status, t.priority,
+      `SELECT t.id, t.ticket_code AS ticket_number, t.subject, t.status, t.priority,
               t.created_at, t.resolved_at, t.sla_due_at, t.sla_breached,
               t.assigned_to, t.closure_rating,
               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS raised_by_name,

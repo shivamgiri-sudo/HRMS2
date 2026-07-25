@@ -13,11 +13,10 @@ export const assetsService = {
     if (filters.category)  { conds.push("a.asset_category = ?");  params.push(filters.category); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*, b.branch_name,
-              IF(aa.employee_id IS NOT NULL,
-                 JSON_OBJECT('employee_id', aa.employee_id,
-                             'employee_name', CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')),
-                             'assigned_date', aa.assigned_date),
-                 NULL) AS current_assignment
+              aa.employee_id AS assigned_to,
+              aa.assigned_date,
+              CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS assigned_employee_name,
+              e.employee_code AS assigned_employee_code
        FROM asset_master a
        LEFT JOIN branch_master b ON b.id = a.branch_id
        LEFT JOIN asset_assignment aa ON aa.asset_id = a.id AND aa.returned_date IS NULL
@@ -112,7 +111,8 @@ export const assetsService = {
       "UPDATE asset_assignment SET returned_date = CURDATE(), return_condition = ? WHERE asset_id = ? AND returned_date IS NULL",
       [condition, assetId]
     );
-    await db.execute("UPDATE asset_master SET status = 'available', updated_at = NOW() WHERE id = ?", [assetId]);
+    const newStatus = condition === 'lost' ? 'lost' : condition === 'damaged' ? 'repair' : 'available';
+    await db.execute("UPDATE asset_master SET status = ?, updated_at = NOW() WHERE id = ?", [newStatus, assetId]);
     await logSensitiveAction({
       actor_user_id: returnedBy, action_type: "ASSET_RETURNED", module_key: "ASSETS",
       entity_type: "asset", entity_id: assetId,
