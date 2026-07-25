@@ -1,5 +1,5 @@
 import { bpoPnlAllocationOverlayService } from "../process-pnl/bpo-pnl-allocation-overlay.service.js";
-import { getBpoMasterReport } from "./bpo-master-report-catalog.js";
+import { getBpoMasterReport } from "./bpo-master-report-registry.js";
 
 export interface CanonicalAdapterFilters {
   month?: string;
@@ -199,6 +199,15 @@ function normalizeRow(code: string, raw: Record<string, unknown>) {
   return Object.fromEntries(definition.columns.map((column) => [column.key, raw[column.key] ?? null]));
 }
 
+function mappedKeys(code: string, period: string) {
+  const structuralRow = code === "bpo-client-sla-delivery-master"
+    ? clientRow({}, period)
+    : code === "bpo-finance-pnl-profitability-master"
+      ? financeRow({}, period)
+      : executiveRow({}, period);
+  return Object.keys(structuralRow);
+}
+
 export async function runCanonicalBpoMasterAdapter(
   code: string,
   filters: CanonicalAdapterFilters
@@ -219,13 +228,10 @@ export async function runCanonicalBpoMasterAdapter(
   const rows = mapped
     .slice(filters.offset, filters.offset + filters.limit)
     .map((row) => normalizeRow(code, row));
-  const availableKeys = [...new Set(mapped.flatMap((row) =>
-    Object.entries(row).filter(([, value]) => value !== null && value !== undefined).map(([key]) => key)
-  ))];
   return {
     rows,
     totalCount: mapped.length,
     sourceTable: "CANONICAL_BPO_PNL_ALLOCATION_ENGINE",
-    availableKeys,
+    availableKeys: mappedKeys(code, period),
   };
 }
