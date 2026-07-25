@@ -92,7 +92,7 @@ export const useUserRole = () => {
       const demoCredential = resolveActiveDemoCredential(user, DEMO_LOGIN_ENABLED);
       if (demoCredential) {
         const roles = [demoCredential.role] as AppRole[];
-        const roleKeys = expandRoleKeys([...roles, "employee"]);
+        const roleKeys = expandRoleKeys(roles);
 
         return {
           roles,
@@ -122,7 +122,7 @@ export const useUserRole = () => {
         const scopeRoleKeys = (data.scopes ?? [])
           .map((scope: WorkforceScope) => scope.role_key)
           .filter(Boolean);
-        const roleKeys = expandRoleKeys([...roles, ...scopeRoleKeys, "employee"]);
+        const roleKeys = expandRoleKeys([...roles, ...scopeRoleKeys]);
 
         return {
           roles,

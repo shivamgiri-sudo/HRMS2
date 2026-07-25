@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   BarChart3, Briefcase, Crown, GraduationCap, Receipt, Server, Shield, ShieldCheck, User, UserPlus, Users,
 } from "lucide-react";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRole } from "@/hooks/useUserRole";
 import ReferenceRoleDashboard from "./dashboards/ReferenceRoleDashboard";
@@ -83,6 +84,22 @@ export default function Index() {
       })}
     </div>
   ) : undefined;
+
+  if (accessible.length === 0) {
+    return (
+      <DashboardLayout>
+        <div className="flex min-h-[65vh] items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <Shield className="mx-auto h-10 w-10 text-slate-400" />
+            <h1 className="mt-4 text-xl font-bold text-slate-900">No Dashboard Assigned</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Your current role does not include a role dashboard. Open My Modules for pages assigned through RBAC.
+            </p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return <ReferenceRoleDashboard key={current} variant={current} subheader={tabBar} />;
 }

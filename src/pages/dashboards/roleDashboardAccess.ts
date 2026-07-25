@@ -37,11 +37,11 @@ const RESOLUTION_PRIORITY: readonly RoleDashboardVariant[] = [
   "wfm_attendance",
   "wfm",
   "payroll",
+  "manager",
   "quality",
   "operations",
   "recruiter",
   "it_manager",
-  "manager",
   "employee",
 ];
 

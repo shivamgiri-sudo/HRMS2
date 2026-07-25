@@ -43,6 +43,11 @@ import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
+import {
+  DASHBOARD_ACCESS_REGISTRY,
+  canAccessDashboard,
+  getDashboardDefinition,
+} from "../../../backend/src/shared/dashboardAccessRegistry";
 
 type Props = { children: ReactNode; subheader?: ReactNode };
 
@@ -67,7 +72,7 @@ export function DashboardLayout({ children, subheader }: Props) {
   const { user, signOut } = useAuth();
   const { isAdminOrHR } = useIsAdminOrHR();
   const { data: myProfile } = useEmployeeProfile();
-  const { canViewPage, visiblePageCodes, hasAnyRole } = useWorkforceAccess();
+  const { canViewPage, visiblePageCodes, hasAnyRole, roleKeys } = useWorkforceAccess();
   const { data: versionData } = useVersionCheck();
 
   const displayVersion = isAutoUpdatingEnvironment()
@@ -82,7 +87,13 @@ export function DashboardLayout({ children, subheader }: Props) {
 
     const isSuperAdmin = hasAnyRole("super_admin");
 
-    const canShow = (item: { pageCode?: string; roles?: string[]; adminOnly?: boolean; public?: boolean }) => {
+    const dashboardByRoute = new Map(
+      Object.values(DASHBOARD_ACCESS_REGISTRY).map((dashboard) => [dashboard.route, dashboard.code]),
+    );
+
+    const canShow = (item: { href: string; pageCode?: string; roles?: string[]; adminOnly?: boolean; public?: boolean }) => {
+      const dashboardCode = getDashboardDefinition(item.pageCode)?.code ?? dashboardByRoute.get(item.href);
+      if (dashboardCode) return canAccessDashboard(dashboardCode, roleKeys);
       if (isSuperAdmin) return true;
       if (item.pageCode) return visibleSet.has(item.pageCode) || canViewPage(item.pageCode);
       if (item.roles?.length) return hasAnyRole(...item.roles);
@@ -108,7 +119,7 @@ export function DashboardLayout({ children, subheader }: Props) {
           .filter(Boolean) as typeof group.items,
       }))
       .filter((g) => g.items.length > 0);
-  }, [visiblePageCodes, canViewPage, hasAnyRole, isAdminOrHR]);
+  }, [visiblePageCodes, canViewPage, hasAnyRole, isAdminOrHR, roleKeys]);
 
   const searchableItems = useMemo(
     () => filteredGroups.flatMap((g) =>

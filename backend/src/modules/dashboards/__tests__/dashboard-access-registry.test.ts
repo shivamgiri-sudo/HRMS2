@@ -39,7 +39,7 @@ describe("dashboard access registry", () => {
 
   it("matches the complete production role-dashboard matrix", () => {
     const expected: Record<string, string[]> = {
-      admin: ["EMPLOYEE_SELF_DASHBOARD"],
+      admin: [],
       super_admin: Object.keys(DASHBOARD_ACCESS_REGISTRY),
       ceo: ["CEO_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       hr: ["HR_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
