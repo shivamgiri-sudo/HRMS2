@@ -321,6 +321,16 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  const itDashboardQuery = useQuery({
+    queryKey: ["reference-dashboard-it-full", branchId, processId],
+    queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(
+      `/api/it-provisioning/it-dashboard-summary${branchId || processId ? `?${branchId ? `branch_id=${branchId}` : ""}${branchId && processId ? "&" : ""}${processId ? `process_id=${processId}` : ""}` : ""}`,
+    ))),
+    enabled: accessGranted && variant === "it_manager",
+    staleTime: 30_000,
+    retry: 1,
+  });
+
   const qualitySummaryQuery = useQuery({
     queryKey: ["reference-dashboard-quality-summary", branchId, processId],
     queryFn: () => hrmsApi.get<unknown>(`/api/quality-dashboard/summary${params}`),
@@ -374,7 +384,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(["ceo", "super_admin", "manager"].includes(variant) ? [orgKpiQuery] : []),
     ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
     ...(["operations", "manager", "super_admin", "ceo"].includes(variant) ? [qaQualityQuery] : []),
-    ...(variant === "it_manager" ? [itProvisioningQuery] : []),
+    ...(variant === "it_manager" ? [itProvisioningQuery, itDashboardQuery] : []),
   ] : [];
 
   // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
@@ -442,6 +452,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     orgKpi: normalizeOrgKpiData(orgKpiQuery.data),
     itProvisioning: itProvisioningQuery.data ?? {},
     itProvisioningAvailable: !itProvisioningQuery.isError,
+    itDashboard: itDashboardQuery.data ?? {},
     loading: primaryLoading,
     refreshing: activeQueryResults.some((query) => query.isFetching),
     generatedAt: summary?.generatedAt,

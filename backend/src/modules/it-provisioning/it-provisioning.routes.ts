@@ -624,4 +624,126 @@ router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'
   return res.json({ success: true, data: summary });
 }));
 
+// ── IT Dashboard Summary (comprehensive) ─────────────────────────────────────
+router.get('/it-dashboard-summary', requireRole('admin', 'super_admin', 'it', 'branch_it', 'ho_it', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+
+  const provFilters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
+    assignedRole: 'it',
+  };
+  if (isAdmin) {
+    if (req.query.branch_id) provFilters.branchIds = [String(req.query.branch_id)];
+    if (req.query.process_id) provFilters.processIds = [String(req.query.process_id)];
+  } else {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    const scoped = await narrowDashboardScope(
+      baseScope,
+      String(req.query.branch_id ?? ''),
+      String(req.query.process_id ?? ''),
+    );
+    provFilters.branchIds = scoped.branchIds;
+    provFilters.processIds = scoped.processIds;
+  }
+
+  const [
+    provisioning,
+    [ticketStatsRows],
+    [ticketListRows],
+    [assetSummaryRows],
+    [empDirectoryRows],
+  ] = await Promise.all([
+    getProvisioningStats(provFilters),
+
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*)                                                                     AS total_tickets,
+         SUM(status NOT IN ('resolved','closed','cancelled'))                         AS open_tickets,
+         SUM(priority = 'urgent' AND status NOT IN ('resolved','closed','cancelled')) AS urgent_tickets,
+         SUM(sla_breached = 1)                                                        AS sla_breached_total,
+         SUM(sla_breached = 1 AND status NOT IN ('resolved','closed','cancelled'))    AS sla_breached_open,
+         ROUND(AVG(CASE WHEN resolved_at IS NOT NULL
+           THEN TIMESTAMPDIFF(MINUTE, created_at, resolved_at) END), 0)               AS avg_resolution_minutes,
+         SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time
+       FROM helpdesk_ticket
+       WHERE category = 'it'`,
+      [],
+    ),
+
+    db.execute<RowDataPacket[]>(
+      `SELECT t.id, t.ticket_number, t.subject, t.status, t.priority,
+              t.created_at, t.resolved_at, t.sla_due_at, t.sla_breached,
+              t.assigned_to, t.closure_rating,
+              CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS raised_by_name,
+              e.employee_code,
+              bm.branch_name, pm.process_name,
+              au.display_name AS resolved_by_name
+         FROM helpdesk_ticket t
+         LEFT JOIN employees e ON e.id = t.employee_id
+         LEFT JOIN branch_master bm ON bm.id = e.branch_id
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN auth_user au ON au.id = t.assigned_to
+        WHERE t.category = 'it'
+        ORDER BY t.created_at DESC
+        LIMIT 50`,
+      [],
+    ),
+
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*)                                                                              AS total_assets,
+         SUM(status = 'available')                                                            AS available,
+         SUM(status = 'assigned')                                                             AS assigned,
+         SUM(status = 'maintenance')                                                          AS in_maintenance,
+         SUM(warranty_expiry IS NOT NULL AND warranty_expiry BETWEEN NOW()
+             AND DATE_ADD(NOW(), INTERVAL 90 DAY))                                            AS expiring_soon
+       FROM asset_master
+       WHERE active_status = 1`,
+      [],
+    ),
+
+    db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code,
+              CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+              e.official_email,
+              bm.branch_name, pm.process_name, dm.dept_name,
+              ipr.domain_account, ipr.asset_tag,
+              ipr.status AS it_provision_status,
+              ipr.actioned_at AS it_provisioned_at,
+              am.asset_name, am.asset_category, am.serial_number
+         FROM employees e
+         LEFT JOIN branch_master bm ON bm.id = e.branch_id
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN department_master dm ON dm.id = e.department_id
+         LEFT JOIN it_provisioning_request ipr
+                ON ipr.employee_id = e.id
+               AND ipr.task_code = 'IT_EMAIL_DOMAIN_ASSET'
+               AND ipr.id = (SELECT id FROM it_provisioning_request
+                              WHERE employee_id = e.id AND task_code = 'IT_EMAIL_DOMAIN_ASSET'
+                              ORDER BY created_at DESC LIMIT 1)
+         LEFT JOIN asset_assignment aa ON aa.employee_id = e.id AND aa.returned_date IS NULL
+         LEFT JOIN asset_master am ON am.id = aa.asset_id
+        WHERE e.active_status = 1
+        ORDER BY e.employee_code
+        LIMIT 200`,
+      [],
+    ),
+  ]);
+
+  return res.json({
+    success: true,
+    data: {
+      provisioning,
+      helpdesk: {
+        stats: (ticketStatsRows as any[])[0] ?? {},
+        tickets: ticketListRows as any[],
+      },
+      assets: (assetSummaryRows as any[])[0] ?? {},
+      employees: empDirectoryRows as any[],
+      generatedAt: new Date().toISOString(),
+    },
+  });
+}));
+
 export { router as itProvisioningRouter };

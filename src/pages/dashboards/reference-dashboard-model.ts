@@ -41,6 +41,7 @@ export interface ReferenceDashboardData {
   orgKpi: JsonRecord;
   itProvisioning?: JsonRecord;
   itProvisioningAvailable?: boolean;
+  itDashboard?: JsonRecord;
   loading: boolean;
   refreshing: boolean;
   generatedAt?: string;
