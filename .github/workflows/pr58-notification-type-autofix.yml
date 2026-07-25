@@ -29,27 +29,39 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           file = Path('backend/src/services/notification.service.ts')
           text = file.read_text()
 
-          old = '  id?: string;\n  email?: string;'
-          new = '  id?: string;\n  user_id?: string;\n  email?: string;'
-          if text.count(old) != 1:
-              raise SystemExit(f'NotificationRecipient field insertion point mismatch: {text.count(old)}')
-          text = text.replace(old, new, 1)
+          interface_pattern = re.compile(
+              r'(export interface NotificationRecipient\s*\{[\s\S]*?\n\s*id\?: string;\n)(\s*email\?: string;)',
+              re.MULTILINE,
+          )
+          text, interface_count = interface_pattern.subn(
+              r'\1  user_id?: string;\n\2',
+              text,
+              count=1,
+          )
+          if interface_count != 1:
+              raise SystemExit(f'NotificationRecipient interface mismatch: {interface_count}')
 
-          old = '''          const [subs] = await db.execute<RowDataPacket[]>(
-            `SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = ?`,
-            [recipient.user_id],
-          );'''
-          new = '''          const [subs] = await (db.execute(
-            `SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = ?`,
-            [recipient.user_id],
-          ) as Promise<[RowDataPacket[], unknown]>);'''
-          if text.count(old) != 1:
-              raise SystemExit(f'Push subscription query block mismatch: {text.count(old)}')
-          file.write_text(text.replace(old, new, 1))
+          query_pattern = re.compile(
+              r'const \[subs\] = await db\.execute<RowDataPacket\[\]>\(\s*'
+              r'(`SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = \?`,)\s*'
+              r'(\[recipient\.user_id\],)\s*'
+              r'\);',
+              re.MULTILINE,
+          )
+          text, query_count = query_pattern.subn(
+              r'const [subs] = await (db.execute(\n            \1\n            \2\n          ) as Promise<[RowDataPacket[], unknown]>);',
+              text,
+              count=1,
+          )
+          if query_count != 1:
+              raise SystemExit(f'Push subscription query mismatch: {query_count}')
+
+          file.write_text(text)
           PY
 
           rm .github/workflows/pr58-notification-type-autofix.yml
