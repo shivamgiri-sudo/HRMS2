@@ -1207,26 +1207,38 @@ export async function submitInterviewUpdate(
 
     // Auto-link candidate to the selected requisition/batch, then record outcome (fire-and-forget)
     if (input.requisitionId) {
-      jobRequisitionService.linkCandidate(
-        input.requisitionId,
-        candidate.id,
-        actorUserId ?? 'system',
-        'candidate_applied',
-        'auto-linked at interview feedback submission'
-      ).then(() => {
-        // Update outcome so fulfilled_headcount increments for selected candidates
-        if (finalDecision === 'Selected' || finalDecision === 'Rejected') {
-          const outcome = finalDecision === 'Selected' ? 'selected' : 'rejected';
-          return jobRequisitionService.updateCandidateOutcome(
+      (async () => {
+        try {
+          await jobRequisitionService.linkCandidate(
             input.requisitionId!,
             candidate.id,
-            outcome as 'selected' | 'rejected',
-            `${finalDecision} at interview feedback`
+            actorUserId ?? 'system',
+            'candidate_applied',
+            'auto-linked at interview feedback submission'
           );
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          // 409 "already linked" is expected on re-submissions — continue to outcome update
+          if (!msg.includes('already linked')) {
+            console.warn('[recruiter-submission link]', msg);
+            return;
+          }
         }
-      }).catch((e: unknown) => {
-        console.warn('[recruiter-submission auto-link/outcome]', e instanceof Error ? e.message : e);
-      });
+        // Always update outcome regardless of whether link was new or pre-existing
+        if (finalDecision === 'Selected' || finalDecision === 'Rejected') {
+          const outcome = finalDecision === 'Selected' ? 'selected' : 'rejected';
+          try {
+            await jobRequisitionService.updateCandidateOutcome(
+              input.requisitionId!,
+              candidate.id,
+              outcome as 'selected' | 'rejected',
+              `${finalDecision} at interview feedback`
+            );
+          } catch (e2: unknown) {
+            console.warn('[recruiter-submission outcome]', e2 instanceof Error ? e2.message : e2);
+          }
+        }
+      })().catch((e: unknown) => console.warn('[recruiter-submission auto-link/outcome]', e instanceof Error ? e.message : e));
     }
 
     if (finalDecision === "Selected") {

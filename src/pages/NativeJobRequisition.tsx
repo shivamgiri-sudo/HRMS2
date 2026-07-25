@@ -177,6 +177,7 @@ const emptyForm = {
   job_description: '',
   planned_batch_no: '',
   training_start_date: '',
+  target_joining_date: '',
   requisition_validity: '',
 };
 
@@ -371,6 +372,7 @@ export default function NativeJobRequisition() {
         experience_max_years: formData.experience_max_years ? Number(formData.experience_max_years) : null,
         planned_batch_no: formData.planned_batch_no || null,
         training_start_date: formData.training_start_date || null,
+        target_joining_date: formData.target_joining_date || null,
         requisition_validity: formData.requisition_validity || null,
         process_id: formData.process_id || null,
       };
@@ -572,6 +574,7 @@ export default function NativeJobRequisition() {
       job_description: '',
       planned_batch_no: req.planned_batch_no || '',
       training_start_date: req.training_start_date ? req.training_start_date.substring(0, 10) : '',
+      target_joining_date: req.target_joining_date ? req.target_joining_date.substring(0, 10) : '',
       requisition_validity: req.requisition_validity ? req.requisition_validity.substring(0, 10) : '',
     });
     setFormError('');
@@ -1221,6 +1224,15 @@ export default function NativeJobRequisition() {
                         type="date"
                         value={formData.requisition_validity}
                         onChange={(e) => field('requisition_validity', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Target Joining Date</label>
+                      <input
+                        type="date"
+                        value={formData.target_joining_date}
+                        onChange={(e) => field('target_joining_date', e.target.value)}
                         className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                       />
                     </div>

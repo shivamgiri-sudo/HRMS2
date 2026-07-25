@@ -991,20 +991,28 @@ export const jobRequisitionService = {
         END) AS screened_count,
 
         COUNT(DISTINCT CASE
-          WHEN c.current_stage IN ('Selected', 'Offered', 'Joined', 'Converted')
+          WHEN jrc.outcome IN ('selected', 'offer_declined')
+            OR c.current_stage IN ('Selected', 'Offered', 'Joined', 'Converted')
           THEN c.id
         END) AS selected_count,
 
         COUNT(DISTINCT CASE
           WHEN c.current_stage IN ('Offered', 'Joined', 'Converted')
+            OR jrc.outcome = 'offer_declined'
           THEN c.id
         END) AS offered_count,
 
-        COUNT(DISTINCT ob.id) AS onboarding_count,
+        COUNT(DISTINCT CASE
+          WHEN ob.id IS NOT NULL
+            AND (ob.bridge_status != 'pending'
+                 OR ob.joining_document_completion_pct > 0
+                 OR ob.hr_approved_at IS NOT NULL)
+          THEN ob.id
+        END) AS onboarding_count,
 
         COUNT(DISTINCT CASE
-          WHEN ob.employee_id IS NOT NULL AND e.active_status = 1
-          THEN e.id
+          WHEN ob.employee_code IS NOT NULL OR ob.employee_id IS NOT NULL
+          THEN ob.id
         END) AS joined_count,
 
         COUNT(DISTINCT lm.id) AS lms_enrolled_count
@@ -1275,21 +1283,22 @@ export const jobRequisitionService = {
   async getJoinedEmployees(requisitionId: string): Promise<JoinedEmployee[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         e.id            AS employee_id,
-         e.full_name,
-         e.employee_code,
-         e.date_of_joining,
-         ob.status AS bridge_status,
+         COALESCE(e.id, ob.employee_id) AS employee_id,
+         COALESCE(e.full_name, c.full_name) AS full_name,
+         COALESCE(e.employee_code, ob.employee_code) AS employee_code,
+         COALESCE(e.date_of_joining, ob.joining_date) AS date_of_joining,
+         ob.bridge_status,
          c.id            AS candidate_id,
          c.full_name     AS candidate_name,
          (lm.id IS NOT NULL) AS lms_enrolled
        FROM job_requisition_candidate jrc
        JOIN ats_candidate c          ON c.id = jrc.candidate_id
        JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
-       JOIN employees e              ON e.id = ob.employee_id AND e.active_status = 1
+            AND (ob.employee_code IS NOT NULL OR ob.employee_id IS NOT NULL)
+       LEFT JOIN employees e         ON e.id = ob.employee_id
        LEFT JOIN lms_employee_mapping lm ON lm.employee_id = e.id
        WHERE jrc.requisition_id = ?
-       ORDER BY e.date_of_joining ASC`,
+       ORDER BY COALESCE(e.date_of_joining, ob.bridge_date) ASC`,
       [requisitionId]
     );
     return (rows as RowDataPacket[]).map(r => ({
