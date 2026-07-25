@@ -15,12 +15,32 @@ deepReportRouter.use(requireAuth);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
 
+const ROLE_ALIASES: Record<string, string[]> = {
+  visitor_security: ["security"],
+  visitor_reception: ["security"],
+  branch_hr: ["hr"],
+  hr_branch: ["hr"],
+  quality_analyst: ["quality"],
+  payroll_hr: ["payroll"],
+};
+
+const ROUTE_ALIASES: Record<string, string> = {
+  "/performance-dashboard": "/performance-hub",
+  "/training": "/lms/coordinator",
+  "/it-dashboard": "/it/dashboard",
+};
+
 function rolesFor(req: AuthenticatedRequest) {
-  return [...new Set([
+  const rawRoles = [...new Set([
     ...(req.authUser?.roles ?? []),
     ...(req.userRoles ?? []),
     req.authUser?.role,
   ].filter((role): role is string => Boolean(role)))];
+  return [...new Set(rawRoles.flatMap((role) => [role, ...(ROLE_ALIASES[role] ?? [])]))];
+}
+
+function normalisedRoutes(routes: Array<{ label: string; path: string }>) {
+  return routes.map((route) => ({ ...route, path: ROUTE_ALIASES[route.path] ?? route.path }));
 }
 
 function canExport(roles: string[], exportRoles: string[]) {
@@ -33,6 +53,7 @@ deepReportRouter.get("/", h(async (req, res) => {
     .filter((pack) => canViewDeepReportPack(pack, roles))
     .map((pack) => ({
       ...pack,
+      relatedRoutes: normalisedRoutes(pack.relatedRoutes),
       canExport: canExport(roles, pack.exportRoles),
     }));
 
@@ -59,10 +80,12 @@ deepReportRouter.get("/:code", h(async (req, res) => {
     return res.status(403).json({ success: false, message: "You do not have access to this report section" });
   }
 
+  const resolved = resolveDeepReportPack(pack);
   return res.json({
     success: true,
     data: {
-      ...resolveDeepReportPack(pack),
+      ...resolved,
+      relatedRoutes: normalisedRoutes(resolved.relatedRoutes),
       canExport: canExport(roles, pack.exportRoles),
     },
   });
