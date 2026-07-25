@@ -187,7 +187,8 @@ export function useHubEmployees(filters: HubFilters, month: string) {
       const raw: HubEmployee[] = Array.isArray(res) ? res : (res?.data ?? []);
       return { data: raw, total: Number(res?.total ?? raw.length) };
     },
-    staleTime: 60_000,
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
   });
 }
 

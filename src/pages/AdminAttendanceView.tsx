@@ -10,7 +10,7 @@ import type { HubEmployee, HubFilters } from "@/hooks/useAttendanceHub";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
-const ALLOWED_ROLES = ["super_admin", "admin", "hr", "payroll_head", "payroll_admin"] as const;
+const ALLOWED_ROLES = ["super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"] as const;
 
 const DEFAULT_FILTERS: HubFilters = {
   search: "",
@@ -38,7 +38,7 @@ export default function AdminAttendanceView() {
   const [selectedEmployee, setSelectedEmployee] = useState<HubEmployee | null>(null);
 
   // Debounce search so API isn't called on every keystroke
-  const debouncedSearch = useDebounce(filters.search, 400);
+  const debouncedSearch = useDebounce(filters.search, 250);
   const debouncedFilters = useMemo(
     () => ({ ...filters, search: debouncedSearch }),
     [filters, debouncedSearch]

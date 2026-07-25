@@ -564,7 +564,7 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req
 }));
 
 // GET /api/employees/hr-hub/filter-options - scoped options from active employee assignments
-router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
   const parsed = employeeFiltersSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -660,7 +660,7 @@ router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "
   });
 }));
 
-router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
   // IST today: UTC+5:30
   const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   const today = nowIST.toISOString().slice(0, 10);
@@ -703,7 +703,7 @@ router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "p
 }));
 
 // GET /api/employees/hr-hub — enriched employee list for People Attendance & Earnings Hub
-router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin"), h(async (req: any, res: any) => {
+router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
   const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ success: false, error: "month must be YYYY-MM" });
@@ -750,8 +750,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
   }
   const where = `WHERE ${conds.join(" AND ")}`;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code,
+  const mainQuery = `SELECT e.id, e.employee_code,
             CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS full_name,
             e.employment_status, e.date_of_joining,
             bm.branch_name, pm.process_name, dm.designation_name, dept.dept_name,
@@ -783,22 +782,18 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
           GROUP BY employee_id
        ) att ON att.employee_id = e.id
        LEFT JOIN (
-         SELECT spl.employee_id, spl.net_salary, spr.run_month
-           FROM salary_prep_line spl
-           JOIN salary_prep_run spr ON spr.id = spl.run_id
-           JOIN (
-             SELECT spl2.employee_id, MAX(spr2.run_month) AS max_month
-               FROM salary_prep_line spl2
-               JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id
-              GROUP BY spl2.employee_id
-           ) latest ON latest.employee_id = spl.employee_id
-                   AND spr.run_month = latest.max_month
+         SELECT employee_id, net_salary, run_month
+           FROM (
+             SELECT spl.employee_id, spl.net_salary, spr.run_month,
+                    ROW_NUMBER() OVER (PARTITION BY spl.employee_id ORDER BY spr.run_month DESC, spr.created_at DESC) AS rn
+               FROM salary_prep_line spl
+               JOIN salary_prep_run spr ON spr.id = spl.run_id
+           ) ranked
+          WHERE rn = 1
        ) sal ON sal.employee_id = e.id
        ${where}
        ORDER BY e.employee_code ASC
-       LIMIT ${limit} OFFSET ${offset}`,
-    [monthStart, monthEnd, ...params]
-  );
+       LIMIT ${limit} OFFSET ${offset}`;
 
   const countQuery = anomalyOnly
     ? `SELECT COUNT(*) AS total
@@ -824,7 +819,10 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
     ? [monthStart, monthEnd, ...params]
     : params;
 
-  const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
+  const [[rows], [countRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(mainQuery, [monthStart, monthEnd, ...params]),
+    db.execute<RowDataPacket[]>(countQuery, countParams),
+  ]);
 
   const data = (rows as any[]).map((r: any) => ({
     ...r,
