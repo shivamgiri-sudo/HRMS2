@@ -541,7 +541,7 @@ export default function PnlMasterControlCenterPage() {
           aria-label="Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification"
           className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white"
         >
-          <h1 className="text-sm font-semibold">P&amp;L Control Centre</h1>
+          <h1 className="text-sm font-semibold">P&L Master & Control Center</h1>
           <div className="flex items-center gap-3">
             {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
             <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={() => setBulkUploadOpen(true)}>
