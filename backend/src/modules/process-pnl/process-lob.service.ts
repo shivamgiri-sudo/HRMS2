@@ -990,7 +990,7 @@ export const processLobService = {
       tax: allocationForPool(processRow.tax - directTax, lobs, weights, allocatedTax),
     };
 
-    const rows = lobs.map((lob) => {
+    const rows: Array<Record<string, unknown> & { rowType: "lob" | "unallocated"; processLobId: string | null }> = lobs.map((lob) => {
       const item = direct.get(lob.id) ?? defaultDirectData();
       const plan = plans.get(lob.id);
       const otherOperatingNet = item.otherOperatingCost - item.otherOperatingIncome + (allocatedOtherOperating.get(lob.id) ?? 0);
