@@ -8,6 +8,8 @@ export interface DeepReportFilters {
   month?: string;
   from?: string;
   to?: string;
+  authorizedBranchIds?: string[];
+  scopeIsGlobal?: boolean;
 }
 
 interface ColumnMetadata extends RowDataPacket {
@@ -47,6 +49,7 @@ const MONTH = /^\d{4}-\d{2}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ISSUE_STATUS = /(pending|failed|failure|error|rejected|overdue|unmapped|missing|hold|open|blocked|exception|expired|negative|mismatch)/i;
 const ACTIVE_STATUS = /^(active|approved|completed|complete|closed|paid|verified|validated|success|successful|finalized|released|locked|disbursed|present)$/i;
+const NO_SCOPE_SENTINEL = "__NO_BRANCH_SCOPE__";
 
 function q(identifier: string) {
   if (!IDENTIFIER.test(identifier)) throw new Error(`Unsafe SQL identifier: ${identifier}`);
@@ -60,6 +63,8 @@ function normalizeFilters(filters: DeepReportFilters): DeepReportFilters {
     month: filters.month && MONTH.test(filters.month) ? filters.month : undefined,
     from: filters.from && DATE.test(filters.from) ? filters.from : undefined,
     to: filters.to && DATE.test(filters.to) ? filters.to : undefined,
+    authorizedBranchIds: [...new Set((filters.authorizedBranchIds ?? []).map(String).filter(Boolean))],
+    scopeIsGlobal: Boolean(filters.scopeIsGlobal),
   };
 }
 
@@ -67,20 +72,82 @@ function chooseColumn(columns: Set<string>, candidates: string[]) {
   return candidates.find((candidate) => columns.has(candidate)) ?? null;
 }
 
+function placeholders(values: unknown[]) {
+  return values.map(() => "?").join(",");
+}
+
 function buildWhere(columns: Set<string>, filters: DeepReportFilters) {
   const clauses: string[] = [];
   const params: unknown[] = [];
   const applied: string[] = [];
+  const authorised = filters.scopeIsGlobal ? [] : (filters.authorizedBranchIds ?? []);
 
-  if (filters.branchId && columns.has("branch_id")) {
-    clauses.push(`${q("branch_id")} = ?`);
-    params.push(filters.branchId);
-    applied.push("branchId");
+  if (!filters.scopeIsGlobal && authorised.includes(NO_SCOPE_SENTINEL)) {
+    return {
+      sql: "",
+      params: [],
+      applied: [],
+      unsafeReason: "The authenticated user has no authorised branch scope for reporting.",
+    };
   }
-  if (filters.processId && columns.has("process_id")) {
-    clauses.push(`${q("process_id")} = ?`);
-    params.push(filters.processId);
-    applied.push("processId");
+
+  if (!filters.scopeIsGlobal && filters.branchId && !authorised.includes(filters.branchId)) {
+    return {
+      sql: "",
+      params: [],
+      applied: [],
+      unsafeReason: "The requested branch is outside the authenticated user's reporting scope.",
+    };
+  }
+
+  const effectiveBranches = filters.branchId
+    ? [filters.branchId]
+    : authorised;
+
+  if (effectiveBranches.length > 0) {
+    if (columns.has("branch_id")) {
+      clauses.push(`${q("branch_id")} IN (${placeholders(effectiveBranches)})`);
+      params.push(...effectiveBranches);
+      applied.push(filters.branchId ? "branchId" : "authorisedBranchScope");
+    } else if (columns.has("employee_id")) {
+      clauses.push(`${q("employee_id")} IN (
+        SELECT scoped_employee.id
+          FROM employees scoped_employee
+         WHERE scoped_employee.branch_id IN (${placeholders(effectiveBranches)})
+      )`);
+      params.push(...effectiveBranches);
+      applied.push(filters.branchId ? "branchIdThroughEmployee" : "authorisedBranchScopeThroughEmployee");
+    } else {
+      return {
+        sql: "",
+        params: [],
+        applied: [],
+        unsafeReason: "This source cannot be safely restricted to the authenticated user's branch scope.",
+      };
+    }
+  }
+
+  if (filters.processId) {
+    if (columns.has("process_id")) {
+      clauses.push(`${q("process_id")} = ?`);
+      params.push(filters.processId);
+      applied.push("processId");
+    } else if (columns.has("employee_id")) {
+      clauses.push(`${q("employee_id")} IN (
+        SELECT scoped_employee.id
+          FROM employees scoped_employee
+         WHERE scoped_employee.process_id = ?
+      )`);
+      params.push(filters.processId);
+      applied.push("processIdThroughEmployee");
+    } else {
+      return {
+        sql: "",
+        params: [],
+        applied: [],
+        unsafeReason: "This source cannot be safely restricted to the selected Process.",
+      };
+    }
   }
 
   const periodColumn = chooseColumn(columns, ["period_code", "run_month", "payroll_month", "month"]);
@@ -123,6 +190,36 @@ function buildWhere(columns: Set<string>, filters: DeepReportFilters) {
     sql: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
     params,
     applied,
+    unsafeReason: null as string | null,
+  };
+}
+
+function sourceError(
+  group: DeepReportSourceGroup,
+  selectedTable: string | null,
+  availableTables: string[],
+  missingCandidates: string[],
+  message: string
+): DeepSourceHealth {
+  return {
+    key: group.key,
+    label: group.label,
+    description: group.description,
+    required: group.required !== false,
+    state: "error",
+    selectedTable,
+    availableTables,
+    missingCandidates,
+    rowCount: null,
+    activeCount: null,
+    issueCount: null,
+    latestActivity: null,
+    statusColumn: null,
+    statusBreakdown: [],
+    missingBranchMappings: null,
+    missingProcessMappings: null,
+    appliedFilters: [],
+    error: message,
   };
 }
 
@@ -161,6 +258,10 @@ async function probeSourceGroup(
   try {
     const columns = new Set((columnMap.get(selectedTable) ?? []).map((column) => column.column_name));
     const where = buildWhere(columns, filters);
+    if (where.unsafeReason) {
+      return sourceError(group, selectedTable, availableTables, missingCandidates, where.unsafeReason);
+    }
+
     const statusColumn = chooseColumn(columns, [
       "status",
       "approval_status",
@@ -223,22 +324,22 @@ async function probeSourceGroup(
 
     let missingBranchMappings: number | null = null;
     if (columns.has("branch_id")) {
-      const [rows] = await db.execute<RowDataPacket[]>(
+      const [mappingRows] = await db.execute<RowDataPacket[]>(
         `SELECT SUM(CASE WHEN ${q("branch_id")} IS NULL OR CAST(${q("branch_id")} AS CHAR) = '' THEN 1 ELSE 0 END) AS missing
            FROM ${q(selectedTable)}${where.sql}`,
         where.params
       );
-      missingBranchMappings = Number(rows[0]?.missing ?? 0);
+      missingBranchMappings = Number(mappingRows[0]?.missing ?? 0);
     }
 
     let missingProcessMappings: number | null = null;
     if (columns.has("process_id")) {
-      const [rows] = await db.execute<RowDataPacket[]>(
+      const [mappingRows] = await db.execute<RowDataPacket[]>(
         `SELECT SUM(CASE WHEN ${q("process_id")} IS NULL OR CAST(${q("process_id")} AS CHAR) = '' THEN 1 ELSE 0 END) AS missing
            FROM ${q(selectedTable)}${where.sql}`,
         where.params
       );
-      missingProcessMappings = Number(rows[0]?.missing ?? 0);
+      missingProcessMappings = Number(mappingRows[0]?.missing ?? 0);
     }
 
     return {
@@ -261,26 +362,13 @@ async function probeSourceGroup(
       appliedFilters: where.applied,
     };
   } catch (error) {
-    return {
-      key: group.key,
-      label: group.label,
-      description: group.description,
-      required: group.required !== false,
-      state: "error",
+    return sourceError(
+      group,
       selectedTable,
       availableTables,
       missingCandidates,
-      rowCount: null,
-      activeCount: null,
-      issueCount: null,
-      latestActivity: null,
-      statusColumn: null,
-      statusBreakdown: [],
-      missingBranchMappings: null,
-      missingProcessMappings: null,
-      appliedFilters: [],
-      error: error instanceof Error ? error.message : String(error),
-    };
+      error instanceof Error ? error.message : String(error)
+    );
   }
 }
 
@@ -294,12 +382,12 @@ export const deepReportService = {
     const columnMap = new Map<string, ColumnMetadata[]>();
 
     if (candidateTables.length) {
-      const placeholders = candidateTables.map(() => "?").join(",");
+      const tablePlaceholders = candidateTables.map(() => "?").join(",");
       const [tables] = await db.execute<TableMetadata[]>(
         `SELECT table_name, table_rows
            FROM information_schema.tables
           WHERE table_schema = DATABASE()
-            AND table_name IN (${placeholders})`,
+            AND table_name IN (${tablePlaceholders})`,
         candidateTables
       );
       for (const table of tables) tableMap.set(String(table.table_name), table);
@@ -308,7 +396,7 @@ export const deepReportService = {
         `SELECT table_name, column_name, data_type
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
-            AND table_name IN (${placeholders})`,
+            AND table_name IN (${tablePlaceholders})`,
         candidateTables
       );
       for (const column of columns) {
@@ -333,11 +421,11 @@ export const deepReportService = {
     );
     const knownIssueCount = sources.reduce((total, source) => total + (source.issueCount ?? 0), 0);
     const knownRowCount = sources.reduce((total, source) => total + (source.rowCount ?? 0), 0);
-    const latestActivity = sources
+    const activityValues = sources
       .map((source) => source.latestActivity)
       .filter((value): value is string => Boolean(value))
-      .sort()
-      .at(-1) ?? null;
+      .sort();
+    const latestActivity = activityValues.length ? activityValues[activityValues.length - 1] : null;
     const coveragePct = requiredSources.length
       ? Number(((availableRequired.length / requiredSources.length) * 100).toFixed(1))
       : 100;
@@ -351,7 +439,7 @@ export const deepReportService = {
       ...sourceErrors.map((source) => ({
         severity: "critical" as const,
         code: `SOURCE_ERROR_${source.key.toUpperCase()}`,
-        message: `${source.label} could not be queried: ${source.error ?? "unknown error"}`,
+        message: `${source.label} could not be queried safely: ${source.error ?? "unknown error"}`,
       })),
       ...(mappingExceptions > 0
         ? [{
@@ -372,7 +460,13 @@ export const deepReportService = {
     return {
       packCode: pack.code,
       generatedAt: new Date().toISOString(),
-      filters,
+      filters: {
+        branchId: filters.branchId,
+        processId: filters.processId,
+        month: filters.month,
+        from: filters.from,
+        to: filters.to,
+      },
       kpis: {
         schemaCoveragePct: coveragePct,
         availableRequiredSources: availableRequired.length,
