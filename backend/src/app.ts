@@ -372,6 +372,7 @@ app.use("/api/org/events", eventsRouter);
 app.use("/api/org", orgRouter);
 app.use("/api/org-chart", orgChartRouter);
 app.use("/api/ats-ext", atsExtRouter);
+app.use("/api/files", filesRouter); // must be before clientRouter (which applies requireAuth to /api/*)
 app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);
@@ -381,7 +382,6 @@ app.use("/api/admin/email-templates", emailTemplatesRouter);
 app.use("/api/workflow", workflowRouter);
 app.use("/api/lifecycle", lifecycleRouter);
 app.use("/api/assets-mgmt", assetsRouter);
-app.use("/api/files", filesRouter);
 app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/hr", hrDocumentTemplatesRouter);
 app.use("/api/payroll", payrollEpfComplianceRouter);
