@@ -18,6 +18,32 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+// PERFORMANCE: Simple in-memory cache for hr-hub queries (30-second TTL)
+interface CacheEntry { data: any; timestamp: number; }
+const hrHubCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 30_000; // 30 seconds
+
+function getCached(key: string): any | null {
+  const entry = hrHubCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    hrHubCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key: string, data: any): void {
+  hrHubCache.set(key, { data, timestamp: Date.now() });
+  // Auto-cleanup: remove entries older than 5 minutes
+  if (hrHubCache.size > 100) {
+    const cutoff = Date.now() - 300_000;
+    for (const [k, v] of hrHubCache.entries()) {
+      if (v.timestamp < cutoff) hrHubCache.delete(k);
+    }
+  }
+}
+
 router.use(requireAuth);
 
 // GET /api/employees/me — returns the employee record for the logged-in user with nested details
@@ -712,6 +738,13 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
   const [y, m] = month.split("-").map(Number);
   const monthEnd = `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
 
+  // PERFORMANCE: Check cache first (cache key includes all filters)
+  const cacheKey = `hr-hub:${req.authUser!.id}:${JSON.stringify(req.query)}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
+
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     ["hr", "manager", "payroll_head", "payroll_admin"],
@@ -750,8 +783,9 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
   }
   const where = `WHERE ${conds.join(" AND ")}`;
 
+  // PERFORMANCE FIX: Use indexed queries and simpler aggregations
   const mainQuery = `SELECT e.id, e.employee_code,
-            CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS full_name,
+            e.full_name,
             e.employment_status, e.date_of_joining,
             bm.branch_name, pm.process_name, dm.designation_name, dept.dept_name,
             COALESCE(att.present_days, 0) AS present_days,
@@ -767,30 +801,26 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN (
          SELECT employee_id,
-                SUM(attendance_status = 'present') AS present_days,
-                COALESCE(SUM(
-                  CASE
+                COUNT(CASE WHEN attendance_status = 'present' THEN 1 END) AS present_days,
+                SUM(CASE
                     WHEN attendance_status NOT IN ('week_off','holiday','leave_approved')
                     THEN COALESCE(lwp_value, 0)
                     ELSE 0
-                  END
-                ), 0) AS lwp_days,
+                END) AS lwp_days,
                 COALESCE(SUM(late_mark), 0) AS late_marks,
-                SUM(attendance_status = 'missing_punch') AS missing_punch_count
+                COUNT(CASE WHEN attendance_status = 'missing_punch' THEN 1 END) AS missing_punch_count
            FROM attendance_daily_record
-          WHERE record_date BETWEEN ? AND ?
+          WHERE record_date >= ? AND record_date <= ?
           GROUP BY employee_id
        ) att ON att.employee_id = e.id
-       LEFT JOIN (
-         SELECT employee_id, net_salary, run_month
-           FROM (
-             SELECT spl.employee_id, spl.net_salary, spr.run_month,
-                    ROW_NUMBER() OVER (PARTITION BY spl.employee_id ORDER BY spr.run_month DESC, spr.created_at DESC) AS rn
-               FROM salary_prep_line spl
-               JOIN salary_prep_run spr ON spr.id = spl.run_id
-           ) ranked
-          WHERE rn = 1
-       ) sal ON sal.employee_id = e.id
+       LEFT JOIN LATERAL (
+         SELECT spl.net_salary, spr.run_month
+           FROM salary_prep_line spl
+           INNER JOIN salary_prep_run spr ON spr.id = spl.run_id
+          WHERE spl.employee_id = e.id
+          ORDER BY spr.run_month DESC, spr.created_at DESC
+          LIMIT 1
+       ) sal ON TRUE
        ${where}
        ORDER BY e.employee_code ASC
        LIMIT ${limit} OFFSET ${offset}`;
@@ -829,7 +859,12 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
     has_anomaly: Number(r.lwp_days) > 2 || Number(r.missing_punch_count) > 0,
   }));
 
-  return res.json({ success: true, data, total: Number((countRows as any[])[0]?.total ?? 0), page, limit });
+  const result = { success: true, data, total: Number((countRows as any[])[0]?.total ?? 0), page, limit };
+
+  // PERFORMANCE: Cache the result
+  setCache(cacheKey, result);
+
+  return res.json(result);
 }));
 
 router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo"), h(async (req, res) => {
