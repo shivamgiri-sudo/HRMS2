@@ -51,6 +51,7 @@ async function fetchJson(
   try {
     const res = await fetch(apiUrl(path), {
       ...init,
+      credentials: 'include',
       headers: {
         Accept: 'application/json',
         ...init.headers,
@@ -87,13 +88,10 @@ function decodeJwtUser(token: string): HrmsUser | null {
 }
 
 async function tryRefresh(): Promise<HrmsUser | null> {
-  const raw = localStorage.getItem('hrms_refresh_token');
-  if (!raw) return null;
   try {
     const { ok, payload } = await fetchJson('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: raw }),
     });
     if (!ok) {
       // Check for security-related errors that require logout
@@ -108,10 +106,6 @@ async function tryRefresh(): Promise<HrmsUser | null> {
     }
     const { data } = payload ?? {};
     localStorage.setItem('hrms_access_token', data.accessToken);
-    // SECURITY: Store the rotated refresh token (token rotation is now enforced)
-    if (data.refreshToken) {
-      localStorage.setItem('hrms_refresh_token', data.refreshToken);
-    }
     return decodeJwtUser(data.accessToken);
   } catch {
     return null;
@@ -253,12 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
-      // Only store refresh token if provided (not provided when 2FA is required)
-      if (refreshToken) {
-        localStorage.setItem('hrms_refresh_token', refreshToken);
-      } else {
-        localStorage.removeItem('hrms_refresh_token');
-      }
+      localStorage.removeItem('hrms_refresh_token');
       const forceChange = authUser.mustChangePassword === true;
       const requiresTwoFactor = authUser.twoFactorRequired === true;
       const verifiedTwoFactor = authUser.twoFactorVerified === true;
@@ -297,18 +286,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     setIsSigningOut(true);
     try {
-      const refreshToken = localStorage.getItem('hrms_refresh_token');
-      if (refreshToken) {
-        const token = localStorage.getItem('hrms_access_token');
-        await fetch(apiUrl('/api/auth/logout'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ refreshToken }),
-        }).catch(() => { /* best-effort */ });
-      }
+      const token = localStorage.getItem('hrms_access_token');
+      await fetch(apiUrl('/api/auth/logout'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }).catch(() => { /* best-effort */ });
     } finally {
       localStorage.removeItem('hrms_demo_session');
       localStorage.removeItem('hrms_access_token');
@@ -390,9 +376,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (payload?.accessToken) {
         localStorage.setItem('hrms_access_token', payload.accessToken);
       }
-      if (payload?.refreshToken) {
-        localStorage.setItem('hrms_refresh_token', payload.refreshToken);
-      }
+      localStorage.removeItem('hrms_refresh_token');
 
       localStorage.setItem('hrms_2fa_required', 'true');
       localStorage.setItem('hrms_2fa_verified', 'true');

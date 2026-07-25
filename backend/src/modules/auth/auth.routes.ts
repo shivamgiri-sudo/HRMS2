@@ -13,6 +13,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
 import { classifyLoginError } from "./auth-login-error.js";
+import { clearRefreshTokenCookie, getRefreshTokenFromRequest, setRefreshTokenCookie } from "./auth-cookie.js";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -161,6 +162,11 @@ router.post("/login", authLimiter, h(async (req, res) => {
 
   try {
     const tokens = await authService.login(identifier, password, req);
+    if (tokens.refreshToken) {
+      setRefreshTokenCookie(res, tokens.refreshToken);
+    } else {
+      clearRefreshTokenCookie(res);
+    }
     return res.json({ data: tokens });
   } catch (error: unknown) {
     const failure = classifyLoginError(error);
@@ -322,18 +328,19 @@ router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin
 // The old token is marked as rotated (not deleted) for reuse detection.
 // If a rotated token is reused, the entire token family is revoked.
 router.post("/refresh", h(async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = getRefreshTokenFromRequest(req);
   if (!refreshToken) return res.status(400).json({ error: "refreshToken required" });
 
   try {
     const tokens = await authService.refreshAccess(refreshToken);
+    setRefreshTokenCookie(res, tokens.refreshToken);
     return res.json({
       data: {
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken, // NEW: rotated refresh token
       }
     });
   } catch (error: unknown) {
+    clearRefreshTokenCookie(res);
     const err = error as { code?: string; message?: string };
     // Return specific error codes for client-side handling
     if (err.code === 'TOKEN_REUSED') {
@@ -364,7 +371,7 @@ router.post("/refresh", h(async (req, res) => {
 // POST /api/auth/logout — public (rate limited)
 // Must work even with expired/invalid access token so users can always logout
 router.post("/logout", logoutLimiter, h(async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = getRefreshTokenFromRequest(req);
   // Always return success to prevent revealing whether a session existed
   // This prevents enumeration attacks where an attacker probes for active sessions
   if (refreshToken) {
@@ -372,6 +379,7 @@ router.post("/logout", logoutLimiter, h(async (req, res) => {
       // Silently ignore errors - don't reveal session state
     });
   }
+  clearRefreshTokenCookie(res);
   return res.json({ success: true });
 }));
 
@@ -495,6 +503,7 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req, res) => 
     const exchanged = await authService.exchangePreAuthToken(preAuthToken, req);
     accessToken = exchanged.accessToken;
     refreshToken = exchanged.refreshToken;
+    setRefreshTokenCookie(res, exchanged.refreshToken);
   } catch {
     // If exchange fails (e.g. already-verified challenge, race), the client will
     // need to call POST /api/auth/2fa/exchange explicitly.
@@ -514,7 +523,8 @@ router.post("/2fa/exchange", requireAuth, h(async (req, res) => {
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   try {
     const { accessToken, refreshToken } = await authService.exchangePreAuthToken(preAuthToken, req);
-    return res.json({ success: true, accessToken, refreshToken });
+    setRefreshTokenCookie(res, refreshToken);
+    return res.json({ success: true, accessToken });
   } catch (error: unknown) {
     const status = typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode?: unknown }).statusCode === "number"
       ? (error as { statusCode: number }).statusCode

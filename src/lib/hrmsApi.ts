@@ -16,13 +16,11 @@ let _refreshPromise: Promise<boolean> | null = null;
 async function refreshAccessToken(): Promise<boolean> {
   if (_refreshPromise) return _refreshPromise;
   _refreshPromise = (async () => {
-    const raw = localStorage.getItem("hrms_refresh_token");
-    if (!raw) return false;
     try {
       const res = await fetch(`${HRMS_API_URL}/api/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: raw }),
+        credentials: "include",
       });
       if (!res.ok) return false;
       const data = await res.json();
@@ -106,6 +104,7 @@ async function fetchOnce(normalizedPath: string, method: string, body: unknown, 
   try {
     return await fetch(`${HRMS_API_URL}${normalizedPath}`, {
       method,
+      credentials: "include",
       headers: { "Content-Type": "application/json", ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
@@ -167,6 +166,7 @@ async function requestRaw(method: string, path: string): Promise<string> {
 
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...headers },
   });
 
@@ -202,6 +202,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
   const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "POST",
+    credentials: "include",
     headers, // No Content-Type — browser sets multipart boundary automatically
     body,
   });
@@ -219,6 +220,7 @@ async function requestBlob(path: string): Promise<Blob> {
   const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "GET",
+    credentials: "include",
     headers: { ...headers },
   });
   if (!res.ok) {
