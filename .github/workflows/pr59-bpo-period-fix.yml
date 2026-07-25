@@ -1,0 +1,149 @@
+name: PR59 BPO Period Semantics Fix
+
+on:
+  push:
+    branches:
+      - agent/deep-section-reports
+    paths:
+      - .github/workflows/pr59-bpo-period-fix.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pr59-bpo-period-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deep-section-reports
+          fetch-depth: 0
+
+      - name: Correct snapshot and monthly period semantics
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/src/modules/reporting/bpo-master-report.service.ts')
+          text = path.read_text()
+
+          old = '''interface QueryContext {
+            sourceTable: string;'''
+          new = '''interface QueryContext {
+            reportCode: string;
+            sourceTable: string;'''
+          if text.count(old) != 1:
+            raise SystemExit(f'QueryContext insertion mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''  return {
+              sourceTable,'''
+          new = '''  return {
+              reportCode,
+              sourceTable,'''
+          if text.count(old) != 1:
+            raise SystemExit(f'context return mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''  if (column.key === "REPORT_DATE") {
+              if (context.dateExpression) return context.dateExpression;
+              if (context.monthExpression) return `LAST_DAY(CONCAT(SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7),'-01'))`;
+              if (filters.month) return `LAST_DAY('${filters.month}-01')`;
+              return "CURRENT_DATE()";
+            }'''
+          new = '''  if (column.key === "REPORT_DATE") {
+              const monthlyReports = new Set([
+                "bpo-employee-performance-360-master",
+                "bpo-payroll-statutory-master",
+                "bpo-finance-pnl-profitability-master",
+                "bpo-management-executive-master",
+              ]);
+              if (monthlyReports.has(context.reportCode)) {
+                if (filters.month) return `LAST_DAY('${filters.month}-01')`;
+                if (context.monthExpression) return `LAST_DAY(CONCAT(SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7),'-01'))`;
+                return "LAST_DAY(CURRENT_DATE())";
+              }
+              if (context.reportCode === "bpo-hr-workforce-lifecycle-master") {
+                return filters.to ? `DATE('${filters.to}')` : "CURRENT_DATE()";
+              }
+              if (context.dateExpression) return context.dateExpression;
+              if (context.monthExpression) return `LAST_DAY(CONCAT(SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7),'-01'))`;
+              if (filters.month) return `LAST_DAY('${filters.month}-01')`;
+              return "CURRENT_DATE()";
+            }'''
+          if text.count(old) != 1:
+            raise SystemExit(f'REPORT_DATE replacement mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''  if (column.key === "PAYROLL_MONTH" || column.key === "FINANCE_MONTH" || column.key === "REPORT_MONTH") {
+              return context.monthExpression ?? (context.dateExpression ? `DATE_FORMAT(${context.dateExpression},'%Y-%m')` : filters.month ? `'${filters.month}'` : `DATE_FORMAT(CURRENT_DATE(),'%Y-%m')`);
+            }'''
+          new = '''  if (column.key === "PAYROLL_MONTH" || column.key === "FINANCE_MONTH" || column.key === "REPORT_MONTH") {
+              if (filters.month) return `'${filters.month}'`;
+              return context.monthExpression ?? (context.dateExpression ? `DATE_FORMAT(${context.dateExpression},'%Y-%m')` : `DATE_FORMAT(CURRENT_DATE(),'%Y-%m')`);
+            }'''
+          if text.count(old) != 1:
+            raise SystemExit(f'month expression replacement mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''  if (filters.month) {
+              if (context.monthExpression) {
+                clauses.push(`SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7) = ?`);
+                params.push(filters.month);
+              } else if (context.dateExpression) {
+                clauses.push(`DATE_FORMAT(${context.dateExpression},'%Y-%m') = ?`);
+                params.push(filters.month);
+              }
+            } else if (context.dateExpression) {
+              if (filters.from) {
+                clauses.push(`DATE(${context.dateExpression}) >= ?`);
+                params.push(filters.from);
+              }
+              if (filters.to) {
+                clauses.push(`DATE(${context.dateExpression}) <= ?`);
+                params.push(filters.to);
+              }
+            }'''
+          new = '''  const snapshotReport = [
+              "bpo-employee-performance-360-master",
+              "bpo-hr-workforce-lifecycle-master",
+            ].includes(context.reportCode);
+            if (!snapshotReport) {
+              if (filters.month) {
+                if (context.monthExpression) {
+                  clauses.push(`SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7) = ?`);
+                  params.push(filters.month);
+                } else if (context.dateExpression) {
+                  clauses.push(`DATE_FORMAT(${context.dateExpression},'%Y-%m') = ?`);
+                  params.push(filters.month);
+                }
+              } else if (context.dateExpression) {
+                if (filters.from) {
+                  clauses.push(`DATE(${context.dateExpression}) >= ?`);
+                  params.push(filters.from);
+                }
+                if (filters.to) {
+                  clauses.push(`DATE(${context.dateExpression}) <= ?`);
+                  params.push(filters.to);
+                }
+              }
+            }'''
+          if text.count(old) != 1:
+            raise SystemExit(f'where period replacement mismatch: {text.count(old)}')
+          path.write_text(text)
+          PY
+
+          rm .github/workflows/pr59-bpo-period-fix.yml
+
+      - name: Commit period semantics
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/reporting/bpo-master-report.service.ts .github/workflows/pr59-bpo-period-fix.yml
+          git commit -m "fix(reports): use reporting-period dates for BPO snapshots"
+          git push origin HEAD:agent/deep-section-reports
