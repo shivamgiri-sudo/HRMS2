@@ -24,7 +24,23 @@ SELECT UUID(), vpt.id, a.id, a.process_id, a.process_lob_id, a.cost_centre_id,
    AND existing.grn_allocation_id = a.id
  WHERE existing.id IS NULL;
 
-CREATE OR REPLACE VIEW vw_vendor_payment_lob_allocation AS
+SET @cost_centre_name_expr = CASE
+  WHEN (SELECT COUNT(*)
+          FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = 'cost_centre_master'
+           AND column_name = 'cost_centre_name') > 0
+    THEN 'ccm.cost_centre_name'
+  WHEN (SELECT COUNT(*)
+          FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = 'cost_centre_master'
+           AND column_name = 'cc_name') > 0
+    THEN 'ccm.cc_name'
+  ELSE 'NULL'
+END;
+
+SET @sql = CONCAT("CREATE OR REPLACE VIEW vw_vendor_payment_lob_allocation AS
 SELECT
   vpt.id AS vendor_payment_id,
   vpt.grn_request_id,
@@ -40,7 +56,7 @@ SELECT
   pm.process_name,
   lob.lob_code,
   lob.lob_name,
-  ccm.cost_centre_name,
+  ", @cost_centre_name_expr, " AS cost_centre_name,
   COALESCE(
     a.pnl_bucket,
     CASE WHEN a.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END
@@ -66,6 +82,7 @@ FROM vendor_payment_tracking vpt
 JOIN grn_cost_allocation a ON a.grn_request_id = vpt.grn_request_id
 LEFT JOIN process_master pm ON pm.id = a.process_id
 LEFT JOIN process_lob_master lob ON lob.id = a.process_lob_id
-LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id;
+LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id");
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SELECT '422_vendor_payment_lob_bridge.sql applied' AS migration_status;
