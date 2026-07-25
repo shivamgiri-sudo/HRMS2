@@ -5,12 +5,14 @@ import { reportingService } from './reporting.service.js';
 import { reportingAnalyticsV2Service } from './reporting.analytics-v2.service.js';
 import { bpoMasterReportRouter } from './bpo-master-report.routes.js';
 import { deepReportRouter } from './deep-report.routes.js';
+import { journeyAuditReportRouter } from './journey-audit-report.routes.js';
 import { reportSuiteHighRiskRouter } from "./report-suite-highrisk.routes.js";
 import { reportSuiteRouter } from "./report-suite.routes.js";
 
 const router = Router();
 router.use("/bpo-master", bpoMasterReportRouter);
 router.use("/deep-sections", deepReportRouter);
+router.use("/journey-audit", journeyAuditReportRouter);
 router.use("/suite", reportSuiteHighRiskRouter);
 router.use("/suite", reportSuiteRouter);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
