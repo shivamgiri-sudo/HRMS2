@@ -4,10 +4,14 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
+const MAX_ACCURACY_METERS = 200; // ignore readings worse than this
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchIdRef = useRef<number | null>(null);
+  const lastPostRef = useRef<number>(0);
+  const latestPosRef = useRef<{ latitude: number; longitude: number; accuracy: number } | null>(null);
 
   // Keep JWT in IndexedDB so the SW Background Sync handler can use it
   useEffect(() => {
@@ -24,44 +28,74 @@ export function useLocationHeartbeat() {
     return () => window.removeEventListener("storage", sync);
   }, [user?.id]);
 
-  // Fixed-interval snapshot — ONE reading per minute, no continuous watching.
-  // watchPosition fires on every GPS chip update (noisy indoors, causes jumping).
-  // getCurrentPosition on a timer gives one stable reading per interval.
   useEffect(() => {
     if (!user || !("geolocation" in navigator)) return;
 
-    function snap() {
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const { latitude, longitude, accuracy } = pos.coords;
-          try {
-            await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
-            await enqueuePosition({ latitude, longitude, accuracy });
-            triggerBackgroundSync();
-          } catch {
-            void enqueuePosition({ latitude, longitude, accuracy })
-              .then(() => triggerBackgroundSync());
-          }
-        },
-        () => { /* permission denied — silent */ },
-        // maximumAge: 300_000 — use any position the browser already has cached
-        // in the last 5 minutes. Returns instantly on page load without waiting
-        // for a fresh GPS fix. Avoids the 5–15s cold-start delay.
-        { enableHighAccuracy: false, maximumAge: 300_000, timeout: 10_000 },
-      );
+    async function postLocation(latitude: number, longitude: number, accuracy: number) {
+      lastPostRef.current = Date.now();
+      try {
+        await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
+        await enqueuePosition({ latitude, longitude, accuracy });
+        triggerBackgroundSync();
+      } catch {
+        void enqueuePosition({ latitude, longitude, accuracy })
+          .then(() => triggerBackgroundSync());
+      }
     }
 
-    snap(); // fire immediately on login / page load
-    timerRef.current = setInterval(snap, HEARTBEAT_INTERVAL_MS);
+    function onPosition(pos: GeolocationPosition) {
+      const { latitude, longitude, accuracy } = pos.coords;
+      // Ignore low-quality readings (e.g. cell-tower only, accuracy 1000m+)
+      if (accuracy > MAX_ACCURACY_METERS) return;
+      latestPosRef.current = { latitude, longitude, accuracy };
+      const now = Date.now();
+      if (now - lastPostRef.current >= HEARTBEAT_INTERVAL_MS) {
+        void postLocation(latitude, longitude, accuracy);
+      }
+    }
 
-    // Also re-snap when the tab becomes visible again (user switches back to HRMS)
+    // watchPosition is OS-level — Android Chrome keeps it running in background.
+    // setInterval/setTimeout are frozen by the browser after ~60s when backgrounded.
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      onPosition,
+      () => { /* permission denied or unavailable — silent */ },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 30_000,
+        timeout: 15_000,
+      },
+    );
+
+    // Fallback: also post every minute from the latest cached position.
+    // This covers the case where GPS hasn't moved (watchPosition doesn't fire
+    // if position unchanged) but we still want a heartbeat.
+    timerRef.current = setInterval(() => {
+      const pos = latestPosRef.current;
+      if (!pos) return;
+      const now = Date.now();
+      if (now - lastPostRef.current >= HEARTBEAT_INTERVAL_MS) {
+        void postLocation(pos.latitude, pos.longitude, pos.accuracy);
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // When user switches back to tab: post immediately if stale
     function onVisible() {
-      if (document.visibilityState === "visible") snap();
+      if (document.visibilityState !== "visible") return;
+      const pos = latestPosRef.current;
+      if (!pos) return;
+      const now = Date.now();
+      if (now - lastPostRef.current >= HEARTBEAT_INTERVAL_MS) {
+        void postLocation(pos.latitude, pos.longitude, pos.accuracy);
+      }
     }
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
