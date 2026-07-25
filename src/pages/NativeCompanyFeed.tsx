@@ -20,6 +20,7 @@ import {
   type CompanyPost,
 } from "@/hooks/useCompanyFeed";
 import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
+import { AuthedImage } from "@/components/ui/AuthedImage";
 
 const MODERATOR_ROLES = new Set(["hr_head", "admin", "super_admin"]);
 
@@ -128,7 +129,7 @@ function FeedPostCard({ post, featured = false }: { post: CompanyPost; featured?
                     key={media.file_id}
                     className="overflow-hidden rounded-[1.3rem] border border-slate-200 bg-slate-100"
                   >
-                    <img
+                    <AuthedImage
                       src={getCompanyFeedImageUrl(media.file_id)}
                       alt={`Post image ${media.sort_order} by ${authorLabel}`}
                       loading="lazy"
