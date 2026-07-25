@@ -43,6 +43,7 @@ import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
+import { getRoutePageCode } from "@/lib/pageRoutePageCodes";
 import {
   DASHBOARD_ACCESS_REGISTRY,
   canAccessDashboard,
@@ -92,10 +93,11 @@ export function DashboardLayout({ children, subheader }: Props) {
     );
 
     const canShow = (item: { href: string; pageCode?: string; roles?: string[]; adminOnly?: boolean; public?: boolean }) => {
-      const dashboardCode = getDashboardDefinition(item.pageCode)?.code ?? dashboardByRoute.get(item.href);
+      const pageCode = item.pageCode ?? getRoutePageCode(item.href);
+      const dashboardCode = getDashboardDefinition(pageCode)?.code ?? dashboardByRoute.get(item.href);
       if (dashboardCode) return canAccessDashboard(dashboardCode, roleKeys);
       if (isSuperAdmin) return true;
-      if (item.pageCode) return visibleSet.has(item.pageCode) || canViewPage(item.pageCode);
+      if (pageCode) return visibleSet.has(pageCode) || canViewPage(pageCode);
       if (item.roles?.length) return hasAnyRole(...item.roles);
       if ((item as any).adminOnly && !isAdminOrHR) return false;
       // Explicitly marked public items are visible to all authenticated users

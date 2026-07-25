@@ -1,21 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { getDemoCred, resolveActiveDemoCredential } from "@/lib/demoCreds";
+import { COMMON_USER_PAGE_CODES, ROLE_DASHBOARD_PAGE_CODES } from "@/lib/rbacPageMatrix";
 
-const ROLE_DASHBOARD_CODES = [
-  "CEO_DASHBOARD",
-  "PAYROLL_HR_DASHBOARD",
-  "WFM_DASHBOARD",
-  "WFM_ATTENDANCE_DASHBOARD",
-  "HR_DASHBOARD",
-  "QUALITY_DASHBOARD",
-  "OPERATIONS_DASHBOARD",
-  "RECRUITER_DASHBOARD",
-  "IT_MANAGER_DASHBOARD",
-  "MANAGEMENT_DASHBOARD",
-  "EMPLOYEE_SELF_DASHBOARD",
-  "SUPER_ADMIN_DASHBOARD",
-];
+const NON_COMMON_ROLE_DASHBOARD_CODES = ROLE_DASHBOARD_PAGE_CODES.filter(
+  (pageCode) => !COMMON_USER_PAGE_CODES.includes(pageCode as any),
+);
 
 describe("demo access contract", () => {
   it("resolves the matching CEO demo identity for frontend role and employee gates", () => {
@@ -54,15 +44,35 @@ describe("demo access contract", () => {
   });
 
   it.each(["admin@mascallnet.com", "demo@mascallnet.com"])(
-    "does not grant role-dashboard page codes to admin demo identity %s",
+    "does not grant department role-dashboard page codes to admin demo identity %s",
     (email) => {
       const pages = getDemoCred(email)?.pages ?? [];
-      expect(pages.filter((pageCode) => ROLE_DASHBOARD_CODES.includes(pageCode))).toEqual([]);
+      expect(pages).toContain("EMPLOYEE_SELF_DASHBOARD");
+      expect(pages.filter((pageCode) => NON_COMMON_ROLE_DASHBOARD_CODES.includes(pageCode as any))).toEqual([]);
     },
   );
 
   it("keeps super-admin demo as the only all-dashboard demo identity", () => {
     const pages = getDemoCred("superadmin@mascallnet.com")?.pages ?? [];
-    expect(ROLE_DASHBOARD_CODES.every((pageCode) => pages.includes(pageCode))).toBe(true);
+    expect(ROLE_DASHBOARD_PAGE_CODES.every((pageCode) => pages.includes(pageCode))).toBe(true);
+  });
+
+  it.each([
+    "superadmin@mascallnet.com",
+    "admin@mascallnet.com",
+    "hr@mascallnet.com",
+    "recruiter@mascallnet.com",
+    "manager@mascallnet.com",
+    "tl@mascallnet.com",
+    "qa@mascallnet.com",
+    "wfm@mascallnet.com",
+    "finance@mascallnet.com",
+    "employee@mascallnet.com",
+    "ceo@mascallnet.com",
+    "trainer@mascallnet.com",
+    "demo@mascallnet.com",
+  ])("grants common employee pages to %s", (email) => {
+    const pages = getDemoCred(email)?.pages ?? [];
+    expect(COMMON_USER_PAGE_CODES.every((pageCode) => pages.includes(pageCode))).toBe(true);
   });
 });

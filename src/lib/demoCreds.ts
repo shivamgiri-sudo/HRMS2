@@ -1,3 +1,8 @@
+import {
+  getRolePageCodes,
+  ROLE_DASHBOARD_PAGE_CODES,
+} from "@/lib/rbacPageMatrix";
+
 /**
  * Demo credentials for role-based testing.
  * Each entry creates a local mock session — backend API only.
@@ -32,24 +37,11 @@ const ALL_PAGES = [
   "INTEGRATION_HUB","CLIENT_MASTER","PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL",
   "STATUTORY_CONFIG","KPI_CONFIG","OPERATIONS_KPI","PORTAL_DATA_MANAGER","PROCESS_CONFIG",
   "LEAVE_TYPES","RTA_BOARD",
+  "MY_PROFILE","ATTENDANCE_REGULARIZATION","MY_EXPENSES","EXPENSE_CREATE","MY_KPI",
+  "RESIGNATION_MY_REQUEST","DPDP_WITHDRAWAL",
 ];
 
-const ROLE_DASHBOARD_PAGES = new Set([
-  "CEO_DASHBOARD",
-  "PAYROLL_HR_DASHBOARD",
-  "WFM_DASHBOARD",
-  "WFM_ATTENDANCE_DASHBOARD",
-  "HR_DASHBOARD",
-  "QUALITY_DASHBOARD",
-  "OPERATIONS_DASHBOARD",
-  "RECRUITER_DASHBOARD",
-  "IT_MANAGER_DASHBOARD",
-  "MANAGEMENT_DASHBOARD",
-  "EMPLOYEE_SELF_DASHBOARD",
-  "SUPER_ADMIN_DASHBOARD",
-]);
-
-const ADMIN_DEMO_PAGES = ALL_PAGES.filter((pageCode) => !ROLE_DASHBOARD_PAGES.has(pageCode));
+const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);
 
 export const DEMO_CREDENTIALS: DemoCred[] = [
   {
@@ -61,7 +53,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Super Admin",
     employeeId:   "demo-emp-superadmin",
     employeeCode: "EMP-SA-001",
-    pages:        ALL_PAGES,
+    pages:        getRolePageCodes("super_admin", ALL_PAGES),
   },
   {
     email:        "admin@mascallnet.com",
@@ -83,16 +75,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Priya Nair",
     employeeId:   "demo-emp-hr",
     employeeCode: "EMP-HR-001",
-    pages: [
-      "ATS_DASHBOARD","ATS_RECRUITER_QUEUE","ATS_RECRUITER_WORKSPACE","ATS_WAITING_QUEUE",
-      "ATS_CANDIDATE_MASTER","ATS_ONBOARDING_BRIDGE","ATS_EXTENSIONS",
-      "LMS_MY_LEARNING","LMS_COORDINATOR","LMS_ADMIN","LMS_MANAGEMENT_DASHBOARD","LMS_INTEGRATION",
-      "HELPDESK","LETTERS","EMPLOYEE_LIFECYCLE","ORG_MASTERS","WORKFLOW_ADMIN",
-      "BENEFITS","CAREER_PLANNING","MOBILITY","JOBS_PORTAL","ADVANCED_REPORTS",
-      "STATUTORY_COMPLIANCE","LABOUR_COMPLIANCE","DPDP_COMPLIANCE","LEAVE_TYPES",
-      "PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL","STATUTORY_CONFIG",
-      "ASSETS_MANAGER","WORK_INBOX","KPI_CONFIG","PROCESS_CONFIG","HR_DASHBOARD",
-    ],
+    pages:        getRolePageCodes("hr", ALL_PAGES),
   },
   {
     email:        "recruiter@mascallnet.com",
@@ -103,11 +86,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Ravi Kumar",
     employeeId:   "demo-emp-recruiter",
     employeeCode: "EMP-REC-001",
-    pages: [
-      "ATS_DASHBOARD","ATS_RECRUITER_QUEUE","ATS_RECRUITER_WORKSPACE",
-      "ATS_WAITING_QUEUE","ATS_CANDIDATE_MASTER","ATS_ONBOARDING_BRIDGE","ATS_EXTENSIONS",
-      "HELPDESK","WORK_INBOX",
-    ],
+    pages:        getRolePageCodes("recruiter", ALL_PAGES),
   },
   {
     email:        "manager@mascallnet.com",
@@ -118,12 +97,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Sunita Reddy",
     employeeId:   "demo-emp-manager",
     employeeCode: "EMP-MGR-001",
-    pages: [
-      "WFM_ROSTER","WFM_LIVE_TRACKER","RTA_BOARD","WORKFORCE_COMMAND_CENTER",
-      "MANAGEMENT_DASHBOARD","KPI_CONFIG","OPERATIONS_KPI","PROCESS_CONFIG",
-      "HELPDESK","WORK_INBOX","ADVANCED_REPORTS","CAREER_PLANNING","PIP_MANAGEMENT",
-      "GOALS","LMS_MY_LEARNING",
-    ],
+    pages:        getRolePageCodes("process_manager", ALL_PAGES),
   },
   {
     email:        "tl@mascallnet.com",
@@ -134,10 +108,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Vikram Mehta",
     employeeId:   "demo-emp-tl",
     employeeCode: "EMP-TL-001",
-    pages: [
-      "WFM_ROSTER","RTA_BOARD","HELPDESK","WORK_INBOX",
-      "GOALS","LMS_MY_LEARNING","CAREER_PLANNING",
-    ],
+    pages:        getRolePageCodes("team_leader", ALL_PAGES),
   },
   {
     email:        "qa@mascallnet.com",
@@ -148,10 +119,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Deepa Iyer",
     employeeId:   "demo-emp-qa",
     employeeCode: "EMP-QA-001",
-    pages: [
-      "QUALITY_DASHBOARD","OPERATIONS_DASHBOARD","HELPDESK","WORK_INBOX",
-      "ADVANCED_REPORTS","GOALS","LMS_MY_LEARNING",
-    ],
+    pages:        getRolePageCodes("qa", ALL_PAGES),
   },
   {
     email:        "wfm@mascallnet.com",
@@ -162,11 +130,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Karan Gupta",
     employeeId:   "demo-emp-wfm",
     employeeCode: "EMP-WFM-001",
-    pages: [
-      "WFM_ROSTER","WFM_LIVE_TRACKER","WFM_EXTENSIONS","RTA_BOARD",
-      "OPERATIONS_DASHBOARD","OPERATIONS_KPI","MANAGEMENT_DASHBOARD",
-      "HELPDESK","WORK_INBOX","ADVANCED_REPORTS",
-    ],
+    pages:        getRolePageCodes("wfm", ALL_PAGES),
   },
   {
     email:        "finance@mascallnet.com",
@@ -177,11 +141,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Meera Joshi",
     employeeId:   "demo-emp-finance",
     employeeCode: "EMP-FIN-001",
-    pages: [
-      "PAYROLL_PAYSLIPS","TAX_DECLARATION","FULL_FINAL","STATUTORY_CONFIG",
-      "STATUTORY_COMPLIANCE","LABOUR_COMPLIANCE","ADVANCED_REPORTS","WORK_INBOX",
-      "PAYROLL_HR_DASHBOARD",
-    ],
+    pages:        getRolePageCodes("finance", ALL_PAGES),
   },
   {
     email:        "employee@mascallnet.com",
@@ -192,10 +152,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Ananya Singh",
     employeeId:   "demo-emp-employee",
     employeeCode: "EMP-STF-001",
-    pages: [
-      "LMS_MY_LEARNING","HELPDESK","WORK_INBOX","PAYROLL_PAYSLIPS","TAX_DECLARATION",
-      "GOALS","CAREER_PLANNING","BENEFITS","EMPLOYEE_SELF_DASHBOARD",
-    ],
+    pages:        getRolePageCodes("employee", ALL_PAGES),
   },
   {
     email:        "ceo@mascallnet.com",
@@ -206,11 +163,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Rajesh Kapoor",
     employeeId:   "demo-emp-ceo",
     employeeCode: "EMP-CEO-001",
-    pages: [
-      "MANAGEMENT_DASHBOARD","WORKFORCE_COMMAND_CENTER","OPERATIONS_DASHBOARD",
-      "OPERATIONS_KPI","ADVANCED_REPORTS","KPI_CONFIG","QUALITY_DASHBOARD",
-      "PORTAL_DATA_MANAGER","CLIENT_MASTER","WORK_INBOX","CEO_DASHBOARD",
-    ],
+    pages:        getRolePageCodes("ceo", ALL_PAGES),
   },
   {
     email:        "trainer@mascallnet.com",
@@ -221,10 +174,7 @@ export const DEMO_CREDENTIALS: DemoCred[] = [
     fullName:     "Pooja Bansal",
     employeeId:   "demo-emp-trainer",
     employeeCode: "EMP-TRN-001",
-    pages: [
-      "LMS_MY_LEARNING","LMS_COORDINATOR","LMS_ADMIN","LMS_MANAGEMENT_DASHBOARD","LMS_INTEGRATION",
-      "HELPDESK","WORK_INBOX",
-    ],
+    pages:        getRolePageCodes("trainer", ALL_PAGES),
   },
   // Legacy alias — stays for backward compat
   {

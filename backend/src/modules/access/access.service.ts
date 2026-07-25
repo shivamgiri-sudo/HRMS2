@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import type { Request } from "express";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { COMMON_USER_PAGE_CODES } from "../../shared/rbacPageMatrix.js";
 
 export interface RbacMismatch {
   user_id: string;
@@ -186,6 +187,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     manager_employee_id?: string | null;
   };
   type DisabledPageRow = RowDataPacket & { page_code: string };
+  type CatalogPageRow = RowDataPacket & { page_code: string };
   type PageRow = RowDataPacket & {
     page_code: string;
     can_view: number | boolean;
@@ -196,7 +198,7 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   };
 
   // Batch 1: all queries independent of each other run in parallel
-  const [[roleRows], [empRows], [scopeRows], [disabledRows]] = await Promise.all([
+  const [[roleRows], [empRows], [scopeRows], [disabledRows], [activeCatalogRows]] = await Promise.all([
     db.execute<RowDataPacket[]>(
       "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
       [userId]
@@ -213,12 +215,16 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     db.execute<RowDataPacket[]>(
       "SELECT page_code FROM page_catalog WHERE active_status = 0"
     ),
+    db.execute<RowDataPacket[]>(
+      "SELECT page_code FROM page_catalog WHERE active_status = 1"
+    ),
   ]);
 
   const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
   const emp = (empRows as EmployeeRow[])[0] ?? null;
   const scopes = scopeRows as ScopeRow[];
   const disabledPageCodes = (disabledRows as DisabledPageRow[]).map((row) => String(row.page_code));
+  const activePageCodes = (activeCatalogRows as CatalogPageRow[]).map((row) => String(row.page_code));
 
   // Batch 2: page-permissions (depends on roles) + user-page-overrides run in parallel
   const allRoleKeys = [...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")])].filter(Boolean);
@@ -265,6 +271,34 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
 
   // Merge: user overrides replace role-based for matching page_code
   const pageMap = new Map(pages.map(p => [p.page_code, p]));
+
+  if (roles.includes("super_admin")) {
+    for (const pageCode of activePageCodes) {
+      pageMap.set(pageCode, {
+        page_code: pageCode,
+        can_view: true,
+        can_create: true,
+        can_edit: true,
+        can_delete: true,
+        can_export: true,
+      });
+    }
+  } else {
+    const activePageSet = new Set(activePageCodes);
+    for (const pageCode of COMMON_USER_PAGE_CODES) {
+      if (!activePageSet.has(pageCode)) continue;
+      if (pageMap.has(pageCode)) continue;
+      pageMap.set(pageCode, {
+        page_code: pageCode,
+        can_view: true,
+        can_create: false,
+        can_edit: false,
+        can_delete: false,
+        can_export: false,
+      });
+    }
+  }
+
   for (const userPage of userPageRows as PageRow[]) {
     pageMap.set(userPage.page_code, {
       page_code: userPage.page_code,

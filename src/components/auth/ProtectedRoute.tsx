@@ -9,6 +9,7 @@ import {
   canAccessDashboard,
   type DashboardCode,
 } from "../../../backend/src/shared/dashboardAccessRegistry";
+import { getRoutePageCode } from "@/lib/pageRoutePageCodes";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -23,8 +24,9 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
   const { isAdminOrHR, isLoading: isRoleLoading, error: roleError, roleKeys } = useIsAdminOrHR();
-  const { isLoading: isAccessLoading, isError: isAccessError } = useWorkforceAccess();
+  const { isLoading: isAccessLoading, isError: isAccessError, canViewPage } = useWorkforceAccess();
   const isEmployee = employeeStatus?.isEmployee ?? false;
+  const routePageCode = dashboardCode ? undefined : getRoutePageCode(location.pathname);
 
   if (isLoading || isEmployeeLoading || isRoleLoading || isAccessLoading) {
     return (
@@ -97,6 +99,29 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
         </div>
       );
     }
+  }
+
+  if (routePageCode && !canViewPage(routePageCode)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
+              <ShieldX className="h-8 w-8 text-destructive" />
+            </div>
+            <CardTitle>Access Denied</CardTitle>
+            <CardDescription>
+              You don't have page access for this HRMS area.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-center">
+            <Button asChild>
+              <Link to="/dashboard">Go to Dashboard</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   // Allow access to dashboard for everyone (non-employees see onboarding request form there)
