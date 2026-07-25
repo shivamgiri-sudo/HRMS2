@@ -4,12 +4,10 @@ import {
 } from "./bpo-master-report-registry.js";
 import { runVerifiedWorkforceAdapter } from "./bpo-master-verified-workforce-adapters.js";
 import { runVerifiedBusinessAdapter } from "./bpo-master-verified-business-adapters.js";
-import { runGovernanceBpoMasterAdapter } from "./bpo-master-governance-adapters.js";
+import { runSafeGovernanceBpoMasterAdapter } from "./bpo-master-governance-safe-adapters.js";
 import { runCanonicalBpoMasterAdapter } from "./bpo-master-canonical-adapters.js";
 import type { BranchScope } from "./reporting.scope.js";
-import type {
-  SourceFieldLineage,
-} from "./bpo-master-source-registry.js";
+import type { SourceFieldLineage } from "./bpo-master-source-registry.js";
 import type {
   VerificationSummary,
   VerifiedAdapterFilters,
@@ -144,7 +142,7 @@ export const bpoMasterReportV2Service = {
     if (!definition) throw Object.assign(new Error("BPO master report not found"), { statusCode: 404 });
     const filters = normalizeFilters(input);
 
-    const governance = await runGovernanceBpoMasterAdapter(code, filters, branchScope);
+    const governance = await runSafeGovernanceBpoMasterAdapter(code, filters, branchScope);
     if (governance) return responseFromAdapter(definition, filters, governance);
 
     const workforce = await runVerifiedWorkforceAdapter(code, filters, branchScope);
