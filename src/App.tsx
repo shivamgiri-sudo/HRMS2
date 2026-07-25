@@ -8,7 +8,6 @@ import CookieConsent from "@/components/layout/CookieConsent";
 import { OfflineFallback } from "@/components/layout/OfflineFallback";
 import ScrollToTop from "@/components/layout/ScrollToTop";
 import { Toaster as Sonner } from "@/components/ui/sonner";
-import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { useLocationHeartbeat } from "@/hooks/useLocationHeartbeat";
@@ -41,7 +40,6 @@ const PageLoader = () => (
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Toaster />
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
