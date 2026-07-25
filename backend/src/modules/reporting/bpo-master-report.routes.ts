@@ -48,6 +48,13 @@ function isExportRequest(req: AuthenticatedRequest) {
   return ["1", "true", "yes"].includes(String(req.query.export ?? "").toLowerCase());
 }
 
+function maskSensitiveValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return value;
+  const text = String(value);
+  if (text.length <= 4) return "RESTRICTED";
+  return `****${text.slice(-4)}`;
+}
+
 bpoMasterReportRouter.get("/", h(async (req, res) => {
   const roles = rolesFor(req);
   const data = BPO_MASTER_REPORTS
@@ -79,7 +86,8 @@ bpoMasterReportRouter.get("/:code", h(async (req, res) => {
     return res.status(403).json({ success: false, message: "You do not have permission to view this BPO master report" });
   }
   const exportRequested = isExportRequest(req);
-  if (exportRequested && !canExport(roles, definition.exportRoles)) {
+  const exportAllowed = canExport(roles, definition.exportRoles);
+  if (exportRequested && !exportAllowed) {
     return res.status(403).json({ success: false, message: "You do not have permission to export this BPO master report" });
   }
 
@@ -107,8 +115,20 @@ bpoMasterReportRouter.get("/:code", h(async (req, res) => {
     export: exportRequested,
   }, branchScope);
 
+  if (!exportAllowed && result.rows.length) {
+    const sensitiveKeys = new Set(definition.columns.filter((column) => column.sensitive).map((column) => column.key));
+    result.rows = result.rows.map((row) => {
+      const masked = { ...row };
+      for (const key of sensitiveKeys) masked[key] = maskSensitiveValue(masked[key]);
+      return masked;
+    });
+  }
+
   return res.json({
     success: true,
-    data: result,
+    data: {
+      ...result,
+      sensitiveDataMasked: !exportAllowed,
+    },
   });
 }));
