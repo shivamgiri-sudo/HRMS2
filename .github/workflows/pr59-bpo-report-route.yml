@@ -1,0 +1,61 @@
+name: PR59 BPO Report Route
+
+on:
+  push:
+    branches:
+      - agent/deep-section-reports
+    paths:
+      - .github/workflows/pr59-bpo-report-route.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pr59-bpo-report-route.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deep-section-reports
+          fetch-depth: 0
+
+      - name: Route reports pages
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/config/routes/platform.routes.tsx')
+          text = path.read_text()
+          old_imports = '''const NativeReportsCenter           = lazy(() => import("@/pages/NativeReportsCenterV3"));
+          const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));'''
+          new_imports = '''const BpoMasterReports              = lazy(() => import("@/pages/BpoMasterReports"));
+          const NativeReportsControlRoom      = lazy(() => import("@/pages/NativeReportsCenterV3"));
+          const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));'''
+          if text.count(old_imports) != 1:
+            raise SystemExit(f'import replacement mismatch: {text.count(old_imports)}')
+          text = text.replace(old_imports, new_imports, 1)
+
+          old_routes = '''      <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsCenter /></Gate></ProtectedRoute>} />
+                <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />'''
+          new_routes = '''      <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoMasterReports /></Gate></ProtectedRoute>} />
+                <Route path="/reports/control-room" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
+                <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />'''
+          if text.count(old_routes) != 1:
+            raise SystemExit(f'route replacement mismatch: {text.count(old_routes)}')
+          path.write_text(text.replace(old_routes, new_routes, 1))
+          PY
+
+          rm .github/workflows/pr59-bpo-report-route.yml
+
+      - name: Commit report routes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/config/routes/platform.routes.tsx .github/workflows/pr59-bpo-report-route.yml
+          git commit -m "feat(reports): make BPO master reports the primary reports page"
+          git push origin HEAD:agent/deep-section-reports
