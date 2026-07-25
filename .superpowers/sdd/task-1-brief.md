@@ -1,63 +1,57 @@
-# Task 1: Database Migration - Add assigned_hr_user_id Column
+# Task 1 Brief: Build the routed dashboard audit matrix
 
-**Files:**
-- Create: `backend/sql/363_joining_document_assigned_hr.sql`
+## Goal
 
-**Interfaces:**
-- Consumes: Existing `employee_joining_document_checklist` table schema
-- Produces: Column `assigned_hr_user_id CHAR(36) NULL` with index
+Create the canonical inventory for the routed role dashboards so later implementation tasks audit the real widgets and API paths instead of guessing.
 
-## Steps
+## Scope
 
-- [ ] **Step 1: Write migration SQL**
+Only the routed role dashboards defined in `src/config/routes/dashboards.routes.tsx`.
 
-Create file `backend/sql/363_joining_document_assigned_hr.sql`:
+## Required outputs
 
-```sql
--- Add assigned_hr_user_id column for HR task assignment tracking
--- Purpose: Track which HR person is responsible for each employee's document checklist
--- Used by: Bulk Assign HR action + "Assigned HR" column in tracker table
+Create:
 
-SET @sql = IF(
-  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'employee_joining_document_checklist'
-      AND COLUMN_NAME = 'assigned_hr_user_id') = 0,
-  'ALTER TABLE employee_joining_document_checklist 
-     ADD COLUMN assigned_hr_user_id CHAR(36) NULL AFTER verified_at,
-     ADD INDEX idx_ejdc_assigned_hr (assigned_hr_user_id)',
-  'SELECT ''employee_joining_document_checklist.assigned_hr_user_id already exists'' AS note'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-```
+- `docs/dashboard-audit/2026-07-25-role-dashboard-widget-matrix.md`
 
-- [ ] **Step 2: Test migration on development database**
+That document must include one section per routed role dashboard with:
 
-Run against development MySQL:
+- route path
+- dashboard code
+- page component
+- summary endpoint
+- secondary endpoints used by the page/shared UI if applicable:
+  - `/:dashboardCode/summary`
+  - `/:dashboardCode/metric-values`
+  - `/:dashboardCode/metrics`
+  - `/:dashboardCode/good-bad-insights`
+  - `/:dashboardCode/metric/:metricCode/drilldown`
+  - `/:dashboardCode/metric/:metricCode/trend`
+  - `/:dashboardCode/filters`
+  - `/:dashboardCode/root-causes`
+  - `/:dashboardCode/owner-accountability`
+  - `/employee/summary`
+  - `/PAYROLL_HR_DASHBOARD/operational-summary`
+- visible widgets/components to verify
+- any immediately visible risk notes, especially shared widgets that may point at HR summary data
 
-```bash
-mysql -h 192.168.10.6 -u [user] -p mas_hrms < backend/sql/363_joining_document_assigned_hr.sql
-```
+## Files to inspect
 
-Expected: Column added successfully or "already exists" message
+- `src/config/routes/dashboards.routes.tsx`
+- `src/pages/dashboards/*.tsx`
+- `src/pages/dashboards/ReferenceRoleDashboard.tsx`
+- `src/pages/dashboards/ReferenceDashboardUI.tsx`
+- `src/pages/dashboards/dashboard-data-contracts.ts`
+- `src/pages/dashboards/reference-dashboard-model.ts`
+- `src/components/dashboard/**/*`
+- `backend/src/modules/dashboards/dashboard.routes.ts`
 
-- [ ] **Step 3: Verify column exists**
+## Constraints
 
-```bash
-mysql -h 192.168.10.6 -u [user] -p mas_hrms -e "DESCRIBE employee_joining_document_checklist;" | grep assigned_hr_user_id
-```
+- Do not modify application code in this task unless absolutely necessary to complete the inventory.
+- Focus on accuracy over brevity.
+- Use real paths and dashboard codes exactly as found.
 
-Expected: Output shows `assigned_hr_user_id | char(36) | YES | | NULL`
+## Deliverable standard
 
-- [ ] **Step 4: Commit migration**
-
-```bash
-git add backend/sql/363_joining_document_assigned_hr.sql
-git commit -m "feat(db): add assigned_hr_user_id column to joining documents checklist
-
-Migration adds assigned_hr_user_id column for tracking HR task assignments.
-
-File: backend/sql/363_joining_document_assigned_hr.sql"
-```
+The output should be good enough that another implementer can audit each dashboard without rediscovering routes, API calls, or shared-widget risks.
