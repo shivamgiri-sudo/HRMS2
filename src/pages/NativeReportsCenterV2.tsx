@@ -757,7 +757,7 @@ async function downloadFullExport(
   params.set("export", "true");
 
   const url = `/api/reports/suite/${code}?${params.toString()}`;
-  const res = await hrmsApi.get<ApiResponse>(url);
+  const res = await hrmsApi.get<ApiResponse>(url, 120_000);
   const rows = res.data ?? [];
 
   onProgress?.(`Generating XLSX with ${rows.length.toLocaleString()} rows...`);
@@ -940,7 +940,7 @@ export default function NativeReportsCenterV2() {
       params.set("offset", String((page - 1) * pageSize));
 
       const url = `/api/reports/suite/${selectedReport.code}?${params.toString()}`;
-      const res = await hrmsApi.get<ApiResponse>(url);
+      const res = await hrmsApi.get<ApiResponse>(url, 120_000);
       const data = res.data ?? [];
       const total = res.totalCount ?? res.meta?.totalCount ?? data.length;
 

@@ -103,7 +103,7 @@ export const regularizationSchema = z.object({
   sessionDate:     z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD"),
   reason:          z.string().trim().min(1).max(500),
   reasonCode:      z.string().min(1).max(50).optional(),
-  requestedStatus: z.enum(['present', 'half_day', 'absent']).optional(),
+  requestedStatus: z.enum(['present', 'half_day', 'absent']).nullable().optional(),
   supportingNote:  z.string().trim().nullable().optional(),
   // Dispute extension fields (optional — null = plain regularization)
   disputeType:     z.enum(DISPUTE_TYPES).nullable().optional(),

@@ -664,16 +664,27 @@ export const jobRequisitionService = {
   /**
    * Get candidates linked to a requisition
    */
-  async getRequisitionCandidates(requisitionId: string): Promise<Array<RequisitionCandidate & { candidate_name: string; mobile: string; email: string }>> {
+  async getRequisitionCandidates(requisitionId: string): Promise<Array<RequisitionCandidate & { candidate_name: string; mobile: string; email: string; alternate_mobile?: string; current_address?: string; recruiter_name: string | null; date_of_selection: string | null }>> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT jrc.*, c.full_name AS candidate_name, c.mobile, c.email, c.current_stage AS latest_stage
+      `SELECT
+          jrc.*,
+          c.full_name AS candidate_name,
+          c.mobile,
+          c.email,
+          c.alternate_mobile,
+          c.current_address,
+          c.current_stage AS latest_stage,
+          COALESCE(rec_emp.full_name, rec_emp2.full_name) AS recruiter_name,
+          jrc.outcome_at AS date_of_selection
        FROM job_requisition_candidate jrc
        JOIN ats_candidate c ON c.id = jrc.candidate_id
+       LEFT JOIN employees rec_emp ON rec_emp.user_id = jrc.linked_by AND rec_emp.active_status = 1
+       LEFT JOIN employees rec_emp2 ON rec_emp2.id = jrc.linked_by AND rec_emp2.active_status = 1
        WHERE jrc.requisition_id = ?
        ORDER BY jrc.linked_at DESC`,
       [requisitionId]
     );
-    return rows as Array<RequisitionCandidate & { candidate_name: string; mobile: string; email: string }>;
+    return rows as Array<RequisitionCandidate & { candidate_name: string; mobile: string; email: string; alternate_mobile?: string; current_address?: string; recruiter_name: string | null; date_of_selection: string | null }>;
   },
 
   /**

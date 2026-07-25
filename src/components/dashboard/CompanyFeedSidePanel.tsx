@@ -6,21 +6,36 @@ import {
   ChevronRight,
   Clock3,
   Megaphone,
+  MessageCircle,
+  ThumbsUp,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AuthedImage } from "@/components/ui/AuthedImage";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { FeedPostCard } from "@/components/feed/FeedPostCard";
 import { useCompanyFeed, type CompanyPost } from "@/hooks/useCompanyFeed";
-import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
+import { getCompanyFeedImageUrl, formatRelativeTime } from "@/lib/companyFeedUtils";
+
+function getCurrentUserId(): string | undefined {
+  try {
+    const token = localStorage.getItem("hrms_access_token");
+    if (!token) return undefined;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return typeof payload?.id === "string" ? payload.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isNewPost(post: CompanyPost): boolean {
+  const dateStr = post.approved_at ?? post.created_at;
+  if (!dateStr) return false;
+  return Date.now() - new Date(dateStr).getTime() < 24 * 60 * 60 * 1000;
+}
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "Recently";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Recently";
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(date);
+  return formatRelativeTime(value);
 }
 
 function PostImageCarousel({ post }: { post: CompanyPost }) {
@@ -84,13 +99,21 @@ function PostImageCarousel({ post }: { post: CompanyPost }) {
   );
 }
 
-function PostCard({ post }: { post: CompanyPost }) {
+function PostCard({ post, onClick }: { post: CompanyPost; onClick: () => void }) {
   const timestamp = formatTimestamp(post.approved_at ?? post.submitted_at ?? post.created_at);
   const authorLabel = post.author_name ?? "Company Update";
   const authorCode = post.author_code ? `@${post.author_code}` : "";
+  const isNew = isNewPost(post);
 
   return (
-    <article className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]">
+    <article
+      className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[var(--shadow-sm)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)] cursor-pointer"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === "Enter" && onClick()}
+      aria-label={`View post by ${authorLabel}`}
+    >
       <div
         className="absolute inset-x-0 top-0 h-[1.5px]"
         style={{
@@ -102,9 +125,16 @@ function PostCard({ post }: { post: CompanyPost }) {
       <div className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
-              <Megaphone className="h-3 w-3" />
-              MCN Broadcast
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--brand-100)] bg-[color:var(--brand-50)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--brand-700)]">
+                <Megaphone className="h-3 w-3" />
+                MCN
+              </div>
+              {isNew && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--success-500,#3BAD49)] px-2 py-0.5 text-[10px] font-semibold text-white animate-pulse">
+                  New
+                </span>
+              )}
             </div>
             <p className="mt-1.5 truncate text-xs font-semibold text-slate-900">{authorLabel}</p>
             {authorCode && <p className="truncate text-[11px] text-slate-400">{authorCode}</p>}
@@ -122,6 +152,18 @@ function PostCard({ post }: { post: CompanyPost }) {
             {post.content_text.trim()}
           </p>
         )}
+
+        {/* Engagement counts */}
+        <div className="flex items-center gap-3 pt-1">
+          <span className="flex items-center gap-1 text-[11px] text-slate-400">
+            <ThumbsUp className="h-3 w-3" />
+            {post.like_count ?? 0}
+          </span>
+          <span className="flex items-center gap-1 text-[11px] text-slate-400">
+            <MessageCircle className="h-3 w-3" />
+            {post.comment_count ?? 0}
+          </span>
+        </div>
       </div>
     </article>
   );
@@ -145,9 +187,42 @@ export function CompanyFeedSidePanel() {
   const { data, isLoading, isError } = useCompanyFeed({ limit: 6, page: 1 });
   const posts = data?.posts ?? [];
   const total = data?.total ?? 0;
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [selectedPostSnapshot, setSelectedPostSnapshot] = useState<CompanyPost | null>(null);
+  const currentUserId = getCurrentUserId();
+
+  // Live post from cache (updates when mutations fire); fall back to snapshot
+  const livePost = selectedPostId
+    ? (posts.find((p) => p.id === selectedPostId) ?? selectedPostSnapshot)
+    : null;
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Post detail modal */}
+      <Dialog open={!!selectedPostId} onOpenChange={(open) => { if (!open) { setSelectedPostId(null); setSelectedPostSnapshot(null); } }}>
+        <DialogContent className="max-w-lg p-0 overflow-hidden rounded-2xl">
+          <div className="flex items-center justify-between px-5 pt-4 pb-2">
+            <span className="text-sm font-semibold text-slate-700">Company Update</span>
+            <button
+              type="button"
+              onClick={() => { setSelectedPostId(null); setSelectedPostSnapshot(null); }}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="overflow-y-auto max-h-[80vh] px-0 pb-4">
+            {livePost && (
+              <FeedPostCard
+                post={livePost}
+                currentUserId={currentUserId}
+                showEngagement={true}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Header */}
       <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[var(--shadow-sm)]">
         <div className="flex items-center gap-2">
@@ -196,7 +271,7 @@ export function CompanyFeedSidePanel() {
         )}
 
         {posts.map((post) => (
-          <PostCard key={post.id} post={post} />
+          <PostCard key={post.id} post={post} onClick={() => { setSelectedPostId(post.id); setSelectedPostSnapshot(post); }} />
         ))}
       </div>
 

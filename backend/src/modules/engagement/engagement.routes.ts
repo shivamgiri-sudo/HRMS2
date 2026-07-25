@@ -144,6 +144,28 @@ router.get("/company-posts/manage", h(companyPosts.listManage));
 router.post("/company-posts/:id/approve", h(companyPosts.approve));
 router.post("/company-posts/:id/reject", h(companyPosts.reject));
 router.delete("/company-posts/:id", h(companyPosts.remove));
+router.post("/company-posts/:id/react", h(companyPosts.react));
+router.get("/company-posts/:id/comments", h(companyPosts.listComments));
+router.post("/company-posts/:id/comments", h(companyPosts.addComment));
+router.delete("/company-posts/:id/comments/:cid", h(companyPosts.removeComment));
+
+// Lightweight employee search for @mention — all authenticated users
+router.get("/mention-search", h(async (req: AuthenticatedRequest, res: Response) => {
+  const q = String(req.query.q ?? "").trim();
+  if (!q || q.length < 2) return res.json({ success: true, data: [] });
+  const { db } = await import("../../db/mysql.js");
+  const like = `%${q}%`;
+  const [rows] = await db.execute(
+    `SELECT e.id, e.full_name, e.employee_code, e.designation
+       FROM employees e
+       WHERE e.active_status = 1
+         AND (e.full_name LIKE ? OR e.employee_code LIKE ?)
+       ORDER BY e.full_name ASC
+       LIMIT 10`,
+    [like, like],
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 router.get("/company-post-creators", requireRole("super_admin"), h(companyPosts.listCreators));
 router.post("/company-post-creators/:employeeId/grant", requireRole("super_admin"), h(companyPosts.grantCreator));

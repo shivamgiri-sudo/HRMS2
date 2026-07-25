@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Clock3, Megaphone, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, Megaphone, MessageCircle, ThumbsUp, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,21 +9,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { AuthedImage } from "@/components/ui/AuthedImage";
 import { useCompanyFeed, type CompanyPost } from "@/hooks/useCompanyFeed";
-import { getCompanyFeedImageUrl } from "@/lib/companyFeedUtils";
+import { getCompanyFeedImageUrl, formatRelativeTime } from "@/lib/companyFeedUtils";
 
 const SESSION_KEY = "feed_popup_shown";
+const PERMANENT_DISMISS_KEY = "feed_popup_dismissed_permanent";
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "Recently";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Recently";
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  return formatRelativeTime(value);
 }
 
 function PostSlide({ post }: { post: CompanyPost }) {
@@ -111,6 +103,24 @@ function PostSlide({ post }: { post: CompanyPost }) {
             {post.content_text.trim()}
           </p>
         )}
+
+        {/* Engagement counts */}
+        {((post.like_count ?? 0) > 0 || (post.comment_count ?? 0) > 0) && (
+          <div className="flex items-center gap-3">
+            {(post.like_count ?? 0) > 0 && (
+              <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                <ThumbsUp className="h-3.5 w-3.5" />
+                {post.like_count}
+              </span>
+            )}
+            {(post.comment_count ?? 0) > 0 && (
+              <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                <MessageCircle className="h-3.5 w-3.5" />
+                {post.comment_count}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -119,6 +129,7 @@ function PostSlide({ post }: { post: CompanyPost }) {
 export function CompanyFeedLoginPopup() {
   const [open, setOpen] = useState(false);
   const [postIdx, setPostIdx] = useState(0);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
 
   const { data, isLoading } = useCompanyFeed({ limit: 10, page: 1 });
   const postsWithImages = (data?.posts ?? []).filter((p: CompanyPost) => p.media.length > 0);
@@ -126,12 +137,16 @@ export function CompanyFeedLoginPopup() {
   useEffect(() => {
     if (isLoading) return;
     if (postsWithImages.length === 0) return;
+    if (localStorage.getItem(PERMANENT_DISMISS_KEY)) return;
     if (sessionStorage.getItem(SESSION_KEY)) return;
     setOpen(true);
     sessionStorage.setItem(SESSION_KEY, "1");
   }, [isLoading, postsWithImages.length]);
 
   const handleOpenChange = (value: boolean) => {
+    if (!value && dontShowAgain) {
+      localStorage.setItem(PERMANENT_DISMISS_KEY, "1");
+    }
     setOpen(value);
     if (!value) sessionStorage.setItem(SESSION_KEY, "1");
   };
@@ -208,52 +223,64 @@ export function CompanyFeedLoginPopup() {
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-3">
-          <Link
-            to="/engagement/company-feed"
-            onClick={() => handleOpenChange(false)}
-            className="text-xs font-semibold text-[color:var(--brand-700)] underline-offset-2 hover:underline"
-          >
-            View all company updates →
-          </Link>
-          <div className="flex items-center gap-2">
-            {total > 1 && (
-              <>
+        <div className="border-t border-slate-100 px-5 py-3 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Link
+              to="/engagement/company-feed"
+              onClick={() => handleOpenChange(false)}
+              className="text-xs font-semibold text-[color:var(--brand-700)] underline-offset-2 hover:underline"
+            >
+              View all company updates →
+            </Link>
+            <div className="flex items-center gap-2">
+              {total > 1 && (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 rounded-lg px-2.5 text-xs"
+                    onClick={prevPost}
+                    disabled={total <= 1}
+                    aria-label="Previous announcement"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 rounded-lg px-2.5 text-xs"
+                    onClick={nextPost}
+                    aria-label="Next announcement"
+                  >
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                  </Button>
+                </>
+              )}
+              <DialogClose asChild>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-7 rounded-lg px-2.5 text-xs"
-                  onClick={prevPost}
-                  disabled={total <= 1}
-                  aria-label="Previous announcement"
+                  className="h-7 rounded-lg px-3 text-xs text-slate-500"
                 >
-                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Dismiss
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 rounded-lg px-2.5 text-xs"
-                  onClick={nextPost}
-                  aria-label="Next announcement"
-                >
-                  Next
-                  <ChevronRight className="h-3.5 w-3.5 ml-1" />
-                </Button>
-              </>
-            )}
-            <DialogClose asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 rounded-lg px-3 text-xs text-slate-500"
-              >
-                Dismiss
-              </Button>
-            </DialogClose>
+              </DialogClose>
+            </div>
           </div>
+          {/* Permanent dismiss */}
+          <label className="flex cursor-pointer items-center gap-2 text-[11px] text-slate-400 hover:text-slate-600 select-none">
+            <input
+              type="checkbox"
+              checked={dontShowAgain}
+              onChange={(e) => setDontShowAgain(e.target.checked)}
+              className="h-3 w-3 rounded accent-[color:var(--brand-600)]"
+            />
+            Don't show this popup again
+          </label>
         </div>
       </DialogContent>
     </Dialog>

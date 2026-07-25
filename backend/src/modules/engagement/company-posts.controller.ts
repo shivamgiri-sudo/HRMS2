@@ -2,14 +2,18 @@ import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import {
   approveCompanyPost,
+  createComment,
   createCompanyPost,
+  deleteComment,
   deleteCompanyPost,
   grantCompanyPostCreator,
   listApprovedCompanyFeed,
+  listComments,
   listCompanyPostApprovals,
   listCompanyPostCreators,
   listCompanyPostManagement,
   listMyCompanyPosts,
+  reactToPost,
   rejectCompanyPost,
   revokeCompanyPostCreator,
 } from "./company-posts.service.js";
@@ -59,10 +63,10 @@ export const companyPostsController = {
   async listFeed(req: AuthenticatedRequest, res: Response) {
     try {
       const { actorUserId } = getActorContext(req);
-      void actorUserId; // auth confirmed; feed is read-only for all authenticated users
       const result = await listApprovedCompanyFeed({
         page: parsePage(req.query.page),
         limit: parseLimit(req.query.limit),
+        actorUserId,
       });
       return res.json({ success: true, ...result });
     } catch (err: unknown) {
@@ -244,6 +248,62 @@ export const companyPostsController = {
       }
       const data = await revokeCompanyPostCreator({ ...parsed.data, actorUserId });
       return res.json({ success: true, data });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+    }
+  },
+
+  async react(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { actorUserId } = getActorContext(req);
+      const postId = req.params.id;
+      const reaction = req.body?.reaction as unknown;
+      if (reaction !== "like" && reaction !== "dislike") {
+        return res.status(400).json({ success: false, error: "reaction must be 'like' or 'dislike'" });
+      }
+      await reactToPost({ postId, actorUserId, reaction });
+      return res.json({ success: true });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+    }
+  },
+
+  async listComments(req: AuthenticatedRequest, res: Response) {
+    try {
+      void getActorContext(req); // auth check
+      const postId = req.params.id;
+      const result = await listComments(postId);
+      return res.json({ success: true, ...result });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+    }
+  },
+
+  async addComment(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { actorUserId } = getActorContext(req);
+      const postId = req.params.id;
+      const body = typeof req.body?.body === "string" ? req.body.body : "";
+      if (!body.trim()) {
+        return res.status(400).json({ success: false, error: "body is required" });
+      }
+      const comment = await createComment({ postId, actorUserId, body });
+      return res.status(201).json({ success: true, data: comment });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });
+    }
+  },
+
+  async removeComment(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { actorUserId } = getActorContext(req);
+      const commentId = req.params.cid;
+      await deleteComment({ commentId, actorUserId });
+      return res.json({ success: true });
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string };
       return res.status(e.statusCode ?? 500).json({ success: false, error: e.message ?? "Server error" });

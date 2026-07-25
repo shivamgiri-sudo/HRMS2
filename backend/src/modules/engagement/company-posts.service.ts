@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { Role, normalizeRoleInputs } from "../../platform/policy/roles.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type {
+  CommentDTO,
+  CommentListResult,
   CompanyPostDTO,
   CompanyPostCreatorAccessRowDTO,
   CompanyPostListResult,
@@ -62,7 +64,7 @@ type ModerationEvaluation = {
   reason: string | null;
 };
 
-type CompanyPostRow = Omit<CompanyPostDTO, "media" | "active_status"> & {
+type CompanyPostRow = Omit<CompanyPostDTO, "media" | "active_status" | "my_reaction"> & {
   active_status: number | boolean;
   author_name: string | null;
   author_code: string | null;
@@ -162,6 +164,7 @@ function mapCompanyPostRow(row: CompanyPostRow, media: CompanyPostMediaDTO[]): C
     ...row,
     active_status: Boolean(row.active_status),
     media,
+    my_reaction: null,
   };
 }
 
@@ -276,6 +279,7 @@ async function listCompanyPosts(
             cp.rejected_at, cp.rejected_by,
             er.full_name AS rejected_by_name,
             cp.rejection_reason, cp.deleted_at, cp.deleted_by, cp.active_status,
+            cp.like_count, cp.dislike_count, cp.comment_count,
             cp.created_at, cp.updated_at
        FROM company_posts cp
        LEFT JOIN employees e  ON cp.author_employee_id COLLATE utf8mb4_unicode_ci = e.id
@@ -447,10 +451,40 @@ export async function createCompanyPost(input: CreatePostInput): Promise<Company
   return getCompanyPostById(postId);
 }
 
+// ─── Engagement: reactions ───────────────────────────────────────────────────
+
+export async function getMyReactions(
+  userId: string,
+  postIds: string[],
+): Promise<Map<string, "like" | "dislike">> {
+  if (postIds.length === 0) return new Map();
+  const placeholders = postIds.map(() => "?").join(", ");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT post_id, reaction FROM company_post_likes WHERE user_id = ? AND post_id IN (${placeholders})`,
+    [userId, ...postIds],
+  );
+  const map = new Map<string, "like" | "dislike">();
+  for (const row of rows as Array<{ post_id: string; reaction: string }>) {
+    map.set(row.post_id, row.reaction as "like" | "dislike");
+  }
+  return map;
+}
+
 export async function listApprovedCompanyFeed(
-  opts: { page?: number; limit?: number } = {},
+  opts: { page?: number; limit?: number; actorUserId?: string } = {},
 ): Promise<CompanyPostListResult> {
-  return listCompanyPosts(`cp.status = 'approved' AND cp.active_status = 1`, [], opts);
+  const result = await listCompanyPosts(`cp.status = 'approved' AND cp.active_status = 1`, [], opts);
+
+  if (!opts.actorUserId || result.posts.length === 0) return result;
+
+  const reactionMap = await getMyReactions(opts.actorUserId, result.posts.map((p) => p.id));
+  return {
+    ...result,
+    posts: result.posts.map((p) => ({
+      ...p,
+      my_reaction: reactionMap.get(p.id) ?? null,
+    })),
+  };
 }
 
 export async function listMyCompanyPosts(input: ListMyCompanyPostsInput): Promise<CompanyPostListResult> {
@@ -739,4 +773,139 @@ export async function revokeCompanyPostCreator(input: RevokeInput): Promise<Comp
     [employeeId],
   );
   return rows[0] as CompanyPostCreatorAccessRowDTO;
+}
+
+export async function reactToPost(input: {
+  postId: string;
+  actorUserId: string;
+  reaction: "like" | "dislike";
+}): Promise<void> {
+  const [existingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, reaction FROM company_post_likes WHERE post_id = ? AND user_id = ? LIMIT 1`,
+    [input.postId, input.actorUserId],
+  );
+  const existing = existingRows[0] as { id?: string; reaction?: string } | undefined;
+
+  if (existing?.reaction === input.reaction) {
+    // Same reaction — toggle off
+    await withCompanyPostTransaction(async (conn) => {
+      await conn.execute(
+        `DELETE FROM company_post_likes WHERE post_id = ? AND user_id = ?`,
+        [input.postId, input.actorUserId],
+      );
+      const col = input.reaction === "like" ? "like_count" : "dislike_count";
+      await conn.execute(
+        `UPDATE company_posts SET ${col} = GREATEST(0, ${col} - 1) WHERE id = ?`,
+        [input.postId],
+      );
+    });
+    return;
+  }
+
+  await withCompanyPostTransaction(async (conn) => {
+    if (existing) {
+      // Switch reaction
+      await conn.execute(
+        `UPDATE company_post_likes SET reaction = ?, updated_at = NOW() WHERE post_id = ? AND user_id = ?`,
+        [input.reaction, input.postId, input.actorUserId],
+      );
+      const addCol = input.reaction === "like" ? "like_count" : "dislike_count";
+      const subCol = existing.reaction === "like" ? "like_count" : "dislike_count";
+      await conn.execute(
+        `UPDATE company_posts SET ${addCol} = ${addCol} + 1, ${subCol} = GREATEST(0, ${subCol} - 1) WHERE id = ?`,
+        [input.postId],
+      );
+    } else {
+      await conn.execute(
+        `INSERT INTO company_post_likes (id, post_id, user_id, reaction) VALUES (?, ?, ?, ?)`,
+        [randomUUID(), input.postId, input.actorUserId, input.reaction],
+      );
+      const col = input.reaction === "like" ? "like_count" : "dislike_count";
+      await conn.execute(
+        `UPDATE company_posts SET ${col} = ${col} + 1 WHERE id = ?`,
+        [input.postId],
+      );
+    }
+  });
+}
+
+// ─── Engagement: comments ────────────────────────────────────────────────────
+
+export async function listComments(postId: string): Promise<CommentListResult> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id, c.post_id, c.user_id, c.author_name, c.author_code, c.body,
+            c.created_at, c.updated_at
+       FROM company_post_comments c
+      WHERE c.post_id = ? AND c.deleted_at IS NULL
+      ORDER BY c.created_at ASC`,
+    [postId],
+  );
+  const comments = rows as CommentDTO[];
+  return { comments, total: comments.length };
+}
+
+export async function createComment(input: {
+  postId: string;
+  actorUserId: string;
+  body: string;
+}): Promise<CommentDTO> {
+  const body = input.body.trim();
+  if (!body) throw Object.assign(new Error("Comment body cannot be empty"), { statusCode: 400 });
+  if (body.length > 1000) throw Object.assign(new Error("Comment must be 1000 characters or fewer"), { statusCode: 400 });
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT full_name, employee_code FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [input.actorUserId],
+  );
+  const emp = empRows[0] as { full_name?: string; employee_code?: string } | undefined;
+
+  const commentId = randomUUID();
+  await withCompanyPostTransaction(async (conn) => {
+    await conn.execute(
+      `INSERT INTO company_post_comments (id, post_id, user_id, author_name, author_code, body)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [commentId, input.postId, input.actorUserId, emp?.full_name ?? null, emp?.employee_code ?? null, body],
+    );
+    await conn.execute(
+      `UPDATE company_posts SET comment_count = comment_count + 1 WHERE id = ?`,
+      [input.postId],
+    );
+  });
+
+  const [resultRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, post_id, user_id, author_name, author_code, body, created_at, updated_at
+       FROM company_post_comments WHERE id = ? LIMIT 1`,
+    [commentId],
+  );
+  return resultRows[0] as CommentDTO;
+}
+
+export async function deleteComment(input: {
+  commentId: string;
+  actorUserId: string;
+}): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, post_id, user_id FROM company_post_comments WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+    [input.commentId],
+  );
+  const row = rows[0] as { id?: string; post_id?: string; user_id?: string } | undefined;
+  if (!row) throw Object.assign(new Error("Comment not found"), { statusCode: 404 });
+
+  const isModerator = await userHasRole(input.actorUserId, MODERATION_ROLES);
+  if (row.user_id !== input.actorUserId && !isModerator) {
+    throw accessDenied("You can only delete your own comments");
+  }
+
+  await withCompanyPostTransaction(async (conn) => {
+    await conn.execute(
+      `UPDATE company_post_comments SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL`,
+      [input.actorUserId, input.commentId],
+    );
+    if (row.post_id) {
+      await conn.execute(
+        `UPDATE company_posts SET comment_count = GREATEST(0, comment_count - 1) WHERE id = ?`,
+        [row.post_id],
+      );
+    }
+  });
 }
