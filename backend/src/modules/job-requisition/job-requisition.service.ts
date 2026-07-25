@@ -139,17 +139,17 @@ export const jobRequisitionService = {
         COALESCE(cand.rejected_candidates, 0) AS rejected_candidates,
         COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates,
         COALESCE(req_emp.full_name, req_emp.first_name) AS requester_name,
-        req_emp.designation AS requester_designation,
-        req_u.role AS requester_role,
+        req_dm.designation_name AS requester_designation,
+        (SELECT role_key FROM user_roles WHERE user_id = jr.requested_by AND active_status = 1 ORDER BY created_at ASC LIMIT 1) AS requester_role,
         COALESCE(apr_emp.full_name, apr_emp.first_name) AS approver_name,
-        apr_emp.designation AS approver_designation,
-        apr_u.role AS approver_role
+        apr_dm.designation_name AS approver_designation,
+        (SELECT role_key FROM user_roles WHERE user_id = jr.approved_by AND active_status = 1 ORDER BY created_at ASC LIMIT 1) AS approver_role
        FROM job_requisition jr
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
-       LEFT JOIN auth_user req_u ON req_u.id = jr.requested_by
        LEFT JOIN employees req_emp ON req_emp.user_id = jr.requested_by AND req_emp.active_status = 1
-       LEFT JOIN auth_user apr_u ON apr_u.id = jr.approved_by
+       LEFT JOIN designation_master req_dm ON req_dm.id = req_emp.designation_id
        LEFT JOIN employees apr_emp ON apr_emp.user_id = jr.approved_by AND apr_emp.active_status = 1
+       LEFT JOIN designation_master apr_dm ON apr_dm.id = apr_emp.designation_id
        LEFT JOIN (
          SELECT
            requisition_id,
@@ -200,17 +200,17 @@ export const jobRequisitionService = {
         COALESCE(cand.rejected_candidates, 0) AS rejected_candidates,
         COALESCE(cand.pipeline_candidates, 0) AS pipeline_candidates,
         COALESCE(req_emp.full_name, req_emp.first_name) AS requester_name,
-        req_emp.designation AS requester_designation,
-        req_u.role AS requester_role,
+        req_dm.designation_name AS requester_designation,
+        (SELECT role_key FROM user_roles WHERE user_id = jr.requested_by AND active_status = 1 ORDER BY created_at ASC LIMIT 1) AS requester_role,
         COALESCE(apr_emp.full_name, apr_emp.first_name) AS approver_name,
-        apr_emp.designation AS approver_designation,
-        apr_u.role AS approver_role
+        apr_dm.designation_name AS approver_designation,
+        (SELECT role_key FROM user_roles WHERE user_id = jr.approved_by AND active_status = 1 ORDER BY created_at ASC LIMIT 1) AS approver_role
        FROM job_requisition jr
        LEFT JOIN employees e ON e.id = jr.owner_recruiter_id
-       LEFT JOIN auth_user req_u ON req_u.id = jr.requested_by
        LEFT JOIN employees req_emp ON req_emp.user_id = jr.requested_by AND req_emp.active_status = 1
-       LEFT JOIN auth_user apr_u ON apr_u.id = jr.approved_by
+       LEFT JOIN designation_master req_dm ON req_dm.id = req_emp.designation_id
        LEFT JOIN employees apr_emp ON apr_emp.user_id = jr.approved_by AND apr_emp.active_status = 1
+       LEFT JOIN designation_master apr_dm ON apr_dm.id = apr_emp.designation_id
        LEFT JOIN (
          SELECT
            requisition_id,
