@@ -58,13 +58,14 @@ jobs:
             exit 1
           fi
 
-      - name: Report architecture contracts
+      - name: Report architecture and source contracts
         id: report-tests
         shell: bash
         run: |
           if ! npm --prefix backend exec -- vitest run \
             src/modules/reporting/__tests__/deep-report-packs.contract.test.ts \
             src/modules/reporting/__tests__/bpo-master-report-catalog.contract.test.ts \
+            src/modules/reporting/__tests__/bpo-master-source-safety.contract.test.ts \
             > /tmp/deep-report-tests.log 2>&1; then
             cat /tmp/deep-report-tests.log
             exit 1
