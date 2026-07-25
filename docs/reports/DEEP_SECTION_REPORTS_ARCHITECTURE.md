@@ -1,223 +1,180 @@
-# Deep Section Reports Architecture
+# HRMS2 BPO Reporting Architecture
 
 ## Goal
 
-Replace a difficult-to-navigate catalogue of 137 isolated report tiles with a limited set of governed, decision-ready section packs. The existing detailed report datasets remain the drill-down library; the new Reports V3 page organises them into business sections and adds schema health, source coverage, reconciliation and compliance context.
+Create a reporting system suitable for a BPO operation without flooding users with hundreds of narrow exports. The primary reporting experience consists of a limited number of comprehensive master reports. Each master report combines the maximum useful information for one major BPO management domain.
+
+The reporting architecture now has three layers:
+
+1. **11 Comprehensive BPO Master Reports** — the primary downloadable operational and management reports.
+2. **20 Deep Section Control Packs** — source coverage, schema health, exceptions, reconciliation and compliance control views.
+3. **Detailed Report Library** — the existing detailed datasets retained for drill-down and investigation.
 
 ## User-facing routes
 
 | Route | Purpose |
 |---|---|
-| `/reports` | Deep Section Reports control room |
+| `/reports` | Comprehensive BPO Master Reports |
+| `/reports/control-room` | Deep Section source, readiness and compliance control room |
 | `/reports/library` | Existing detailed report library |
 
 ## API routes
 
 | Route | Purpose |
 |---|---|
-| `GET /api/reports/deep-sections` | Role-filtered section catalogue |
-| `GET /api/reports/deep-sections/:code` | One resolved section pack |
+| `GET /api/reports/bpo-master` | Role-filtered BPO master report catalogue |
+| `GET /api/reports/bpo-master/:code` | Execute, paginate or export one comprehensive BPO master report |
+| `GET /api/reports/deep-sections` | Role-filtered section control catalogue |
 | `GET /api/reports/deep-sections/:code/overview` | Schema-aware source and data-health overview |
-| `GET /api/reports/suite/:reportCode` | Existing detailed report drill-down |
+| `GET /api/reports/suite/:reportCode` | Detailed report drill-down |
 
-## Report-pack structure
+## Mandatory BPO report standards
 
-Every section pack contains exactly six perspectives:
+Every BPO master report must comply with all of the following rules:
 
-1. **Overview** — executive metrics, source availability, freshness and control readiness.
-2. **Trends** — movement over time and directional risk.
-3. **Detailed Register** — row-level operational evidence with a declared grain and key.
-4. **Exceptions** — items requiring owner action.
-5. **Reconciliation** — consistency across source systems or lifecycle stages.
-6. **Compliance** — approval, audit, privacy and statutory evidence.
+- `EMPLOYEE_CODE` is a mandatory output column.
+- Employee-level reports use the actual HRMS employee code.
+- Candidate reports use `PENDING EMPLOYEE CODE` until the employee code is generated.
+- Branch/Client/Process aggregate reports use `AGGREGATE` rather than inventing an employee identity.
+- `REPORT_DATE` is mandatory.
+- Display date format is `DD-MMM-YYYY`, for example `25-JUL-2026`.
+- Monthly periods use `MMM-YYYY`, for example `JUL-2026`.
+- All report headers are uppercase.
+- Every report declares a row grain and primary key.
+- Missing or unavailable fields remain blank/unavailable; they are never converted to artificial zero.
+- Branch scope is enforced on the backend and fails closed.
+- Sensitive values are masked by the API when the user has view permission but lacks export permission.
+- Full exports require the report's export role.
 
-A pack also declares:
+## Comprehensive BPO master reports
 
-- business owner;
-- view and export roles;
-- related operating pages;
-- decisions the pack must support;
-- compliance controls;
-- sensitive data domains;
-- candidate database sources;
-- existing detailed report codes;
-- planned/missing report codes.
-
-## Covered sections
-
-| Pack | Primary owners | Core areas |
+| Master report | Row grain | Main coverage |
 |---|---|---|
-| People, Organisation & Workforce | HR | Employee master, organisation, lifecycle, headcount |
-| Recruitment, ATS, Onboarding & BGV | Recruitment / HR | Requisition, pipeline, offer, joining and verification |
-| Attendance, Biometric & Regularisation | WFM / HR | Attendance, punch evidence, disputes and shrinkage |
-| Leave, Holiday & Absence | HR / Payroll | Entitlement, utilisation, LWP and special leave |
-| WFM, Roster, Capacity & Breaks | WFM / Operations | Forecast, roster, adherence, capacity and breaks |
-| Payroll, Compensation & Disbursal | Payroll / Finance | Readiness, calculation, variance, disbursal and sign-off |
-| Statutory, Tax & Labour Compliance | Payroll / Finance / HR | PF, ESIC, PT, TDS, filing and identity readiness |
-| Exit, Separation & Attrition | HR / Payroll / Finance | Resignation, clearance, F&F and attrition |
-| Finance, Vendor, GRN & Profitability | Finance / Accounts | Vendor, budget, GRN, payment, Process/LOB P&L and close |
-| Operations, Productivity & Business Actions | Operations | Delivery, KPI, productivity and action governance |
-| Quality, Audit & Process Risk | Quality | Audit, fatal errors, calibration and corrective action |
-| Performance, KPI, Feedback & Career | HR / Operations | Goals, scorecards, feedback, PIP and career |
-| Training, LMS & Certification | Training / HR | Curriculum, enrolment, assessment and certification |
-| Assets, IT Provisioning & Service | IT / Administration | Inventory, custody, provisioning and service |
-| Helpdesk, Grievance & Support | IT / HR / Support | Tickets, grievances, SLA and resolution |
-| Documents, Identity, BGV & Privacy | HR / Compliance / Payroll | Documents, identity, consent, retention and privacy |
-| Engagement, Communication & People Experience | HR | Recognition, surveys, feed, communication and experience |
-| Security, Access, Audit & Policy | Security / Super Admin | Authentication, roles, privileged changes and audit |
-| Integration, Migration & Data Quality | IT / Data Governance | Sync, identity mapping, migration and schema health |
-| Visitor, Workplace & Facilities | Administration / Security | Visitor approval, check-in/out, badge and host mapping |
+| BPO Operations & Productivity Master | Employee / work date / Process-LOB | Shift, login, production, productivity, AHT, SLA, quality, shrinkage and actions |
+| BPO Employee Performance 360 Master | Employee / report month | Productivity, quality, attendance, trend, rank, training, feedback, PIP and incentive eligibility |
+| BPO Client SLA, Delivery & Commercial Master | Client / Process-LOB / date | Forecast, volume, backlog, staffing, SLA, TAT, quality, billing, penalty and client governance |
+| BPO WFM, Attendance & Shrinkage Master | Employee / attendance date | Roster, biometric, attendance, leave, breaks, adherence, overtime, regularisation and payroll impact |
+| BPO HR Workforce & Employee Lifecycle Master | Employee / report date | Employee master, organisation, joining, confirmation, documents, BGV, movements and exit readiness |
+| BPO Payroll, Compensation & Statutory Master | Employee / payroll month / run | Attendance input, earnings, deductions, incentives, statutory, tax, payslip and disbursal |
+| BPO Finance, P&L & Profitability Master | Branch / Client / Process-LOB / finance month | Commercial plan, revenue, cost, GRN, payable, cash, gross profit, EBITDA and period close |
+| BPO Quality, Risk & Compliance Master | Employee / quality audit | Audit score, error taxonomy, fatal risk, calibration, RCA, CAPA and verification |
+| BPO Recruitment, Onboarding & Training Readiness Master | Candidate or employee / requisition | Demand, source, funnel, offer, joining, documents, BGV, training, OJT and readiness |
+| BPO Admin, Asset, IT & Facility Master | Employee / asset-access item / date | Asset custody, IT access, helpdesk, seat/facility, security and exit recovery |
+| BPO Executive Management Master | Branch / Client / Process-LOB / month | Workforce, delivery, quality, attendance, attrition, cost, revenue, margin, risk and decisions |
 
-## Source-health contract
+Each report contains at least 45 governed columns and covers at least seven source domains. The architecture intentionally avoids separate micro-reports for every metric.
 
-The overview endpoint inspects `information_schema` before reading a source table. Candidate table names are static catalogue values and must match `^[A-Za-z0-9_]+$`.
+## Schema-aware execution
 
-For each source group it returns:
+The BPO master report engine inspects `information_schema` and selects the widest recognised source available for each report. It then:
 
-- `available`, `missing` or `error` state;
-- selected and alternative source tables;
-- filtered row count;
-- status breakdown when a supported status column exists;
-- known issue count derived from exception-like statuses;
-- latest activity timestamp;
-- missing Branch and Process mappings;
-- filters that were actually applicable to that table.
+- maps existing source columns to standard uppercase output columns;
+- joins employee and organisation masters when possible;
+- applies date, Branch, Process, Client and employee filters only when the source can support them safely;
+- returns column-coverage metadata;
+- lists unavailable columns explicitly;
+- reports the selected source table;
+- returns `Unavailable` when no recognised source exists.
 
-### Mandatory accuracy rule
+A source is never treated as complete merely because a table exists. The UI displays the percentage of the standard report columns that the current schema can populate.
 
-A missing table, missing query capability or SQL failure must return **Unavailable/Error**. It must never be represented as zero. Zero is valid only when a query successfully executes and returns zero.
+## Branch and role security
 
-## Shared filters
+- Section and master-report visibility is filtered by backend role.
+- User role aliases are normalised, for example `quality_analyst → quality`, `payroll_head → payroll`, and `branch_hr → hr`.
+- `resolveBranchScope` is reused across master reports, deep-section controls and detailed report routes.
+- A non-global user without an authorised Branch receives no company-wide records.
+- A user cannot change the Branch filter to access an unauthorised Branch.
+- Detailed report view and export access is checked against the canonical report catalogue.
 
-The Reports V3 page provides:
+## Sensitive data handling
 
-- Month;
-- From date;
-- To date;
-- authorised Branch;
-- Process.
+Sensitive columns include, depending on the report:
 
-The overview service applies only filters supported by a table's real columns. Detailed report queries continue to use their existing filter contracts and branch-scoping controls.
+- salary, CTC, payroll and incentives;
+- bank, PAN, UAN, ESIC and identity values;
+- employee/candidate contact and address information;
+- BGV findings;
+- grievance, disciplinary and PIP information;
+- client commercial rates, revenue, cost and margin;
+- asset identifiers and system access values.
 
-## Data grain and duplicate controls
+The API masks these values when the current user can view the report but does not have export authority. This prevents sensitive values from being recoverable through browser network responses.
 
-Every detailed report definition declares:
+## Deep Section control packs
+
+The control room retains 20 business sections covering People, Recruitment, Attendance, Leave, WFM, Payroll, Statutory, Exit, Finance, Operations, Quality, Performance, Training, Assets, Support, Documents/Privacy, Engagement, Security, Integration/Data Quality and Visitor/Workplace.
+
+Each section has six perspectives:
+
+1. Overview
+2. Trends
+3. Detailed Register
+4. Exceptions
+5. Reconciliation
+6. Compliance
+
+These packs are not intended to create more downloadable micro-reports. They explain source health, control readiness, decision questions, compliance obligations and available drill-downs.
+
+## Data-grain and duplicate controls
+
+Every report declares:
 
 - row grain;
 - primary key;
-- columns and formats;
-- view roles;
-- export roles;
-- source tables;
-- calculation notes.
+- output columns;
+- view and export roles;
+- sensitive fields;
+- source domains;
+- control notes.
 
-The UI checks duplicate keys in the displayed result and warns when multiple rows violate the declared grain. This is a diagnostic warning, not an automatic de-duplication step.
+The UI checks displayed rows for duplicate primary-key signatures and raises a warning. It does not silently remove duplicates because duplicate rows may indicate a source-data or join defect.
 
-## RBAC and sensitive data
+## Accuracy rules
 
-- Section visibility is filtered by authenticated role on the backend.
-- Detailed report visibility remains governed by each report definition.
-- Export requires both section-level and detailed-report export permission.
-- Sensitive values are masked in the UI when the user lacks export-level permission.
-- PII, salary, identity, bank, BGV, grievance, performance and security domains are explicitly declared per section.
-
-## Compliance principles
-
-Each pack must support:
-
-1. clear business ownership;
-2. approved source and calculation definition;
-3. branch/process scoping;
-4. evidence of approval or status lifecycle;
-5. exception ownership;
-6. reconciliation to upstream/downstream records;
-7. privacy-aware viewing and export;
-8. retention and audit evidence where relevant.
-
-## Finance-specific reconciliation
-
-The Finance pack must distinguish:
-
-- budget amount;
-- GRN gross amount;
-- P&L recognised cost;
-- vendor payable;
-- cash paid;
-- outstanding balance;
-- recognition period;
-- payment date;
-- Process and LOB attribution;
-- period-close snapshot.
-
-These values must not be collapsed into a generic `actual` metric.
-
-## Attendance-specific reconciliation
-
-The Attendance pack must distinguish:
-
-- rostered shift;
-- raw biometric evidence;
-- processed biometric minutes;
-- final attendance status;
-- regularisation or override;
-- payroll-impacting payable/LWP values.
-
-## Payroll-specific reconciliation
-
-The Payroll pack must reconcile:
-
-- attendance/payable days;
-- earnings and deductions;
-- gross, deductions and net pay;
-- statutory contribution;
-- bank/disbursal value;
-- payslip generation and acknowledgement;
-- final sign-off.
+- `0` is valid only when a query successfully runs and the business value is zero.
+- Missing table, missing column, unsafe scope or SQL error must be represented as unavailable/error.
+- Target and achieved values must remain separate.
+- Forecast and actual values must remain separate.
+- Payroll calculation, payslip and disbursal values must remain separate.
+- Budget, GRN gross amount, P&L-recognised cost, vendor payable and cash paid must remain separate.
+- Raw biometric, processed attendance, regularisation and payroll impact must remain separate.
+- Aggregate reports must be traceable to employee-level or transaction-level evidence.
 
 ## Detailed library preservation
 
-The existing Reports Center V2 remains available at `/reports/library`. V3 does not duplicate report SQL. It references detailed report definitions from the canonical catalogue and calls the existing `/api/reports/suite/:code` endpoint.
+The existing Reports Center V2 remains available at `/reports/library`. It is retained for narrow investigations and legacy consumers. The primary Reports page does not display 137 isolated tiles.
 
-The legacy inline catalogue inside V2 remains technical debt and should be removed only after a separate parity test proves that the central catalogue contains every required definition and filter.
+The high-risk and generic detailed-report engines now use shared report-catalog RBAC and backend Branch-scope enforcement.
 
-## Adding a new detailed report
+## Validation gates
 
-A new detailed dataset must not be added merely because a stakeholder requests another export. Before implementation, define:
+The focused reports workflow validates:
 
-1. business question;
-2. row grain;
-3. primary key;
-4. source tables;
-5. calculation definition;
-6. branch/process scope;
-7. sensitive fields;
-8. view and export roles;
-9. reconciliation target;
-10. owner and exception workflow.
+- frontend TypeScript typecheck;
+- backend TypeScript typecheck;
+- frontend production build;
+- backend production build;
+- 20-section pack contracts;
+- 11 BPO master-report contracts;
+- mandatory employee code and report date;
+- uppercase and unique headers;
+- minimum report depth;
+- aggregate employee-code policy;
+- sensitive-column declarations.
 
-Then:
+Before production release, authenticated UAT must additionally verify:
 
-- add it to the canonical report catalogue;
-- implement the backend query;
-- add it to one or more section perspectives;
-- add schema and duplicate-grain tests;
-- validate empty, unavailable and error states separately.
-
-## Validation checklist
-
-- Backend TypeScript typecheck;
-- Frontend TypeScript typecheck;
-- Backend build;
-- Frontend build;
-- deep-report pack contract tests;
-- existing report schema-contract tests;
-- role visibility tests;
-- branch-scope tests;
-- sensitive export tests;
-- authenticated browser validation of `/reports` and `/reports/library`;
-- representative report execution in each section;
-- production-schema read-only source-coverage review.
+- all 11 master reports for representative roles;
+- Branch and Process scope;
+- no-scope fail-closed behaviour;
+- sensitive masking;
+- full export permissions;
+- date and header formatting in Excel;
+- duplicate-grain warnings;
+- current production-schema column coverage;
+- performance on full-month exports.
 
 ## Deployment safety
 
-This architecture is additive. It does not execute database migrations or alter production data. Production deployment, PM2 restart, Nginx changes and merging remain separate controlled actions.
+This reporting work is additive and read-only. It does not execute database migrations or modify production data. Merging, deployment, PM2 restart, Nginx changes and production rollout remain separate controlled actions.
