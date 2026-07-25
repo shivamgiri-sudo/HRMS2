@@ -28,17 +28,10 @@ jobs:
           file = Path('backend/src/services/notification.service.ts')
           text = file.read_text()
 
-          old = '''export interface NotificationRecipient {
-            type: "candidate" | "recruiter" | "hr";
-            id?: string;
-            email?: string;'''.replace('          ', '')
-          new = '''export interface NotificationRecipient {
-            type: "candidate" | "recruiter" | "hr";
-            id?: string;
-            user_id?: string;
-            email?: string;'''.replace('          ', '')
+          old = '  id?: string;\n  email?: string;'
+          new = '  id?: string;\n  user_id?: string;\n  email?: string;'
           if text.count(old) != 1:
-              raise SystemExit(f'NotificationRecipient block mismatch: {text.count(old)}')
+              raise SystemExit(f'NotificationRecipient field insertion point mismatch: {text.count(old)}')
           text = text.replace(old, new, 1)
 
           old = '''          const [subs] = await db.execute<RowDataPacket[]>(
