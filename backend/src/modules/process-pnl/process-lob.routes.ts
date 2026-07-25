@@ -4,6 +4,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { processLobCommercialService } from "./process-lob-commercial.service.js";
 import { processLobService } from "./process-lob.service.js";
 
 const router = Router();
@@ -23,6 +24,12 @@ const ASSIGNMENT_WRITE_ROLES = [
   "finance_head",
   "payroll_head",
 ] as const;
+
+function requiredProcessId(req: AuthenticatedRequest) {
+  const processId = String(req.query.processId ?? "").trim();
+  if (!processId) throw Object.assign(new Error("processId is required"), { statusCode: 400 });
+  return processId;
+}
 
 router.get("/", h(async (req, res) => {
   const data = await processLobService.listLobs({
@@ -60,14 +67,37 @@ router.post(
   })
 );
 
+router.get("/commercial", h(async (req, res) => {
+  const data = await processLobCommercialService.list(
+    requiredProcessId(req),
+    req.query.period ? String(req.query.period) : undefined
+  );
+  res.json({ success: true, data });
+}));
+
+router.post(
+  "/revenue-rules",
+  requireWriteAccess,
+  requireRole(...LOB_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processLobCommercialService.saveRevenueRule(req.body ?? {}, req.authUser.id);
+    res.status(req.body?.id ? 200 : 201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/delivery-actuals",
+  requireWriteAccess,
+  requireRole(...LOB_WRITE_ROLES),
+  h(async (req, res) => {
+    const data = await processLobCommercialService.saveDeliveryActual(req.body ?? {}, req.authUser.id);
+    res.status(req.body?.id ? 200 : 201).json({ success: true, data });
+  })
+);
+
 router.get("/assignments", h(async (req, res) => {
-  const processId = String(req.query.processId ?? "").trim();
-  if (!processId) {
-    res.status(400).json({ success: false, error: "processId is required" });
-    return;
-  }
   const data = await processLobService.listAssignments(
-    processId,
+    requiredProcessId(req),
     req.query.period ? String(req.query.period) : undefined
   );
   res.json({ success: true, data });
@@ -84,26 +114,16 @@ router.post(
 );
 
 router.get("/diagnostics", h(async (req, res) => {
-  const processId = String(req.query.processId ?? "").trim();
-  if (!processId) {
-    res.status(400).json({ success: false, error: "processId is required" });
-    return;
-  }
   const data = await processLobService.getDiagnostics(
-    processId,
+    requiredProcessId(req),
     req.query.period ? String(req.query.period) : undefined
   );
   res.json({ success: true, data });
 }));
 
 router.get("/summary", h(async (req, res) => {
-  const processId = String(req.query.processId ?? "").trim();
-  if (!processId) {
-    res.status(400).json({ success: false, error: "processId is required" });
-    return;
-  }
   const data = await processLobService.getProcessSummary(
-    processId,
+    requiredProcessId(req),
     req.query.period ? String(req.query.period) : undefined
   );
   res.json({ success: true, data });
