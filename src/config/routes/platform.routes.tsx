@@ -36,7 +36,7 @@ const NativeAuditLog                = lazy(() => import("@/pages/NativeAuditLog"
 const NativeSecurityCenter          = lazy(() => import("@/pages/NativeSecurityCenter"));
 const UnifiedAccessControl          = lazy(() => import("@/pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("@/pages/SuperAdminAccessControl"));
-const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccessControl"));
+const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccess"));
 const NativePolicyEngine            = lazy(() => import("@/pages/NativePolicyEngine"));
 const AIProviderSettings            = lazy(() => import("@/pages/AIProviderSettings"));
 const PeopleOSCopilot               = lazy(() => import("@/pages/PeopleOSCopilot"));
