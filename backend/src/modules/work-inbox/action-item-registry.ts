@@ -164,7 +164,7 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     defaultAssigneeRoles: ["payroll_head", "super_admin"],
     defaultPriority:   ACTION_PRIORITY.HIGH,
     defaultTtlHours:   48,
-    deeplinkPattern:   "/payroll/branch-readiness",
+    deeplinkPattern:   "/payroll/branch-readiness?ref={entityId}",
     requiresScope:     false,
   },
   {
@@ -175,7 +175,7 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     defaultAssigneeRoles: ["payroll_head", "super_admin"],
     defaultPriority:   ACTION_PRIORITY.HIGH,
     defaultTtlHours:   24,
-    deeplinkPattern:   "/payroll/branch-readiness",
+    deeplinkPattern:   "/payroll/branch-readiness?ref={entityId}",
     requiresScope:     false,
   },
   {
@@ -186,7 +186,7 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     defaultAssigneeRoles: ["payroll_head", "super_admin"],
     defaultPriority:   ACTION_PRIORITY.HIGH,
     defaultTtlHours:   48,
-    deeplinkPattern:   "/payroll/process-readiness",
+    deeplinkPattern:   "/payroll/process-readiness?ref={entityId}",
     requiresScope:     true,
   },
   {
@@ -197,7 +197,7 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     defaultAssigneeRoles: ["payroll_head", "super_admin"],
     defaultPriority:   ACTION_PRIORITY.HIGH,
     defaultTtlHours:   24,
-    deeplinkPattern:   "/payroll/process-readiness",
+    deeplinkPattern:   "/payroll/process-readiness?ref={entityId}",
     requiresScope:     true,
   },
   // ── Exit ─────────────────────────────────────────────────────────────────────
