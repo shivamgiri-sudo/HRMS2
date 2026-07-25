@@ -14,11 +14,14 @@ on:
       - "src/hooks/useProcessLobPnl.ts"
       - "backend/src/modules/finance/**"
       - "backend/src/modules/process-pnl/**"
+      - "backend/src/services/notification.service.ts"
       - "backend/src/db/runFinance**"
       - "backend/src/db/runPendingMigrations.ts"
       - "backend/sql/41*.sql"
       - "backend/sql/420*.sql"
       - "backend/sql/421*.sql"
+      - "backend/sql/422*.sql"
+      - "backend/sql/423*.sql"
       - ".github/workflows/finance-smart-controls.yml"
 
 permissions:
@@ -31,6 +34,30 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: hrms_finance_ci
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: 3306
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: root
+      JWT_SECRET: finance-ci-placeholder-secret-at-least-32-characters
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +110,7 @@ jobs:
           src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
           src/modules/process-pnl/__tests__/process-lob.test.ts
+          src/modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts
           src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts
           src/modules/finance/__tests__/finance.schema-contract.test.ts
           src/modules/finance/__tests__/budget-coverage.contract.test.ts
