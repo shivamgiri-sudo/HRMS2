@@ -3300,6 +3300,470 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
     }
 
+    // ─── Attendance Register Monthly (Day-wise Pivot Grid) ────────────────────
+    case "attendance-register-monthly": {
+      const month = monthParam(req.query.month);
+      const [yr, mo] = month.split("-").map(Number);
+      const daysInMonth = new Date(yr, mo, 0).getDate();
+      const firstDay = `${month}-01`;
+      const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("e.active_status = 1");
+      clauses.push("adr.record_date BETWEEN ? AND ?");
+      params.push(firstDay, lastDay);
+
+      const attSql = `
+        SELECT
+          e.id AS employee_id,
+          e.employee_code,
+          COALESCE(e.biometric_code, '') AS bio_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+          COALESCE(dept.dept_name, e.department, '') AS department,
+          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(e.profile_type, '') AS profile,
+          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(b.branch_name, '') AS emp_location,
+          CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+          DAY(adr.record_date) AS day_num,
+          adr.attendance_status
+        FROM attendance_daily_record adr
+        JOIN employees e ON e.id = adr.employee_id
+        LEFT JOIN department_master dept ON dept.id = e.department_id
+        LEFT JOIN designation_master desig ON desig.id = e.designation_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY e.employee_code, adr.record_date
+      `;
+
+      const [attRows] = await db.execute<RowDataPacket[]>(attSql, params);
+
+      // Status code mapping
+      const statusCode: Record<string, string> = {
+        present: "P", absent: "A", half_day: "HD", week_off: "W",
+        holiday: "H", leave_approved: "L", on_duty: "OD",
+        unreconciled: "A",
+      };
+
+      // Pivot into per-employee rows
+      const empMap = new Map<string, any>();
+      for (const row of attRows) {
+        if (!empMap.has(row.employee_id)) {
+          empMap.set(row.employee_id, {
+            emp_code:    row.employee_code,
+            bio_code:    row.bio_code,
+            emp_name:    row.emp_name,
+            department:  row.department,
+            designation: row.designation,
+            profile:     row.profile,
+            cost_center: row.cost_center,
+            emp_location:row.emp_location,
+            billable:    row.billable,
+          });
+        }
+        const emp = empMap.get(row.employee_id);
+        const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
+        emp[`day_${row.day_num}`] = code;
+      }
+
+      const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
+        let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0, weekoff = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+          const v = emp[`day_${d}`] ?? "";
+          if (v === "A") absent++;
+          else if (v === "P") present++;
+          else if (v === "OD") od++;
+          else if (v === "HD") hd++;
+          else if (v === "L") leave++;
+          else if (v === "H") holiday++;
+          else if (v === "W") weekoff++;
+        }
+        const salDays = present + hd * 0.5 + od + holiday + weekoff;
+        return {
+          sno: idx + 1,
+          emp_code: emp.emp_code,
+          bio_code: emp.bio_code,
+          emp_name: emp.emp_name,
+          department: emp.department,
+          designation: emp.designation,
+          profile: emp.profile,
+          cost_center: emp.cost_center,
+          emp_location: emp.emp_location,
+          billable: emp.billable,
+          ...Object.fromEntries(
+            Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
+          ),
+          absent_count: absent,
+          present_count: present,
+          od_count: od,
+          hd_count: hd,
+          leave_count: leave,
+          holiday_count: holiday,
+          weekoff_count: weekoff,
+          sal_days: salDays,
+          total: daysInMonth,
+        };
+      });
+
+      return res.json({
+        success: true, code,
+        data: pivotRows,
+        totalCount: pivotRows.length,
+        meta: {
+          count: pivotRows.length, totalCount: pivotRows.length,
+          limit: "unlimited", offset: 0, page: 1, totalPages: 1,
+          isFullExport: true, daysInMonth, month,
+        },
+      });
+    }
+
+    // ─── Leave Balance Export (Wide Pivot Format) ─────────────────────────────
+    case "leave-balance-export": {
+      const month = monthParam(req.query.month);
+      const balYear = month.slice(0, 4);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("e.active_status = 1");
+
+      sql = `
+        SELECT
+          e.employee_code AS emp_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+          COALESCE(b.branch_name, '') AS branch_name,
+          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('CL','CAS') THEN lbl.allocated_days END), 0) AS cl_current,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('ML','SL','MED') THEN lbl.allocated_days END), 0) AS ml_current,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('EL','PL_E') THEN lbl.allocated_days END), 0) AS el_current,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('PL','PTL','MTL','ML_M') THEN lbl.allocated_days END), 0) AS ptl_current,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('CL','CAS') THEN lbl.used_days END), 0) AS cl_taken,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('ML','SL','MED') THEN lbl.used_days END), 0) AS ml_taken,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('EL','PL_E') THEN lbl.used_days END), 0) AS el_taken,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('PL','PTL','MTL','ML_M') THEN lbl.used_days END), 0) AS ptl_taken,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('CL','CAS') THEN (lbl.allocated_days - lbl.used_days) END), 0) AS cl_remain,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('ML','SL','MED') THEN (lbl.allocated_days - lbl.used_days) END), 0) AS ml_remain,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('EL','PL_E') THEN (lbl.allocated_days - lbl.used_days) END), 0) AS el_remain,
+          COALESCE(SUM(CASE WHEN lt.leave_code IN ('PL','PTL','MTL','ML_M') THEN (lbl.allocated_days - lbl.used_days) END), 0) AS ptl_remain
+        FROM employees e
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN leave_balance_ledger lbl ON lbl.employee_id = e.id AND lbl.balance_year = ?
+        LEFT JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
+        WHERE ${clauses.join(" AND ")}
+        GROUP BY e.id, e.employee_code, e.first_name, e.last_name, b.branch_name, cc.cost_centre_name, e.cost_center
+        ORDER BY e.employee_code
+      `;
+      params.unshift(balYear);
+      break;
+    }
+
+    // ─── Left Employee Export ──────────────────────────────────────────────────
+    case "left-employee-export": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit')");
+      clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
+      params.push(from, to);
+
+      sql = `
+        SELECT
+          e.employee_code AS emp_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+          COALESCE(dept.dept_name, e.department, '') AS department,
+          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(b.branch_name, '') AS branch_name,
+          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(e.mobile, '') AS mobile_no,
+          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
+          DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%Y-%m-%d') AS left_date,
+          COALESCE(er.exit_reason_category, '') AS left_remarks,
+          COALESCE(e.source, '') AS source,
+          COALESCE(e.sub_source, '') AS sub_source,
+          COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
+          COALESCE(esa.ctc_annual, 0) AS offered_ctc
+        FROM employees e
+        LEFT JOIN department_master dept ON dept.id = e.department_id
+        LEFT JOIN designation_master desig ON desig.id = e.designation_id
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN exit_request er ON er.employee_id = e.id
+              AND er.status IN ('confirmed','cleared','completed')
+              AND er.id = (SELECT id FROM exit_request WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
+        LEFT JOIN (
+          SELECT employee_id, net_in_hand
+          FROM employee_salary_snapshot
+          WHERE (employee_id, snapshot_month) IN (
+            SELECT employee_id, MAX(snapshot_month) FROM employee_salary_snapshot GROUP BY employee_id
+          )
+        ) ess ON ess.employee_id = e.id
+        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY left_date DESC, e.employee_code
+      `;
+      break;
+    }
+
+    // ─── New Join Employee Export ──────────────────────────────────────────────
+    case "new-join-export": {
+      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
+      const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("e.date_of_joining BETWEEN ? AND ?");
+      params.push(from, to);
+
+      sql = `
+        SELECT
+          e.employee_code AS emp_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+          COALESCE(b.branch_name, '') AS branch_name,
+          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(dept.dept_name, e.department, '') AS department,
+          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          DATE_FORMAT(e.date_of_joining, '%Y-%m-%d') AS doj,
+          COALESCE(e.source, '') AS source,
+          COALESCE(e.sub_source, '') AS sub_source,
+          COALESCE(e.mobile, '') AS mobile_no,
+          COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
+          COALESCE(esa.ctc_annual, 0) AS offered_ctc
+        FROM employees e
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN department_master dept ON dept.id = e.department_id
+        LEFT JOIN designation_master desig ON desig.id = e.designation_id
+        LEFT JOIN (
+          SELECT employee_id, net_in_hand
+          FROM employee_salary_snapshot
+          WHERE (employee_id, snapshot_month) IN (
+            SELECT employee_id, MAX(snapshot_month) FROM employee_salary_snapshot GROUP BY employee_id
+          )
+        ) ess ON ess.employee_id = e.id
+        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY e.date_of_joining DESC, e.employee_code
+      `;
+      break;
+    }
+
+    // ─── Salary Sheet Export (90-column full payroll) ─────────────────────────
+    case "salary-sheet-export": {
+      const month = monthParam(req.query.month);
+      addEmployeeFilters(req.query, clauses, params);
+      clauses.push("spr.run_month = ?"); params.push(month);
+      clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+
+      // Fetch salary lines + employee info
+      const lineSql = `
+        SELECT
+          e.employee_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
+          COALESCE(cc.cost_centre_name, e.cost_center, '') AS cost_center,
+          COALESCE(dept.dept_name, e.department, '') AS department,
+          COALESCE(desig.designation_name, e.designation, '') AS designation,
+          COALESCE(e.profile_type, '') AS profile,
+          CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'InHouse' ELSE 'Non-Billable' END AS employee_for,
+          CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+          COALESCE(b.branch_name, '') AS branch,
+          spl.id AS line_id,
+          spl.employee_id,
+          COALESCE(spl.basic, 0) AS basic,
+          COALESCE(spl.hra, 0) AS hra,
+          COALESCE(spl.special_allowance, 0) AS special_allowance,
+          COALESCE(spl.gross_salary, 0) AS gross,
+          COALESCE(spl.working_days, 0) AS working_days,
+          COALESCE(esa.ctc_annual, 0) AS ctc_offered,
+          COALESCE(esa.ctc_annual, 0) AS current_ctc,
+          COALESCE(spl.active_calendar_days, 30) AS actual_days,
+          COALESCE(spl.final_payable_days, spl.present_days, 0) AS earned_days,
+          COALESCE(spl.holiday_work_extra_payout, 0) AS extra_day,
+          COALESCE(spl.leave_days, 0) AS leave_days,
+          CASE WHEN COALESCE(spl.esic_employee, 0) > 0 THEN 'Yes' ELSE 'No' END AS esi_elig,
+          CASE WHEN COALESCE(spl.pf_employee, 0) > 0 THEN 'Yes' ELSE 'No' END AS pf_elig,
+          COALESCE(spl.esic_employee, 0) AS esic,
+          COALESCE(spl.pf_employee, 0) AS epf,
+          COALESCE(spl.tds_amount, spl.tds, 0) AS income_tax,
+          COALESCE(spl.advance_recovery, 0) AS adv_paid,
+          COALESCE(spl.loan_emi, 0) AS loan_ded,
+          COALESCE(spl.professional_tax, 0) AS pro_tax_deduction,
+          COALESCE(spl.lwp_deduction, 0) AS leave_deduction,
+          COALESCE(spl.other_deductions, 0) AS other_deduction,
+          COALESCE(spl.total_deductions, 0) AS total_deduction,
+          COALESCE(spl.incentive_total, 0) AS incentive,
+          COALESCE(spl.overtime_pay, 0) AS extra_day_incentive,
+          COALESCE(spl.net_salary, 0) AS net_salary,
+          COALESCE(spl.esic_employer, 0) AS esic_company,
+          COALESCE(spl.pf_employer, 0) AS epf_company,
+          0 AS admin_chrg,
+          COALESCE(esa.ctc_annual, 0) AS ctc,
+          spr.id AS run_id,
+          DATE_FORMAT(spr.created_at, '%Y-%m-%d') AS sal_date,
+          COALESCE(e.uan, eu.uan, '') AS uan,
+          COALESCE(e.epf_number, eu.member_id, '') AS epf_no,
+          COALESCE(e.esic_number, '') AS esic_no,
+          COALESCE(e.employment_status, 'Active') AS left_status,
+          COALESCE(ebd.payment_mode, 'Bank Transfer') AS salary_payment_mode,
+          COALESCE(ebd.account_number, '') AS ac_no,
+          COALESCE(ebd.ifsc_code, '') AS ifsc_code,
+          COALESCE(ebd.bank_name, '') AS ac_bank,
+          COALESCE(ebd.branch_name, '') AS ac_branch
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN department_master dept ON dept.id = e.department_id
+        LEFT JOIN designation_master desig ON desig.id = e.designation_id
+        LEFT JOIN branch_master b ON b.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
+        LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY e.employee_code
+      `;
+
+      const [lineRows] = await db.execute<RowDataPacket[]>(lineSql, params);
+      if (!lineRows.length) {
+        return res.json({ success: true, code, data: [], totalCount: 0, meta: { count: 0, totalCount: 0, isFullExport: true } });
+      }
+
+      // Fetch component amounts for all lines in this run
+      const lineIds = lineRows.map(r => r.line_id);
+      const compPlaceholders = lineIds.map(() => "?").join(",");
+      const [compRows] = await db.execute<RowDataPacket[]>(
+        `SELECT line_id, component_code, amount FROM salary_prep_line_component WHERE line_id IN (${compPlaceholders})`,
+        lineIds
+      );
+
+      // Map component amounts by line_id
+      const compMap = new Map<string, Record<string, number>>();
+      for (const c of compRows) {
+        if (!compMap.has(c.line_id)) compMap.set(c.line_id, {});
+        compMap.get(c.line_id)![c.component_code] = Number(c.amount);
+      }
+
+      const result = lineRows.map((row, idx) => {
+        const comp = compMap.get(row.line_id) ?? {};
+        const basic  = Number(row.basic)  || comp["BASIC"]  || 0;
+        const hra    = Number(row.hra)    || comp["HRA"]    || 0;
+        const bonus  = comp["BONUS"]  || 0;
+        const conv   = comp["CONV"]   || comp["TA"] || 0;
+        const portfolio = comp["PORTFOLIO"] || 0;
+        const medAllw   = comp["MA"] || 0;
+        const lta       = comp["LTA"] || 0;
+        const special   = Number(row.special_allowance) || comp["SPECIAL"] || comp["PA"] || 0;
+        const otherAllw = comp["OTHER"] || 0;
+        const pli1  = comp["PLI"] || 0;
+        const gross = Number(row.gross) || (basic + hra + bonus + conv + portfolio + medAllw + lta + special + otherAllw + pli1);
+
+        const earnedDays  = Number(row.earned_days) || 0;
+        const workingDays = Number(row.working_days) || 1;
+        const earnRatio   = earnedDays / workingDays;
+
+        return {
+          sno: idx + 1,
+          emp_code:    row.employee_code,
+          emp_name:    row.emp_name,
+          cost_center: row.cost_center,
+          department:  row.department,
+          designation: row.designation,
+          profile:     row.profile,
+          employee_for:row.employee_for,
+          billable:    row.billable,
+          branch:      row.branch,
+          // Earnings (Gross components)
+          basic, hra, bonus, conv, portfolio,
+          medical_allowance: medAllw,
+          lta, special_allowance: special,
+          other_allowance: otherAllw,
+          pli1, gross,
+          // Working days
+          working_days:  row.working_days,
+          ctc_offered:   row.ctc_offered,
+          current_ctc:   row.current_ctc,
+          actual_days:   row.actual_days,
+          earned_days:   earnedDays,
+          extra_day:     row.extra_day,
+          leave:         row.leave_days,
+          // Earned salary (proportional)
+          basic1:             Math.round(basic  * earnRatio),
+          hra1:               Math.round(hra    * earnRatio),
+          bonus1:             Math.round(bonus  * earnRatio),
+          conv1:              Math.round(conv   * earnRatio),
+          portfolio1:         Math.round(portfolio * earnRatio),
+          special_allowance1: Math.round(special * earnRatio),
+          other_allowance1:   Math.round(otherAllw * earnRatio),
+          medical_allowance1: Math.round(medAllw * earnRatio),
+          gross1:             Math.round(gross  * earnRatio),
+          // Deductions
+          esi_elig:        row.esi_elig,
+          pf_elig:         row.pf_elig,
+          esic:            row.esic,
+          epf:             row.epf,
+          income_tax:      row.income_tax,
+          adv_taken:       0,
+          adv_paid:        row.adv_paid,
+          loan_taken:      0,
+          loan_ded:        row.loan_ded,
+          mobile_deduction:comp["MOB_DED"] || 0,
+          short_collection:comp["SHORT_COLL"] || 0,
+          asset_recovery:  comp["ASSET_REC"] || 0,
+          insurance:       comp["INSURANCE"] || 0,
+          pro_tax_deduction: row.pro_tax_deduction,
+          leave_deduction: row.leave_deduction,
+          other_deduction: row.other_deduction,
+          other_deduction_remarks: "",
+          total_deduction: row.total_deduction,
+          // Additions
+          incentive:          row.incentive,
+          extra_day_incentive:row.extra_day_incentive,
+          arrear:             comp["ARREAR"] || 0,
+          pli:                comp["PLI"] || 0,
+          // Net
+          net_salary: row.net_salary,
+          // Company cost
+          esic_company: row.esic_company,
+          epf_company:  row.epf_company,
+          admin_chrg:   row.admin_chrg,
+          ctc:          row.ctc,
+          // Metadata
+          shsh:        row.run_id?.slice(-8)?.toUpperCase() ?? "",
+          sal_date:    row.sal_date,
+          uan:         row.uan,
+          epf_no:      row.epf_no,
+          esic_no:     row.esic_no,
+          cheque_number: "",
+          cheque_date:   "",
+          print_date:    new Date().toISOString().slice(0, 10),
+          left_status:   row.left_status,
+          // Tax (TDS details — basic placeholders from prep line)
+          tax_total_gross: gross * 12,
+          tax_section10: 0,
+          tax_balance: 0,
+          tax_under_hd: 0,
+          deduction_under24: 0,
+          tax_gross_total: gross * 12,
+          tax_agg_chapter6: 0,
+          total_income: gross * 12,
+          tax_on_total_income: Number(row.income_tax) * 12,
+          edu_cess: Math.round(Number(row.income_tax) * 12 * 0.04),
+          tax_pay_edu_cess: Math.round(Number(row.income_tax) * 12 * 1.04),
+          tax_deducted_till_prev_month: 0,
+          balance_tax: 0,
+          // Bank
+          salary_payment_mode: row.salary_payment_mode,
+          ac_no:       row.ac_no,
+          ifsc_code:   row.ifsc_code,
+          ac_bank:     row.ac_bank,
+          ac_branch:   row.ac_branch,
+        };
+      });
+
+      return res.json({
+        success: true, code,
+        data: result,
+        totalCount: result.length,
+        meta: { count: result.length, totalCount: result.length, limit: "unlimited", offset: 0, isFullExport: true },
+      });
+    }
+
     default: {
       const fallback = fallbackReport(code);
       sql = fallback.sql;
