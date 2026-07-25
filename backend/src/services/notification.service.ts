@@ -49,6 +49,7 @@ export interface NotificationTemplate {
 export interface NotificationRecipient {
   type: "candidate" | "recruiter" | "hr";
   id?: string;
+  user_id?: string;
   email?: string;
   mobile?: string;
   name?: string;
@@ -362,10 +363,10 @@ export class NotificationService {
       // Web Push — send to all browser subscriptions for this recipient (by user_id if available)
       if (webpush && recipient.user_id && db) {
         try {
-          const [subs] = await db.execute<RowDataPacket[]>(
+          const [subs] = await (db.execute(
             `SELECT endpoint, p256dh, auth_key FROM push_subscriptions WHERE user_id = ?`,
             [recipient.user_id],
-          );
+          ) as Promise<[RowDataPacket[], unknown]>);
           const title = template.subject
             ? this.renderTemplate(template.subject, context)
             : template_code;
