@@ -115,19 +115,20 @@ bpoMasterReportRouter.get("/:code", h(async (req, res) => {
     export: exportRequested,
   }, branchScope);
 
-  if (!exportAllowed && result.rows.length) {
-    const sensitiveKeys = new Set(definition.columns.filter((column) => column.sensitive).map((column) => column.key));
-    result.rows = result.rows.map((row) => {
-      const masked = { ...row };
-      for (const key of sensitiveKeys) masked[key] = maskSensitiveValue(masked[key]);
-      return masked;
-    });
-  }
+  const responseRows = !exportAllowed && result.rows.length
+    ? result.rows.map((row) => {
+        const sensitiveKeys = new Set(definition.columns.filter((column) => column.sensitive).map((column) => column.key));
+        const masked = { ...row };
+        for (const key of sensitiveKeys) masked[key] = maskSensitiveValue(masked[key]);
+        return masked;
+      })
+    : result.rows;
 
   return res.json({
     success: true,
     data: {
       ...result,
+      rows: responseRows,
       sensitiveDataMasked: !exportAllowed,
     },
   });

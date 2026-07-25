@@ -521,22 +521,28 @@ function buildWhere(
     params.push(filters.clientId);
   }
 
-  if (filters.month) {
-    if (context.monthExpression) {
-      clauses.push(`SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7) = ?`);
-      params.push(filters.month);
+  const snapshotReport = [
+    "bpo-employee-performance-360-master",
+    "bpo-hr-workforce-lifecycle-master",
+  ].includes(context.reportCode);
+  if (!snapshotReport) {
+    if (filters.month) {
+      if (context.monthExpression) {
+        clauses.push(`SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7) = ?`);
+        params.push(filters.month);
+      } else if (context.dateExpression) {
+        clauses.push(`DATE_FORMAT(${context.dateExpression},'%Y-%m') = ?`);
+        params.push(filters.month);
+      }
     } else if (context.dateExpression) {
-      clauses.push(`DATE_FORMAT(${context.dateExpression},'%Y-%m') = ?`);
-      params.push(filters.month);
-    }
-  } else if (context.dateExpression) {
-    if (filters.from) {
-      clauses.push(`DATE(${context.dateExpression}) >= ?`);
-      params.push(filters.from);
-    }
-    if (filters.to) {
-      clauses.push(`DATE(${context.dateExpression}) <= ?`);
-      params.push(filters.to);
+      if (filters.from) {
+        clauses.push(`DATE(${context.dateExpression}) >= ?`);
+        params.push(filters.from);
+      }
+      if (filters.to) {
+        clauses.push(`DATE(${context.dateExpression}) <= ?`);
+        params.push(filters.to);
+      }
     }
   }
 

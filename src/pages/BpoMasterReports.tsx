@@ -266,7 +266,6 @@ export default function BpoMasterReports() {
       });
       const sheet = XLSX.utils.json_to_sheet(exportRows, { header: selectedReport.columns.map((column) => column.label) });
       sheet["!autofilter"] = { ref: sheet["!ref"] ?? "A1:A1" };
-      sheet["!freeze"] = { xSplit: 2, ySplit: 1 } as never;
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, sheet, "BPO MASTER REPORT".slice(0, 31));
       XLSX.writeFile(workbook, reportFileName(selectedReport.code));
