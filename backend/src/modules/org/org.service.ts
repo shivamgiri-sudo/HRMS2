@@ -503,18 +503,43 @@ export const processService = {
   list: (options?: ListOptions) => listActive("process_master", "process_name", { entityType: "process", ...options }),
   getById: (id: string) => getById("process_master", id),
   setStatus: (id: string, status: number) => setStatus("process_master", id, status),
-  async create(data: { process_code: string; process_name: string; branch_id?: string; department_id?: string; business_lob?: string }) {
+  async create(data: { process_code: string; process_name: string; branch_id?: string; department_id?: string; business_lob?: string; client_name?: string; workload_type?: string }) {
     const id = randomUUID();
     await db.execute(
-      "INSERT INTO process_master (id, process_code, process_name, branch_id, department_id, business_lob) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, data.process_code, data.process_name, data.branch_id ?? null, data.department_id ?? null, data.business_lob ?? null]
+      "INSERT INTO process_master (id, process_code, process_name, branch_id, department_id, business_lob, client_name, workload_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        data.process_code,
+        data.process_name,
+        data.branch_id?.trim() || null,
+        data.department_id?.trim() || null,
+        data.business_lob?.trim() || null,
+        data.client_name?.trim() || null,
+        data.workload_type?.trim() || null,
+      ]
     );
     return getById("process_master", id);
   },
-  async update(id: string, data: { process_name?: string; branch_id?: string; department_id?: string; business_lob?: string }) {
+  async update(id: string, data: { process_name?: string; branch_id?: string; department_id?: string; business_lob?: string; client_name?: string; workload_type?: string }) {
     await db.execute(
-      "UPDATE process_master SET process_name = COALESCE(?, process_name), branch_id = COALESCE(?, branch_id), department_id = COALESCE(?, department_id), business_lob = COALESCE(?, business_lob), updated_at = NOW() WHERE id = ?",
-      [data.process_name ?? null, data.branch_id ?? null, data.department_id ?? null, data.business_lob ?? null, id]
+      `UPDATE process_master SET
+        process_name  = COALESCE(?, process_name),
+        branch_id     = COALESCE(NULLIF(?, ''), branch_id),
+        department_id = COALESCE(NULLIF(?, ''), department_id),
+        business_lob  = COALESCE(NULLIF(?, ''), business_lob),
+        client_name   = COALESCE(NULLIF(?, ''), client_name),
+        workload_type = COALESCE(NULLIF(?, ''), workload_type),
+        updated_at    = NOW()
+       WHERE id = ?`,
+      [
+        data.process_name?.trim() || null,
+        data.branch_id?.trim() ?? null,
+        data.department_id?.trim() ?? null,
+        data.business_lob?.trim() ?? null,
+        data.client_name?.trim() ?? null,
+        data.workload_type?.trim() ?? null,
+        id,
+      ]
     );
     return getById("process_master", id);
   },
