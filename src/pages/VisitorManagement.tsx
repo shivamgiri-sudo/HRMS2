@@ -4,8 +4,9 @@ import { VisitorRegistrationDialog } from "@/components/visitor/VisitorRegistrat
 import { VisitorEmpty, VisitorShell, VisitorStat, VisitorStatusBadge } from "@/components/visitor/VisitorShell";
 import { visitorApi, visitorDateTime, type VisitorStatus, type VisitorVisit, type VisitorVisitDetail } from "@/features/visitor/visitorApi";
 
+// Tracking links now resolve to the internal /visitor-status/:token page
 const portalUrl = (import.meta.env.VITE_VISITOR_PORTAL_URL as string | undefined)?.replace(/\/$/, "")
-  ?? "https://visitor-management-portal.shivam-giri.chatgpt.site";
+  ?? "";
 
 function DetailDrawer({ visitId, onClose }: { visitId: string; onClose: () => void }) {
   const [visit, setVisit] = useState<VisitorVisitDetail | null>(null);
@@ -82,7 +83,11 @@ export default function VisitorManagement() {
     });
   }, [search, status, visits]);
 
-  const trackingLink = created ? `${portalUrl}/?tracking_token=${created.tracking_token}` : "";
+  const trackingLink = created
+    ? portalUrl
+      ? `${portalUrl}/visitor-status/${created.tracking_token}`
+      : `${window.location.origin}/visitor-status/${created.tracking_token}`
+    : "";
 
   return (
     <VisitorShell

@@ -57,6 +57,9 @@ export const Role = {
   DPO:                 "dpo",              // Data Protection Officer
   SECURITY:            "security",
   SECURITY_HEAD:       "security_head",
+  VISITOR_SECURITY:    "visitor_security",
+  VISITOR_RECEPTION:   "visitor_reception",
+  HR_BRANCH:           "hr_branch",
   SALES:               "sales",
   ANALYST:             "analyst",
   WFM_SPOC:            "wfm_spoc",

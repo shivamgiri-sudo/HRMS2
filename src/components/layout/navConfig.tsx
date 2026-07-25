@@ -267,6 +267,7 @@ export const navGroups: NavGroup[] = [
           { label: "Incentives", href: "/payroll/incentives", icon: ic(TrendingUp), pageCode: "PAYROLL_INCENTIVES", description: "Incentive management" },
           { label: "Payroll Readiness",      href: "/payroll/branch-readiness",     icon: ic(Building2),  roles: ["super_admin","payroll_head","branch_head","payroll_branch","admin","hr","finance","payroll"], description: "Branch-wise payroll readiness" },
           { label: "Process Readiness",     href: "/payroll/process-readiness",    icon: ic(GitBranch),  roles: ["super_admin","payroll_head","branch_head","payroll_branch","admin","hr","finance","payroll","process_manager","wfm"], pageCode: "PAYROLL_PROCESS_READINESS", description: "Process-level payroll readiness & WFM declarations" },
+          { label: "Attendance Control",    href: "/payroll/attendance-control-tower", icon: ic(ShieldCheck), roles: ["super_admin","admin","payroll_head","payroll_branch","payroll","hr","wfm","branch_head"], pageCode: "PAYROLL_ATTENDANCE_CONTROL_TOWER", description: "COSEC biometric, APR dialler and payroll ADR gap control" },
           { label: "Payroll Calendar",      href: "/payroll/calendar",             icon: ic(CalendarDays), roles: ["super_admin","payroll_head","payroll_branch"], description: "Payroll planning calendar" },
           { label: "HO Queues",             href: "/payroll/ho-queues",            icon: ic(ClipboardList), roles: ["admin","hr","finance","payroll","super_admin"],   description: "HO approval queues" },
           { label: "Cheque Validation",     href: "/payroll/cheque-validation",    icon: ic(FileCheck),     roles: ["payroll","payroll_head","super_admin","finance"], description: "Cheque name validation" },
@@ -410,7 +411,7 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Customization",    href: "/customization",      icon: ic(Settings2), pageCode: "CUSTOMIZATION_MANAGER", description: "Customization rules" },
           { label: "Visitor Mgmt",    href: "/visitor-management", icon: ic(UserPlus), roles: ["admin","super_admin","hr","branch_head","security_head","visitor_security","visitor_reception","branch_hr","hr_branch"],  description: "Visitor access & security" },
-          { label: "Visitor Approvals", href: "/visitor-management/approvals", icon: ic(CheckCircle), roles: ["admin","super_admin","hr","branch_head"], description: "Visitor approval queue" },
+          { label: "Visitor Approvals", href: "/visitor-management/approvals", icon: ic(CheckCircle), description: "Visitor approval queue" },
           { label: "Visitor Desk", href: "/visitor-management/desk", icon: ic(UserPlus), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Reception and check-in desk" },
           { label: "Visitor Security", href: "/visitor-management/security", icon: ic(ShieldCheck), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Visitor security operations" },
           { label: "Assets",           href: "/assets",             icon: ic(Package), roles: ["admin","hr","super_admin","manager","branch_head"], description: "Assets" },

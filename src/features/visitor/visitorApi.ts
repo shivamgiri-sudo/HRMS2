@@ -228,6 +228,11 @@ export const visitorApi = {
     return response.data;
   },
 
+  async extend(id: string, input: { scheduled_end: string; reason: string }) {
+    const response = await hrmsApi.post<ApiResponse<{ id: string; status: VisitorStatus }>>(`/api/visitor/visits/${id}/extend`, input);
+    return response.data;
+  },
+
   async occupancy(branchId?: string) {
     const query = queryString({ branch_id: branchId });
     const response = await hrmsApi.get<ApiResponse<VisitorOccupancy[]>>(`/api/visitor/occupancy?${query}`);
