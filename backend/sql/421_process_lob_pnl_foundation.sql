@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS process_lob_master (
   approved_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_process_lob_code (process_id, lob_code),
+  UNIQUE KEY uq_process_lob_version (process_id, lob_code, effective_from),
+  INDEX idx_process_lob_code (process_id, lob_code, active_status),
   INDEX idx_process_lob_effective (process_id, active_status, effective_from, effective_to),
   INDEX idx_process_lob_cost_centre (cost_centre_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
