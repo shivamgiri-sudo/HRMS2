@@ -7,6 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { grnLobAttributionService } from "../finance/grn-lob-attribution.service.js";
 import { processLobCommercialService } from "./process-lob-commercial.service.js";
 import { processLobService } from "./process-lob.service.js";
+import { vendorPaymentLobAttributionService } from "./vendor-payment-lob-attribution.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -102,6 +103,14 @@ router.post(
   h(async (req, res) => {
     const data = await processLobCommercialService.saveDeliveryActual(req.body ?? {}, req.authUser.id);
     res.status(req.body?.id ? 200 : 201).json({ success: true, data });
+  })
+);
+
+router.get(
+  "/vendor-payment-attribution/:paymentId",
+  h(async (req, res) => {
+    const data = await vendorPaymentLobAttributionService.get(req.params.paymentId);
+    res.json({ success: true, data });
   })
 );
 
