@@ -105,6 +105,26 @@ router.post(
   })
 );
 
+router.get(
+  "/grn-attribution/pending",
+  requireRole(...GRN_ATTRIBUTION_ROLES),
+  h(async (req, res) => {
+    const data = await grnLobAttributionService.listPending(
+      req.query.limit ? Number(req.query.limit) : 100
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/grn-attribution/:grnId",
+  requireRole(...GRN_ATTRIBUTION_ROLES),
+  h(async (req, res) => {
+    const data = await grnLobAttributionService.getWorkspace(req.params.grnId);
+    res.json({ success: true, data });
+  })
+);
+
 router.put(
   "/grn-attribution/:grnId",
   requireWriteAccess,
