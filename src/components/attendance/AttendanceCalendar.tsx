@@ -92,10 +92,9 @@ interface DayDetail {
     first_punch_in: string | null;
     last_punch_out: string | null;
     work_minutes: number | null;
-    synced_at: string;
+    synced_at: string | null;
   } | null;
   raw_punches: RawPunch[];
-  punch_count: number;
 }
 
 interface AttendanceCalendarProps {
@@ -251,7 +250,22 @@ function DayDetailSheet({
   const agg = data?.cosec_daily_agg;
   const punches = data?.raw_punches ?? [];
   const isNight = detectNightShift(agg?.first_punch_in, agg?.last_punch_out);
-  const status  = normalizeStatus(adr?.attendance_status);
+
+  // When ADR row is absent but COSEC data exists, derive a best-effort status from COSEC work_minutes
+  const statusFromCosec: DayStatus | null = (() => {
+    if (!adr && agg?.work_minutes != null) {
+      if (agg.work_minutes >= 480) return "present";
+      if (agg.work_minutes >= 240) return "half_day";
+      return "absent";
+    }
+    return null;
+  })();
+  const derivedStatus = normalizeStatus(adr?.attendance_status);
+  const status: DayStatus = (derivedStatus !== "absent" || adr != null)
+    ? derivedStatus
+    : (statusFromCosec ?? derivedStatus);
+
+  const hasAnyData = !!(adr || agg || punches.length > 0);
 
   // ── Action panel state ──────────────────────────────────────────────────────
   const [activeAction, setActiveAction] = useState<'regularize' | 'leave' | 'dispute' | null>(null);
@@ -381,8 +395,26 @@ function DayDetailSheet({
           </div>
         )}
 
-        {!isLoading && !error && data && (
+        {!isLoading && !error && data && !hasAnyData && (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center space-y-2">
+            <AlertOctagon className="h-7 w-7 text-slate-300 mx-auto" />
+            <p className="text-sm font-medium text-slate-500">No attendance data found</p>
+            <p className="text-xs text-slate-400">
+              Biometric data is synced overnight. Please check back after the nightly sync completes.
+            </p>
+          </div>
+        )}
+
+        {!isLoading && !error && data && hasAnyData && (
           <div className="space-y-4">
+
+            {/* Banner: ADR not yet processed but COSEC data exists */}
+            {!adr && agg && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>Attendance record not yet processed by the engine for this date. Showing live COSEC biometric data only.</span>
+              </div>
+            )}
 
             {/* Status row */}
             <div className="flex items-center justify-between">
@@ -545,7 +577,7 @@ function DayDetailSheet({
               </>
             )}
 
-            {punches.length === 0 && !agg && (
+            {punches.length === 0 && !agg && !adr && (
               <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
                 No biometric punch data found for this date.
               </div>
