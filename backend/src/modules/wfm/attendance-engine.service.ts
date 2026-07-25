@@ -151,6 +151,11 @@ export function isOperationsExecutiveByRegex(departmentName: string, designation
     && /^executive(?:\s*-\s*.+)?$/.test(designation);
 }
 
+function isOperationsDepartmentName(departmentName: string): boolean {
+  const department = departmentName.trim().toLowerCase();
+  return department === 'operations' || department === 'operation';
+}
+
 // G9: Read a feature flag from attendance_feature_config. Returns the raw string or null.
 async function getFeatureFlag(key: string): Promise<string | null> {
   try {
@@ -592,7 +597,7 @@ export const attendanceEngineService = {
     let rule = await this.resolveRule(designationId, processId, branchId, date);
 
     // G1: DB-backed APR eligibility check (replaces hardcoded regex)
-    const isAprEmployee = await this.isAprEligible(
+    const configuredAprEmployee = await this.isAprEligible(
       designationId, departmentId, processId,
       emp.dept_name, emp.designation_name
     );
@@ -601,6 +606,26 @@ export const attendanceEngineService = {
     // and for mismatch detection even when employee is APR-eligible.
     const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
     const biometricMinutes = biometricEvidence.minutes;
+    let isAprEmployee = configuredAprEmployee || rule.attendance_source === 'dialler';
+    let forcedAprMinutes: number | null = null;
+    let forcedAprSourceSystem: string | null = null;
+
+    // Production-safe fallback: if master data is incomplete but the employee belongs to
+    // operations and biometric has no evidence for the day, let strong APR/dialler evidence
+    // drive the attendance source for that date instead of forcing a missing_punch payroll gap.
+    if (!isAprEmployee && biometricMinutes === 0 && isOperationsDepartmentName(emp.dept_name)) {
+      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+      const diallerMinutes = aprMinutes > 0
+        ? aprMinutes
+        : await this.getDiallerMinutes(employeeId, date, shiftWindow);
+      if (diallerMinutes >= 240) {
+        isAprEmployee = true;
+        forcedAprMinutes = diallerMinutes;
+        forcedAprSourceSystem = aprMinutes > 0
+          ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
+          : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date');
+      }
+    }
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
     const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
@@ -611,7 +636,7 @@ export const attendanceEngineService = {
         // Get APR minutes if applicable to check for actual work on this day
         let actualMinutesOnWeekOff = biometricMinutes;
         if (isAprEmployee) {
-          const aprCheck = await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+          const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
           if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
         }
 
@@ -675,13 +700,13 @@ export const attendanceEngineService = {
         biometricStatusRaw = classifyCosecMinutes(biometricMinutes, halfDayFloor).status;
       }
 
-      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+      const aprMinutes = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
       diallerMinutes = aprMinutes > 0
         ? aprMinutes
         : await this.getDiallerMinutes(employeeId, date, shiftWindow);
-      sourceSystem = aprMinutes > 0
+      sourceSystem = forcedAprSourceSystem ?? (aprMinutes > 0
         ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
-        : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date');
+        : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date'));
       sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes ?? 0;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };

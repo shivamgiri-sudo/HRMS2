@@ -307,4 +307,119 @@ describe("attendance engine night-shift process flow", () => {
     expect(result.status).toBe("present");
     expect(result.sourceReference).toBe("MAS1001");
   });
+
+  it("falls back to APR for operations employees with incomplete master data when biometric is empty", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[
+        {
+          employee_code: "MAS1001",
+          designation_id: null,
+          department_id: "dept-ops-dup",
+          process_id: "proc-1",
+          branch_id: "branch-1",
+          cost_centre_id: "cc-1",
+          date_of_joining: "2026-01-01",
+          reporting_manager_id: "mgr-1",
+          dept_name: "operations",
+          designation_name: "",
+        },
+      ], []])
+      .mockResolvedValueOnce([[{
+        shift_start_time: "21:00:00",
+        shift_end_time: "06:00:00",
+      }], []])
+      .mockResolvedValueOnce([[{
+        id: "rule-1",
+        rule_name: "Ops Rule",
+        scope_type: "process",
+        designation_id: null,
+        process_id: "proc-1",
+        branch_id: "branch-1",
+        attendance_source: "biometric",
+        full_day_minutes: 540,
+        half_day_minutes: 240,
+        grace_minutes: 15,
+        effective_from: "2026-01-01",
+        effective_to: null,
+        active_status: 1,
+      }], []])
+      .mockResolvedValueOnce([[{ cnt: 1 }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{
+        minutes: 0,
+        source_system: "cosec_policy_absence",
+        source_reference: null,
+      }], []])
+      .mockResolvedValueOnce([[
+        { ReportDate: "2026-07-25", Net_Login: "05:00:00" },
+      ], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.source).toBe("dialler");
+    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.rawMinutes).toBe(300);
+    expect(result.diallerMinutes).toBe(300);
+    expect(result.status).toBe("half_day");
+    expect(result.lwpValue).toBe(0.5);
+  });
+
+  it("trusts an explicit dialler attendance rule even when APR eligibility config does not match", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[
+        {
+          employee_code: "MAS1001",
+          designation_id: null,
+          department_id: null,
+          process_id: "proc-1",
+          branch_id: "branch-1",
+          cost_centre_id: "cc-1",
+          date_of_joining: "2026-01-01",
+          reporting_manager_id: "mgr-1",
+          dept_name: "",
+          designation_name: "",
+        },
+      ], []])
+      .mockResolvedValueOnce([[{
+        shift_start_time: null,
+        shift_end_time: null,
+      }], []])
+      .mockResolvedValueOnce([[{
+        id: "arc-apr-ops-exec",
+        rule_name: "APR Rule",
+        scope_type: "process",
+        designation_id: null,
+        process_id: "proc-1",
+        branch_id: "branch-1",
+        attendance_source: "dialler",
+        full_day_minutes: 480,
+        half_day_minutes: 240,
+        grace_minutes: 15,
+        effective_from: "2026-01-01",
+        effective_to: null,
+        active_status: 1,
+      }], []])
+      .mockResolvedValueOnce([[{ cnt: 1 }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{
+        minutes: 0,
+        source_system: "cosec_policy_absence",
+        source_reference: null,
+      }], []])
+      .mockResolvedValueOnce([[
+        { ReportDate: "2026-07-25", Net_Login: "08:10:00" },
+      ], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.source).toBe("dialler");
+    expect(result.sourceSystem).not.toBe("cosec_policy_absence");
+  });
 });
