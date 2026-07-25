@@ -1,0 +1,93 @@
+name: PR59 Wire Workforce BPO Adapters
+
+on:
+  push:
+    branches:
+      - agent/deep-section-reports
+    paths:
+      - .github/workflows/pr59-wire-workforce-adapters.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pr59-wire-workforce-adapters.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/deep-section-reports
+          fetch-depth: 0
+
+      - name: Wire workforce adapter before canonical and generic paths
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/src/modules/reporting/bpo-master-report.service.ts')
+          text = path.read_text()
+          import_marker = 'import { runCanonicalBpoMasterAdapter } from "./bpo-master-canonical-adapters.js";'
+          import_new = import_marker + '\nimport { runWorkforceBpoMasterAdapter } from "./bpo-master-workforce-adapters.js";'
+          if text.count(import_marker) != 1:
+            raise SystemExit(f'import marker mismatch: {text.count(import_marker)}')
+          text = text.replace(import_marker, import_new, 1)
+
+          run_marker = '''    const filters = normalizeFilters(inputFilters);
+              const canonical = await runCanonicalBpoMasterAdapter(code, {'''
+          run_new = '''    const filters = normalizeFilters(inputFilters);
+              const workforce = await runWorkforceBpoMasterAdapter(code, {
+                month: filters.month,
+                from: filters.from,
+                to: filters.to,
+                branchId: filters.branchId,
+                processId: filters.processId,
+                employeeCode: filters.employeeCode,
+                limit: filters.limit,
+                offset: filters.offset,
+              }, branchScope);
+              if (workforce) {
+                const availableSet = new Set(workforce.availableKeys);
+                const available = definition.columns
+                  .filter((column) => availableSet.has(column.key))
+                  .map((column) => column.key);
+                const unavailable = definition.columns
+                  .filter((column) => !availableSet.has(column.key))
+                  .map((column) => column.key);
+                return {
+                  definition,
+                  generatedAt: new Date().toISOString(),
+                  sourceState: "available" as const,
+                  sourceTable: workforce.sourceTable,
+                  rows: workforce.rows,
+                  totalCount: workforce.totalCount,
+                  filters,
+                  coverage: {
+                    available,
+                    unavailable,
+                    percentage: definition.columns.length
+                      ? Number(((available.length / definition.columns.length) * 100).toFixed(1))
+                      : 100,
+                  },
+                  message: null,
+                };
+              }
+              const canonical = await runCanonicalBpoMasterAdapter(code, {'''
+          if text.count(run_marker) != 1:
+            raise SystemExit(f'run marker mismatch: {text.count(run_marker)}')
+          path.write_text(text.replace(run_marker, run_new, 1))
+          PY
+
+          rm .github/workflows/pr59-wire-workforce-adapters.yml
+
+      - name: Commit adapter wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/reporting/bpo-master-report.service.ts .github/workflows/pr59-wire-workforce-adapters.yml
+          git commit -m "feat(reports): populate workforce master reports from governed sources"
+          git push origin HEAD:agent/deep-section-reports
