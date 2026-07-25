@@ -43,16 +43,24 @@ function isCreatorAccessError(message?: string): boolean {
   return /creator access|no active company post creator access|forbidden|http 403/i.test(message ?? "");
 }
 
-// Get current user id from JWT stored in localStorage
-function getCurrentUserId(): string | undefined {
+function getJwtPayload(): { id?: string; sub?: string; role?: string } | null {
   try {
     const token = localStorage.getItem("hrms_access_token");
-    if (!token) return undefined;
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return typeof payload?.id === "string" ? payload.id : undefined;
-  } catch {
-    return undefined;
-  }
+    if (!token) return null;
+    return JSON.parse(atob(token.split(".")[1]));
+  } catch { return null; }
+}
+
+const MODERATOR_ROLES = new Set(["super_admin", "admin", "hr_admin", "hr_head"]);
+
+function getCurrentUserId(): string | undefined {
+  const p = getJwtPayload();
+  return typeof p?.id === "string" ? p.id : (typeof p?.sub === "string" ? p.sub : undefined);
+}
+
+function getIsModerator(): boolean {
+  const p = getJwtPayload();
+  return typeof p?.role === "string" && MODERATOR_ROLES.has(p.role);
 }
 
 export default function NativeCompanyFeed() {
@@ -64,6 +72,7 @@ export default function NativeCompanyFeed() {
   const knownTotalRef = useRef<number | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const currentUserId = getCurrentUserId();
+  const isModerator = getIsModerator();
 
   const feedQuery = useCompanyFeed({ limit: PAGE_LIMIT, page: feedPage });
   const myPostsQuery = useMyCompanyPosts({ limit: 6 });
@@ -278,6 +287,7 @@ export default function NativeCompanyFeed() {
                     key={post.id}
                     post={post}
                     currentUserId={currentUserId}
+                    isModerator={isModerator}
                   />
                 ))}
 

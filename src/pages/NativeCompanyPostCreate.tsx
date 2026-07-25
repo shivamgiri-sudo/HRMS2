@@ -15,7 +15,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { MentionTextarea } from "@/components/feed/MentionTextarea";
 import {
   getStatusMeta,
   useCreateCompanyPost,
@@ -264,14 +264,12 @@ export default function NativeCompanyPostCreate() {
                   <Label htmlFor="post-copy" className="text-sm font-semibold">Post copy</Label>
                   <CharRing value={content.length} max={MAX_CHARS} />
                 </div>
-                <Textarea
-                  id="post-copy"
+                <MentionTextarea
                   value={content}
-                  maxLength={MAX_CHARS}
-                  onChange={(e) => setContent(e.target.value)}
-                  placeholder="Share a townhall highlight, operations update, employee moment, or compliance-safe internal announcement…"
-                  className="min-h-[180px] rounded-xl border-slate-200 bg-slate-50/60 px-4 py-3 text-[15px] leading-7 text-slate-700 focus:bg-white resize-none"
-                  data-gramm="false"
+                  onChange={(val) => { if (val.length <= MAX_CHARS) setContent(val); }}
+                  placeholder="Share a townhall highlight, operations update, employee moment… (type @ to tag someone)"
+                  className="w-full min-h-[180px] rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3 text-[15px] leading-7 text-slate-700 focus:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--brand-200)]"
+                  minRows={6}
                 />
               </div>
 

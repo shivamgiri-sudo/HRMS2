@@ -1,7 +1,7 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Loader2, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { MentionTextarea } from "@/components/feed/MentionTextarea";
 import { useAddComment, useComments, useDeleteComment, type CommentItem } from "@/hooks/useCompanyFeed";
 import { formatRelativeTime } from "@/lib/companyFeedUtils";
 
@@ -74,7 +74,6 @@ function CommentRow({
 export function CommentThread({ postId, open, currentUserId, isModerator = false }: CommentThreadProps) {
   const [draft, setDraft] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const commentsQuery = useComments(postId, open);
   const addMutation = useAddComment();
@@ -128,18 +127,19 @@ export function CommentThread({ postId, open, currentUserId, isModerator = false
 
       {/* Add comment */}
       <div className="flex gap-2 pt-2">
-        <Textarea
-          ref={textareaRef}
+        <MentionTextarea
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Add a comment…"
-          className="min-h-[40px] resize-none rounded-xl py-2 text-sm"
+          onChange={setDraft}
+          placeholder="Add a comment… (type @ to mention someone)"
+          className="flex-1 min-h-[40px] rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          minRows={1}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void submitComment();
             }
           }}
+          disabled={addMutation.isPending}
         />
         <Button
           type="button"

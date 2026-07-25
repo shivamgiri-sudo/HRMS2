@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  Eye,
   Loader2,
   RefreshCcw,
   Trash2,
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { FeedPostCard } from "@/components/feed/FeedPostCard";
 import {
   getStatusMeta,
   type CompanyPost,
@@ -26,6 +28,15 @@ import {
 } from "@/hooks/useCompanyFeed";
 import { useToast } from "@/hooks/use-toast";
 import { formatRelativeTime } from "@/lib/companyFeedUtils";
+
+function getCurrentUserId(): string | undefined {
+  try {
+    const token = localStorage.getItem("hrms_access_token");
+    if (!token) return undefined;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return typeof payload?.id === "string" ? payload.id : (typeof payload?.sub === "string" ? payload.sub : undefined);
+  } catch { return undefined; }
+}
 
 type ManageTab = "all" | "approved" | "pending" | "flagged" | "rejected" | "auto_rejected";
 
@@ -61,6 +72,8 @@ export default function NativeCompanyPostManage() {
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
+  const [previewPost, setPreviewPost] = useState<CompanyPost | null>(null);
+  const currentUserId = getCurrentUserId();
 
   const posts = manageQuery.data?.posts ?? [];
   const total = manageQuery.data?.total ?? 0;
@@ -216,6 +229,14 @@ export default function NativeCompanyPostManage() {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          title="Preview post"
+                          onClick={() => setPreviewPost(post)}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-[color:var(--brand-50)] hover:text-[color:var(--brand-600)]"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
                         {post.status === "pending_approval" && (
                           <button
                             type="button"
@@ -257,6 +278,25 @@ export default function NativeCompanyPostManage() {
           )}
         </div>
       </div>
+
+      {/* Post preview dialog */}
+      <Dialog open={!!previewPost} onOpenChange={(open) => { if (!open) setPreviewPost(null); }}>
+        <DialogContent className="max-w-lg p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="px-5 pt-4 pb-2">
+            <DialogTitle className="text-sm">Post Preview</DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto max-h-[80vh] px-0 pb-4">
+            {previewPost && (
+              <FeedPostCard
+                post={previewPost}
+                currentUserId={currentUserId}
+                isModerator={true}
+                showEngagement={false}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteReason(""); } }}>

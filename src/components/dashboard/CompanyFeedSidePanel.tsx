@@ -187,19 +187,25 @@ export function CompanyFeedSidePanel() {
   const { data, isLoading, isError } = useCompanyFeed({ limit: 6, page: 1 });
   const posts = data?.posts ?? [];
   const total = data?.total ?? 0;
-  const [selectedPost, setSelectedPost] = useState<CompanyPost | null>(null);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [selectedPostSnapshot, setSelectedPostSnapshot] = useState<CompanyPost | null>(null);
   const currentUserId = getCurrentUserId();
+
+  // Live post from cache (updates when mutations fire); fall back to snapshot
+  const livePost = selectedPostId
+    ? (posts.find((p) => p.id === selectedPostId) ?? selectedPostSnapshot)
+    : null;
 
   return (
     <div className="flex flex-col gap-3">
       {/* Post detail modal */}
-      <Dialog open={!!selectedPost} onOpenChange={(open) => { if (!open) setSelectedPost(null); }}>
+      <Dialog open={!!selectedPostId} onOpenChange={(open) => { if (!open) { setSelectedPostId(null); setSelectedPostSnapshot(null); } }}>
         <DialogContent className="max-w-lg p-0 overflow-hidden rounded-2xl">
           <div className="flex items-center justify-between px-5 pt-4 pb-2">
             <span className="text-sm font-semibold text-slate-700">Company Update</span>
             <button
               type="button"
-              onClick={() => setSelectedPost(null)}
+              onClick={() => { setSelectedPostId(null); setSelectedPostSnapshot(null); }}
               className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               aria-label="Close"
             >
@@ -207,9 +213,9 @@ export function CompanyFeedSidePanel() {
             </button>
           </div>
           <div className="overflow-y-auto max-h-[80vh] px-0 pb-4">
-            {selectedPost && (
+            {livePost && (
               <FeedPostCard
-                post={selectedPost}
+                post={livePost}
                 currentUserId={currentUserId}
                 showEngagement={true}
               />
@@ -265,7 +271,7 @@ export function CompanyFeedSidePanel() {
         )}
 
         {posts.map((post) => (
-          <PostCard key={post.id} post={post} onClick={() => setSelectedPost(post)} />
+          <PostCard key={post.id} post={post} onClick={() => { setSelectedPostId(post.id); setSelectedPostSnapshot(post); }} />
         ))}
       </div>
 
