@@ -4,7 +4,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
-const MAX_ACCURACY_METERS = 200; // ignore readings worse than this
+const MAX_ACCURACY_METERS = 50; // only accept GPS-quality readings (≤50m)
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();
@@ -61,8 +61,8 @@ export function useLocationHeartbeat() {
       () => { /* permission denied or unavailable — silent */ },
       {
         enableHighAccuracy: true,
-        maximumAge: 30_000,
-        timeout: 15_000,
+        maximumAge: 0,        // always get a fresh GPS fix, never serve stale cache
+        timeout: 20_000,
       },
     );
 
