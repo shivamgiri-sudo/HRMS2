@@ -776,25 +776,6 @@ router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Respon
   });
 }));
 
-// GET /api/payroll/payslip/:runId/:employeeId — admin/hr/finance/payroll or employee own
-router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
-  const { runId, employeeId } = req.params;
-
-  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin");
-  if (!isPayrollRole) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp || callerEmp.id !== employeeId) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
-  }
-
-  const raw = await payslipService.getPayslip(employeeId, runId);
-  // Parse run_month (YYYY-MM) into numeric month/year for frontend
-  const [runYear, runMon] = (raw.run_month ?? '').split('-').map(Number);
-  const data = { ...raw, month: runMon || 0, year: runYear || 0 };
-  return res.json({ success: true, data });
-}));
-
 // GET /api/payroll/payslip/list/:employeeId — paginated payslip history for one employee (admin/HR view)
 router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeId } = req.params;
@@ -901,6 +882,26 @@ router.get("/payslip/legacy-detail/:employeeCode/:payMonth", requireAuth, h(asyn
     return res.status(404).json({ success: false, message: "Legacy payslip not found" });
   }
   return res.json({ success: true, data: (rows as any[])[0] });
+}));
+
+// GET /api/payroll/payslip/:runId/:employeeId — admin/hr/finance/payroll or employee own
+// MUST be registered after all static /payslip/<literal>/... routes to avoid shadowing them.
+router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runId, employeeId } = req.params;
+
+  const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll", "payroll_head", "payroll_admin");
+  if (!isPayrollRole) {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp || callerEmp.id !== employeeId) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+  }
+
+  const raw = await payslipService.getPayslip(employeeId, runId);
+  // Parse run_month (YYYY-MM) into numeric month/year for frontend
+  const [runYear, runMon] = (raw.run_month ?? '').split('-').map(Number);
+  const data = { ...raw, month: runMon || 0, year: runYear || 0 };
+  return res.json({ success: true, data });
 }));
 
 // POST /api/payroll/payslip/:runId/generate — admin/hr/finance/payroll only

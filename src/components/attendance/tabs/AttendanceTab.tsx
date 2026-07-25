@@ -190,6 +190,7 @@ export function AttendanceTab({ employeeId }: Props) {
       {viewMode === "calendar" ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <AttendanceCalendar
+            key={monthStr}
             employeeId={employeeId}
             initialMonth={currentMonth.getMonth()}
             initialYear={currentMonth.getFullYear()}

@@ -385,29 +385,6 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
       req,
     });
 
-    // FIX: Apply correction to attendance_daily_record immediately upon approval
-    // This ensures the calendar and payroll see the approved status right away
-    try {
-      const { attendanceEngineService } = await import('./attendance-engine.service.js');
-      const targetStatus = pre.requested_status || pre.new_status || 'present';
-      const targetLwp = targetStatus === 'present' ? 0 : targetStatus === 'half_day' ? 0.5 : 1.0;
-
-      await attendanceEngineService.correctDailyRecord(
-        pre.employee_id,
-        String(pre.session_date).slice(0, 10),
-        {
-          attendanceStatus: targetStatus as any,
-          lwpValue: targetLwp,
-          overrideReason: `Regularization approved: ${pre.dispute_type || 'punch correction'}${reviewerNote ? ' - ' + reviewerNote : ''}`,
-          isLocked: true,
-          regularizationId
-        },
-        req.authUser.id
-      );
-    } catch (error) {
-      // Log but don't fail approval if ADR update fails
-      console.error('[REGULARIZATION] Failed to update ADR after approval:', error);
-    }
   }
 
   return { httpStatus: 200, payload: { success: true, data: { ...data, decision_support: decisionSupport }, message: `Regularization ${status}` } };

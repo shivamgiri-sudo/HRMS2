@@ -202,7 +202,7 @@ export function useAttendanceDailyRecords(employeeId: string | null, fromDate: s
       const res = await hrmsApi.get<any>(`/api/wfm/attendance/daily?employeeId=${employeeId}&fromDate=${fromDate}&toDate=${toDate}`);
       return (res?.data ?? res ?? []) as DailyRecord[];
     },
-    staleTime: 30_000,
+    staleTime: 0,
   });
 }
 
@@ -214,7 +214,7 @@ export function useAttendanceSummary(employeeId: string | null, month: string) {
       const res = await hrmsApi.get<any>(`/api/wfm/attendance/summary/${employeeId}/${month}`);
       return (res?.data ?? res) as AttendanceSummary;
     },
-    staleTime: 30_000,
+    staleTime: 0,
   });
 }
 
@@ -228,7 +228,7 @@ export function useRunningSalary(employeeId: string | null, month: string) {
       const res = await hrmsApi.get<any>(`/api/payroll/running-summary/${employeeId}?month=${month}`);
       return (res?.data ?? res?.summary ?? res) as RunningSalary;
     },
-    staleTime: 60_000,
+    staleTime: 0,
   });
 }
 
