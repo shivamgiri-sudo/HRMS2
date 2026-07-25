@@ -1,9 +1,10 @@
-name: Deep Section Reports
+name: BPO Master & Deep Section Reports
 
 on:
   pull_request:
     branches: [main]
     paths:
+      - "src/pages/BpoMasterReports.tsx"
       - "src/pages/NativeReportsCenterV3.tsx"
       - "src/pages/NativeReportsCenterV2.tsx"
       - "src/lib/report-catalog.ts"
@@ -16,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deep-section-reports-${{ github.ref }}
+  group: bpo-master-reports-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -44,7 +45,7 @@ jobs:
         shell: bash
         run: |
           if ! npm run typecheck > /tmp/reports-frontend-typecheck.log 2>&1; then
-            tail -n 180 /tmp/reports-frontend-typecheck.log
+            tail -n 220 /tmp/reports-frontend-typecheck.log
             exit 1
           fi
 
@@ -53,16 +54,17 @@ jobs:
         shell: bash
         run: |
           if ! npm --prefix backend run typecheck > /tmp/reports-backend-typecheck.log 2>&1; then
-            tail -n 180 /tmp/reports-backend-typecheck.log
+            tail -n 220 /tmp/reports-backend-typecheck.log
             exit 1
           fi
 
-      - name: Deep report pack contracts
+      - name: Report architecture contracts
         id: report-tests
         shell: bash
         run: |
           if ! npm --prefix backend exec -- vitest run \
             src/modules/reporting/__tests__/deep-report-packs.contract.test.ts \
+            src/modules/reporting/__tests__/bpo-master-report-catalog.contract.test.ts \
             > /tmp/deep-report-tests.log 2>&1; then
             cat /tmp/deep-report-tests.log
             exit 1
@@ -87,7 +89,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: deep-section-report-diagnostics
+          name: bpo-master-report-diagnostics
           path: |
             /tmp/reports-frontend-typecheck.log
             /tmp/reports-backend-typecheck.log
