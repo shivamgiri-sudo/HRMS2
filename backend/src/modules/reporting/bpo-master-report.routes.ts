@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { BPO_MASTER_REPORTS, getBpoMasterReport } from "./bpo-master-report-catalog.js";
-import { bpoMasterReportService } from "./bpo-master-report.service.js";
+import { BPO_MASTER_REPORTS, getBpoMasterReport } from "./bpo-master-report-registry.js";
+import { bpoMasterReportV2Service } from "./bpo-master-report-v2.service.js";
 import { resolveBranchScope } from "./reporting.scope.js";
 
 export const bpoMasterReportRouter = Router();
@@ -72,6 +72,8 @@ bpoMasterReportRouter.get("/", h(async (req, res) => {
       employeeCodePolicy: "MANDATORY",
       dateStandard: "DD-MMM-YYYY",
       headerStandard: "UPPER_CASE",
+      sourcePolicy: "EXACT_RUNTIME_SCHEMA_OR_UNAVAILABLE",
+      accuracyPolicy: "SOURCE_LINEAGE_AND_GRAIN_VERIFICATION_REQUIRED",
       roles,
     },
   });
@@ -102,7 +104,7 @@ bpoMasterReportRouter.get("/:code", h(async (req, res) => {
     return res.status(403).json({ success: false, message: "Requested branch is outside your authorised reporting scope" });
   }
 
-  const result = await bpoMasterReportService.run(definition.code, {
+  const result = await bpoMasterReportV2Service.run(definition.code, {
     month: req.query.month ? String(req.query.month) : undefined,
     from: req.query.from ? String(req.query.from) : undefined,
     to: req.query.to ? String(req.query.to) : undefined,
