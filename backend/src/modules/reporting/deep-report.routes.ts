@@ -7,6 +7,7 @@ import {
   resolveDeepReportPack,
 } from "./deep-report-packs.js";
 import { deepReportService } from "./deep-report.service.js";
+import { resolveBranchScope } from "./reporting.scope.js";
 
 export const deepReportRouter = Router();
 deepReportRouter.use(requireAuth);
@@ -76,12 +77,25 @@ deepReportRouter.get("/:code/overview", h(async (req, res) => {
     return res.status(403).json({ success: false, message: "You do not have access to this report section" });
   }
 
+  const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+  const branchScope = await resolveBranchScope(req.authUser.id);
+  if (
+    requestedBranchId
+    && !branchScope.isSuperAdmin
+    && branchScope.branchIds.length > 0
+    && !branchScope.branchIds.includes(requestedBranchId)
+  ) {
+    return res.status(403).json({ success: false, message: "Requested branch is outside your authorised reporting scope" });
+  }
+
   const data = await deepReportService.overview(pack, {
-    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    branchId: requestedBranchId,
     processId: req.query.processId ? String(req.query.processId) : undefined,
     month: req.query.month ? String(req.query.month) : undefined,
     from: req.query.from ? String(req.query.from) : undefined,
     to: req.query.to ? String(req.query.to) : undefined,
+    authorizedBranchIds: branchScope.branchIds,
+    scopeIsGlobal: branchScope.isSuperAdmin || branchScope.branchIds.length === 0,
   });
 
   return res.json({ success: true, data });
