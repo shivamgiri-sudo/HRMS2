@@ -167,4 +167,144 @@ describe("attendance engine night-shift process flow", () => {
     expect(result.diallerMinutes).toBe(300);
     expect(result.lwpValue).toBe(0);
   });
+
+  it("keeps approved leave above APR night-shift minutes for payroll status", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[
+        {
+          employee_code: "MAS1001",
+          designation_id: "desig-1",
+          department_id: "dept-1",
+          process_id: "proc-1",
+          branch_id: "branch-1",
+          cost_centre_id: "cc-1",
+          date_of_joining: "2026-01-01",
+          reporting_manager_id: "mgr-1",
+          dept_name: "operations",
+          designation_name: "executive",
+        },
+      ], []])
+      .mockResolvedValueOnce([[{
+        shift_start_time: "21:00:00",
+        shift_end_time: "06:00:00",
+      }], []])
+      .mockResolvedValueOnce([[{
+        id: "rule-1",
+        rule_name: "Ops Rule",
+        scope_type: "process",
+        designation_id: "desig-1",
+        process_id: "proc-1",
+        branch_id: "branch-1",
+        attendance_source: "biometric",
+        full_day_minutes: 540,
+        half_day_minutes: 240,
+        grace_minutes: 15,
+        effective_from: "2026-01-01",
+        effective_to: null,
+        active_status: 1,
+      }], []])
+      .mockResolvedValueOnce([[{ cnt: 1 }], []])
+      .mockResolvedValueOnce([[{ id: "apr-elig-1" }], []])
+      .mockResolvedValueOnce([[{
+        minutes: 0,
+        source_system: "cosec_policy_absence",
+        source_reference: null,
+      }], []])
+      .mockResolvedValueOnce([[{ id: "leave-1" }], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.status).toBe("leave_approved");
+    expect(result.source).toBe("dialler");
+    expect(result.rawMinutes).toBe(0);
+    expect(result.diallerMinutes).toBeNull();
+    expect(result.lwpValue).toBe(0);
+    expect(result.sourceSystem).toBe("attendance_override");
+  });
+
+  it("keeps holiday above APR night-shift minutes for payroll status", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[
+        {
+          employee_code: "MAS1001",
+          designation_id: "desig-1",
+          department_id: "dept-1",
+          process_id: "proc-1",
+          branch_id: "branch-1",
+          cost_centre_id: "cc-1",
+          date_of_joining: "2026-01-01",
+          reporting_manager_id: "mgr-1",
+          dept_name: "operations",
+          designation_name: "executive",
+        },
+      ], []])
+      .mockResolvedValueOnce([[{
+        shift_start_time: "21:00:00",
+        shift_end_time: "06:00:00",
+      }], []])
+      .mockResolvedValueOnce([[{
+        id: "rule-1",
+        rule_name: "Ops Rule",
+        scope_type: "process",
+        designation_id: "desig-1",
+        process_id: "proc-1",
+        branch_id: "branch-1",
+        attendance_source: "biometric",
+        full_day_minutes: 540,
+        half_day_minutes: 240,
+        grace_minutes: 15,
+        effective_from: "2026-01-01",
+        effective_to: null,
+        active_status: 1,
+      }], []])
+      .mockResolvedValueOnce([[{ cnt: 1 }], []])
+      .mockResolvedValueOnce([[{ id: "apr-elig-1" }], []])
+      .mockResolvedValueOnce([[{
+        minutes: 0,
+        source_system: "cosec_policy_absence",
+        source_reference: null,
+      }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{ id: "holiday-1" }], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.status).toBe("holiday");
+    expect(result.source).toBe("dialler");
+    expect(result.rawMinutes).toBe(0);
+    expect(result.lwpValue).toBe(0);
+    expect(result.sourceSystem).toBe("attendance_override");
+  });
+
+  it("classifies cross-midnight APR totals as half day when combined minutes are between 240 and 479", async () => {
+    setupAprNightShiftBase();
+    dbExecute.mockResolvedValueOnce([[
+      { ReportDate: "2026-07-25", Net_Login: "02:30:00" },
+      { ReportDate: "2026-07-26", Net_Login: "02:30:00" },
+    ], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.source).toBe("dialler");
+    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.rawMinutes).toBe(300);
+    expect(result.status).toBe("half_day");
+    expect(result.lwpValue).toBe(0.5);
+  });
+
+  it("does not let the post-midnight date steal the shift-start payroll attendance", async () => {
+    setupAprNightShiftBase();
+    dbExecute.mockResolvedValueOnce([[
+      { ReportDate: "2026-07-26", Net_Login: "08:30:00" },
+    ], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.sourceRecordDate).toBe("2026-07-25");
+    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.rawMinutes).toBe(510);
+    expect(result.status).toBe("present");
+    expect(result.sourceReference).toBe("MAS1001");
+  });
 });
