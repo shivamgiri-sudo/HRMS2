@@ -348,6 +348,9 @@ SOURCE sql/540_report_performance_indexes.sql;
 -- ── Employee FULLTEXT search index (541) ──────────────────────────────────────
 SOURCE sql/541_employee_fulltext_search_index.sql;
 
+-- ── EPF Form 11 auto-fill + Form 2 nomination template (562) ─────────────────
+SOURCE sql/562_epf_form_autofill.sql;
+
 -- ── Utility / engagement fixes (999, 1000) ────────────────────────────────────
 SOURCE sql/1000_fix_engagement_schema_columns.sql;
 SOURCE sql/999_create_missing_engagement_tables.sql;

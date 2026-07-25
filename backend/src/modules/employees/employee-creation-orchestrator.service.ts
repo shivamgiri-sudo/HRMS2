@@ -255,6 +255,24 @@ export async function createEmployeeFromCandidate(
     result.employeeId = employeeId;
     result.employeeCode = employeeCode;
 
+    // Promote ATS candidate selfie to employee avatar_url/photo_url (non-blocking)
+    try {
+      const [selfieRows] = await db.execute<RowDataPacket[]>(
+        `SELECT selfie_url FROM ats_candidate WHERE id = ? LIMIT 1`,
+        [candidateId]
+      );
+      const selfieUrl: string | null = (selfieRows as any[])[0]?.selfie_url ?? null;
+      if (selfieUrl) {
+        await db.execute(
+          `UPDATE employees SET photo_url = ?, avatar_url = ? WHERE id = ?`,
+          [selfieUrl, selfieUrl, employeeId]
+        );
+        result.warnings.push('ATS selfie promoted to employee avatar');
+      }
+    } catch (selfieErr) {
+      console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
+    }
+
     // RULE 9: Provisioning failure doesn't block creation
     try {
       await dispatchJoinProvisioningTasks({

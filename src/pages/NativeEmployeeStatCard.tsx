@@ -701,10 +701,8 @@ function TabEmpty({ icon, message }: { icon: React.ReactNode; message: string })
 
 const TABS: { key: StatTab; label: string; icon: React.ReactNode }[] = [
   { key: "overview",   label: "Overview",   icon: <Zap className="h-4 w-4" /> },
-  { key: "documents",  label: "Documents",  icon: <FileText className="h-4 w-4" /> },
   { key: "attendance", label: "Attendance", icon: <CalendarDays className="h-4 w-4" /> },
   { key: "leave",      label: "Leave",      icon: <Clock className="h-4 w-4" /> },
-  { key: "payslips",   label: "Payslips",   icon: <CreditCard className="h-4 w-4" /> },
   { key: "assets",     label: "Assets",     icon: <Package className="h-4 w-4" /> },
   { key: "journey",    label: "Journey",    icon: <TrendingUp className="h-4 w-4" /> },
 ];
@@ -1207,7 +1205,11 @@ export default function NativeEmployeeStatCard() {
               designation={card.employee.designation_name ?? "—"}
               department={card.employee.dept_name ?? undefined}
               branchName={card.employee.branch_name ?? undefined}
-              branchAddress={card.employee.branch_address ?? undefined}
+              branchAddress={
+                card.employee.branch_address ||
+                [card.employee.branch_city, card.employee.branch_state].filter(Boolean).join(", ") ||
+                undefined
+              }
               branchCity={card.employee.branch_city ?? undefined}
               branchState={card.employee.branch_state ?? undefined}
               hrContact={card.employee.branch_hr_contact ?? "hr@teammas.in"}
@@ -1231,7 +1233,11 @@ export default function NativeEmployeeStatCard() {
               designation={card.employee.designation_name ?? "—"}
               department={card.employee.dept_name ?? undefined}
               branchName={card.employee.branch_name ?? undefined}
-              branchAddress={card.employee.branch_address ?? undefined}
+              branchAddress={
+                card.employee.branch_address ||
+                [card.employee.branch_city, card.employee.branch_state].filter(Boolean).join(", ") ||
+                undefined
+              }
               branchCity={card.employee.branch_city ?? undefined}
               branchState={card.employee.branch_state ?? undefined}
               hrContact={card.employee.branch_hr_contact ?? "hr@teammas.in"}

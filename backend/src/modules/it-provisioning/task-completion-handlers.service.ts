@@ -243,12 +243,22 @@ export async function completeAdminProvisioningTask(
   const task = await getTask(taskId);
   const conn = await db.getConnection();
 
-  // Fetch employee_code for cosec fallback (not stored on provisioning task row)
+  // Fetch employee_code and photo_url
   const [empCodeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_code FROM employees WHERE id = ? LIMIT 1`,
+    `SELECT employee_code, photo_url FROM employees WHERE id = ? LIMIT 1`,
     [task.employee_id]
   );
-  const empCode: string = (empCodeRows as RowDataPacket[])[0]?.employee_code as string ?? task.employee_id;
+  const empRow = (empCodeRows as RowDataPacket[])[0] as any;
+  const empCode: string = empRow?.employee_code ?? task.employee_id;
+
+  // Block ID card completion if employee has no photo
+  if (input.id_card_printed && !empRow?.photo_url) {
+    conn.release();
+    throw Object.assign(
+      new Error("Employee photo is required before the ID card can be issued. Ask the employee to upload their profile photo first."),
+      { statusCode: 422 }
+    );
+  }
 
   try {
     await conn.beginTransaction();

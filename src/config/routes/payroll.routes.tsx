@@ -21,6 +21,7 @@ const NativeIncentives          = lazy(() => import("@/pages/NativeIncentives"))
 const PayrollOvertimeManagement = lazy(() => import("@/pages/PayrollOvertimeManagement"));
 const PayrollConfigFlags        = lazy(() => import("@/pages/payroll/PayrollConfigFlags"));
 const RecalculationQueue        = lazy(() => import("@/pages/payroll/RecalculationQueue"));
+const AttendanceControlTower    = lazy(() => import("@/pages/payroll/AttendanceControlTower"));
 const RunningPayrollBreakdown   = lazy(() => import("@/pages/payroll/RunningPayrollBreakdown"));
 const HolidayMaster             = lazy(() => import("@/pages/payroll/HolidayMaster"));
 const DisbursalManagement       = lazy(() => import("@/pages/payroll/DisbursalManagement"));
@@ -78,6 +79,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><DisbursalManagement /></ProtectedRoute>} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><PayrollConfigFlags /></ProtectedRoute>} />
       <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><RecalculationQueue /></ProtectedRoute>} />
+      <Route path="/payroll/attendance-control-tower" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','payroll','hr','wfm','branch_head']}><AttendanceControlTower /></ProtectedRoute>} />
       <Route path="/payroll/running-breakdown"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm','employee']}><RunningPayrollBreakdown /></ProtectedRoute>} />
       <Route path="/payroll/holiday-master"      element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><HolidayMaster /></ProtectedRoute>} />
       <Route path="/payroll/holiday-work-requests" element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><HolidayWorkRequest /></ProtectedRoute>} />

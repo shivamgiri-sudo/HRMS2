@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/popover";
 import { EmployeeLeaveEligibility, type EmployeeLeaveEligibilityHandle } from "./EmployeeLeaveEligibility";
 import { fetchAllEmployeeRows } from "@/hooks/useEmployees";
+import { PhotoUpload } from "@/components/employee/PhotoUpload";
 
 const WEEKDAYS = [
   { value: 0, label: 'Sun' },
@@ -509,6 +510,17 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
               </TabsList>
               
               <TabsContent value="basic" className="space-y-4 mt-4">
+                {employee?.id && (
+                  <div className="space-y-2">
+                    <Label>Profile Photo</Label>
+                    <PhotoUpload
+                      employeeId={employee.id}
+                      currentUrl={employeeDetails?.avatar_url ?? employeeDetails?.photo_url ?? null}
+                      canDelete
+                      displayName={`${employeeDetails?.first_name ?? ""} ${employeeDetails?.last_name ?? ""}`.trim()}
+                    />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="employee_code">Employee Number *</Label>
                   <div className="relative">

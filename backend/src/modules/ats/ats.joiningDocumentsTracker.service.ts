@@ -2,7 +2,7 @@ import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getUserRoleKeys } from '../../shared/scopeAccess.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
-import { sendRejectedEmail } from './ats.email.service.js';
+import { sendJoiningDocReminderEmail } from './ats.email.service.js';
 import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
 // archiver ships a CJS default; @types/archiver only declares named exports so we
 // need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
@@ -352,12 +352,20 @@ export async function sendBulkReminders(
     }
 
     try {
-      void customMessage; // reserved for future custom reminder template
-      await sendRejectedEmail({
-        candidateId: emp.id,
+      // Fetch names of pending/incomplete documents for this employee
+      const [docRows] = await db.execute<RowDataPacket[]>(
+        `SELECT document_name FROM employee_joining_document_checklist
+         WHERE employee_id = ? AND status NOT IN ('verified','signed','completed')
+         ORDER BY sequence`,
+        [emp.id]
+      );
+      const pendingDocs = (docRows as any[]).map((r: any) => String(r.document_name));
+      void customMessage; // reserved for future custom message override
+      await sendJoiningDocReminderEmail({
         to: emp.official_email,
-        candidateName: emp.full_name,
-        branchName: '',
+        employeeName: emp.full_name,
+        pendingDocuments: pendingDocs.length > 0 ? pendingDocs : ['Joining documents'],
+        employeeId: emp.id,
       });
       result.sent++;
     } catch (error: unknown) {

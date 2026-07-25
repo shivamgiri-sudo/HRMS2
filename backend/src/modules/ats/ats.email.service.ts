@@ -14,7 +14,8 @@ import {
 } from './email.templates.js';
 
 type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
-                 'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification';
+                 'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification' |
+                 'joining_doc_reminder';
 
 interface SendResult { ok: boolean; error?: string }
 
@@ -512,4 +513,76 @@ export async function sendRejectedEmailProfessional(params: {
     params.candidateId,
     'rejected_professional',
   );
+}
+
+// ── Joining Document eSign Email ───────────────────────────────────────────────
+
+export function buildJoiningDocEsignEmailHtml(params: {
+  employeeName: string;
+  documentName: string;
+  signLink: string;
+  expiryStr: string;
+}): string {
+  const { employeeName, documentName, signLink, expiryStr } = params;
+  return `
+  <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#0f766e,#0ea5e9);padding:24px 28px;color:#ffffff">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.88">MAS Callnet HRMS — Action Required</div>
+        <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3">Please sign your joining document</h1>
+      </div>
+      <div style="padding:26px 28px">
+        <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#334155">
+          Your HR team has shared the following joining document for your e-signature:
+        </p>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px 18px;margin:0 0 20px">
+          <p style="margin:0;font-size:15px;font-weight:700;color:#166534">${documentName}</p>
+        </div>
+        <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#475569">
+          Please review and sign the document by clicking the button below. This link is valid until <strong>${expiryStr}</strong>.
+        </p>
+        <p style="margin:0 0 8px">
+          <a href="${signLink}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:13px 22px;border-radius:12px;font-weight:800;font-size:15px">Review &amp; Sign Document</a>
+        </p>
+        <p style="margin:16px 0 0;font-size:12px;color:#64748b">If the button does not work, copy this link:<br><span style="word-break:break-all">${signLink}</span></p>
+        <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 16px">
+        <p style="margin:0;font-size:12px;color:#94a3b8">If you did not expect this document, please contact your HR team immediately.</p>
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 28px;color:#94a3b8;font-size:11px">
+        MAS Callnet India Pvt. Ltd. &bull; This is an automated message — please do not reply directly to this email.
+      </div>
+    </div>
+  </div>`;
+}
+
+export async function sendJoiningDocReminderEmail(params: {
+  to: string;
+  employeeName: string;
+  pendingDocuments: string[];
+  employeeId: string;
+}): Promise<SendResult> {
+  const { to, employeeName, pendingDocuments, employeeId } = params;
+  const docList = pendingDocuments.map(d => `<li style="margin-bottom:4px">${d}</li>`).join('');
+  const hrLink = `${env.FRONTEND_URL || 'http://localhost:5173'}/employees/${employeeId}/joining-documents`;
+  const html = `
+  <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#0f766e,#0ea5e9);padding:24px 28px;color:#ffffff">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.88">MAS Callnet HRMS — Reminder</div>
+        <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3">Joining documents pending</h1>
+      </div>
+      <div style="padding:26px 28px">
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${employeeName}</strong>,</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">The following joining documents are still pending your action:</p>
+        <ul style="margin:0 0 20px;padding-left:20px;font-size:14px;color:#334155;line-height:1.7">${docList}</ul>
+        <p style="margin:0 0 14px;font-size:14px;color:#475569">Please check your email inbox for individual signing links, or contact your HR team.</p>
+        <p style="margin:0 0 8px">
+          <a href="${hrLink}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:12px;font-weight:700;font-size:14px">View Joining Documents</a>
+        </p>
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 28px;color:#94a3b8;font-size:11px">MAS Callnet India Pvt. Ltd.</div>
+    </div>
+  </div>`;
+  return send(to, 'Reminder: Joining documents pending — MAS Callnet', html, employeeId, 'joining_doc_reminder');
 }
