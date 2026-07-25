@@ -3,10 +3,12 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { reportingService } from './reporting.service.js';
 import { reportingAnalyticsV2Service } from './reporting.analytics-v2.service.js';
+import { deepReportRouter } from './deep-report.routes.js';
 import { reportSuiteHighRiskRouter } from "./report-suite-highrisk.routes.js";
 import { reportSuiteRouter } from "./report-suite.routes.js";
 
 const router = Router();
+router.use("/deep-sections", deepReportRouter);
 router.use("/suite", reportSuiteHighRiskRouter);
 router.use("/suite", reportSuiteRouter);
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
