@@ -18,6 +18,17 @@ const EXPECTED_CODES = [
   "bpo-management-executive-master",
 ];
 
+const GOVERNED_ADAPTER_CODES = [
+  "bpo-operations-productivity-master",
+  "bpo-employee-performance-360-master",
+  "bpo-client-sla-delivery-master",
+  "bpo-wfm-attendance-shrinkage-master",
+  "bpo-hr-workforce-lifecycle-master",
+  "bpo-payroll-statutory-master",
+  "bpo-finance-pnl-profitability-master",
+  "bpo-management-executive-master",
+];
+
 describe("BPO master report catalog", () => {
   it("contains the complete limited set of comprehensive BPO master reports", () => {
     expect(BPO_MASTER_REPORTS).toHaveLength(11);
@@ -94,5 +105,10 @@ describe("BPO master report catalog", () => {
       expect(report.viewRoles).not.toContain("employee");
       expect(report.exportRoles).not.toContain("employee");
     }
+  });
+
+  it("uses governed multi-source adapters for the highest-value BPO domains", () => {
+    expect(GOVERNED_ADAPTER_CODES).toHaveLength(8);
+    for (const code of GOVERNED_ADAPTER_CODES) expect(EXPECTED_CODES).toContain(code);
   });
 });
