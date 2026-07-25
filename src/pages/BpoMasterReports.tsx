@@ -10,8 +10,10 @@ import {
   ChevronRight,
   Database,
   Download,
+  FileSearch,
   FileSpreadsheet,
   Filter,
+  History,
   Library,
   Loader2,
   Play,
@@ -64,7 +66,28 @@ interface CatalogResponse {
     employeeCodePolicy: string;
     dateStandard: string;
     headerStandard: string;
+    sourcePolicy?: string;
+    accuracyPolicy?: string;
   };
+}
+
+interface FieldLineage {
+  sourceSchema: string;
+  sourceTable: string;
+  sourceColumn: string | null;
+  transformation: string;
+  confidence: "EXACT" | "DERIVED" | "UNAVAILABLE";
+}
+
+interface VerificationSummary {
+  runtimeSchemaVerified: boolean;
+  exactMappedFieldCount: number;
+  derivedMappedFieldCount: number;
+  unavailableFieldCount: number;
+  duplicateGrainCount: number;
+  sourceRowCount: number;
+  distinctGrainCount: number;
+  accuracyStatus: "SCHEMA_VERIFIED" | "DUPLICATE_GRAIN_FOUND";
 }
 
 interface RunResult {
@@ -80,6 +103,10 @@ interface RunResult {
     unavailable: string[];
     percentage: number;
   };
+  lineage?: Record<string, FieldLineage>;
+  verification?: VerificationSummary;
+  accuracyStatement?: string;
+  sensitiveDataMasked?: boolean;
   message: string | null;
 }
 
@@ -104,6 +131,9 @@ const DOMAIN_ICONS: Record<string, typeof BarChart3> = {
   "RECRUITMENT / TRAINING": Users,
   "ADMIN / IT / FACILITY": Database,
   "HIGHER MANAGEMENT": BarChart3,
+  "AUDIT / COMPLIANCE / CONTROL": ShieldCheck,
+  "END-TO-END EMPLOYEE JOURNEY": History,
+  "DATA GOVERNANCE / REPORT ACCURACY": FileSearch,
 };
 
 function currentMonth() {
@@ -211,7 +241,8 @@ export default function BpoMasterReports() {
     );
   }, [reports, search]);
   const rows = runResult?.rows ?? [];
-  const duplicates = runResult ? duplicateCount(rows, runResult.definition.primaryKey) : 0;
+  const displayedDuplicates = runResult?.verification?.duplicateGrainCount
+    ?? (runResult ? duplicateCount(rows, runResult.definition.primaryKey) : 0);
   const totalPages = Math.max(1, Math.ceil((runResult?.totalCount ?? 0) / pageSize));
 
   function selectReport(code: string) {
@@ -281,7 +312,7 @@ export default function BpoMasterReports() {
     <HrmsModernShell
       eyebrow="BPO REPORTING STANDARD"
       title="COMPREHENSIVE BPO MASTER REPORTS"
-      description="Limited master reports with maximum related detail for Operations, HR, WFM, Payroll, Finance, Quality, Recruitment, Administration, Client Performance and Higher Management."
+      description="Fourteen source-governed master reports covering Operations, employee performance, Client delivery, WFM, HR, Payroll, Finance, Quality, Recruitment, Administration, Executive Management, Audit/Compliance, Interview-to-Exit journey and report-data lineage."
       icon={<FileSpreadsheet className="h-5 w-5" />}
       actions={
         <div className="flex flex-wrap items-center gap-2">
@@ -294,6 +325,9 @@ export default function BpoMasterReports() {
               className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs font-semibold uppercase outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+          <Link to="/reports/source-validation" className="inline-flex h-10 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
+            <FileSearch className="h-4 w-4" /> SOURCE ACCURACY
+          </Link>
           <Link to="/reports/control-room" className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50">
             <ShieldCheck className="h-4 w-4" /> CONTROL ROOM
           </Link>
@@ -304,13 +338,14 @@ export default function BpoMasterReports() {
       }
     >
       <div className="space-y-4">
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           {[
-            ["MASTER REPORTS", catalogQuery.data?.meta.totalMasterReportCount ?? 11, FileSpreadsheet],
+            ["MASTER REPORTS", catalogQuery.data?.meta.totalMasterReportCount ?? 14, FileSpreadsheet],
             ["EMPLOYEE CODE", "MANDATORY", Users],
             ["DATE FORMAT", "DD-MMM-YYYY", RefreshCw],
             ["HEADERS", "UPPER CASE", Table2],
             ["BRANCH SCOPE", "FAIL CLOSED", ShieldCheck],
+            ["SOURCE POLICY", "EXACT OR UNAVAILABLE", FileSearch],
           ].map(([label, value, Icon]) => {
             const MetricIcon = Icon as typeof BarChart3;
             return (
@@ -366,7 +401,7 @@ export default function BpoMasterReports() {
           <aside className="rounded-xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-100 px-4 py-3">
               <p className="text-xs font-black uppercase tracking-widest text-slate-700">SELECT MASTER REPORT</p>
-              <p className="mt-1 text-[10px] uppercase text-slate-400">ONE COMPREHENSIVE REPORT PER MAJOR BPO DOMAIN</p>
+              <p className="mt-1 text-[10px] uppercase text-slate-400">COMPREHENSIVE DOMAIN REPORTS + CROSS-MODULE CONTROL LEDGERS</p>
             </div>
             <div className="max-h-[780px] space-y-2 overflow-y-auto p-2">
               {catalogQuery.isLoading ? (
@@ -405,6 +440,7 @@ export default function BpoMasterReports() {
                           <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">EMPLOYEE CODE: MANDATORY</span>
                           <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">DATE: DD-MMM-YYYY</span>
                           <span className="rounded-full bg-violet-50 px-2 py-1 text-violet-700">HEADERS: UPPER CASE</span>
+                          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">SOURCE: EXACT / DERIVED / UNAVAILABLE</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -438,14 +474,21 @@ export default function BpoMasterReports() {
 
                 {runResult && (
                   <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-                    <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-5">
+                    <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-7">
                       <div><p className="text-[10px] font-black uppercase text-slate-400">SOURCE STATE</p><p className={classNames("mt-1 text-sm font-black uppercase", runResult.sourceState === "available" ? "text-emerald-700" : "text-rose-700")}>{runResult.sourceState}</p></div>
-                      <div><p className="text-[10px] font-black uppercase text-slate-400">SOURCE TABLE</p><p className="mt-1 font-mono text-xs font-bold text-slate-700">{runResult.sourceTable ?? "UNAVAILABLE"}</p></div>
+                      <div><p className="text-[10px] font-black uppercase text-slate-400">SOURCE TABLE</p><p className="mt-1 break-words font-mono text-xs font-bold text-slate-700">{runResult.sourceTable ?? "UNAVAILABLE"}</p></div>
                       <div><p className="text-[10px] font-black uppercase text-slate-400">COLUMN COVERAGE</p><p className="mt-1 text-sm font-black text-slate-900">{runResult.coverage.percentage}%</p></div>
-                      <div><p className="text-[10px] font-black uppercase text-slate-400">TOTAL ROWS</p><p className="mt-1 text-sm font-black text-slate-900">{runResult.totalCount.toLocaleString("en-IN")}</p></div>
-                      <div><p className="text-[10px] font-black uppercase text-slate-400">DUPLICATE KEYS</p><p className={classNames("mt-1 text-sm font-black", duplicates ? "text-amber-700" : "text-emerald-700")}>{duplicates.toLocaleString("en-IN")}</p></div>
+                      <div><p className="text-[10px] font-black uppercase text-slate-400">SOURCE ROWS</p><p className="mt-1 text-sm font-black text-slate-900">{(runResult.verification?.sourceRowCount ?? runResult.totalCount).toLocaleString("en-IN")}</p></div>
+                      <div><p className="text-[10px] font-black uppercase text-slate-400">DISTINCT GRAIN</p><p className="mt-1 text-sm font-black text-slate-900">{(runResult.verification?.distinctGrainCount ?? runResult.totalCount).toLocaleString("en-IN")}</p></div>
+                      <div><p className="text-[10px] font-black uppercase text-slate-400">DUPLICATE KEYS</p><p className={classNames("mt-1 text-sm font-black", displayedDuplicates ? "text-amber-700" : "text-emerald-700")}>{displayedDuplicates.toLocaleString("en-IN")}</p></div>
+                      <div><p className="text-[10px] font-black uppercase text-slate-400">MAPPING</p><p className="mt-1 text-xs font-black text-slate-700">{runResult.verification ? `${runResult.verification.exactMappedFieldCount} EXACT · ${runResult.verification.derivedMappedFieldCount} DERIVED · ${runResult.verification.unavailableFieldCount} UNAVAILABLE` : "NOT REPORTED"}</p></div>
                     </div>
 
+                    {runResult.accuracyStatement && (
+                      <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold uppercase leading-5 text-amber-800">
+                        <AlertTriangle className="mr-2 inline h-4 w-4" /> {runResult.accuracyStatement}
+                      </div>
+                    )}
                     {runResult.message && <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-bold uppercase text-amber-700">{runResult.message}</div>}
                     {runResult.coverage.unavailable.length > 0 && (
                       <div className="mx-4 mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -459,14 +502,19 @@ export default function BpoMasterReports() {
                         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs font-bold uppercase text-slate-500">
                           <span>{rows.length.toLocaleString("en-IN")} ROWS SHOWN OF {runResult.totalCount.toLocaleString("en-IN")}</span>
                           <div className="flex items-center gap-3">
-                            {duplicates > 0 ? <span className="inline-flex items-center gap-1 text-amber-700"><AlertTriangle className="h-4 w-4" /> DUPLICATE GRAIN DETECTED</span> : <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-4 w-4" /> GRAIN CHECK PASSED</span>}
+                            {displayedDuplicates > 0 ? <span className="inline-flex items-center gap-1 text-amber-700"><AlertTriangle className="h-4 w-4" /> DUPLICATE GRAIN DETECTED</span> : <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-4 w-4" /> GRAIN CHECK PASSED</span>}
                             <span>{runResult.coverage.available.length} AVAILABLE COLUMNS</span>
+                            {runResult.sensitiveDataMasked && <span className="text-violet-700">SENSITIVE DATA MASKED</span>}
                           </div>
                         </div>
                         <div className="max-h-[650px] overflow-auto border-y border-slate-100">
                           <table className="min-w-max border-collapse text-[11px]">
                             <thead className="sticky top-0 z-10 bg-slate-900 text-left text-[10px] font-black uppercase tracking-wider text-white">
-                              <tr>{selectedReport.columns.map((column) => <th key={column.key} title={column.description} className="whitespace-nowrap border-r border-slate-700 px-3 py-3">{column.label}</th>)}</tr>
+                              <tr>{selectedReport.columns.map((column) => {
+                                const lineage = runResult.lineage?.[column.key];
+                                const title = [column.description, lineage ? `SOURCE: ${lineage.sourceSchema}.${lineage.sourceTable}.${lineage.sourceColumn ?? "DERIVED"} | ${lineage.transformation} | ${lineage.confidence}` : null].filter(Boolean).join("\n");
+                                return <th key={column.key} title={title} className="whitespace-nowrap border-r border-slate-700 px-3 py-3">{column.label}</th>;
+                              })}</tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                               {rows.map((row, index) => (
