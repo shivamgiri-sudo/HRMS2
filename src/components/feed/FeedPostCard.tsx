@@ -29,7 +29,7 @@ function PostImageGrid({
   if (count === 1) {
     return (
       <div
-        className="overflow-hidden rounded-xl cursor-pointer"
+        className="overflow-hidden rounded-xl cursor-pointer bg-slate-950"
         onClick={() => onImageClick(0)}
         role="button"
         tabIndex={0}
@@ -40,7 +40,7 @@ function PostImageGrid({
           src={getCompanyFeedImageUrl(media[0].file_id)}
           alt={`Post image by ${authorLabel}`}
           loading="lazy"
-          className="aspect-[16/9] max-h-72 w-full object-cover transition-transform duration-200 hover:scale-[1.02]"
+          className="max-h-[480px] w-full object-contain transition-transform duration-200 hover:scale-[1.01]"
         />
       </div>
     );
