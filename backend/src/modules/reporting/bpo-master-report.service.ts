@@ -48,6 +48,7 @@ interface SourcePlan {
 }
 
 interface QueryContext {
+  reportCode: string;
   sourceTable: string;
   sourceAlias: string;
   sourceColumns: Map<string, string>;
@@ -349,6 +350,7 @@ function createContext(
   const dateColumn = firstColumn(sourceColumns, plan.dateCandidates);
   const monthColumn = firstColumn(sourceColumns, plan.monthCandidates);
   return {
+    reportCode,
     sourceTable,
     sourceAlias: "src",
     sourceColumns,
@@ -400,6 +402,20 @@ function expressionForColumn(context: QueryContext, column: BpoMasterColumn, fil
     return anyColumn(context, ["employee_code", "agent_code", "analyst_code"]) ?? `'PENDING EMPLOYEE CODE'`;
   }
   if (column.key === "REPORT_DATE") {
+    const monthlyReports = new Set([
+      "bpo-employee-performance-360-master",
+      "bpo-payroll-statutory-master",
+      "bpo-finance-pnl-profitability-master",
+      "bpo-management-executive-master",
+    ]);
+    if (monthlyReports.has(context.reportCode)) {
+      if (filters.month) return `LAST_DAY('${filters.month}-01')`;
+      if (context.monthExpression) return `LAST_DAY(CONCAT(SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7),'-01'))`;
+      return "LAST_DAY(CURRENT_DATE())";
+    }
+    if (context.reportCode === "bpo-hr-workforce-lifecycle-master") {
+      return filters.to ? `DATE('${filters.to}')` : "CURRENT_DATE()";
+    }
     if (context.dateExpression) return context.dateExpression;
     if (context.monthExpression) return `LAST_DAY(CONCAT(SUBSTRING(CAST(${context.monthExpression} AS CHAR),1,7),'-01'))`;
     if (filters.month) return `LAST_DAY('${filters.month}-01')`;
@@ -434,7 +450,8 @@ function expressionForColumn(context: QueryContext, column: BpoMasterColumn, fil
   if (column.key === "SHIFT_START_TIME") return anyColumn(context, ["start_time", "shift_start", "shift_start_time"]);
   if (column.key === "SHIFT_END_TIME") return anyColumn(context, ["end_time", "shift_end", "shift_end_time"]);
   if (column.key === "PAYROLL_MONTH" || column.key === "FINANCE_MONTH" || column.key === "REPORT_MONTH") {
-    return context.monthExpression ?? (context.dateExpression ? `DATE_FORMAT(${context.dateExpression},'%Y-%m')` : filters.month ? `'${filters.month}'` : `DATE_FORMAT(CURRENT_DATE(),'%Y-%m')`);
+    if (filters.month) return `'${filters.month}'`;
+    return context.monthExpression ?? (context.dateExpression ? `DATE_FORMAT(${context.dateExpression},'%Y-%m')` : `DATE_FORMAT(CURRENT_DATE(),'%Y-%m')`);
   }
   return anyColumn(context, standardCandidates(column.key));
 }
