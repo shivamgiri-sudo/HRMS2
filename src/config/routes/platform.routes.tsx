@@ -36,7 +36,7 @@ const NativeAuditLog                = lazy(() => import("@/pages/NativeAuditLog"
 const NativeSecurityCenter          = lazy(() => import("@/pages/NativeSecurityCenter"));
 const UnifiedAccessControl          = lazy(() => import("@/pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("@/pages/SuperAdminAccessControl"));
-const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccess"));
+const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccessControl"));
 const NativePolicyEngine            = lazy(() => import("@/pages/NativePolicyEngine"));
 const AIProviderSettings            = lazy(() => import("@/pages/AIProviderSettings"));
 const PeopleOSCopilot               = lazy(() => import("@/pages/PeopleOSCopilot"));
@@ -81,10 +81,11 @@ const NativeCallCentreConfig         = lazy(() => import("@/pages/NativeCallCent
 
 const REPORT_ROLES = [
   'super_admin','admin','hr','hr_head','finance','finance_head','accounts_head',
-  'payroll','payroll_head','payroll_branch','wfm','manager','process_manager','branch_head',
-  'ceo','coo','quality','qa','operations','operations_manager','recruiter','recruitment_head',
+  'payroll','payroll_head','payroll_branch','payroll_hr','wfm','manager','process_manager','branch_head',
+  'ceo','coo','quality','qa','quality_analyst','operations','operations_manager','recruiter','recruitment_head',
   'recruitment_hr','trainer','training','it','it_manager','security','security_head',
-  'compliance','privacy_officer','facility_manager','team_leader','tl'
+  'compliance','privacy_officer','facility_manager','visitor_security','visitor_reception',
+  'branch_hr','hr_branch','team_leader','tl'
 ];
 
 export const platformRouteElements = (
