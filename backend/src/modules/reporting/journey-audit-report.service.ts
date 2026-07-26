@@ -40,6 +40,10 @@ const SOURCE_REGISTRY: SourceSpec[] = [
   { key: "EXIT_CLEARANCE", title: "EXIT CLEARANCE HISTORY", table: "exit_clearance_checklist", requiredColumns: ["id", "exit_request_id", "department", "status", "created_at"], authoritativeFor: ["DEPARTMENT CLEARANCE", "EXIT RECOVERY"], activityDateColumn: "created_at", actorColumn: "assigned_to", immutable: true },
   { key: "SENSITIVE_ACTION", title: "SENSITIVE ACTION LOG", table: "sensitive_action_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SENSITIVE DATA CHANGE", "PRIVILEGED ACTION"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
   { key: "AUDIT_LOG", title: "SYSTEM AUDIT LOG", table: "audit_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SYSTEM USER ACTIVITY", "CONTROL EVIDENCE"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
+  { key: "ATS_OFFER", title: "OFFER MANAGEMENT", table: "ats_offer", requiredColumns: ["id", "candidate_id", "status", "offer_date", "created_at"], authoritativeFor: ["OFFER CREATED", "OFFER STATUS", "OFFER ACCEPTED/REJECTED"], activityDateColumn: "created_at", actorColumn: "prepared_by", immutable: false },
+  { key: "LEAVE_REQUEST", title: "LEAVE REQUEST", table: "leave_request", requiredColumns: ["id", "employee_id", "leave_type_id", "from_date", "to_date", "status", "applied_at"], authoritativeFor: ["LEAVE APPLIED", "LEAVE APPROVED", "LEAVE REJECTED"], activityDateColumn: "applied_at", immutable: false },
+  { key: "SALARY_RUN", title: "PAYROLL RUN RECORD", table: "salary_prep_run", requiredColumns: ["id", "run_month", "status", "created_at"], authoritativeFor: ["PAYROLL RUN CREATED", "PAYROLL RUN APPROVED"], activityDateColumn: "created_at", actorColumn: "created_by", immutable: false },
+  { key: "REGULARISATION", title: "ATTENDANCE REGULARISATION", table: "attendance_regularization", requiredColumns: ["id", "employee_id", "session_date", "status", "reason", "reviewed_by", "created_at"], authoritativeFor: ["REGULARISATION REQUEST", "REGULARISATION APPROVED"], activityDateColumn: "created_at", actorColumn: "reviewed_by", immutable: false },
 ];
 
 async function schemaColumns() {
@@ -258,6 +262,29 @@ export const journeyAuditReportService = {
     const countSql = `SELECT COUNT(*) AS total FROM (${sql}) counted`;
     const [countRows] = await db.execute<RowDataPacket[]>(countSql, params);
     const [rows] = await db.execute<RowDataPacket[]>(`${sql} ORDER BY ACTIVITY_DATETIME ASC, SOURCE_TABLE, SOURCE_RECORD_ID LIMIT ? OFFSET ?`, [...params, filters.limit, filters.offset]);
+
+    // Compute DAYS_FROM_PREVIOUS_EVENT per person key
+    const lastEventDateByPerson = new Map<string, Date>();
+    for (const row of rows as Record<string, unknown>[]) {
+      const personKey = String(row["EMPLOYEE_CODE"] ?? row["CANDIDATE_ID"] ?? "UNKNOWN");
+      const activityDateRaw = row["ACTIVITY_DATETIME"];
+      if (activityDateRaw) {
+        const activityDate = new Date(String(activityDateRaw));
+        const lastDate = lastEventDateByPerson.get(personKey);
+        if (lastDate && !Number.isNaN(activityDate.getTime())) {
+          const diffMs = activityDate.getTime() - lastDate.getTime();
+          row["DAYS_FROM_PREVIOUS_EVENT"] = Math.round(diffMs / (1000 * 60 * 60 * 24));
+        } else {
+          row["DAYS_FROM_PREVIOUS_EVENT"] = null;
+        }
+        if (!Number.isNaN(activityDate.getTime())) {
+          lastEventDateByPerson.set(personKey, activityDate);
+        }
+      } else {
+        row["DAYS_FROM_PREVIOUS_EVENT"] = null;
+      }
+    }
+
     return { rows, totalCount: Number(countRows[0]?.total ?? 0), sources: SOURCE_REGISTRY.filter((s) => has(columns, s.table, s.requiredColumns)).map((s) => s.table), message: null };
   },
 
