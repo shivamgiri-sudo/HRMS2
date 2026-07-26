@@ -255,7 +255,7 @@ Migration `015_platform_foundation.sql` creates `sensitive_action_log` (for high
 | DATE_OF_EXIT | employees | date_of_exit | INTERNAL | VERIFIED |
 | LIFECYCLE_EVENT_TYPE | employee_lifecycle_event | event_type | INTERNAL | VERIFIED |
 | EFFECTIVE_DATE | employee_lifecycle_event | effective_date | INTERNAL | VERIFIED |
-| LEAVE_BALANCE | leave_balance_ledger | balance_days | INTERNAL | VERIFIED |
+| LEAVE_BALANCE | leave_balance_ledger | balance_days | INTERNAL | COLUMN_GAP | COLUMN_GAP — no balance_days column; derive as allocated_days - used_days |
 | EXIT_TYPE | exit_request | exit_type | CONFIDENTIAL | VERIFIED |
 | EXIT_STATUS | exit_request | status | INTERNAL | VERIFIED |
 | CLEARANCE_STATUS | exit_clearance_checklist | status | INTERNAL | VERIFIED |
@@ -288,7 +288,7 @@ Migration `015_platform_foundation.sql` creates `sensitive_action_log` (for high
 | STAGE_DATE | ats_candidate_stage_log | stage_date | INTERNAL | VERIFIED |
 | BRIDGE_DATE | ats_onboarding_bridge | bridge_date | INTERNAL | VERIFIED |
 | EMPLOYEE_CODE_POST_BRIDGE | ats_onboarding_bridge | employee_id → employees.employee_code | INTERNAL | VERIFIED |
-| LMS_PROGRESS | lms_learner_progress_snapshot | (integration layer) | INTERNAL | COLUMN_GAP |
+| LMS_PROGRESS | lms_learning_progress_snapshot | (integration layer) | INTERNAL | COLUMN_GAP |
 | CERTIFICATION_STATUS | lms_certification_snapshot | (integration layer) | INTERNAL | COLUMN_GAP |
 
 ---
