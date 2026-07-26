@@ -24,7 +24,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { navGroups } from "@/components/layout/navConfig";
 import type { NavItem } from "@/components/layout/SidebarNav";
-import { useUserRole } from "@/hooks/useUserRole";
+import { useAccessibleNavGroups } from "@/lib/navigationAccess";
 import { cn } from "@/lib/utils";
 import type { Tone } from "./reference-dashboard-model";
 import { formatValue } from "./reference-dashboard-model";
@@ -446,7 +446,7 @@ export function ReferenceQuickLink({
   href: string;
   tone?: Tone;
 }) {
-  const { data: roleData, isLoading } = useUserRole();
+  const accessibleGroups = useAccessibleNavGroups(navGroups);
   const targetPath = href.split("?")[0];
   const findItem = (items: NavItem[]): NavItem | undefined => {
     for (const item of items) {
@@ -456,21 +456,10 @@ export function ReferenceQuickLink({
     }
     return undefined;
   };
-  const navItem = navGroups.flatMap((group) => group.items)
+  const navItem = accessibleGroups.flatMap((group) => group.items)
     .map((item) => item.href.split("?")[0] === targetPath ? item : findItem(item.children ?? []))
     .find(Boolean);
-  const page = navItem?.pageCode
-    ? roleData?.pages.find((permission) => permission.page_code === navItem.pageCode)
-    : undefined;
-  const allowed = !isLoading && Boolean(roleData) && Boolean(navItem) && (
-    navItem!.public === true
-    || (navItem!.pageCode
-      ? page?.can_view === true && !roleData!.disabledPageCodes.includes(navItem!.pageCode)
-      : navItem!.roles
-        ? navItem!.roles.some((role) => roleData!.roleKeys.includes(role))
-        : true)
-  );
-  if (!allowed) return null;
+  if (!navItem) return null;
 
   return (
     <Link to={href} className="reference-quick-link" aria-label={title}>

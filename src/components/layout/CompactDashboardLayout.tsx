@@ -43,11 +43,9 @@ import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { APP_VERSION, isAutoUpdatingEnvironment } from "@/lib/version";
-import { getRoutePageCode } from "@/lib/pageRoutePageCodes";
+import { flattenNavGroups, useAccessibleNavGroups } from "@/lib/navigationAccess";
 import {
   DASHBOARD_ACCESS_REGISTRY,
-  canAccessDashboard,
-  getDashboardDefinition,
 } from "../../../backend/src/shared/dashboardAccessRegistry";
 
 type Props = { children: ReactNode; subheader?: ReactNode };
@@ -71,9 +69,9 @@ export function DashboardLayout({ children, subheader }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const { isAdminOrHR } = useIsAdminOrHR();
   const { data: myProfile } = useEmployeeProfile();
-  const { canViewPage, visiblePageCodes, hasAnyRole, roleKeys } = useWorkforceAccess();
+  const filteredGroups = useAccessibleNavGroups(navGroups);
+  const { roleKeys } = useWorkforceAccess();
   const { data: versionData } = useVersionCheck();
 
   const displayVersion = isAutoUpdatingEnvironment()
@@ -82,56 +80,8 @@ export function DashboardLayout({ children, subheader }: Props) {
     ? APP_VERSION
     : (versionData?.currentVersion ?? APP_VERSION);
 
-  /* Filter nav items by access — recurses into children */
-  const filteredGroups = useMemo(() => {
-    const visibleSet = new Set(visiblePageCodes);
-
-    const isSuperAdmin = hasAnyRole("super_admin");
-
-    const dashboardByRoute = new Map(
-      Object.values(DASHBOARD_ACCESS_REGISTRY).map((dashboard) => [dashboard.route, dashboard.code]),
-    );
-
-    const canShow = (item: { href: string; pageCode?: string; roles?: string[]; adminOnly?: boolean; public?: boolean }) => {
-      const pageCode = item.pageCode ?? getRoutePageCode(item.href);
-      const dashboardCode = getDashboardDefinition(pageCode)?.code ?? dashboardByRoute.get(item.href);
-      if (dashboardCode) return canAccessDashboard(dashboardCode, roleKeys);
-      if (isSuperAdmin) return true;
-      if (pageCode) return visibleSet.has(pageCode) || canViewPage(pageCode);
-      if (item.roles?.length) return hasAnyRole(...item.roles);
-      if ((item as any).adminOnly && !isAdminOrHR) return false;
-      // Explicitly marked public items are visible to all authenticated users
-      if (item.public === true) return true;
-      // Default DENY — items without an explicit guard are hidden unless super_admin
-      return false;
-    };
-
-    return navGroups
-      .map((group) => ({
-        ...group,
-        items: group.items
-          .map((item) => {
-            if (item.children?.length) {
-              const filteredChildren = item.children.filter(canShow);
-              if (filteredChildren.length === 0) return null;
-              return { ...item, children: filteredChildren };
-            }
-            return canShow(item) ? item : null;
-          })
-          .filter(Boolean) as typeof group.items,
-      }))
-      .filter((g) => g.items.length > 0);
-  }, [visiblePageCodes, canViewPage, hasAnyRole, isAdminOrHR, roleKeys]);
-
   const searchableItems = useMemo(
-    () => filteredGroups.flatMap((g) =>
-      g.items.flatMap((item) => {
-        if (item.children?.length) {
-          return item.children.map((child) => ({ ...child, groupTitle: g.title }));
-        }
-        return [{ ...item, groupTitle: g.title }];
-      })
-    ),
+    () => flattenNavGroups(filteredGroups).map((item) => ({ ...item, groupTitle: item.group })),
     [filteredGroups]
   );
 

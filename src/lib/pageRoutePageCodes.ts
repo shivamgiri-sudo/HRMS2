@@ -75,6 +75,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/mobility": "MOBILITY",
   "/my-dashboard": "EMPLOYEE_SELF_DASHBOARD",
   "/my-kpi": "MY_KPI",
+  "/onboarding": "ATS_ONBOARDING_BRIDGE",
   "/operations-kpi": "OPERATIONS_KPI",
   "/operations/dashboard": "OPERATIONS_DASHBOARD",
   "/operations-dashboard": "OPERATIONS_DASHBOARD",
@@ -161,8 +162,38 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/workforce-planning": "WFM_AUTO_ROSTER",
 };
 
+export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
+  "/employee-stat-card/:id": "EMPLOYEE_MANAGEMENT",
+  "/employees/:id": "EMPLOYEE_MANAGEMENT",
+  "/employees/:id/360": "EMPLOYEE_MANAGEMENT",
+  "/letters/:id/preview": "LETTERS",
+};
+
+function normalizeRoutePath(href: string): string {
+  const [path] = href.split("?");
+  if (!path) return "/";
+  if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
+  return path;
+}
+
+function matchesRoutePattern(path: string, pattern: string): boolean {
+  const pathSegments = path.split("/").filter(Boolean);
+  const patternSegments = pattern.split("/").filter(Boolean);
+
+  if (pathSegments.length !== patternSegments.length) return false;
+
+  return patternSegments.every((segment, index) => segment.startsWith(":") || segment === pathSegments[index]);
+}
+
 export function getRoutePageCode(href: string | undefined): string | undefined {
   if (!href) return undefined;
-  const [path] = href.split("?");
-  return PAGE_CODE_BY_ROUTE[href] ?? PAGE_CODE_BY_ROUTE[path];
+  const path = normalizeRoutePath(href);
+  const exact = PAGE_CODE_BY_ROUTE[href] ?? PAGE_CODE_BY_ROUTE[path];
+  if (exact) return exact;
+
+  for (const [pattern, pageCode] of Object.entries(PAGE_CODE_BY_ROUTE_PATTERN)) {
+    if (matchesRoutePattern(path, pattern)) return pageCode;
+  }
+
+  return undefined;
 }

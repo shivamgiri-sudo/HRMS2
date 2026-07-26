@@ -391,6 +391,7 @@ const MIGRATION_MANIFEST: string[] = [
   "535_attendance_reconciliation_issue.sql",    // NCOSEC-to-payroll attendance reconciliation issue ledger
   "536_attendance_reconciliation_apr_issue_types.sql", // APR payroll attendance reconciliation issue types
   "537_payroll_attendance_conflict_review.sql", // Payroll attendance control tower review ledger
+  "538_route_page_access_backfill.sql",         // Backfill route-mapped page codes and grants
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   ];
@@ -980,6 +981,12 @@ let verificationState: SchemaVerificationState = {
   valid: false,
 };
 
+export function buildSchemaMigrationsAppliedQuery(hasSuccessColumn: boolean): string {
+  return hasSuccessColumn
+    ? "SELECT filename FROM schema_migrations WHERE success = 1 OR success IS NULL"
+    : "SELECT filename FROM schema_migrations";
+}
+
 export function getSchemaVerificationState(): SchemaVerificationState {
   return { ...verificationState, pendingFiles: [...verificationState.pendingFiles] };
 }
@@ -1029,9 +1036,18 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
         return getSchemaVerificationState();
       }
 
-      // Get applied migrations
+      const [successColumnRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT COLUMN_NAME
+         FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations' AND COLUMN_NAME = 'success'`,
+        [dbName]
+      );
+      const hasSuccessColumn = successColumnRows.length > 0;
+
+      // Get applied migrations, tolerating older schema_migrations layouts that
+      // do not yet have a success column.
       const [applied] = await conn.execute<RowDataPacket[]>(
-        `SELECT filename FROM schema_migrations WHERE success = 1 OR success IS NULL`
+        buildSchemaMigrationsAppliedQuery(hasSuccessColumn)
       );
       const appliedSet = new Set((applied as Array<{ filename: string }>).map((r) => r.filename));
 
