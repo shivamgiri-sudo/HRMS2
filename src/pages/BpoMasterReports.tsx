@@ -519,7 +519,7 @@ export default function BpoMasterReports() {
                             <tbody className="divide-y divide-slate-100">
                               {rows.map((row, index) => (
                                 <tr key={`${index}-${selectedReport.primaryKey.map((key) => String(row[key] ?? "")).join("-")}`} className="hover:bg-blue-50/40">
-                                  {selectedReport.columns.map((column) => <td key={column.key} className="max-w-xs whitespace-nowrap border-r border-slate-100 px-3 py-2 text-slate-700">{displayValue(row[column.key], column.format)}</td>)}
+                                  {selectedReport.columns.map((column) => <td key={column.key} className="max-w-xs whitespace-nowrap border-r border-slate-100 px-3 py-2 text-slate-700">{column.sensitive && !selectedReport.canExport ? "****" : displayValue(row[column.key], column.format)}</td>)}
                                 </tr>
                               ))}
                             </tbody>

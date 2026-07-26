@@ -39,15 +39,22 @@ describe("report role and scope contracts", () => {
     expect(adapter).toContain('where.push("1=0")');
   });
 
-  it("sensitive columns use masked format", () => {
+  it("sensitive columns are marked sensitive and use appropriate display format", () => {
     const reportsWithSensitive = BPO_MASTER_REPORTS.filter((r) =>
       r.columns.some((c) => c.sensitive)
     );
     expect(reportsWithSensitive.length).toBeGreaterThan(0);
+    // Sensitive flag must be set; format must NOT override the actual data type
     for (const report of reportsWithSensitive) {
       const sensitiveColumns = report.columns.filter((c) => c.sensitive);
       for (const col of sensitiveColumns) {
-        expect(col.format, `${report.code}.${col.key} sensitive but not masked`).toBe("masked");
+        // Opaque identifiers use masked format; financial/operational fields retain their type
+        const isOpaqueId = /ACCOUNT_NUMBER|IFSC|SERIAL_NUMBER|USER_ID|IP_ADDRESS|ACCESS_CARD_NUMBER|UAN_NUMBER|PAN_NUMBER|ESIC_NUMBER/i.test(col.key);
+        if (isOpaqueId) {
+          expect(col.format, `${report.code}.${col.key} opaque id should be masked`).toBe("masked");
+        } else {
+          expect(col.format, `${report.code}.${col.key} non-id sensitive should not be masked`).not.toBe("masked");
+        }
       }
     }
   });
