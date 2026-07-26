@@ -21,7 +21,7 @@ const NativeSupportCommandCenter    = lazy(() => import("@/pages/NativeSupportCo
 const NativeGrievanceCommandCenter  = lazy(() => import("@/pages/NativeGrievanceCommandCenter"));
 const NativeLetters                 = lazy(() => import("@/pages/NativeLetters"));
 const NativeLetterPreview           = lazy(() => import("@/pages/NativeLetterPreview"));
-const NativeAppointmentEsign          = lazy(() => import("@/pages/NativeAppointmentEsign"));
+const NativeAppointmentEsign        = lazy(() => import("@/pages/NativeAppointmentEsign"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
@@ -57,7 +57,10 @@ const NativeBadges                  = lazy(() => import("@/pages/NativeBadges"))
 const NativeKudos                   = lazy(() => import("@/pages/NativeKudos"));
 const NativeSurveys                 = lazy(() => import("@/pages/NativeSurveys"));
 const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboard"));
-const NativeReportsCenter           = lazy(() => import("@/pages/NativeReportsCenterV2"));
+const BpoMasterReports              = lazy(() => import("@/pages/BpoMasterReports"));
+const BpoReportSourceValidation     = lazy(() => import("@/pages/BpoReportSourceValidation"));
+const NativeReportsControlRoom      = lazy(() => import("@/pages/NativeReportsCenterV3"));
+const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
@@ -77,6 +80,19 @@ const NativeDispatchHistory          = lazy(() => import("@/pages/NativeDispatch
 const NativeNotificationPreferences  = lazy(() => import("@/pages/NativeNotificationPreferences"));
 const NativeCommunicationConfig      = lazy(() => import("@/pages/NativeCommunicationConfig"));
 const NativeCallCentreConfig         = lazy(() => import("@/pages/NativeCallCentreConfig"));
+
+const REPORT_ROLES = [
+  'super_admin','admin','hr','hr_head','finance','finance_head','accounts_head',
+  'payroll','payroll_head','payroll_branch','payroll_hr','wfm','manager','process_manager','branch_head',
+  'ceo','coo','quality','qa','quality_analyst','operations','operations_manager','recruiter','recruitment_head',
+  'recruitment_hr','trainer','training','it','it_manager','security','security_head',
+  'compliance','privacy_officer','facility_manager','visitor_security','visitor_reception',
+  'branch_hr','hr_branch','team_leader','tl'
+];
+
+const REPORT_VALIDATION_ROLES = [
+  'super_admin','admin','ceo','coo','internal_auditor','compliance_head','it_manager','hr_head','finance_head'
+];
 
 export const platformRouteElements = (
   <>
@@ -167,7 +183,10 @@ export const platformRouteElements = (
       <Route path="/engagement/leaderboard"      element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
 
       {/* Reports */}
-      <Route path="/reports"                     element={<ProtectedRoute roles={['super_admin','admin','hr','hr_head','finance','payroll','wfm','manager','process_manager','branch_head','ceo','quality','operations']}><Gate pageCode="REPORTS_CENTER"><NativeReportsCenter /></Gate></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoMasterReports /></Gate></ProtectedRoute>} />
+      <Route path="/reports/source-validation" element={<ProtectedRoute roles={REPORT_VALIDATION_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoReportSourceValidation /></Gate></ProtectedRoute>} />
+      <Route path="/reports/control-room" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
+      <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
 
       {/* Communication */}
       <Route path="/communication/templates"     element={<ProtectedRoute roles={['admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />
