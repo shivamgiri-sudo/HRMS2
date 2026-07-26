@@ -19,6 +19,11 @@ export interface MasterReportValidationResult {
   sourceAccuracyStatus: string;
   uatStatus: "PENDING";
   error: string | null;
+  reconciliationStatus: "NOT_APPLICABLE" | "PENDING" | "RECONCILED" | "DISCREPANCY" | "NOT_EVIDENCED";
+  reconciliationNote: string | null;
+  sourceFreshnessMinutes: number | null;
+  nullMandatoryFieldCount: number;
+  orphanRowCount: number;
 }
 
 export async function validateAllBpoMasterReports(
@@ -67,6 +72,11 @@ export async function validateAllBpoMasterReports(
               : "SCHEMA/GRAIN VALID; VALUE RECONCILIATION PENDING",
         uatStatus: "PENDING",
         error: null,
+        reconciliationStatus: "NOT_APPLICABLE",
+        reconciliationNote: null,
+        sourceFreshnessMinutes: null,
+        nullMandatoryFieldCount: 0,
+        orphanRowCount: 0,
       });
     } catch (error) {
       results.push({
@@ -86,6 +96,11 @@ export async function validateAllBpoMasterReports(
         sourceAccuracyStatus: "RUNTIME QUERY FAILED",
         uatStatus: "PENDING",
         error: error instanceof Error ? error.message : "Unknown report validation error",
+        reconciliationStatus: "NOT_APPLICABLE",
+        reconciliationNote: null,
+        sourceFreshnessMinutes: null,
+        nullMandatoryFieldCount: 0,
+        orphanRowCount: 0,
       });
     }
   }
