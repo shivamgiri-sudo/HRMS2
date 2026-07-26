@@ -42,6 +42,9 @@ const SOURCE_REGISTRY: SourceSpec[] = [
   { key: "AUDIT_LOG", title: "SYSTEM AUDIT LOG", table: "audit_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SYSTEM USER ACTIVITY", "CONTROL EVIDENCE"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
   { key: "ATS_OFFER", title: "OFFER MANAGEMENT", table: "ats_offer", requiredColumns: ["id", "candidate_id", "status", "offer_date", "created_at"], authoritativeFor: ["OFFER CREATED", "OFFER STATUS", "OFFER ACCEPTED/REJECTED"], activityDateColumn: "created_at", actorColumn: "prepared_by", immutable: false },
   { key: "LEAVE_REQUEST", title: "LEAVE REQUEST", table: "leave_request", requiredColumns: ["id", "employee_id", "leave_type_id", "from_date", "to_date", "status", "applied_at"], authoritativeFor: ["LEAVE APPLIED", "LEAVE APPROVED", "LEAVE REJECTED"], activityDateColumn: "applied_at", immutable: false },
+  // NOTE: salary_prep_run is a run-level batch record with no employee_id.
+  // This entry enables verifySources() schema checking only.
+  // Per-employee payroll events require joining through salary_prep_line.
   { key: "SALARY_RUN", title: "PAYROLL RUN RECORD", table: "salary_prep_run", requiredColumns: ["id", "run_month", "status", "created_at"], authoritativeFor: ["PAYROLL RUN CREATED", "PAYROLL RUN APPROVED"], activityDateColumn: "created_at", actorColumn: "created_by", immutable: false },
   { key: "REGULARISATION", title: "ATTENDANCE REGULARISATION", table: "attendance_regularization", requiredColumns: ["id", "employee_id", "session_date", "status", "reason", "reviewed_by", "created_at"], authoritativeFor: ["REGULARISATION REQUEST", "REGULARISATION APPROVED"], activityDateColumn: "created_at", actorColumn: "reviewed_by", immutable: false },
 ];
@@ -266,7 +269,10 @@ export const journeyAuditReportService = {
     // Compute DAYS_FROM_PREVIOUS_EVENT per person key
     const lastEventDateByPerson = new Map<string, Date>();
     for (const row of rows as Record<string, unknown>[]) {
-      const personKey = String(row["EMPLOYEE_CODE"] ?? row["CANDIDATE_ID"] ?? "UNKNOWN");
+      const empCode = String(row["EMPLOYEE_CODE"] ?? "");
+      const personKey = (empCode && empCode !== "PENDING EMPLOYEE CODE")
+        ? empCode
+        : String(row["CANDIDATE_ID"] ?? "UNKNOWN");
       const activityDateRaw = row["ACTIVITY_DATETIME"];
       if (activityDateRaw) {
         const activityDate = new Date(String(activityDateRaw));

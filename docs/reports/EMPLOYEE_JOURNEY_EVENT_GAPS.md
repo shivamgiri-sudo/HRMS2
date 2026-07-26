@@ -21,12 +21,12 @@ For each journey stage, checked whether an immutable event record is created wit
 | OFFER APPROVED | ats_offer | No separate approved_at event log | approved_by field only (no approval timestamp) | Offer approval timestamp not stored; only the approver ID | Add approval_workflow link for offer approvals in future migration | Partial | Medium |
 | BGV INITIATED / CHECK / EXCEPTION | No bgv_request or bgv_result table found in migrations | — | — | BGV event tables completely absent from schema | Future Phase 10 migration needed for bgv_* tables | NO | High — compliance gap |
 | OTP / CONSENT DURING ONBOARDING | employee_onboarding table has basic onboarding steps (verify exact columns) | — | — | Consent timestamp and OTP verification not stored | Future migration: add consent_timestamp, otp_verified_at to onboarding | NO | High |
-| SYSTEM ACCESS CREATED | No it_access_log or it_provisioning table found in migrations | — | — | IT provisioning events completely absent from schema | Future Phase 10: add it_access_provisioning table | NO | Medium |
+| SYSTEM ACCESS CREATED | No it_access_log or it_provisioning table found in migrations | — | — | IT provisioning events completely absent from schema | Future Phase 10: add it_access_provisioning table | NO | High |
 | TRAINING BATCH ASSIGNED | lms_batch_assignment (via LMS integration sync — verify) | sync_date (if exists) | — | LMS is external system; event comes via sync, not native event | Integration layer sync record only; not a native HRMS event | Partial | Medium |
 | TRAINING ATTENDANCE | lms_learning_progress_snapshot (via LMS sync) | updated_at | — | Daily attendance at LMS level; HRMS sees only snapshots | Acceptable via LMS integration | Partial | Low |
 | ASSESSMENT / CERTIFICATION | lms_certification_sync (verify) | — | — | Certification decision lives in external LMS | Integration layer sync only | Partial | Low |
 | PAYSLIP RELEASE | salary_payslip | generated_at (verify column name in 007_payroll.sql) | — | Only run-level timestamp; payslip-level actor not stored | Join to salary_prep_run for actor | YES | Low |
-| GRIEVANCE | No employee_grievance table found in migrations | — | — | Grievance events completely absent | Future Phase phase 9/10 | NO | Medium — compliance |
+| GRIEVANCE | No employee_grievance table found in migrations | — | — | Grievance events completely absent | Future Phase phase 9/10 | NO | High |
 | DISCIPLINARY ACTION | No disciplinary_action table found in migrations | — | — | Disciplinary events completely absent | Future Phase 9/10 | NO | High — POSH Act |
 | NOTICE PERIOD TRACKING | exit_request | last_working_day ✓ | — | Day-by-day notice serving not tracked | Derive from LWD minus notice_period_days from exit_request | YES | Low |
 
@@ -36,11 +36,11 @@ For each journey stage, checked whether an immutable event record is created wit
 - BGV events: `bgv_request`, `bgv_result` — no tables in schema
 - Disciplinary action: no table in schema — POSH Act compliance risk
 - Requisition approval: no approval log or approval_workflow link for ats_requisition
+- IT access provisioning: no tables in schema
+- Grievance events: no table in schema
 
 ### MEDIUM DATA LOSS RISK (partial or no evidence)
 - OTP/consent during onboarding: not stored
-- IT access provisioning: no tables in schema
-- Grievance events: no table in schema
 - Offer approval timestamp: approver stored but not approval date
 - Candidate sourcer identity: no sourced_by in ats_candidate
 
