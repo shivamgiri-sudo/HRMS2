@@ -15,7 +15,7 @@ router.use(requireAuth);
 // Returns window_close_date and whether the run is within the editable window.
 router.get('/runs/:id/window-status', requireRole('payroll', 'super_admin', 'finance', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, run_month, status, window_close_date, auto_closed_at, closed_by
+    `SELECT id, run_month, status, window_close_date, auto_closed_at, closed_by, tds_mode
      FROM salary_prep_run WHERE id = ? LIMIT 1`,
     [req.params.id]
   );
@@ -35,6 +35,7 @@ router.get('/runs/:id/window-status', requireRole('payroll', 'super_admin', 'fin
       status: run.status,
       window_close_date: run.window_close_date,
       auto_closed_at: run.auto_closed_at,
+      tds_mode: run.tds_mode ?? 'manual',
       is_window_open: !isClosed && !['locked', 'disbursed'].includes(run.status),
       days_remaining: run.window_close_date
         ? Math.max(0, Math.ceil((new Date(run.window_close_date as string).getTime() - today.getTime()) / 86400000))
@@ -242,6 +243,7 @@ router.get('/employee-salary-history', requireRole('payroll', 'super_admin', 'fi
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT esa.id, esa.employee_id, esa.ctc_annual,
             ROUND(esa.ctc_annual / 12, 2) AS ctc_monthly,
+            ROUND(esa.ctc_annual / 12, 2) AS gross_monthly_ctc,
             esa.effective_from, esa.effective_to, esa.active_status,
             esa.assignment_reason,
             ssm.structure_name, ssm.basic_pct, ssm.hra_pct,

@@ -11,18 +11,22 @@ const LEGACY_DOUBLE_DATA_PATHS = [
   "/api/clients-usage",
 ];
 
+export type HrmsApiError = Error & {
+  status?: number;
+  code?: string;
+  payload?: unknown;
+};
+
 let _refreshPromise: Promise<boolean> | null = null;
 
 async function refreshAccessToken(): Promise<boolean> {
   if (_refreshPromise) return _refreshPromise;
   _refreshPromise = (async () => {
-    const raw = localStorage.getItem("hrms_refresh_token");
-    if (!raw) return false;
     try {
       const res = await fetch(`${HRMS_API_URL}/api/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: raw }),
+        credentials: "include",
       });
       if (!res.ok) return false;
       const data = await res.json();
@@ -99,6 +103,39 @@ async function parseResponse(res: Response): Promise<unknown> {
   return text;
 }
 
+function buildApiError(status: number, payload: unknown, fallbackMessage: string): HrmsApiError {
+  const errorPayload = payload as { error?: unknown; message?: unknown; code?: unknown } | null;
+  const raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
+  let message: string;
+
+  if (typeof raw === "string") {
+    message = raw;
+  } else if (raw && typeof raw === "object") {
+    const fieldErrors = (raw as Record<string, unknown>).fieldErrors;
+    if (fieldErrors && typeof fieldErrors === "object") {
+      const first = Object.values(fieldErrors as Record<string, unknown[]>).flat()[0];
+      message = typeof first === "string" ? first : `Validation error (${Object.keys(fieldErrors).join(", ")})`;
+    } else {
+      message = JSON.stringify(raw);
+    }
+  } else {
+    message = fallbackMessage;
+  }
+
+  const error = new Error(message) as HrmsApiError;
+  error.name = "HrmsApiError";
+  error.status = status;
+  error.payload = payload;
+  if (typeof errorPayload?.code === "string") error.code = errorPayload.code;
+  return error;
+}
+
+export function getHrmsApiErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object" || !("status" in error)) return null;
+  const status = (error as HrmsApiError).status;
+  return typeof status === "number" ? status : null;
+}
+
 async function fetchOnce(normalizedPath: string, method: string, body: unknown, timeoutMs: number): Promise<Response> {
   const headers = getAuthHeader();
   const controller = new AbortController();
@@ -106,6 +143,7 @@ async function fetchOnce(normalizedPath: string, method: string, body: unknown, 
   try {
     return await fetch(`${HRMS_API_URL}${normalizedPath}`, {
       method,
+      credentials: "include",
       headers: { "Content-Type": "application/json", ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
@@ -136,24 +174,7 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
   const payload = await parseResponse(res);
 
   if (!res.ok) {
-    const errorPayload = payload as { error?: unknown; message?: unknown } | null;
-    const raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
-    let message: string;
-    if (typeof raw === "string") {
-      message = raw;
-    } else if (raw && typeof raw === "object") {
-      // Zod validation error — extract first field-level message
-      const fieldErrors = (raw as Record<string, unknown>).fieldErrors;
-      if (fieldErrors && typeof fieldErrors === "object") {
-        const first = Object.values(fieldErrors as Record<string, unknown[]>).flat()[0];
-        message = typeof first === "string" ? first : `Validation error (${Object.keys(fieldErrors).join(", ")})`;
-      } else {
-        message = JSON.stringify(raw);
-      }
-    } else {
-      message = `HTTP ${res.status}`;
-    }
-    throw new Error(message);
+    throw buildApiError(res.status, payload, `HTTP ${res.status}`);
   }
 
   addLegacyDataAlias(path, payload);
@@ -167,6 +188,7 @@ async function requestRaw(method: string, path: string): Promise<string> {
 
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...headers },
   });
 
@@ -202,14 +224,13 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
   const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "POST",
+    credentials: "include",
     headers, // No Content-Type — browser sets multipart boundary automatically
     body,
   });
   const payload = await parseResponse(res);
   if (!res.ok) {
-    const errorPayload = payload as { error?: unknown; message?: unknown } | null;
-    const raw = errorPayload?.error ?? errorPayload?.message ?? null;
-    throw new Error(typeof raw === "string" ? raw : `HTTP ${res.status}`);
+    throw buildApiError(res.status, payload, `HTTP ${res.status}`);
   }
   return payload as T;
 }
@@ -219,6 +240,7 @@ async function requestBlob(path: string): Promise<Blob> {
   const normalizedPath = normalizeRequestPath(path);
   const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
     method: "GET",
+    credentials: "include",
     headers: { ...headers },
   });
   if (!res.ok) {

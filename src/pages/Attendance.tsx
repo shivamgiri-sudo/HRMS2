@@ -8,6 +8,8 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  FileText,
+  Fingerprint,
   Home,
   LogIn,
   LogOut,
@@ -20,6 +22,7 @@ import { format } from "date-fns";
 import { formatISTTime, formatISTDate } from "@/lib/utils";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
+import { ADRAttendanceCalendar } from "@/components/attendance/ADRAttendanceCalendar";
 import { resolveAttendanceDisplay } from "@/lib/attendance-live";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
@@ -291,6 +294,7 @@ const Attendance = () => {
   const [selectedYear, setSelectedYear] = useState(
     new Date().getFullYear().toString()
   );
+  const [calendarView, setCalendarView] = useState<'cosec' | 'adr'>('cosec');
   const targetDate = new Date(
     parseInt(selectedYear),
     parseInt(selectedMonth),
@@ -938,12 +942,46 @@ const Attendance = () => {
                   </Button>
                 </div>
 
-                <AttendanceCalendar
-                  employeeId={currentEmployee.id}
-                initialMonth={Number(selectedMonth)}
-                initialYear={Number(selectedYear)}
-              />
-            </section>
+                {/* View toggle */}
+                <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 w-fit">
+                  <button
+                    onClick={() => setCalendarView('cosec')}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-all ${
+                      calendarView === 'cosec'
+                        ? 'bg-white shadow-sm font-semibold text-[#1B6AB5]'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Fingerprint className="h-3.5 w-3.5" />
+                    COSEC Biometric
+                  </button>
+                  <button
+                    onClick={() => setCalendarView('adr')}
+                    className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-all ${
+                      calendarView === 'adr'
+                        ? 'bg-white shadow-sm font-semibold text-emerald-700'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    ADR / Payroll
+                  </button>
+                </div>
+
+                {calendarView === 'cosec' ? (
+                  <AttendanceCalendar
+                    employeeId={currentEmployee.id}
+                    initialMonth={Number(selectedMonth)}
+                    initialYear={Number(selectedYear)}
+                  />
+                ) : (
+                  <ADRAttendanceCalendar
+                    employeeId={currentEmployee.id}
+                    initialMonth={Number(selectedMonth)}
+                    initialYear={Number(selectedYear)}
+                  />
+                )}
+              </section>
           )}
 
           {/* Monthly Summary */}

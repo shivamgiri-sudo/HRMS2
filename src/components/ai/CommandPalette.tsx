@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { navGroups } from "@/components/layout/navConfig";
+import { flattenNavGroups, useAccessibleNavGroups } from "@/lib/navigationAccess";
 
 type Mode = "ai" | "nav" | "employee";
 type AISeverity = "critical" | "high" | "medium" | "low";
@@ -41,23 +42,9 @@ function getMode(value: string): Mode {
   return "ai";
 }
 
-// Flatten all nav items with their labels and hrefs
-function flatNavItems() {
-  return navGroups.flatMap((g) =>
-    g.items.flatMap((item) => {
-      const base = [{ label: item.label, href: item.href, group: g.title, description: item.description }];
-      const children = (item.children ?? []).map((c) => ({
-        label: c.label, href: c.href, group: item.label, description: c.description,
-      }));
-      return [...base, ...children];
-    })
-  );
-}
-
-const ALL_NAV = flatNavItems();
-
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
+  const accessibleGroups = useAccessibleNavGroups(navGroups);
   const [value, setValue] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<AIResponse | null>(null);
@@ -67,6 +54,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   const mode: Mode = getMode(value);
   const query = value.startsWith("/") || value.startsWith("@") ? value.slice(1) : value;
+  const allNav = flattenNavGroups(accessibleGroups);
 
   // Reset state when closing
   useEffect(() => {
@@ -81,7 +69,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   // Nav filter
   const navResults = mode === "nav"
-    ? ALL_NAV.filter((item) =>
+    ? allNav.filter((item) =>
         item.label.toLowerCase().includes(query.toLowerCase()) ||
         (item.description ?? "").toLowerCase().includes(query.toLowerCase())
       ).slice(0, 8)

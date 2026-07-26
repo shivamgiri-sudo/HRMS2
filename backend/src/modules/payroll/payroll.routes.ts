@@ -24,6 +24,7 @@ import { assertRunEditable } from "./payrollWindowGuard.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
+import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
@@ -213,6 +214,93 @@ router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "pay
   return c.listPayrollRecords(req, res);
 }));
 router.get("/overview", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getPayrollOverview));
+
+router.get(
+  "/attendance-control-tower",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await payrollAttendanceControlService.getControlTower({
+      runMonth: typeof req.query.runMonth === "string" ? req.query.runMonth : undefined,
+      runId: typeof req.query.runId === "string" ? req.query.runId : undefined,
+      from: typeof req.query.from === "string" ? req.query.from : undefined,
+      to: typeof req.query.to === "string" ? req.query.to : undefined,
+      issueType: typeof req.query.issueType === "string" ? req.query.issueType : undefined,
+      reviewStatus: typeof req.query.reviewStatus === "string" ? req.query.reviewStatus : undefined,
+      search: typeof req.query.search === "string" ? req.query.search : undefined,
+      branchId: typeof req.query.branchId === "string" ? req.query.branchId : undefined,
+      processId: typeof req.query.processId === "string" ? req.query.processId : undefined,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    return res.json({ success: true, data });
+  }),
+);
+
+router.post(
+  "/attendance-control-tower/notify-managers",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await payrollAttendanceControlService.notifyReportingManagers({
+      runMonth: typeof req.body.runMonth === "string" ? req.body.runMonth : undefined,
+      runId: typeof req.body.runId === "string" ? req.body.runId : undefined,
+      from: typeof req.body.from === "string" ? req.body.from : undefined,
+      to: typeof req.body.to === "string" ? req.body.to : undefined,
+      issueType: typeof req.body.issueType === "string" ? req.body.issueType : undefined,
+      search: typeof req.body.search === "string" ? req.body.search : undefined,
+      branchId: typeof req.body.branchId === "string" ? req.body.branchId : undefined,
+      processId: typeof req.body.processId === "string" ? req.body.processId : undefined,
+      conflictKeys: Array.isArray(req.body.conflictKeys) ? req.body.conflictKeys.map(String) : undefined,
+      actorUserId: req.authUser?.id ?? null,
+    });
+    return res.json({ success: true, data, message: "Reporting manager notifications queued" });
+  }),
+);
+
+router.post(
+  "/attendance-control-tower/review-status",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const status = String(req.body.status ?? "");
+    if (!["reviewed", "no_issue", "regularization_required"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid review status" });
+    }
+    const conflictKeys = Array.isArray(req.body.conflictKeys) ? req.body.conflictKeys.map(String).filter(Boolean) : [];
+    if (conflictKeys.length === 0) {
+      return res.status(400).json({ success: false, message: "Select at least one conflict row" });
+    }
+    const data = await payrollAttendanceControlService.updateReviewStatus({
+      runMonth: typeof req.body.runMonth === "string" ? req.body.runMonth : undefined,
+      conflictKeys,
+      status: status as "reviewed" | "no_issue" | "regularization_required",
+      actorUserId: req.authUser?.id ?? null,
+      note: typeof req.body.note === "string" ? req.body.note : undefined,
+    });
+    return res.json({ success: true, data, message: "Review status updated" });
+  }),
+);
+
+router.post(
+  "/attendance-control-tower/repair-missing-adr",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const conflictKeys = Array.isArray(req.body.conflictKeys) ? req.body.conflictKeys.map(String).filter(Boolean) : [];
+    if (conflictKeys.length === 0) {
+      return res.status(400).json({ success: false, message: "Select at least one ADR missing row" });
+    }
+    const invalid = conflictKeys.some((key) => {
+      const value = String(key);
+      return !value.startsWith("apr:") && !value.startsWith("ncosec:");
+    });
+    if (invalid) {
+      return res.status(400).json({ success: false, message: "Only APR-backed or COSEC-backed ADR missing rows can be repaired from this action" });
+    }
+    const data = await payrollAttendanceControlService.repairMissingAdr({
+      conflictKeys,
+      actorUserId: req.authUser?.id ?? null,
+    });
+    return res.json({ success: true, data, message: "ADR repair attempt completed" });
+  }),
+);
 
 // ─── Cascading filter options for payroll workspace dropdowns ──
 router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -513,9 +601,13 @@ router.get("/advances",
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT sal.id, sal.employee_id, sal.advance_amount, sal.advance_date,
+      `SELECT sal.id, sal.employee_id,
+              sal.advance_amount AS amount,
+              sal.advance_date,
               sal.status, sal.approved_by, sal.approved_at, sal.rejection_reason,
-              sal.recovery_month, sal.created_at,
+              sal.recovery_month AS recovery_months,
+              sal.notes AS purpose,
+              sal.created_at,
               e.employee_code,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name
          FROM salary_advance_log sal

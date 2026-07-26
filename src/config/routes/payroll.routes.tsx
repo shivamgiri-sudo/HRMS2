@@ -1,4 +1,4 @@
-import { Route } from "react-router-dom";
+import { Route, Navigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -21,6 +21,7 @@ const NativeIncentives          = lazy(() => import("@/pages/NativeIncentives"))
 const PayrollOvertimeManagement = lazy(() => import("@/pages/PayrollOvertimeManagement"));
 const PayrollConfigFlags        = lazy(() => import("@/pages/payroll/PayrollConfigFlags"));
 const RecalculationQueue        = lazy(() => import("@/pages/payroll/RecalculationQueue"));
+const AttendanceControlTower    = lazy(() => import("@/pages/payroll/AttendanceControlTower"));
 const RunningPayrollBreakdown   = lazy(() => import("@/pages/payroll/RunningPayrollBreakdown"));
 const HolidayMaster             = lazy(() => import("@/pages/payroll/HolidayMaster"));
 const DisbursalManagement       = lazy(() => import("@/pages/payroll/DisbursalManagement"));
@@ -46,6 +47,8 @@ const PfBatchesPage             = lazy(() => import("@/pages/payroll/PfBatchesPa
 const NativePayrollHOQueues     = lazy(() => import("@/pages/NativePayrollHOQueues"));
 const NativeChequeNameValidation = lazy(() => import("@/pages/NativeChequeNameValidation"));
 const NativeSalaryIncrement     = lazy(() => import("@/pages/NativeSalaryIncrement"));
+const HolidayWork               = lazy(() => import("@/pages/payroll/HolidayWork"));
+const PfManagement              = lazy(() => import("@/pages/payroll/PfManagement"));
 
 function PayslipCenterRoute() {
   const { primaryRole, employeeId, employeeName, employeeCode } = useWorkforceAccess();
@@ -78,10 +81,12 @@ export const payrollRouteElements = (
       <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><DisbursalManagement /></ProtectedRoute>} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><PayrollConfigFlags /></ProtectedRoute>} />
       <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><RecalculationQueue /></ProtectedRoute>} />
+      <Route path="/payroll/attendance-control-tower" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','payroll','hr','wfm','branch_head']}><AttendanceControlTower /></ProtectedRoute>} />
       <Route path="/payroll/running-breakdown"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm','employee']}><RunningPayrollBreakdown /></ProtectedRoute>} />
       <Route path="/payroll/holiday-master"      element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><HolidayMaster /></ProtectedRoute>} />
-      <Route path="/payroll/holiday-work-requests" element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><HolidayWorkRequest /></ProtectedRoute>} />
-      <Route path="/payroll/holiday-work-approvals" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch','wfm']}><HolidayWorkApprovals /></ProtectedRoute>} />
+      <Route path="/payroll/holiday-work"           element={<ProtectedRoute roles={['super_admin','admin','wfm','payroll_head','payroll_branch']}><HolidayWork /></ProtectedRoute>} />
+      <Route path="/payroll/holiday-work-requests"  element={<Navigate to="/payroll/holiday-work" replace />} />
+      <Route path="/payroll/holiday-work-approvals" element={<Navigate to="/payroll/holiday-work?tab=approvals" replace />} />
       <Route path="/payroll/validation"          element={<ProtectedRoute roles={['super_admin','payroll_head']}><PayrollValidationScreen /></ProtectedRoute>} />
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><NocManagement /></ProtectedRoute>} />
       <Route path="/payroll/branch-readiness"    element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll']}><BranchPayrollReadiness /></ProtectedRoute>} />
@@ -97,10 +102,11 @@ export const payrollRouteElements = (
       <Route path="/payroll/salary-certificates" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><SalaryCertificate /></ProtectedRoute>} />
       <Route path="/payroll/reimbursements"      element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><ReimbursementManagement /></ProtectedRoute>} />
       <Route path="/payroll/ho-queues"           element={<ProtectedRoute roles={['super_admin','payroll_head','payroll','finance','hr','admin']}><NativePayrollHOQueues /></ProtectedRoute>} />
-      <Route path="/payroll/cheque-validation"   element={<ProtectedRoute roles={['payroll','payroll_head','super_admin','finance']}><NativeChequeNameValidation /></ProtectedRoute>} />
+      <Route path="/payroll/cheque-validation"   element={<Navigate to="/payroll/ho-queues" replace />} />
       <Route path="/payroll/epf-compliance"      element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll','hr','manager']}><PayrollEpfCompliancePage /></ProtectedRoute>} />
-      <Route path="/payroll/pf-creation-queue"   element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfCreationQueuePage /></ProtectedRoute>} />
-      <Route path="/payroll/pf-batches"          element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfBatchesPage /></ProtectedRoute>} />
+      <Route path="/payroll/pf-management"       element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><PfManagement /></ProtectedRoute>} />
+      <Route path="/payroll/pf-creation-queue"   element={<Navigate to="/payroll/pf-management" replace />} />
+      <Route path="/payroll/pf-batches"          element={<Navigate to="/payroll/pf-management?tab=batches" replace />} />
       <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><DashboardLayout><NativeSalaryIncrement /></DashboardLayout></Gate></ProtectedRoute>} />
   </>
 );

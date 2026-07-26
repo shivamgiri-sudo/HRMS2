@@ -108,6 +108,7 @@ interface MilestoneCardProps {
   onEditChange: (v: string) => void;
   onEditStart: () => void;
   onEditCancel: () => void;
+  onSave?: () => void;
   canEdit: boolean;
 }
 
@@ -119,6 +120,7 @@ function MilestoneCard({
   onEditChange,
   onEditStart,
   onEditCancel,
+  onSave,
   canEdit,
 }: MilestoneCardProps) {
   const chip = dateStr ? daysRemaining(dateStr) : null;
@@ -150,7 +152,7 @@ function MilestoneCard({
             onChange={(e) => onEditChange(e.target.value)}
             className="h-7 text-sm"
           />
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" type="button" onClick={() => {/* handled by parent save */}}>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600" type="button" onClick={onSave}>
             <Check className="h-3.5 w-3.5" />
           </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" type="button" onClick={onEditCancel}>
@@ -185,6 +187,7 @@ interface MonthColumnProps {
   onEditChange: (key: MilestoneKey, value: string) => void;
   editingKey: string | null;
   setEditingKey: (k: string | null) => void;
+  onSave?: () => void;
 }
 
 function MonthColumn({
@@ -195,6 +198,7 @@ function MonthColumn({
   onEditChange,
   editingKey,
   setEditingKey,
+  onSave,
 }: MonthColumnProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -215,6 +219,7 @@ function MonthColumn({
             onEditChange={(v) => onEditChange(key, v)}
             onEditStart={() => setEditingKey(edKey)}
             onEditCancel={() => setEditingKey(null)}
+            onSave={onSave ? () => { setEditingKey(null); onSave(); } : undefined}
             canEdit={canEdit}
           />
         );
@@ -416,6 +421,7 @@ export default function PayrollCalendar() {
                   onEditChange={(key, val) => handleEditChange(month, key, val)}
                   editingKey={editingKey}
                   setEditingKey={setEditingKey}
+                  onSave={canEdit ? () => handleSave(month) : undefined}
                 />
                 {canEdit && hasPendingEdits(month) && (
                   <div className="flex items-center gap-2">

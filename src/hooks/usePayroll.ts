@@ -253,7 +253,7 @@ export function usePayrollStats() {
           missingPayrollEmployees: 0,
           totalBasic:       Number(stats.total_basic       ?? 0),
           totalAllowances:  Number(stats.total_allowances  ?? 0),
-          totalDeductions:  Number(stats.total_deductions  ?? stats.total_pf ?? 0),
+          totalDeductions:  Number(stats.total_deductions  ?? 0),
           effectiveRunMonth: overview.runMonth ?? null,
           isFallback: overview.isFallback ?? false,
         };

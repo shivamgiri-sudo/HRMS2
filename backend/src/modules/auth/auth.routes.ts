@@ -12,6 +12,8 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
+import { classifyLoginError } from "./auth-login-error.js";
+import { clearRefreshTokenCookie, getRefreshTokenFromRequest, setRefreshTokenCookie } from "./auth-cookie.js";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -19,6 +21,9 @@ const authLimiter = rateLimit({
   message: { success: false, message: "Too many login attempts. Please try again in 15 minutes." },
   standardHeaders: true,
   legacyHeaders: false,
+  // Count invalid credentials, but do not lock users out because the database returned 5xx.
+  skipFailedRequests: true,
+  requestWasSuccessful: (_req, res) => res.statusCode < 500,
 });
 
 const otpRequestLimiter = rateLimit({
@@ -157,26 +162,96 @@ router.post("/login", authLimiter, h(async (req, res) => {
 
   try {
     const tokens = await authService.login(identifier, password, req);
+    if (tokens.refreshToken) {
+      setRefreshTokenCookie(res, tokens.refreshToken);
+    } else {
+      clearRefreshTokenCookie(res);
+    }
     return res.json({ data: tokens });
   } catch (error: unknown) {
-    return res.status(401).json({ error: error instanceof Error ? error.message : "Authentication failed" });
+    const failure = classifyLoginError(error);
+    return res.status(failure.status).json({ error: failure.message });
   }
 }));
 
-// POST /api/auth/register — public
-router.post("/register", h(async (req, res) => {
-  const { email, password, onboardingToken } = req.body;
+// POST /api/auth/register — requires a valid invitation/onboarding token
+// SECURITY: Registration is NOT open. Users must have one of:
+// - A valid ATS onboarding token (from candidate flow)
+// - A valid HR invitation token
+// - A valid employee activation token
+// This prevents arbitrary account creation.
+router.post("/register", authLimiter, h(async (req, res) => {
+  const { email, password, onboardingToken, invitationToken, activationToken } = req.body;
   if (!email || !password || password.length < 8) {
     return res.status(400).json({ error: "email and password (min 8 chars) required" });
   }
 
+  // SECURITY: At least one valid token is required
+  const hasToken = onboardingToken || invitationToken || activationToken;
+  if (!hasToken) {
+    return res.status(403).json({
+      error: "Registration requires a valid invitation or onboarding token. Please contact HR.",
+      code: "INVITATION_REQUIRED",
+    });
+  }
+
   try {
     let userId: string;
+
     if (onboardingToken) {
+      // ATS candidate onboarding flow
       userId = await authService.registerFromATS(email, password, String(onboardingToken));
-    } else {
+    } else if (invitationToken) {
+      // HR invitation flow - validate invitation token
+      const tokenHash = crypto.createHash('sha256').update(String(invitationToken)).digest('hex');
+      const [inviteRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, email, consumed_at FROM auth_invitation
+         WHERE token_hash = ? AND expires_at > NOW()`,
+        [tokenHash]
+      );
+      if (!inviteRows.length) {
+        return res.status(403).json({ error: "Invalid or expired invitation token", code: "INVITATION_INVALID" });
+      }
+      if (inviteRows[0].consumed_at) {
+        return res.status(403).json({ error: "Invitation has already been used", code: "INVITATION_CONSUMED" });
+      }
+      // Verify email matches invitation (case-insensitive)
+      if (String(inviteRows[0].email).toLowerCase() !== String(email).toLowerCase()) {
+        return res.status(403).json({ error: "Email does not match invitation", code: "EMAIL_MISMATCH" });
+      }
+      // Mark invitation as consumed
+      await db.execute('UPDATE auth_invitation SET consumed_at = NOW() WHERE id = ?', [inviteRows[0].id]);
       userId = await authService.register(email, password);
+    } else if (activationToken) {
+      // Employee activation flow - validate against employee_activation_tokens
+      const tokenHash = crypto.createHash('sha256').update(String(activationToken)).digest('hex');
+      const [activationRows] = await db.execute<RowDataPacket[]>(
+        `SELECT t.id, t.employee_id, t.consumed_at, e.email AS employee_email
+         FROM employee_activation_tokens t
+         JOIN employees e ON e.id = t.employee_id
+         WHERE t.token_hash = ? AND t.expires_at > NOW()`,
+        [tokenHash]
+      );
+      if (!activationRows.length) {
+        return res.status(403).json({ error: "Invalid or expired activation token", code: "ACTIVATION_INVALID" });
+      }
+      if (activationRows[0].consumed_at) {
+        return res.status(403).json({ error: "Activation token has already been used", code: "ACTIVATION_CONSUMED" });
+      }
+      // Verify email matches employee (case-insensitive)
+      if (String(activationRows[0].employee_email).toLowerCase() !== String(email).toLowerCase()) {
+        return res.status(403).json({ error: "Email does not match employee record", code: "EMAIL_MISMATCH" });
+      }
+      // Mark activation as consumed
+      await db.execute('UPDATE employee_activation_tokens SET consumed_at = NOW() WHERE id = ?', [activationRows[0].id]);
+      userId = await authService.register(email, password);
+      // Link user to employee
+      await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, activationRows[0].employee_id]);
+    } else {
+      // Should not reach here due to hasToken check above
+      return res.status(403).json({ error: "Registration requires a valid token", code: "INVITATION_REQUIRED" });
     }
+
     return res.status(201).json({ ok: true, userId });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Registration failed";
@@ -249,14 +324,46 @@ router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin
 }));
 
 // POST /api/auth/refresh — public
+// SECURITY: Implements token rotation - each refresh returns a NEW refresh token.
+// The old token is marked as rotated (not deleted) for reuse detection.
+// If a rotated token is reused, the entire token family is revoked.
 router.post("/refresh", h(async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = getRefreshTokenFromRequest(req);
   if (!refreshToken) return res.status(400).json({ error: "refreshToken required" });
 
   try {
     const tokens = await authService.refreshAccess(refreshToken);
-    return res.json({ data: tokens });
-  } catch {
+    setRefreshTokenCookie(res, tokens.refreshToken);
+    return res.json({
+      data: {
+        accessToken: tokens.accessToken,
+      }
+    });
+  } catch (error: unknown) {
+    clearRefreshTokenCookie(res);
+    const err = error as { code?: string; message?: string };
+    // Return specific error codes for client-side handling
+    if (err.code === 'TOKEN_REUSED') {
+      return res.status(401).json({
+        error: "Security: Token reuse detected. All sessions have been revoked.",
+        code: 'TOKEN_REUSED',
+        logoutRequired: true,
+      });
+    }
+    if (err.code === 'PASSWORD_CHANGED') {
+      return res.status(401).json({
+        error: "Session expired due to password change. Please log in again.",
+        code: 'PASSWORD_CHANGED',
+        logoutRequired: true,
+      });
+    }
+    if (err.code === 'USER_BLOCKED' || err.code === 'EMPLOYEE_INACTIVE') {
+      return res.status(401).json({
+        error: "Account is not active. Please contact HR.",
+        code: err.code,
+        logoutRequired: true,
+      });
+    }
     return res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 }));
@@ -264,7 +371,7 @@ router.post("/refresh", h(async (req, res) => {
 // POST /api/auth/logout — public (rate limited)
 // Must work even with expired/invalid access token so users can always logout
 router.post("/logout", logoutLimiter, h(async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = getRefreshTokenFromRequest(req);
   // Always return success to prevent revealing whether a session existed
   // This prevents enumeration attacks where an attacker probes for active sessions
   if (refreshToken) {
@@ -272,6 +379,7 @@ router.post("/logout", logoutLimiter, h(async (req, res) => {
       // Silently ignore errors - don't reveal session state
     });
   }
+  clearRefreshTokenCookie(res);
   return res.json({ success: true });
 }));
 
@@ -386,27 +494,36 @@ router.post("/2fa/verify", requireAuth, twoFactorLimiter, h(async (req, res) => 
   }
   await verifyTwoFactorChallenge(req.authUser!.id, otp);
 
-  // Exchange the pre_auth token for a full access token.
-  // The authorization header still carries the pre_auth token at this point.
+  // Exchange the pre_auth token for full session (access + refresh tokens).
+  // SECURITY: Refresh token is ONLY created here, after 2FA verification.
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   let accessToken: string | null = null;
+  let refreshToken: string | null = null;
   try {
-    const exchanged = await authService.exchangePreAuthToken(preAuthToken);
+    const exchanged = await authService.exchangePreAuthToken(preAuthToken, req);
     accessToken = exchanged.accessToken;
+    refreshToken = exchanged.refreshToken;
+    setRefreshTokenCookie(res, exchanged.refreshToken);
   } catch {
     // If exchange fails (e.g. already-verified challenge, race), the client will
     // need to call POST /api/auth/2fa/exchange explicitly.
   }
 
-  return res.json({ success: true, twoFactorVerified: true, ...(accessToken ? { accessToken } : {}) });
+  return res.json({
+    success: true,
+    twoFactorVerified: true,
+    ...(accessToken ? { accessToken } : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+  });
 }));
 
-// POST /api/auth/2fa/exchange — exchange a verified pre_auth token for a full access token
-// Separated out so clients can call this independently if /2fa/verify didn't return the token.
+// POST /api/auth/2fa/exchange — exchange a verified pre_auth token for full session
+// Separated out so clients can call this independently if /2fa/verify didn't return the tokens.
 router.post("/2fa/exchange", requireAuth, h(async (req, res) => {
   const preAuthToken = (req.headers.authorization ?? '').replace('Bearer ', '').trim();
   try {
-    const { accessToken } = await authService.exchangePreAuthToken(preAuthToken);
+    const { accessToken, refreshToken } = await authService.exchangePreAuthToken(preAuthToken, req);
+    setRefreshTokenCookie(res, refreshToken);
     return res.json({ success: true, accessToken });
   } catch (error: unknown) {
     const status = typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode?: unknown }).statusCode === "number"

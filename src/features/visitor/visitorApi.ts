@@ -104,10 +104,81 @@ function queryString(values: Record<string, string | number | undefined>) {
   return params.toString();
 }
 
+export type PublicRegistrationInput = {
+  visitor: { full_name: string; mobile: string; email?: string; company_name?: string };
+  branch_id: string;
+  host_employee_code?: string;
+  visit_type: string;
+  purpose: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  consent: { accepted: true; consent_type: string; consent_version: string };
+  companions?: Array<{ full_name: string; mobile?: string; relationship_label?: string }>;
+  vehicle?: { vehicle_number: string; vehicle_type?: string };
+  belongings?: Array<{ item_type: string; description?: string; serial_number?: string }>;
+};
+
+export type PublicVisitStatus = {
+  visit_number: string;
+  visitor_name: string;
+  company_name?: string | null;
+  branch_name: string;
+  host_display_name?: string | null;
+  visit_type: string;
+  purpose: string;
+  status: VisitorStatus;
+  scheduled_start: string;
+  scheduled_end: string;
+  checked_in_at?: string | null;
+  checked_out_at?: string | null;
+  checkout_requested_at?: string | null;
+};
+
+export type PublicHost = {
+  employee_code: string;
+  full_name: string;
+  designation_name?: string | null;
+  department_name?: string | null;
+};
+
 export const visitorApi = {
   async branches() {
     const response = await hrmsApi.get<ApiResponse<VisitorBranch[]>>("/api/visitor/public/branches");
     return response.data ?? [];
+  },
+
+  async publicHosts(branchId: string, q: string) {
+    const query = queryString({ branch_id: branchId, q });
+    const response = await fetch(`/api/visitor/public/hosts?${query}`).then(r => r.json()) as ApiResponse<PublicHost[]>;
+    return response.data ?? [];
+  },
+
+  async registerPublic(input: PublicRegistrationInput) {
+    const response = await fetch("/api/visitor/public/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }).then(r => r.json()) as ApiResponse<{ id: string; visit_number: string; tracking_token: string; status: VisitorStatus }>;
+    if (!response.success) throw new Error((response as any).message ?? "Registration failed");
+    return response.data;
+  },
+
+  async getPublicStatus(token: string) {
+    const response = await fetch(`/api/visitor/public/status/${token}`, {
+      headers: { "Cache-Control": "no-store" },
+    }).then(r => r.json()) as ApiResponse<PublicVisitStatus>;
+    if (!response.success) throw new Error((response as any).message ?? "Visit not found");
+    return response.data;
+  },
+
+  async requestPublicCheckout(token: string) {
+    const response = await fetch("/api/visitor/public/checkout-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tracking_token: token }),
+    }).then(r => r.json()) as ApiResponse<{ requested: boolean }>;
+    if (!response.success) throw new Error((response as any).message ?? "Checkout request failed");
+    return response.data;
   },
 
   async visits(filters: { status?: VisitorStatus; branch_id?: string; search?: string; date_from?: string; date_to?: string; limit?: number } = {}) {
@@ -154,6 +225,11 @@ export const visitorApi = {
 
   async checkOut(id: string, input: { gate_code: string; notes?: string }) {
     const response = await hrmsApi.post<ApiResponse<{ id: string; status: VisitorStatus }>>(`/api/visitor/visits/${id}/check-out`, input);
+    return response.data;
+  },
+
+  async extend(id: string, input: { scheduled_end: string; reason: string }) {
+    const response = await hrmsApi.post<ApiResponse<{ id: string; status: VisitorStatus }>>(`/api/visitor/visits/${id}/extend`, input);
     return response.data;
   },
 

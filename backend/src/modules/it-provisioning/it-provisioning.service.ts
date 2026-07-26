@@ -342,6 +342,50 @@ export async function dispatchJoinProvisioningTasks(params: {
   }
 
   console.log(`[dispatchJoinProvisioningTasks] Completed provisioning dispatch for ${employeeCode}`);
+
+  // Notify employee to upload their profile photo if missing (required for ID card)
+  try {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT user_id, photo_url, personal_email, official_email, email FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = (empRows as any[])[0];
+    if (emp && !emp.photo_url) {
+      // Inbox notification
+      if (emp.user_id) {
+        await inboxService.createItem({
+          user_id: emp.user_id,
+          type: 'profile_photo_required',
+          title: 'Upload your profile photo',
+          description: 'Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page to upload it.',
+          entity_type: 'employee',
+          entity_id: employeeId,
+          action_url: '/profile',
+          priority: 'high',
+        });
+      } else {
+        // Employee has no user_id yet (ATS-created employees before first login).
+        // In-app notification cannot be delivered until user_id is assigned.
+        console.warn(`[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo inbox notification deferred until account is activated`);
+      }
+      // Email notification
+      const toEmail = emp.personal_email || emp.official_email || emp.email;
+      if (toEmail) {
+        const photoUploadUrl = frontendUrl('/profile');
+        await emailService.send({
+          to: toEmail,
+          subject: 'Action Required: Upload your profile photo — ID card pending',
+          html: provisioningEmailHtml(
+            'Upload Your Profile Photo',
+            `Dear ${employeeName},<br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
+            photoUploadUrl,
+          ),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[dispatchJoinProvisioningTasks] Non-fatal: failed to send missing-photo notification:', err);
+  }
 }
 
 // ── EXIT trigger ───────────────────────────────────────────────────────────────

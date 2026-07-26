@@ -77,8 +77,8 @@ payrollAuditTrailRouter.get(
              CONCAT(au.first_name,' ',COALESCE(au.last_name,'')) AS actor_name,
              pca.created_at
            FROM payroll_calculation_audit pca
-           LEFT JOIN employees e  ON e.id  = pca.employee_id
-           LEFT JOIN employees au ON au.id = pca.actor_user_id
+           LEFT JOIN employees e   ON e.id   = pca.employee_id
+           LEFT JOIN auth_user au  ON au.id  = pca.actor_user_id
            ${calcWhere}
            ORDER BY pca.created_at DESC`,
           calcParams
@@ -111,7 +111,7 @@ payrollAuditTrailRouter.get(
              CONCAT(au.first_name,' ',COALESCE(au.last_name,'')) AS actor_name,
              sal.created_at
            FROM sensitive_action_log sal
-           LEFT JOIN employees au ON au.id = sal.actor_user_id
+           LEFT JOIN auth_user au ON au.id = sal.actor_user_id
            ${salWhere}
            ORDER BY sal.created_at DESC`,
           salParams

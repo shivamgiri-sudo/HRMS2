@@ -7,7 +7,7 @@ export const employeeController = {
   async createEmployee(req: Request, res: Response) {
     const parsed = createEmployeeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await employeeService.createEmployee(parsed.data, (req as any).userId ?? "system");
+    const data = await employeeService.createEmployee(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 
@@ -29,12 +29,12 @@ export const employeeController = {
   async updateEmployee(req: Request, res: Response) {
     const parsed = updateEmployeeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await employeeService.updateEmployee(req.params.id, parsed.data, (req as any).userId ?? "system");
+    const data = await employeeService.updateEmployee(req.params.id, parsed.data, (req as any).authUser?.id ?? "system");
     res.json({ data });
   },
 
   async deactivateEmployee(req: Request, res: Response) {
-    await employeeService.deactivateEmployee(req.params.id, (req as any).userId ?? "system");
+    await employeeService.deactivateEmployee(req.params.id, (req as any).authUser?.id ?? "system");
     res.status(204).send();
   },
 

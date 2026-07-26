@@ -255,6 +255,32 @@ export async function createEmployeeFromCandidate(
     result.employeeId = employeeId;
     result.employeeCode = employeeCode;
 
+    // Promote ATS candidate selfie to employee avatar_url/photo_url (non-blocking)
+    // NOTE: selfie_url from ATS is /api/files/candidate/{uuid} — an auth-gated endpoint.
+    // We only promote it if it is already a public employee-photos path; otherwise we skip
+    // to avoid storing a broken URL that would fail ID card / public verify rendering.
+    // TODO: implement physical file copy from candidate_file.storage_path to PHOTOS_DIR
+    // so selfie can be properly promoted to the public employee-photos endpoint.
+    try {
+      const [selfieRows] = await db.execute<RowDataPacket[]>(
+        `SELECT selfie_url FROM ats_candidate WHERE id = ? LIMIT 1`,
+        [candidateId]
+      );
+      const selfieUrl: string | null = (selfieRows as any[])[0]?.selfie_url ?? null;
+      if (selfieUrl && !selfieUrl.startsWith('/api/files/candidate/')) {
+        await db.execute(
+          `UPDATE employees SET photo_url = ?, avatar_url = ? WHERE id = ?`,
+          [selfieUrl, selfieUrl, employeeId]
+        );
+        result.warnings.push('ATS selfie promoted to employee avatar');
+      } else if (selfieUrl) {
+        console.warn(`[EmployeeOrchestrator] Selfie promotion skipped — URL is auth-gated (${selfieUrl}). Physical file copy required.`);
+        result.warnings.push('ATS selfie not promoted — requires physical file copy to employee-photos directory');
+      }
+    } catch (selfieErr) {
+      console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
+    }
+
     // RULE 9: Provisioning failure doesn't block creation
     try {
       await dispatchJoinProvisioningTasks({

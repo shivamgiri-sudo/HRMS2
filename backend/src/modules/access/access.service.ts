@@ -197,8 +197,105 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
     can_export: number | boolean;
   };
 
+  const loadDisabledPageRows = async (): Promise<DisabledPageRow[]> => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT page_code FROM page_catalog WHERE active_status = 0"
+      );
+      return rows as DisabledPageRow[];
+    } catch {
+      return [];
+    }
+  };
+
+  const loadActiveCatalogRows = async (): Promise<CatalogPageRow[]> => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT page_code FROM page_catalog WHERE active_status = 1"
+      );
+      return rows as CatalogPageRow[];
+    } catch {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          "SELECT page_code FROM page_catalog"
+        );
+        return rows as CatalogPageRow[];
+      } catch {
+        return [];
+      }
+    }
+  };
+
+  const loadRolePageRows = async (roleKeys: string[]): Promise<PageRow[]> => {
+    if (roleKeys.length === 0) return [];
+
+    const placeholders = roleKeys.map(() => "?").join(",");
+
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT rpa.page_code,
+                MAX(rpa.can_view)   AS can_view,
+                MAX(rpa.can_create) AS can_create,
+                MAX(rpa.can_edit)   AS can_edit,
+                MAX(rpa.can_delete) AS can_delete,
+                MAX(rpa.can_export) AS can_export
+         FROM role_page_access rpa
+         LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
+         WHERE rpa.role_key IN (${placeholders})
+           AND rpa.active_status = 1
+           AND COALESCE(pc.active_status, 1) = 1
+         GROUP BY rpa.page_code`,
+        roleKeys
+      );
+      return rows as PageRow[];
+    } catch {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT page_code,
+                MAX(can_view)   AS can_view,
+                MAX(can_create) AS can_create,
+                MAX(can_edit)   AS can_edit,
+                MAX(can_delete) AS can_delete,
+                MAX(can_export) AS can_export
+         FROM role_page_access
+         WHERE role_key IN (${placeholders})
+           AND active_status = 1
+         GROUP BY page_code`,
+        roleKeys
+      );
+      return rows as PageRow[];
+    }
+  };
+
+  const loadUserPageRows = async (): Promise<PageRow[]> => {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export
+         FROM user_page_access upa
+         LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
+         WHERE upa.user_id = ?
+           AND upa.active_status = 1
+           AND COALESCE(pc.active_status, 1) = 1`,
+        [userId]
+      );
+      return rows as PageRow[];
+    } catch {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT page_code, can_view, can_create, can_edit, can_delete, can_export
+           FROM user_page_access
+           WHERE user_id = ?
+             AND active_status = 1`,
+          [userId]
+        );
+        return rows as PageRow[];
+      } catch {
+        return [];
+      }
+    }
+  };
+
   // Batch 1: all queries independent of each other run in parallel
-  const [[roleRows], [empRows], [scopeRows], [disabledRows], [activeCatalogRows]] = await Promise.all([
+  const [[roleRows], [empRows], [scopeRows], disabledRows, activeCatalogRows] = await Promise.all([
     db.execute<RowDataPacket[]>(
       "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
       [userId]
@@ -212,12 +309,8 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
        FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
       [userId]
     ),
-    db.execute<RowDataPacket[]>(
-      "SELECT page_code FROM page_catalog WHERE active_status = 0"
-    ),
-    db.execute<RowDataPacket[]>(
-      "SELECT page_code FROM page_catalog WHERE active_status = 1"
-    ),
+    loadDisabledPageRows(),
+    loadActiveCatalogRows(),
   ]);
 
   const roles = (roleRows as RoleRow[]).map((r) => String(r.role_key ?? ""));
@@ -229,37 +322,10 @@ export async function getAccessMe(userId: string): Promise<AccessMeResponse> {
   // Batch 2: page-permissions (depends on roles) + user-page-overrides run in parallel
   const allRoleKeys = [...new Set([...roles, ...scopes.map((s) => s.role_key ?? "")])].filter(Boolean);
 
-  const placeholders = allRoleKeys.map(() => "?").join(",");
-  const [pageRowsResult, [userPageRows]] = await Promise.all([
-    allRoleKeys.length > 0
-      ? db.execute<RowDataPacket[]>(
-          `SELECT rpa.page_code,
-                  MAX(rpa.can_view)   AS can_view,
-                  MAX(rpa.can_create) AS can_create,
-                  MAX(rpa.can_edit)   AS can_edit,
-                  MAX(rpa.can_delete) AS can_delete,
-                  MAX(rpa.can_export) AS can_export
-           FROM role_page_access rpa
-           LEFT JOIN page_catalog pc ON pc.page_code = rpa.page_code
-           WHERE rpa.role_key IN (${placeholders})
-             AND rpa.active_status = 1
-             AND COALESCE(pc.active_status, 1) = 1
-           GROUP BY rpa.page_code`,
-          allRoleKeys
-        )
-      : Promise.resolve([[], []] as unknown as [RowDataPacket[], import("mysql2").FieldPacket[]]),
-    db.execute<RowDataPacket[]>(
-      `SELECT upa.page_code, upa.can_view, upa.can_create, upa.can_edit, upa.can_delete, upa.can_export
-       FROM user_page_access upa
-       LEFT JOIN page_catalog pc ON pc.page_code = upa.page_code
-       WHERE upa.user_id = ?
-         AND upa.active_status = 1
-         AND COALESCE(pc.active_status, 1) = 1`,
-      [userId]
-    ),
+  const [pageRows, userPageRows] = await Promise.all([
+    loadRolePageRows(allRoleKeys),
+    loadUserPageRows(),
   ]);
-
-  const [pageRows] = pageRowsResult;
   let pages: AccessMeResponse["pages"] = (pageRows as PageRow[]).map((r) => ({
     page_code:  r.page_code as string,
     can_view:   Boolean(r.can_view),

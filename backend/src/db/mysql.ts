@@ -29,7 +29,7 @@ const _pool: Pool = mysql.createPool({
 /**
  * RELIABILITY: Transient errors that are safe to retry.
  *
- * NOTE: ER_CON_COUNT_ERROR is NOT included — connection exhaustion should NOT
+ * NOTE: ER_CON_COUNT_ERROR is NOT included -- connection exhaustion should NOT
  * be retried as it makes the problem worse. Return 503 immediately instead.
  */
 const TRANSIENT_DB_ERROR_CODES = new Set([
@@ -41,10 +41,10 @@ const TRANSIENT_DB_ERROR_CODES = new Set([
 ]);
 
 /**
- * Non-retryable errors — return 503 immediately.
+ * Non-retryable errors -- return 503 immediately.
  */
 const NON_RETRYABLE_DB_ERROR_CODES = new Set([
-  "ER_CON_COUNT_ERROR",  // Connection exhaustion — retry makes it worse
+  "ER_CON_COUNT_ERROR",  // Connection exhaustion -- retry makes it worse
   "ER_TOO_MANY_USER_CONNECTIONS",
 ]);
 
@@ -145,7 +145,7 @@ function recordFailure(error: unknown): void {
   }
 
   if (circuitBreaker.status === "half-open") {
-    // Failure during probe — re-open circuit
+    // Failure during probe -- re-open circuit
     circuitBreaker.status = "open";
     circuitBreaker.nextProbeTime = now + CIRCUIT_BREAKER_CONFIG.recoveryTimeMs;
     return;

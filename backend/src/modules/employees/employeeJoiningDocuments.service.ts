@@ -12,6 +12,8 @@ import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysi
 import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { emailService } from "../communication/email.service.js";
+import { buildJoiningDocEsignEmailHtml } from "../ats/ats.email.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
@@ -1077,13 +1079,14 @@ export async function createJoiningDocumentEsignRequest(params: {
   await db.execute(
     `INSERT INTO employee_joining_document_public_token
        (id, checklist_id, employee_id, candidate_id, document_code, public_token, public_token_hash, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, 'active', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
     [
       randomUUID(),
       checklist.id,
       checklist.employee_id,
       checklist.candidate_id ?? null,
       checklist.document_code,
+      publicToken,
       publicTokenHash,
       nowPlusDays(7),
       params.actorUserId,
@@ -1183,6 +1186,43 @@ export async function createJoiningDocumentEsignRequest(params: {
   });
 
   await recalculateDocumentProgress(params.employeeId);
+
+  // Auto-email the sign link to the employee (both personal and official email)
+  try {
+    // Fetch personal_email separately — it's not on EmployeeDocumentTarget
+    const [empEmailRows] = await db.execute<RowDataPacket[]>(
+      `SELECT personal_email FROM employees WHERE id = ? LIMIT 1`,
+      [params.employeeId]
+    );
+    const personalEmail: string | null = (empEmailRows as any[])[0]?.personal_email ?? null;
+    const toAddresses = [
+      personalEmail,
+      access.target.official_email,
+    ].filter((e): e is string => typeof e === "string" && e.includes("@"));
+    const uniqueTo = [...new Set(toAddresses)];
+    if (uniqueTo.length > 0) {
+      const expiryDate = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+      const expiryStr = expiryDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      const emailHtml = buildJoiningDocEsignEmailHtml({
+        employeeName: access.target.full_name ?? access.target.employee_code ?? "Employee",
+        documentName: checklist.document_name,
+        signLink: tokenLink,
+        expiryStr,
+      });
+      for (const toAddr of uniqueTo) {
+        await emailService.send({
+          to: toAddr,
+          subject: `Action Required: Please sign your ${checklist.document_name} — MAS Callnet`,
+          html: emailHtml,
+        });
+      }
+    } else {
+      console.warn(`[joining-docs] eSign link not emailed — employee ${params.employeeId} has no personal_email or official_email on record`);
+    }
+  } catch (emailErr) {
+    console.warn("[joining-docs] Non-fatal: eSign email delivery failed:", emailErr);
+  }
+
   return {
     sign_link: tokenLink,
     provider_url: externalProviderUrl,

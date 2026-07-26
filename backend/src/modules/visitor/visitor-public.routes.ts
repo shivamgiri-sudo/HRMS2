@@ -27,6 +27,15 @@ visitorPublicRouter.get("/branches", h(async (_req, res) => {
   return res.json({ success: true, data });
 }));
 
+// Public host search — returns name/code/designation only (no PII)
+visitorPublicRouter.get("/hosts", h(async (req, res) => {
+  const q = String(req.query.q ?? "").trim();
+  const branchId = String(req.query.branch_id ?? "").trim();
+  if (q.length < 2) return res.json({ success: true, data: [] });
+  const data = await visitorService.searchPublicHosts(q, branchId || undefined);
+  return res.json({ success: true, data });
+}));
+
 visitorPublicRouter.post("/register", registrationLimiter, h(async (req, res) => {
   const input = publicRegistrationSchema.parse(req.body);
   const data = await visitorService.registerPublic(input, req);

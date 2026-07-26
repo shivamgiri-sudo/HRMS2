@@ -466,9 +466,14 @@ wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async
               adr.clock_in_time,
               adr.clock_out_time,
               adr.biometric_minutes,
+              adr.dialler_minutes,
               adr.raw_minutes,
               adr.attendance_source,
+              adr.apr_status,
+              adr.biometric_status,
+              adr.mismatch_flag,
               adr.lwp_value,
+              ROUND(COALESCE(apr_src.apr_seconds, 0) / 60) AS apr_minutes,
               COALESCE(ibd.total_punches, CASE
                 WHEN adr.clock_in_time IS NULL AND adr.clock_out_time IS NULL THEN 0
                 WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL THEN 1
@@ -480,9 +485,15 @@ wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async
                 ON adr.employee_id = e.id AND adr.record_date = ?
          LEFT JOIN integration_biometric_daily ibd
                 ON ibd.employee_code = e.employee_code AND ibd.activity_date = ?
+         LEFT JOIN (
+               SELECT UserID, ReportDate, SUM(TIME_TO_SEC(Net_Login)) AS apr_seconds
+                 FROM apr
+                WHERE ReportDate = ?
+                GROUP BY UserID, ReportDate
+         ) apr_src ON apr_src.UserID = e.employee_code AND apr_src.ReportDate = ?
         WHERE e.id = ?
         LIMIT 1`,
-      [date, date, requestedEmployeeId],
+      [date, date, date, date, requestedEmployeeId],
     ),
     // Use biometric_attendance_log (mas_hrms native table) instead of cosec_punch_sync
     // to avoid cross-DB collation issues and vicidial-sync lock contention.
@@ -532,6 +543,14 @@ wfmRegularizationSecureRouter.get("/regularizations/attendance-preview", h(async
       suggestedLoginTime: formatPreviewTime(row.working_hours_start),
       suggestedLogoutTime: formatPreviewTime(row.working_hours_end),
       attendanceSource: row.attendance_source ? String(row.attendance_source) : "attendance_daily_record",
+      aprMinutes: Number(row.apr_minutes ?? row.dialler_minutes ?? 0),
+      aprStatus: row.apr_status ? String(row.apr_status) : null,
+      biometricStatus: row.biometric_status ? String(row.biometric_status) : null,
+      mismatchFlag: Number(row.mismatch_flag ?? 0) === 1 || (
+        Number(row.apr_minutes ?? 0) > 0 &&
+        Number(row.biometric_minutes ?? 0) > 0 &&
+        Math.abs(Number(row.apr_minutes ?? 0) - Number(row.biometric_minutes ?? 0)) > 60
+      ),
       biometricMinutes: Number(row.biometric_minutes ?? 0),
       rawMinutes: Number(row.raw_minutes ?? 0),
       lwpValue: Number(row.lwp_value ?? 0),

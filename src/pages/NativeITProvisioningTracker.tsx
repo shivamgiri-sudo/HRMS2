@@ -145,10 +145,11 @@ function StatusBadge({ status, locked }: { status: string; locked: number }) {
     </Badge>
   );
   const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
-    pending:  { label: "Pending",   cls: "bg-amber-100 text-amber-800 border-amber-300",     icon: <Clock className="h-3 w-3" aria-hidden="true" /> },
-    actioned: { label: "Actioned",  cls: "bg-sky-100 text-sky-800 border-sky-300",           icon: <CheckCircle className="h-3 w-3" aria-hidden="true" /> },
-    confirmed:{ label: "Confirmed", cls: "bg-emerald-100 text-emerald-800 border-emerald-300", icon: <CheckCircle className="h-3 w-3" aria-hidden="true" /> },
-    waived:   { label: "Waived",    cls: "bg-slate-100 text-slate-700 border-slate-300",     icon: <XCircle className="h-3 w-3" aria-hidden="true" /> },
+    pending:            { label: "Pending",    cls: "bg-amber-100 text-amber-800 border-amber-300",     icon: <Clock className="h-3 w-3" aria-hidden="true" /> },
+    pending_unassigned: { label: "Unassigned", cls: "bg-orange-100 text-orange-800 border-orange-300",  icon: <AlertCircle className="h-3 w-3" aria-hidden="true" /> },
+    actioned:           { label: "Actioned",   cls: "bg-sky-100 text-sky-800 border-sky-300",           icon: <CheckCircle className="h-3 w-3" aria-hidden="true" /> },
+    confirmed:          { label: "Confirmed",  cls: "bg-emerald-100 text-emerald-800 border-emerald-300", icon: <CheckCircle className="h-3 w-3" aria-hidden="true" /> },
+    waived:             { label: "Waived",     cls: "bg-slate-100 text-slate-700 border-slate-300",     icon: <XCircle className="h-3 w-3" aria-hidden="true" /> },
   };
   const def = map[status] ?? map.pending;
   return (
@@ -463,10 +464,11 @@ function ITTaskForm({ form, setForm, disabled }: {
   );
 }
 
-function AdminTaskForm({ form, setForm, disabled }: {
+function AdminTaskForm({ form, setForm, disabled, photoMissing }: {
   form: AdminForm;
   setForm: React.Dispatch<React.SetStateAction<AdminForm>>;
   disabled: boolean;
+  photoMissing?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -492,13 +494,16 @@ function AdminTaskForm({ form, setForm, disabled }: {
           />
         </div>
       )}
-      <label className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${form.idCardPrinted ? "border-emerald-300 bg-emerald-50" : "hover:bg-slate-50"}`}>
+      <label className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${(disabled || photoMissing) ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${form.idCardPrinted ? "border-emerald-300 bg-emerald-50" : "hover:bg-slate-50"}`}>
         <Checkbox
           checked={form.idCardPrinted}
           onCheckedChange={v => setForm(f => ({ ...f, idCardPrinted: !!v }))}
-          disabled={disabled}
+          disabled={disabled || photoMissing}
         />
-        <span className="font-medium text-sm">Employee ID card printed and issued</span>
+        <span className="font-medium text-sm">
+          Employee ID card printed and issued
+          {photoMissing && <span className="ml-2 text-xs font-normal text-amber-700">(blocked — photo required)</span>}
+        </span>
       </label>
       {form.idCardPrinted && (
         <div>
@@ -1198,6 +1203,12 @@ export default function NativeITProvisioningTracker() {
                           </span>
                         ) : (
                           <div className="flex items-center justify-end gap-2">
+                            {req.status === "pending_unassigned" && (
+                              <span className="text-xs text-orange-700 flex items-center gap-1">
+                                <AlertCircle className="h-3 w-3" aria-hidden="true" />
+                                No {req.assigned_role?.toUpperCase()} user found for this branch
+                              </span>
+                            )}
                             {req.status === "pending" && (
                               <Button
                                 variant="default"
@@ -1288,6 +1299,12 @@ export default function NativeITProvisioningTracker() {
                 <>
                   {statCardData && (
                     <div className="mb-4 flex flex-col items-center gap-2">
+                      {!statCardData.photo_url && (
+                        <div className="w-full rounded-lg bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-800 font-medium flex items-start gap-2">
+                          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
+                          <span>Employee has not uploaded a profile photo. The ID card cannot be printed until a photo is available. Ask the employee to upload their photo from their Profile page first.</span>
+                        </div>
+                      )}
                       <EmployeeIDCard
                         employeeId={actionDialog.request!.employee_id}
                         employeeCode={statCardData.employee_code}
@@ -1307,13 +1324,14 @@ export default function NativeITProvisioningTracker() {
                       <button
                         type="button"
                         onClick={() => window.print()}
-                        className="text-xs text-blue-600 underline mt-1"
+                        disabled={!statCardData.photo_url}
+                        className="text-xs text-blue-600 underline mt-1 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Print ID Card
                       </button>
                     </div>
                   )}
-                  <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} />
+                  <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} photoMissing={!statCardData?.photo_url} />
                 </>
               ) : isWfmTask ? (
                 <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />

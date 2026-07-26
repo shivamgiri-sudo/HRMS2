@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
-import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { apiUrl } from "@/lib/apiBase";
 import { useInactivityTimeout } from "@/hooks/useInactivityTimeout";
 
@@ -52,6 +51,7 @@ async function fetchJson(
   try {
     const res = await fetch(apiUrl(path), {
       ...init,
+      credentials: 'include',
       headers: {
         Accept: 'application/json',
         ...init.headers,
@@ -88,15 +88,22 @@ function decodeJwtUser(token: string): HrmsUser | null {
 }
 
 async function tryRefresh(): Promise<HrmsUser | null> {
-  const raw = localStorage.getItem('hrms_refresh_token');
-  if (!raw) return null;
   try {
     const { ok, payload } = await fetchJson('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: raw }),
     });
-    if (!ok) return null;
+    if (!ok) {
+      // Check for security-related errors that require logout
+      if (payload?.logoutRequired || payload?.code === 'TOKEN_REUSED' || payload?.code === 'PASSWORD_CHANGED') {
+        localStorage.removeItem('hrms_access_token');
+        localStorage.removeItem('hrms_refresh_token');
+        localStorage.removeItem('hrms_must_change_password');
+        localStorage.removeItem('hrms_2fa_required');
+        localStorage.removeItem('hrms_2fa_verified');
+      }
+      return null;
+    }
     const { data } = payload ?? {};
     localStorage.setItem('hrms_access_token', data.accessToken);
     return decodeJwtUser(data.accessToken);
@@ -225,30 +232,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Best-effort GPS for login location — uses cached position (no prompt if already granted)
-      const loginGeo = await new Promise<{ latitude: number | null; longitude: number | null }>((resolve) => {
-        if (!navigator?.geolocation) return resolve({ latitude: null, longitude: null });
-        navigator.geolocation.getCurrentPosition(
-          (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-          () => resolve({ latitude: null, longitude: null }),
-          { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false },
-        );
-      });
       const { ok, payload } = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, password, login_lat: loginGeo.latitude, login_lng: loginGeo.longitude }),
+        body: JSON.stringify({ identifier, password }),
       });
       if (!ok) {
         return { error: new Error(payload?.error || payload?.message || 'Authentication failed') };
       }
       const { accessToken, refreshToken, user: authUser } = payload?.data ?? {};
-      if (!accessToken || !refreshToken || !authUser?.id) {
+      // SECURITY: refreshToken may be null when 2FA is required (token only issued after 2FA)
+      if (!accessToken || !authUser?.id) {
         return { error: new Error('Login response was incomplete. Please try again.') };
       }
       localStorage.removeItem('hrms_demo_session');
       localStorage.setItem('hrms_access_token', accessToken);
-      localStorage.setItem('hrms_refresh_token', refreshToken);
+      localStorage.removeItem('hrms_refresh_token');
       const forceChange = authUser.mustChangePassword === true;
       const requiresTwoFactor = authUser.twoFactorRequired === true;
       const verifiedTwoFactor = authUser.twoFactorVerified === true;
@@ -287,18 +286,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     setIsSigningOut(true);
     try {
-      const refreshToken = localStorage.getItem('hrms_refresh_token');
-      if (refreshToken) {
-        const token = localStorage.getItem('hrms_access_token');
-        await fetch(apiUrl('/api/auth/logout'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ refreshToken }),
-        }).catch(() => { /* best-effort */ });
-      }
+      const token = localStorage.getItem('hrms_access_token');
+      await fetch(apiUrl('/api/auth/logout'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      }).catch(() => { /* best-effort */ });
     } finally {
       localStorage.removeItem('hrms_demo_session');
       localStorage.removeItem('hrms_access_token');
@@ -375,11 +371,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!ok) return { error: new Error(payload?.error || payload?.message || 'Verification failed') };
 
-      // Backend returns a full accessToken after successful 2FA.
-      // Replace the pre_auth token in localStorage so subsequent API calls work.
+      // Backend returns full session tokens (access + refresh) after successful 2FA.
+      // SECURITY: The refresh token is ONLY issued after 2FA verification.
       if (payload?.accessToken) {
         localStorage.setItem('hrms_access_token', payload.accessToken);
       }
+      localStorage.removeItem('hrms_refresh_token');
 
       localStorage.setItem('hrms_2fa_required', 'true');
       localStorage.setItem('hrms_2fa_verified', 'true');

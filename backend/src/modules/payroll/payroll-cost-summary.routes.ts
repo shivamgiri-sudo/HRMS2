@@ -218,7 +218,7 @@ function sumDimensions(rows: RowDataPacket[], isEstimate: boolean): KpiSummary {
  *   group_by  branch|process|department|cost_centre  (defaults to branch)
  */
 payrollCostSummaryRouter.get(
-  "/cost-summary",
+  "/",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const today = new Date();

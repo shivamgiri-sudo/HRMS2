@@ -202,10 +202,10 @@ export default function NocManagement() {
     setNocRequired(null);
     setCheckingNoc(true);
     try {
-      const data = await hrmsApi.get<NocRequiredResponse>(
+      const res = await hrmsApi.get<{ success: boolean; data: NocRequiredResponse }>(
         `/api/payroll/noc/required/${emp.id}`,
       );
-      setNocRequired(data);
+      setNocRequired(res.data);
     } catch (err: unknown) {
       toast.error(
         err instanceof Error ? err.message : "Failed to check NOC requirement",

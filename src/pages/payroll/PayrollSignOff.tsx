@@ -376,7 +376,7 @@ export default function PayrollSignOff() {
               )}
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              CEO sign-off required for runs with total net salary &ge; ₹50L
+              CEO sign-off required for high-value payroll runs (threshold configured in Payroll Config Flags)
             </p>
           </CardContent>
         </Card>
@@ -464,7 +464,7 @@ export default function PayrollSignOff() {
                   {!ceoRequired ? (
                     <div className="flex items-center gap-2 text-sm text-slate-500">
                       <XCircle className="w-4 h-4 text-slate-300" />
-                      Not required — total net salary is below ₹50L threshold
+                      Not required — total net salary is below the configured threshold
                     </div>
                   ) : ceoAcknowledged ? (
                     <div className="space-y-1">

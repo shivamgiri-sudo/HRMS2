@@ -102,7 +102,7 @@ export default function PayrollVarianceReport() {
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ["payroll-variance", applied.month, applied.compareTo],
     queryFn: () => hrmsApi.get<{ success: boolean; data: { month: string; compare_to: string; summary: VarianceSummary; rows: VarianceRow[] } }>(
-      `/payroll/variance?month=${applied.month}&compare_to=${applied.compareTo}`
+      `/api/payroll/variance?month=${applied.month}&compare_to=${applied.compareTo}`
     ).then(r => r.data),
     enabled: !!(applied.month && applied.compareTo),
   });

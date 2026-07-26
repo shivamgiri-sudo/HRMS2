@@ -6,6 +6,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
+import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
 
 const SENSITIVE_FIELDS: Array<{ inputKey: keyof UpdateEmployeeInput; dbCol: string; label: string }> = [
   { inputKey: "branchId",           dbCol: "branch_id",           label: "Branch" },
@@ -148,6 +149,17 @@ export const employeeService = {
     } catch (error) {
       console.error(`[WARN] Failed to provision LMS identity for employee ${input.employeeCode}:`, error);
     }
+
+    // Dispatch IT/WFM/Admin/HR provisioning tasks (same as ATS orchestrator path)
+    dispatchJoinProvisioningTasks({
+      employeeId: id,
+      employeeCode: input.employeeCode,
+      employeeName: employee.full_name,
+      branchId: employee.branch_id ?? null,
+      actorUserId: _userId,
+      triggerEventId: null,
+      joiningDate: input.dateOfJoining,
+    }).catch(err => console.error(`[WARN] Failed to dispatch provisioning tasks for ${input.employeeCode}:`, err));
 
     return employee;
   },

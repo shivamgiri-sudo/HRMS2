@@ -99,14 +99,17 @@ describe("Worker Distributed Safety", () => {
       expect(WORKERS_EXTERNAL_FALSE).toBe(false);
     });
 
-    it("should gate ALL schedulers/workers when WORKERS_PROCESS=external", () => {
-      // These schedulers MUST be gated by WORKERS_EXTERNAL:
-      const allSchedulers = [
+    it("should gate inline workers while keeping essential schedulers explicit", () => {
+      const essentialSchedulers = [
         "startOfficialEmailComplianceScheduler",
         "startIntegrationScheduler",
+      ];
+
+      const inlineSchedulers = [
         "startTenureBadgeScheduler",
         "startCommunicationCleanup",
         "startAttendanceEngineScheduler",
+        "startAttendanceReconciliationWorker",
         "legacySyncWorker.start",
         "startAccessExpiryScheduler",
         "startITProvisioningLockScheduler",
@@ -124,12 +127,13 @@ describe("Worker Distributed Safety", () => {
         "startLmsSyncWorker",
       ];
 
-      // When WORKERS_PROCESS=external, NONE of these should start in API process
-      // The test verifies the list is complete for documentation purposes
-      expect(allSchedulers.length).toBeGreaterThanOrEqual(19);
-      expect(allSchedulers).toContain("startOfficialEmailComplianceScheduler");
-      expect(allSchedulers).toContain("startIntegrationScheduler");
-      expect(allSchedulers).toContain("startPayrollNightlyRecalcWorker");
+      expect(essentialSchedulers).toEqual([
+        "startOfficialEmailComplianceScheduler",
+        "startIntegrationScheduler",
+      ]);
+      expect(inlineSchedulers.length).toBeGreaterThanOrEqual(18);
+      expect(inlineSchedulers).toContain("startAttendanceReconciliationWorker");
+      expect(inlineSchedulers).toContain("startPayrollNightlyRecalcWorker");
     });
   });
 
@@ -193,6 +197,7 @@ describe("Worker Distributed Safety", () => {
         "kpi-daily-sync",
         "apr-vicidial-sync",
         "cosec-sync",
+        "ncosec-attendance-reconciliation",
       ];
 
       expect(criticalWorkers).toContain("payroll-nightly-recalc");

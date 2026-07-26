@@ -54,9 +54,11 @@ payrollProcessReadinessRouter.get(
       const month = resolveMonth(req.query.month);
       const data = await payrollBranchReadinessService.getHOSummaryGrouped(month);
 
-      const totalProcesses = data.reduce((s, b) => s + b.stats.total, 0);
+      const totalProcesses  = data.reduce((s, b) => s + b.stats.total, 0);
       const readyProcesses  = data.reduce((s, b) => s + b.stats.ready, 0);
-      const avgScore = totalProcesses > 0
+      const in_progress     = data.reduce((s, b) => s + ((b.stats as any).in_progress ?? 0), 0);
+      const blocked         = data.reduce((s, b) => s + ((b.stats as any).blocked ?? 0), 0);
+      const avg_score = totalProcesses > 0
         ? Math.round(data.reduce((s, b) => s + b.stats.avg_score * b.stats.total, 0) / totalProcesses)
         : 0;
 
@@ -64,7 +66,11 @@ payrollProcessReadinessRouter.get(
         success: true,
         month,
         data,
-        summary: { totalBranches: data.length, totalProcesses, readyProcesses, avgScore },
+        summary: {
+          totalBranches: data.length, totalProcesses, readyProcesses,
+          avgScore: avg_score, avg_score,
+          in_progress, blocked,
+        },
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

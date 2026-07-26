@@ -287,8 +287,8 @@ function SalarySlabsTab() {
                   <TableCell>{s.label}</TableCell>
                   <TableCell>{s.seq_order}</TableCell>
                   <TableCell>
-                    <Badge variant={s.status === "active" ? "default" : "secondary"}>
-                      {s.status ?? "—"}
+                    <Badge variant={(s as any).active_status === 1 || s.status === "active" ? "default" : "secondary"}>
+                      {(s as any).active_status === 1 || s.status === "active" ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

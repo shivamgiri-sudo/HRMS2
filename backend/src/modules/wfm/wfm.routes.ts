@@ -1023,7 +1023,7 @@ wfmRouter.get(
             first_punch_in: matched.clock_in_time ? matched.clock_in_time.replace("T", " ").replace("+05:30", "") : null,
             last_punch_out: matched.clock_out_time ? matched.clock_out_time.replace("T", " ").replace("+05:30", "") : null,
             work_minutes: matched.raw_minutes ?? matched.biometric_minutes ?? 0,
-            synced_at: null,
+            synced_at: new Date().toISOString(),
           };
         }
       } catch {

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Navigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEmployeeStatus } from "@/hooks/useEmployeeStatus";
@@ -5,6 +6,7 @@ import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { Loader2, ShieldX, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getHrmsApiErrorStatus } from "@/lib/hrmsApi";
 import {
   canAccessDashboard,
   type DashboardCode,
@@ -20,13 +22,24 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRouteProps) {
-  const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
+  const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified, signOut } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
   const { isAdminOrHR, isLoading: isRoleLoading, error: roleError, roleKeys } = useIsAdminOrHR();
-  const { isLoading: isAccessLoading, isError: isAccessError, canViewPage } = useWorkforceAccess();
+  const { isLoading: isAccessLoading, isError: isAccessError, error: accessError, canViewPage } = useWorkforceAccess();
   const isEmployee = employeeStatus?.isEmployee ?? false;
   const routePageCode = dashboardCode ? undefined : getRoutePageCode(location.pathname);
+  const hasRoutePageAccess = routePageCode ? canViewPage(routePageCode) : false;
+  const authFailure =
+    getHrmsApiErrorStatus(roleError) === 401 ||
+    getHrmsApiErrorStatus(accessError) === 401;
+  const hasTriggeredSignOutRef = useRef(false);
+
+  useEffect(() => {
+    if (!authFailure || hasTriggeredSignOutRef.current) return;
+    hasTriggeredSignOutRef.current = true;
+    void signOut();
+  }, [authFailure, signOut]);
 
   if (isLoading || isEmployeeLoading || isRoleLoading || isAccessLoading) {
     return (
@@ -34,6 +47,10 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
+  }
+
+  if (authFailure) {
+    return <Navigate to="/auth" replace state={{ from: location }} />;
   }
 
   if (roleError || isAccessError) {
@@ -72,11 +89,39 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
     return <Navigate to="/two-factor" replace />;
   }
 
-  // Role-restricted route: user must have one of the required roles
-  if (dashboardCode || (roles && roles.length > 0)) {
+  // Dashboard routes stay tied to their dashboard entitlement.
+  if (dashboardCode) {
+    const hasRequiredRole = canAccessDashboard(dashboardCode, roleKeys);
+    if (!hasRequiredRole) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background p-4">
+          <Card className="max-w-md w-full">
+            <CardHeader className="text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
+                <ShieldX className="h-8 w-8 text-destructive" />
+              </div>
+              <CardTitle>Access Denied</CardTitle>
+              <CardDescription>
+                You don't have permission to access this dashboard.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-center">
+              <Button asChild>
+                <Link to="/dashboard">Go to Dashboard</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+  }
+
+  // For page-mapped routes, page access is the source of truth.
+  // Local role lists remain only as a fallback for pages that are not yet mapped.
+  if (!routePageCode && roles && roles.length > 0) {
     const hasRequiredRole = dashboardCode
       ? canAccessDashboard(dashboardCode, roleKeys)
-      : roleKeys.includes("super_admin") || roles!.some((r) => roleKeys.includes(r));
+      : roleKeys.includes("super_admin") || roles.some((r) => roleKeys.includes(r));
     if (!hasRequiredRole) {
       return (
         <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -101,7 +146,7 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
     }
   }
 
-  if (routePageCode && !canViewPage(routePageCode)) {
+  if (routePageCode && !hasRoutePageAccess) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">

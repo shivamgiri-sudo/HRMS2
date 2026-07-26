@@ -105,12 +105,55 @@ export interface BatchResult {
   errors: string[];
 }
 
+export interface ShiftWindowInfo {
+  isNightShift: boolean;
+  startDate: string;
+  endDate: string;
+  shiftStartTime: string | null;
+  shiftEndTime: string | null;
+}
+
+export function isCrossMidnightShift(
+  shiftStartTime: string | null | undefined,
+  shiftEndTime: string | null | undefined
+): boolean {
+  const start = String(shiftStartTime ?? '').trim();
+  const end = String(shiftEndTime ?? '').trim();
+  return Boolean(start && end && end < start);
+}
+
+export function nextIstDate(date: string): string {
+  const d = new Date(`${date}T00:00:00+05:30`);
+  d.setDate(d.getDate() + 1);
+  return (toIST(d) ?? d.toISOString())!.slice(0, 10);
+}
+
+export function buildShiftWindowInfo(
+  date: string,
+  shiftStartTime: string | null | undefined,
+  shiftEndTime: string | null | undefined
+): ShiftWindowInfo {
+  const isNightShift = isCrossMidnightShift(shiftStartTime, shiftEndTime);
+  return {
+    isNightShift,
+    startDate: date,
+    endDate: isNightShift ? nextIstDate(date) : date,
+    shiftStartTime: shiftStartTime ?? null,
+    shiftEndTime: shiftEndTime ?? null,
+  };
+}
+
 // Legacy regex fallback — used when apr_eligibility_config table is empty.
 export function isOperationsExecutiveByRegex(departmentName: string, designationName: string): boolean {
   const department = departmentName.trim().toLowerCase();
   const designation = designationName.trim().toLowerCase();
   return (department === 'operations' || department === 'operation')
     && /^executive(?:\s*-\s*.+)?$/.test(designation);
+}
+
+function isOperationsDepartmentName(departmentName: string): boolean {
+  const department = departmentName.trim().toLowerCase();
+  return department === 'operations' || department === 'operation';
 }
 
 // G9: Read a feature flag from attendance_feature_config. Returns the raw string or null.
@@ -152,6 +195,22 @@ export function classifyCosecMinutes(
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const attendanceEngineService = {
+  async getShiftWindow(employeeId: string, date: string): Promise<ShiftWindowInfo> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+          COALESCE(wra.shift_start_time, wsm.start_time) AS shift_start_time,
+          COALESCE(wra.shift_end_time, wsm.end_time) AS shift_end_time
+       FROM wfm_roster_assignment wra
+       LEFT JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
+       WHERE wra.employee_id = ? AND wra.roster_date = ?
+       ORDER BY FIELD(wra.publish_status, 'approved_final', 'published', 'draft'), wra.updated_at DESC, wra.created_at DESC
+       LIMIT 1`,
+      [employeeId, date]
+    );
+    const row = (rows as RowDataPacket[])[0] as any;
+    return buildShiftWindowInfo(date, row?.shift_start_time ?? null, row?.shift_end_time ?? null);
+  },
+
 
   // Rule resolution — specificity scoring query
   async resolveRule(
@@ -300,10 +359,14 @@ export const attendanceEngineService = {
   // APR Net_Login minutes for Operations+Executive employees (direct from mas_hrms.apr).
   // Sums across ALL campaigns for the employee on that date — an agent can span multiple
   // campaigns in a day and each row carries per-campaign login time.
-  async getAprNetMinutes(employeeCode: string, date: string): Promise<number> {
+  async getAprNetMinutes(employeeCode: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
+    const dates = shiftWindow?.isNightShift
+      ? [shiftWindow.startDate, shiftWindow.endDate]
+      : [date];
+    const placeholders = dates.map(() => '?').join(', ');
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT Net_Login FROM apr WHERE UserID = ? AND ReportDate = ?`,
-      [employeeCode, date]
+      `SELECT ReportDate, Net_Login FROM apr WHERE UserID = ? AND ReportDate IN (${placeholders})`,
+      [employeeCode, ...dates]
     );
     if (!rows.length) return 0;
     let totalMinutes = 0;
@@ -317,12 +380,16 @@ export const attendanceEngineService = {
   },
 
   // Sum dialler login minutes — fallback join on employee_code if employee_id is null
-  async getDiallerMinutes(employeeId: string, date: string): Promise<number> {
+  async getDiallerMinutes(employeeId: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
+    const dates = shiftWindow?.isNightShift
+      ? [shiftWindow.startDate, shiftWindow.endDate]
+      : [date];
+    const placeholders = dates.map(() => '?').join(', ');
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(dsl.login_minutes), 0) AS total
        FROM dialer_session_log dsl
-       WHERE dsl.employee_id = ? AND dsl.session_date = ?`,
-      [employeeId, date]
+       WHERE dsl.employee_id = ? AND dsl.session_date IN (${placeholders})`,
+      [employeeId, ...dates]
     );
     let total = Number((rows[0] as any).total ?? 0);
     // Fallback: join via employee_code for unlinked imports
@@ -331,8 +398,8 @@ export const attendanceEngineService = {
         `SELECT COALESCE(SUM(dsl.login_minutes), 0) AS total
          FROM dialer_session_log dsl
          JOIN employees e ON e.employee_code = dsl.employee_code
-         WHERE e.id = ? AND dsl.session_date = ?`,
-        [employeeId, date]
+         WHERE e.id = ? AND dsl.session_date IN (${placeholders})`,
+        [employeeId, ...dates]
       );
       total = Number((fb[0] as any).total ?? 0);
     }
@@ -524,12 +591,13 @@ export const attendanceEngineService = {
     const branchId: string | null = emp.branch_id ?? null;
     const costCentreId: string | null = emp.cost_centre_id ?? null;
     const dateOfJoining: string | null = emp.date_of_joining ?? null;
+    const shiftWindow = await this.getShiftWindow(employeeId, date);
 
     // Resolve rule
     let rule = await this.resolveRule(designationId, processId, branchId, date);
 
     // G1: DB-backed APR eligibility check (replaces hardcoded regex)
-    const isAprEmployee = await this.isAprEligible(
+    const configuredAprEmployee = await this.isAprEligible(
       designationId, departmentId, processId,
       emp.dept_name, emp.designation_name
     );
@@ -538,6 +606,26 @@ export const attendanceEngineService = {
     // and for mismatch detection even when employee is APR-eligible.
     const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
     const biometricMinutes = biometricEvidence.minutes;
+    let isAprEmployee = configuredAprEmployee || rule.attendance_source === 'dialler';
+    let forcedAprMinutes: number | null = null;
+    let forcedAprSourceSystem: string | null = null;
+
+    // Production-safe fallback: if master data is incomplete but the employee belongs to
+    // operations and biometric has no evidence for the day, let strong APR/dialler evidence
+    // drive the attendance source for that date instead of forcing a missing_punch payroll gap.
+    if (!isAprEmployee && biometricMinutes === 0 && isOperationsDepartmentName(emp.dept_name)) {
+      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
+      const diallerMinutes = aprMinutes > 0
+        ? aprMinutes
+        : await this.getDiallerMinutes(employeeId, date, shiftWindow);
+      if (diallerMinutes >= 240) {
+        isAprEmployee = true;
+        forcedAprMinutes = diallerMinutes;
+        forcedAprSourceSystem = aprMinutes > 0
+          ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
+          : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date');
+      }
+    }
 
     // Check overrides (leave/holiday/week-off) with G7 DOJ holiday exclusion
     const override = await this.resolveOverridePriority(employeeId, date, branchId, dateOfJoining, costCentreId, designationId);
@@ -548,7 +636,7 @@ export const attendanceEngineService = {
         // Get APR minutes if applicable to check for actual work on this day
         let actualMinutesOnWeekOff = biometricMinutes;
         if (isAprEmployee) {
-          const aprCheck = await this.getAprNetMinutes(emp.employee_code, date);
+          const aprCheck = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
           if (aprCheck > 0) actualMinutesOnWeekOff = aprCheck;
         }
 
@@ -612,11 +700,13 @@ export const attendanceEngineService = {
         biometricStatusRaw = classifyCosecMinutes(biometricMinutes, halfDayFloor).status;
       }
 
-      const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date);
+      const aprMinutes = forcedAprMinutes ?? await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
       diallerMinutes = aprMinutes > 0
         ? aprMinutes
-        : await this.getDiallerMinutes(employeeId, date);
-      sourceSystem = aprMinutes > 0 ? 'apr.ReportDate' : 'dialer_session_log.session_date';
+        : await this.getDiallerMinutes(employeeId, date, shiftWindow);
+      sourceSystem = forcedAprSourceSystem ?? (aprMinutes > 0
+        ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
+        : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date'));
       sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes ?? 0;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };

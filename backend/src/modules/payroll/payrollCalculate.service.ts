@@ -197,6 +197,7 @@ export interface CalculateResult {
 interface EmployeeRow {
   employee_id: string;
   employee_code: string;
+  prep_line_id?: string | null;
   ctc_annual: number;
   basic_pct: number;
   hra_pct: number;
@@ -226,6 +227,14 @@ interface StatutoryRow {
 }
 
 export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
+  return calculatePayrollRunScoped(runId, userId);
+}
+
+export async function calculatePayrollRunScoped(
+  runId: string,
+  userId: string,
+  options: { employeeIds?: string[] } = {},
+): Promise<CalculateResult> {
   // 1. Load run
   const [runRows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]
@@ -259,6 +268,8 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
   };
 
   // 3. Fetch eligible employees (scoped to run's process/branch filters)
+  const scopedEmployeeIds = Array.from(new Set((options.employeeIds ?? []).filter(Boolean)));
+  const isTargetedRun = scopedEmployeeIds.length > 0;
   const empConds: string[] = ["esa.active_status = 1"];
   const empParams: unknown[] = [];
   if (run.process_filter) {
@@ -269,9 +280,14 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     empConds.push("e.branch_id IN (SELECT id FROM branch_master WHERE branch_name = ?)");
     empParams.push(run.branch_filter);
   }
+  if (isTargetedRun) {
+    empConds.push(`e.id IN (${scopedEmployeeIds.map(() => "?").join(",")})`);
+    empParams.push(...scopedEmployeeIds);
+  }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
+            spl_existing.id AS prep_line_id,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             e.process_id, e.branch_id,
@@ -281,8 +297,10 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
        JOIN salary_structure_master ss      ON ss.id = esa.structure_id
        LEFT JOIN process_master pm          ON pm.id = e.process_id
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
+       LEFT JOIN salary_prep_line spl_existing
+              ON spl_existing.run_id = ? AND spl_existing.employee_id = e.id
       WHERE LOWER(e.employment_status) = 'active' AND ${empConds.join(" AND ")}`,
-    empParams
+    [runId, ...empParams]
   );
   const employees = empRows as EmployeeRow[];
 
@@ -798,7 +816,7 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
     // 6. Accumulate prep line for batch upsert after loop
-    const prepLineId = randomUUID();
+    const prepLineId = emp.prep_line_id || randomUUID();
     batchPrepLines.push([
       prepLineId, runId, emp.employee_id, emp.employee_code,
       att.working_days, att.present_days, att.leave_days, att.lwp_days, att.late_marks, att.dialer_hours,
@@ -910,6 +928,15 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
 
   // Flush salary_prep_line rows
   if (batchPrepLines.length > 0) {
+    if (isTargetedRun) {
+      await conn.execute(
+        `DELETE FROM salary_prep_line_component
+          WHERE run_id = ?
+            AND employee_id IN (${scopedEmployeeIds.map(() => "?").join(",")})`,
+        [runId, ...scopedEmployeeIds],
+      );
+    }
+
     const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\')').join(',');
     await conn.execute(
       `INSERT INTO salary_prep_line
@@ -928,7 +955,9 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
        VALUES ${placeholders}
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
-         lwp_days = VALUES(lwp_days), gross_salary = VALUES(gross_salary),
+         leave_days = VALUES(leave_days), lwp_days = VALUES(lwp_days),
+         late_marks = VALUES(late_marks), dialer_hours = VALUES(dialer_hours),
+         gross_salary = VALUES(gross_salary),
          gross_before_lwp = VALUES(gross_before_lwp),
          total_deductions = VALUES(total_deductions), net_salary = VALUES(net_salary),
          basic = VALUES(basic), hra = VALUES(hra), special_allowance = VALUES(special_allowance),
@@ -1021,6 +1050,22 @@ export async function calculatePayrollRun(runId: string, userId: string): Promis
     totalGross = Number(sums.tg);
     totalDed   = Number(sums.td);
     totalNet   = Number(sums.tn);
+  }
+
+  if (isTargetedRun) {
+    const [sumRows] = (await conn.execute(
+      `SELECT COUNT(*) AS total_employees,
+              COALESCE(SUM(gross_salary),0) AS tg,
+              COALESCE(SUM(total_deductions),0) AS td,
+              COALESCE(SUM(net_salary),0) AS tn
+         FROM salary_prep_line WHERE run_id = ?`,
+      [runId]
+    )) as [RowDataPacket[], unknown];
+    const sums = (sumRows[0] as any);
+    processedCount = Number(sums.total_employees ?? processedCount);
+    totalGross = Number(sums.tg);
+    totalDed = Number(sums.td);
+    totalNet = Number(sums.tn);
   }
 
   // 7. Update run totals + status
