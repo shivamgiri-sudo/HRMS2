@@ -303,6 +303,243 @@ Validate:
 - `UAT_STATUS` remains pending until authenticated source/report comparison and owner sign-off;
 - this report never claims 100% value accuracy from schema checks alone.
 
+## Departmental UAT checklists
+
+The following checklists provide structured validation steps for each functional department. All checks must pass before departmental sign-off.
+
+### Operations UAT
+
+**Report:** bpo-operations-productivity-master
+
+**Validator:** Operations Manager / Process Manager
+
+- [ ] Report loads for correct date range (single date, 7-day range)
+- [ ] EMPLOYEE_CODE, BRANCH, PROCESS all populate correctly
+- [ ] ROSTER_DATE matches WFM system
+- [ ] PRODUCTIVE_MINUTES is not null for active employees on roster
+- [ ] QUALITY_SCORE shows from db_audit.call_quality_assessment (or UNAVAILABLE if external DB offline)
+- [ ] Source accuracy validation returns PASS or WARNING (not FAIL)
+- [ ] Duplicate grain count = 0 (no duplicate employee/date/process rows)
+- [ ] Biometric punch times vs. processed attendance minutes reconcile
+- [ ] Break minutes sum correctly from wfm_break_log
+- [ ] Shrinkage percentages match WFM report
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### WFM UAT
+
+**Report:** bpo-wfm-attendance-shrinkage-master
+
+**Validator:** WFM Manager / Roster Admin
+
+- [ ] Report loads for selected date range
+- [ ] BIOMETRIC_IN/OUT distinct from PROCESSED_ATTENDANCE_MINUTES
+- [ ] ROSTER_DATE present for all rostered employees
+- [ ] PAYROLL_ATTENDANCE_INPUT separate field with correct status
+- [ ] Shrinkage percentages (planned vs unplanned) sum correctly
+- [ ] Absence types (absent, leave, week_off, holiday) add up to roster days
+- [ ] Late/early logout/short attendance flags compute correctly
+- [ ] Regularisation approval timestamps visible
+- [ ] Cross-midnight shifts assigned to correct attendance date
+- [ ] Payable day and LWP impact reconcile with Payroll report
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### HR UAT
+
+**Report:** bpo-hr-workforce-lifecycle-master
+
+**Validator:** HR Head / Branch HR
+
+- [ ] Report loads for current as-of date
+- [ ] Joining date, exit date, tenure days correct for sample employees
+- [ ] BGV status populated (UNAVAILABLE if BGV tables missing — documented gap)
+- [ ] Probation end date present for recent joiners
+- [ ] FNF clearance status matches exit module
+- [ ] Address comes from employee_address (not guessed columns)
+- [ ] Emergency contact from employee_emergency_contact
+- [ ] Document, PAN, UAN, ESIC statuses reconcile with exact sources
+- [ ] Resignation, LWD and clearance reconcile with exit modules
+- [ ] PII is masked for unauthorised roles
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Recruitment UAT
+
+**Report:** bpo-recruitment-training-readiness-master
+
+**Validator:** Recruitment Head / Recruiter
+
+- [ ] Report loads for joining month filter
+- [ ] Candidate ID and requisition ID present
+- [ ] EMPLOYEE_CODE = PENDING EMPLOYEE CODE pre-joining (not null, not fabricated)
+- [ ] Actual employee code populates post-bridge via ats_onboarding_bridge
+- [ ] Offer date, joining date, no-show flag present
+- [ ] Branch scope resolves by bridged employee branch or exact ATS branch-name match
+- [ ] Unmatched branch candidates hidden from branch-scoped users
+- [ ] Candidate stage history from ats_candidate_stage_log
+- [ ] Offered CTC and candidate PII restricted to authorised roles
+- [ ] BGV comes from candidate BGV checks (or UNAVAILABLE if table missing)
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Training UAT
+
+**Report:** bpo-recruitment-training-readiness-master (training section)
+
+**Validator:** Training Manager / Trainer
+
+- [ ] Training rows show trainer code
+- [ ] Certification status uses only: CERTIFIED / NOT CERTIFIED / PENDING / UNAVAILABLE
+- [ ] OJT date present for trainees in OJT phase
+- [ ] Production release date present for certified employees
+- [ ] LMS readiness populated only after employee bridge exists
+- [ ] Module-wise completion rate derivable from LMS sync snapshots
+- [ ] Time-to-certification by cohort computable
+- [ ] No fabricated certification values when LMS sync unavailable
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Quality UAT
+
+**Report:** bpo-quality-risk-compliance-master
+
+**Validator:** Quality Head / QA Manager
+
+- [ ] Report loads for selected audit date range
+- [ ] AUDIT_ID present and distinct
+- [ ] AUDITOR_CODE populated and resolves to employee
+- [ ] QUALITY_SCORE from db_audit.call_quality_assessment (fully qualified external source)
+- [ ] FATAL_ERROR_FLAG shown correctly (score < 50 + Professionalism/Active Listening failure)
+- [ ] CONTROL_RESULT uses only: PASS / FAIL / WARNING / NOT EVIDENCED / NOT APPLICABLE
+- [ ] Checkpoint counts include only columns existing in runtime schema
+- [ ] No fabricated dispute/calibration/CAPA values when source columns absent
+- [ ] Restricted impact values masked for unauthorised roles
+- [ ] External DB unavailable handled gracefully (UNAVAILABLE status, not error)
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Payroll UAT
+
+**Report:** bpo-payroll-statutory-master
+
+**Validator:** Payroll Head / Payroll Processor
+
+- [ ] Report loads for completed payroll runs only (no draft runs)
+- [ ] PAYROLL_RUN_ID present for all rows
+- [ ] GROSS_EARNINGS and NET_PAY from salary_prep_line (not salary_master)
+- [ ] BANK_ACCOUNT masked for non-payroll viewers (encrypted at rest)
+- [ ] PAN_NUMBER masked for non-payroll viewers
+- [ ] Payroll total reconciles: SUM(net_salary) = salary_prep_run.total_net
+- [ ] All earning components sum to gross earnings
+- [ ] All deduction components sum to total deductions
+- [ ] Gross minus deductions equals net pay
+- [ ] PF, ESIC, PT, TDS eligibility and values correct
+- [ ] Payslip URL from salary_payslip table (not payslip)
+- [ ] Working days, present days, LWP days reconcile with WFM report
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Finance UAT
+
+**Report:** bpo-finance-pnl-profitability-master
+
+**Validator:** Finance Head / CFO
+
+- [ ] Report loads for selected finance month
+- [ ] PLANNED_REVENUE and EARNED_REVENUE distinct
+- [ ] PAYROLL_COST matches payroll run total for same period
+- [ ] EBITDA = EARNED_REVENUE - PAYROLL_COST - OTHER_COSTS (via bpoPnlAllocationOverlayService)
+- [ ] General employee cannot access this report (role restriction enforced)
+- [ ] Branch/Client/Process/LOB grain correct
+- [ ] Revenue, penalties, direct cost and margin reconcile with Client SLA report
+- [ ] Commercial values restricted to authorised roles
+- [ ] GRN cost allocation drives P&L attribution correctly
+- [ ] Invoice amount from billing_invoice.net_amount (post-adjustment)
+- [ ] Collection amount derived correctly when billing_invoice.status = 'paid'
+- [ ] EBITDA, PBT, PAT computed at query time (not stored columns)
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Admin / IT UAT
+
+**Report:** bpo-admin-asset-facility-master
+
+**Validator:** Admin Manager / IT Manager
+
+- [ ] Report loads for asset assignment date range
+- [ ] ASSET_TAG and SERIAL_NUMBER present for assigned assets
+- [ ] ASSET_RETURNED_DATE populated correctly at exit
+- [ ] IT access provisioning rows present for joiners (or UNAVAILABLE if it_provisioning table missing — documented gap)
+- [ ] Asset assignment and return dates match asset_assignment table
+- [ ] Open/overdue helpdesk counts reconcile with helpdesk_ticket
+- [ ] Visitor host employee code present in visitor management rows
+- [ ] Facility fields stay UNAVAILABLE until exact facility sources exist (documented gap)
+- [ ] Exit recovery not inferred unless actual exit date and return evidence exist
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Audit / Compliance UAT
+
+**Report:** bpo-audit-compliance-control-master
+
+**Validator:** Internal Auditor / Compliance Head
+
+- [ ] Report loads for selected activity date range
+- [ ] ACTOR_EMPLOYEE_CODE resolved from user_id via users → employees join
+- [ ] SUBJECT_EMPLOYEE_CODE distinct from ACTOR
+- [ ] OLD_VALUE and NEW_VALUE present in sensitive_action_log events
+- [ ] CONTROL_RESULT populated for security_audit_event rows
+- [ ] DPDP_PURPOSE shown for data-processing events (or UNAVAILABLE if dpdp_processing_event table missing)
+- [ ] Source schema, table and record ID never blank for populated events
+- [ ] Non-JSON approval summaries never break JSON extraction
+- [ ] Exit clearance INCOMPLETE flagged as FAIL
+- [ ] Branch scope fail-closed (unauthorised branches not visible)
+- [ ] audit_action_log is canonical source (not audit_log alias)
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
+### Higher Management UAT
+
+**Report:** bpo-management-executive-master
+
+**Validator:** CEO / COO / Branch Head
+
+- [ ] Report loads for selected month/branch/process/LOB
+- [ ] Every KPI traces to underlying operational/finance/payroll report
+- [ ] BRANCH and PROCESS scope filter works correctly
+- [ ] EMPLOYEE_CODE = AGGREGATE (no individual employee rows)
+- [ ] Export requires export_role (general view denied full export)
+- [ ] Workforce/delivery/revenue/cost/profit metrics reconcile with domain masters
+- [ ] Values reuse canonical BPO P&L engine (not re-derived EBITDA)
+- [ ] Risks and actions do not invent owners or dates
+- [ ] Unavailable management dimensions remain clearly UNAVAILABLE
+- [ ] Branch-restricted users see only authorised branches
+
+**Sign-off:** _______________________ Date: _______
+
+---
+
 ## Final release decision
 
 The PR may be marked ready only when:
@@ -314,4 +551,5 @@ The PR may be marked ready only when:
 - no report shows fabricated zero values or guessed source mappings;
 - numeric source totals reconcile exactly or have approved documented variance;
 - Operations, HR, Payroll, Finance, Quality, Recruitment, Admin and Audit/Compliance owners sign their sections;
-- the lineage report shows UAT complete for all release-critical fields.
+- the lineage report shows UAT complete for all release-critical fields;
+- **all departmental UAT checklists above are completed and signed off**.
