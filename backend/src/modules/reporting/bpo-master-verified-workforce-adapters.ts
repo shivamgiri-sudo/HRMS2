@@ -390,6 +390,7 @@ async function dailyWorkforce(
     : null);
   addField(fields, "DATA_SOURCE", constantField(`'${mode === "OPERATIONS" ? "FINAL_ATTENDANCE+ROSTER+SESSION+BREAK+RECONCILIATION+EXACT_KPI" : "FINAL_ATTENDANCE+ROSTER+BIOMETRIC+SESSION+BREAK+RECONCILIATION"}'`, "EXPLICIT GOVERNED SOURCE SET"));
 
+  // Branch scope: when !isSuperAdmin, scope enforces "branch_id IN (...branchIds)" via branchScopeWhere.
   const scoped = branchScopeWhere(scope, filters, {
     branch: employee.branchExpression,
     process: employee.processExpression,

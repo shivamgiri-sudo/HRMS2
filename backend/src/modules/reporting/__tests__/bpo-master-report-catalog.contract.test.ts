@@ -123,4 +123,69 @@ describe("BPO master report registry", () => {
       expect(report?.controlNotes.some((note) => /source|record|lineage|accuracy/i.test(note))).toBe(true);
     }
   });
+
+  it("journey ledger includes required event tracking columns", () => {
+    const journeyReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-interview-to-exit-journey-ledger"
+    )!;
+    const keys = journeyReport.columns.map((c) => c.key);
+    expect(keys).toContain("ACTIVITY_DATE_TIME");
+    expect(keys).toContain("PREVIOUS_STAGE");
+    expect(keys).toContain("NEW_STAGE");
+    expect(keys).toContain("SOURCE_RECORD_ID");
+    expect(keys).toContain("ACTOR_EMPLOYEE_CODE");
+    expect(keys).toContain("APPROVER_EMPLOYEE_CODE");
+    expect(keys).toContain("SOURCE_TABLE");
+    expect(keys).toContain("JOURNEY_PHASE");
+    expect(keys).toContain("JOURNEY_STAGE");
+  });
+
+  it("audit compliance master includes required control evidence fields", () => {
+    const auditReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-audit-compliance-control-master"
+    )!;
+    const keys = auditReport.columns.map((c) => c.key);
+    expect(keys).toContain("CONTROL_RESULT");
+    expect(keys).toContain("ACTOR_EMPLOYEE_CODE");
+    expect(keys).toContain("SUBJECT_EMPLOYEE_CODE");
+    expect(keys).toContain("OLD_VALUE");
+    expect(keys).toContain("NEW_VALUE");
+    expect(keys).toContain("DPDP_PURPOSE");
+    expect(keys).toContain("DATA_CLASSIFICATION");
+    expect(keys).toContain("EXCEPTION_FLAG");
+    expect(keys).toContain("CORRECTIVE_ACTION");
+    expect(keys).toContain("SLA_STATUS");
+  });
+
+  it("payroll master includes payroll run reconciliation fields", () => {
+    const payrollReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-payroll-statutory-master"
+    )!;
+    const keys = payrollReport.columns.map((c) => c.key);
+    expect(keys).toContain("PAYROLL_RUN_ID");
+    expect(keys).toContain("PAYROLL_MONTH");
+    expect(keys).toContain("GROSS_EARNINGS");
+    expect(keys).toContain("NET_PAY");
+    expect(keys).toContain("BASIC_PAY");
+  });
+
+  it("finance master keeps planned and earned revenue as distinct columns", () => {
+    const financeReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-finance-pnl-profitability-master"
+    )!;
+    const keys = financeReport.columns.map((c) => c.key);
+    expect(keys).toContain("PLANNED_REVENUE");
+    expect(keys).toContain("EARNED_REVENUE");
+    expect(keys).toContain("PAYROLL_COST");
+    expect(keys).toContain("EBITDA");
+  });
+
+  it("WFM master separates roster date from payroll attendance input", () => {
+    const wfmReport = BPO_MASTER_REPORTS.find(
+      (r) => r.code === "bpo-wfm-attendance-shrinkage-master"
+    )!;
+    const keys = wfmReport.columns.map((c) => c.key);
+    expect(keys).toContain("ROSTER_DATE");
+    expect(keys).toContain("PAYROLL_ATTENDANCE_INPUT");
+  });
 });
