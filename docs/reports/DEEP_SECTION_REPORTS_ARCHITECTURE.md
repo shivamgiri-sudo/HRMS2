@@ -268,6 +268,134 @@ Before release, connected staging/production-like UAT must additionally verify:
 
 A report suite must not be described as 100% value-accurate until these checks pass.
 
+## Known limitations
+
+This reporting suite is comprehensive within the existing schema boundary but has documented gaps where source tables or columns have not yet been migrated to production. Refer to the following documents for full gap analysis:
+
+### Schema gaps — missing tables
+
+`REPORT_COVERAGE_GAP_ANALYSIS.md` documents 14 missing tables identified as schema gaps for future phases:
+
+- `branch_seat_capacity` (capacity reporting)
+- `wfm_forecast` (forecast vs actual WFM)
+- `rta_event` (real-time interval operations)
+- `disciplinary_action` and `show_cause_notice` (grievance and disciplinary)
+- `quality_calibration` (quality calibration)
+- `client_escalation` (client escalation tracking)
+- `pf_submission_log` and `esi_submission_log` (statutory filing)
+- `user_access_review` (access review and certification)
+- `budget_master` (budget vs actual)
+- `grn_header` and `grn_line` (normalised GRN)
+- `payment_receipt` (collections and receivables)
+- `bcp_plan` and `incident_log` (business continuity)
+- `risk_register` and `corrective_action` (risk and CAR)
+
+All 14 missing tables are documented in the gap analysis with target phase and recommended report placement. No new master report codes are required; missing domains will be surfaced as sub-sections within the existing 14 reports once source tables are migrated.
+
+### Event coverage gaps — missing journey evidence
+
+`EMPLOYEE_JOURNEY_EVENT_GAPS.md` documents activity stages where immutable event records are missing:
+
+- **BGV tables missing**: No `bgv_request` or `bgv_result` table exists; BGV events cannot be evidenced in the journey ledger until Phase 10 migration.
+- **IT access tables missing**: No `it_access_log` or `it_provisioning` table; IT provisioning events cannot be evidenced.
+- **Grievance table missing**: No `employee_grievance` table; grievance events cannot be evidenced (POSH Act compliance risk).
+- **Disciplinary table missing**: No `disciplinary_action` table; disciplinary events cannot be evidenced (POSH Act compliance risk).
+
+Additional gaps documented in the journey event analysis include partial evidence for requisition approval timestamps, offer approval timestamps, candidate sourcer identity, OTP/consent timestamps during onboarding, and trainer effectiveness scoring.
+
+Where event evidence is missing, the journey ledger surfaces `UNAVAILABLE` status with lineage metadata documenting the missing source. Report consumers must not interpret these as data errors; they are documented future-phase backlog items.
+
+## Source contract rules
+
+All reports enforce authoritative source contracts documented in `MASTER_REPORT_SOURCE_CONTRACT_MATRIX.md`. Key rules:
+
+### 1. Payroll earnings use salary_prep_line (not salary_master)
+
+Canonical payroll computation results are in `salary_prep_line` (migration 007). `salary_master` is not a table in these migrations. `employee_salary_assignment` holds CTC configuration input; `salary_prep_line` holds final computed payroll output per run. Always join via `salary_prep_line.run_id → salary_prep_run.id` for payroll month context.
+
+### 2. Attendance uses processed/final attendance for payroll reporting (not raw biometric)
+
+Raw biometric is in `wfm_attendance_session` (login_time/logout_time). For payroll and compliance reporting the canonical source is `attendance_reconciliation_record` (migration 021). `payroll_readiness_flag` gates attendance locked for payroll. Never use raw `wfm_attendance_session` as the final attendance figure for payroll report rows.
+
+### 3. P&L uses canonical allocation-aware P&L engine (bpoPnlAllocationOverlayService)
+
+EBITDA, PBT, PAT and earned revenue are NOT stored columns. They are computed at query time by `bpoPnlAllocationOverlayService` and `bpoPnlService` (backend/src/modules/process-pnl/). Reports requiring offline P&L must materialise the output of this engine into a snapshot table; do not attempt to re-derive EBITDA by direct SQL sum.
+
+### 4. Quality scores use db_audit.call_quality_assessment (external, fully qualified)
+
+Confirmed via migration 505: quality assessment data lives in external `db_audit` database, not in `mas_hrms`. The source registry queries `information_schema.columns WHERE table_schema IN (DATABASE(), 'db_audit')`. Reports must use fully qualified reference `db_audit.call_quality_assessment` and handle cases where external database is unavailable (SOURCE_STATUS = TABLE_MISSING in offline environments).
+
+### 5. Audit events use audit_action_log (canonical insert target per migrations 218/220)
+
+`audit_action_log` is the canonical write target. `audit_log` is a structural alias created as `LIKE audit_action_log`; it exists only for backward compatibility. New governance adapters must read from and write to `audit_action_log`. For high-security events (salary, PII, statutory), use `sensitive_action_log` which additionally carries `old_value_json`, `new_value_json` and `actor_role` (migration 237). For security centre events use `security_audit_event` (migration 521).
+
+### 6. Candidate pre-bridge uses PENDING EMPLOYEE CODE (not fabricated)
+
+When a candidate has not yet been bridged to an employee record via `ats_onboarding_bridge`, the employee code in journey reports must be rendered as the literal string `'PENDING EMPLOYEE CODE'`. Report consumers must never fabricate an employee code for pre-employment rows and must treat `PENDING EMPLOYEE CODE` as a valid non-null status value, not as a data error.
+
+## Reconciliation rules
+
+Runtime source-to-report reconciliation rules are documented in `REPORT_RECONCILIATION_RESULTS.md` for:
+
+### Payroll reconciliation
+```
+SUM(salary_prep_line.net_salary) by run_id
+= salary_prep_run.total_net
+= SUM(salary_payslip.net_pay)
+= approved_disbursal_total (when available)
+```
+
+### P&L reconciliation
+```
+SUM(LOB_REVENUE + UNALLOCATED_REVENUE per process) = PROCESS_REVENUE
+SUM(LOB_COST + SHARED_COST + UNALLOCATED_DIFF per process) = PROCESS_COST
+PROCESS_REVENUE - PROCESS_COST = EBITDA
+```
+
+### GRN and payment reconciliation
+```
+GRN_GROSS_AMOUNT = SUM(GRN_ALLOCATION_GROSS per GRN)
+VENDOR_PAYMENT_DUE = SUM(PAYMENT_ALLOCATION_GROSS per vendor)
+PAID + OUTSTANDING = DUE
+```
+
+### Attendance reconciliation
+```
+PRESENT + ABSENT + LEAVE + WEEK_OFF + HOLIDAY = ROSTERED_DAYS (per approved attendance policy)
+```
+
+The reconciliation document includes results templates to be populated after live validation runs against staging/production-like databases. Build success does not certify data accuracy; numeric reconciliation is required for UAT sign-off.
+
+## UAT procedure reference
+
+Detailed departmental UAT checklists and acceptance criteria for all 14 master reports are documented in `BPO_MASTER_REPORT_UAT.md`. Each report has:
+
+- Global acceptance criteria (employee code policy, date formatting, grain uniqueness, source lineage, branch scope, sensitive masking, export authority)
+- Specific validation steps per report
+- Reconciliation requirements
+- Role-based test account requirements
+- Business owner sign-off requirements
+
+UAT checklists are organised by department (Operations, WFM, HR, Recruitment, Training, Quality, Payroll, Finance, Admin/IT, Audit/Compliance, Higher Management) to facilitate distributed UAT ownership.
+
+The UAT document must be completed before the PR is marked ready or deployed.
+
+## Validation endpoint permissions
+
+The `/api/reports/bpo-master/validation/source-accuracy` endpoint executes all 14 reports with minimal sample data for runtime SQL validation, source availability, field coverage and grain verification.
+
+This endpoint is restricted to elevated roles:
+- super_admin
+- admin
+- hr_head
+- payroll_head
+- finance_head
+- internal_auditor
+
+Role aliases are normalised via `normalizeRoleAlias()` to allow compatible role names. General employees, team leaders and branch-scoped operational users do not have access to the validation endpoint.
+
+The validation response deliberately keeps `valueAccuracyCertified: false` until source totals, report totals and business-owner sign-off are complete. Schema compatibility is not equivalent to business-value accuracy.
+
 ## Deployment safety
 
 This reporting work is read-only and does not execute a database migration or modify production data. Merge, deployment, PM2 restart, Nginx change and production rollout remain separate controlled actions. The pull request remains draft until latest CI and authenticated production-schema UAT are complete.
