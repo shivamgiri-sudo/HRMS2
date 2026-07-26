@@ -93,7 +93,8 @@ payrollStatutoryConfigCompatRouter.get(
     try {
       const { key } = req.params;
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, config_key, old_value, new_value, reason, changed_by, changed_at
+        `SELECT id, config_key, old_value, new_value, reason, changed_by, changed_at,
+                NULL AS effective_from
            FROM statutory_config_history
           WHERE config_key = ?
           ORDER BY changed_at DESC

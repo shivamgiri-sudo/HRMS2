@@ -93,10 +93,15 @@ payrollVarianceRouter.get(
       [month]
     );
 
-    // Fetch previous month lines
+    // Fetch previous month lines — include employee JOINs so LEAVER rows have name/branch info
     const [prevRows] = await db.execute<RowDataPacket[]>(
       `SELECT
          spl.employee_id,
+         COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         e.employee_code,
+         b.branch_name,
+         d.dept_name AS department_name,
+         dm.designation_name,
          spl.basic,
          spl.gross_salary,
          spl.net_salary,
@@ -113,6 +118,10 @@ payrollVarianceRouter.get(
          spl.lwp_days
        FROM salary_prep_line spl
        JOIN salary_prep_run  spr ON spr.id = spl.run_id
+       JOIN employees e           ON e.id   = spl.employee_id
+       LEFT JOIN branch_master b  ON b.id   = e.branch_id
+       LEFT JOIN department_master d   ON d.id  = e.department_id
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
        WHERE spr.run_month = ?`,
       [prevMonth]
     );

@@ -364,7 +364,7 @@ function MinimumWagesSection({ isSuperAdmin, onToast }: { isSuperAdmin: boolean;
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await apiGet<{ success: boolean; data: MinWageRow[] }>("/api/payroll/minimum-wages");
+      const r = await apiGet<{ success: boolean; data: MinWageRow[] }>("/api/payroll-masters/minimum-wages");
       setRows(r.data ?? []);
     } catch (e: unknown) {
       onToast((e as Error).message, "error");

@@ -125,7 +125,7 @@ payrollMoreRouter.patch("/pt-slabs/:id", requireRole("admin", "finance"), h(asyn
 
 // ─── Payroll Config Flags ─────────────────────────────────────────────────────
 
-payrollMoreRouter.get("/config-flags", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.get("/config-flags", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { branch_id, process_id } = req.query as { branch_id?: string; process_id?: string };
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -139,7 +139,7 @@ payrollMoreRouter.get("/config-flags", requireRole("admin", "super_admin", "fina
   return res.json({ success: true, data: rows });
 }));
 
-payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { branch_id, process_id, config_key, config_value, description } = req.body as {
     branch_id?: string | null; process_id?: string | null;
     config_key: string; config_value: string; description?: string;

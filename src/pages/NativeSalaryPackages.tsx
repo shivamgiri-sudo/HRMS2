@@ -338,7 +338,7 @@ function PackageDialog({
               <SelectContent>
                 {slabs.map((s) => (
                   <SelectItem key={String(s.id)} value={String(s.id)}>
-                    {s.name}
+                    {(s as any).label ?? s.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1049,7 +1049,7 @@ function SlabRow({ slab, pkg, onEdit, onAdd }: SlabRowProps) {
     return (
       <TableRow className="opacity-60 hover:opacity-100">
         <TableCell className="font-medium">
-          {slab.name}
+          {(slab as any).label ?? slab.name}
           <Badge variant="outline" className="ml-2 text-xs">
             No Package
           </Badge>
@@ -1096,7 +1096,7 @@ function SlabRow({ slab, pkg, onEdit, onAdd }: SlabRowProps) {
   return (
     <TableRow className="text-sm">
       <TableCell className="font-medium">
-        {slab.name}
+        {(slab as any).label ?? slab.name}
         {pkg.derived_source === "observed" && (
           <Badge variant="secondary" className="ml-2 text-xs">
             Observed · {pkg.employee_count ?? 0} employees

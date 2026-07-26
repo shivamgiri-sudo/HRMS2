@@ -705,7 +705,9 @@ export const payrollService = {
         COALESCE(spl.paid_working_days, 0)      AS paid_working_days,
         COALESCE(spl.final_payable_days, 0)     AS final_payable_days,
         COALESCE(spl.pf_employee, 0)            AS pf_employee,
+        COALESCE(spl.pf_employer, 0)            AS pf_employer,
         COALESCE(spl.esic_employee, 0)          AS esic_employee,
+        COALESCE(spl.esic_employer, 0)          AS esic_employer,
         COALESCE(spl.professional_tax, 0)       AS professional_tax,
         COALESCE(spl.tds, 0)                    AS tds,
         COALESCE(spl.lwp_deduction, 0)          AS lwp_deduction,
@@ -823,6 +825,7 @@ export const payrollService = {
       ? await db.execute<RowDataPacket[]>(
           `SELECT COUNT(DISTINCT spl.employee_id) AS employee_count,
                   SUM(spl.basic)             AS total_basic,
+                  SUM(COALESCE(spl.hra,0) + COALESCE(spl.special_allowance,0) + COALESCE(spl.incentive_total,0)) AS total_allowances,
                   SUM(spl.gross_salary)      AS total_gross,
                   SUM(spl.net_salary)        AS total_net,
                   SUM(spl.total_deductions)  AS total_deductions,

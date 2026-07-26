@@ -243,6 +243,7 @@ router.get('/employee-salary-history', requireRole('payroll', 'super_admin', 'fi
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT esa.id, esa.employee_id, esa.ctc_annual,
             ROUND(esa.ctc_annual / 12, 2) AS ctc_monthly,
+            ROUND(esa.ctc_annual / 12, 2) AS gross_monthly_ctc,
             esa.effective_from, esa.effective_to, esa.active_status,
             esa.assignment_reason,
             ssm.structure_name, ssm.basic_pct, ssm.hra_pct,

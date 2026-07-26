@@ -84,25 +84,25 @@ export default function StatutoryFilingTracker() {
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["statutory-filing", month],
     queryFn: () => hrmsApi.get<{ success: boolean; data: FilingRecord[] }>(
-      `/payroll/statutory-filing?month=${month}`
+      `/api/payroll/statutory-filing?month=${month}`
     ).then(r => r.data),
   });
 
   const { data: overdueData } = useQuery({
     queryKey: ["statutory-filing-overdue"],
     queryFn: () => hrmsApi.get<{ success: boolean; data: FilingRecord[] }>(
-      "/payroll/statutory-filing/overdue"
+      "/api/payroll/statutory-filing/overdue"
     ).then(r => r.data),
   });
 
   const initMut = useMutation({
-    mutationFn: () => hrmsApi.post(`/payroll/statutory-filing/initialize/${month}`, {}),
+    mutationFn: () => hrmsApi.post(`/api/payroll/statutory-filing/initialize/${month}`, {}),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["statutory-filing"] }); toast({ title: "Obligations initialized" }); },
     onError: () => toast({ title: "Error", variant: "destructive" }),
   });
 
   const markFiledMut = useMutation({
-    mutationFn: (id: string) => hrmsApi.patch(`/payroll/statutory-filing/${id}/mark-filed`, {
+    mutationFn: (id: string) => hrmsApi.patch(`/api/payroll/statutory-filing/${id}/mark-filed`, {
       challan_number: challanNo,
       challan_date: challanDate || undefined,
       remarks: remarksTxt || undefined,
