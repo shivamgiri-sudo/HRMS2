@@ -98,6 +98,8 @@ function auditSelect(values: Record<string, string>) {
 
 async function auditEvents(): Promise<AuditEventBuilder[]> {
   const events: AuditEventBuilder[] = [];
+  // AUTHORITATIVE SOURCE: audit_action_log is the canonical insert target per migrations 218/220.
+  // audit_log (created as LIKE audit_action_log) is a structural alias; read audit_action_log as primary.
   const generalTable = await sourceTableSql("audit_action_log");
   const generalColumns = await sourceColumns("audit_action_log");
   const generalTs = col(generalColumns, ["created_at"]);
