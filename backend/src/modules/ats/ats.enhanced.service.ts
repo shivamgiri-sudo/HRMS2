@@ -128,6 +128,7 @@ export async function getAvailableRecruiters(branchName: string) {
          LOWER(des.designation_name) LIKE '%executive%'
          OR LOWER(des.designation_name) LIKE '%recruiter%'
          OR LOWER(des.designation_name) LIKE '%hr manager%'
+         OR LOWER(des.designation_name) LIKE '%team leader%'
        )
        AND (b.branch_name = ? OR b.branch_code = ?)
        AND e.active_status = 1
