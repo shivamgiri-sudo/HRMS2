@@ -37,7 +37,12 @@ jobs:
 
       - name: Typecheck backend
         working-directory: backend
-        run: npm run typecheck
+        shell: bash
+        run: |
+          if ! npm run typecheck > /tmp/backend-typecheck.log 2>&1; then
+            tail -n 120 /tmp/backend-typecheck.log
+            exit 1
+          fi
 
       - name: Validate typing scoring
         working-directory: backend
