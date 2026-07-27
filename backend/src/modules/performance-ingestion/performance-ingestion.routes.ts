@@ -2,7 +2,7 @@ import { Router, type NextFunction, type RequestHandler, type Response } from "e
 import multer from "multer";
 import { z } from "zod";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { performanceIngestionService } from "./performance-ingestion.service.js";
@@ -95,6 +95,7 @@ router.get(
 
 router.post(
   "/datasets",
+  requireWriteAccess,
   requireRole("super_admin", "admin", "process_manager", "qa_manager"),
   asyncHandler(async (req, res) => {
     const parsed = datasetSchema.safeParse(req.body);
@@ -106,6 +107,7 @@ router.post(
 
 router.post(
   "/datasets/:id/approve",
+  requireWriteAccess,
   requireRole("super_admin", "admin"),
   asyncHandler(async (req, res) => {
     await performanceIngestionService.approveDataset(req.params.id, req.authUser!.id);
@@ -115,6 +117,7 @@ router.post(
 
 function runRoute(mode: "preview" | "publish"): RequestHandler[] {
   return [
+    requireWriteAccess,
     upload.single("file"),
     asyncHandler(async (req, res) => {
       const parsed = runSchema.safeParse(req.body);
@@ -153,6 +156,7 @@ router.get(
 
 router.post(
   "/identity-maps",
+  requireWriteAccess,
   requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager"),
   asyncHandler(async (req, res) => {
     const parsed = identityMapSchema.safeParse(req.body);
@@ -174,6 +178,7 @@ router.post(
 
 router.post(
   "/process-maps",
+  requireWriteAccess,
   requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager"),
   asyncHandler(async (req, res) => {
     const parsed = processMapSchema.safeParse(req.body);
