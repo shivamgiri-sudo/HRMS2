@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertAllowedGoogleSheetUrl,
+  assertConnectorType,
   assertReadOnlyQuery,
 } from "../performance-source-adapters.js";
 
@@ -34,5 +35,17 @@ describe("assertAllowedGoogleSheetUrl", () => {
     "https://user:password@docs.google.com/report.csv",
   ])("rejects unsafe or non-Google export URLs: %s", (url) => {
     expect(() => assertAllowedGoogleSheetUrl(url)).toThrow();
+  });
+});
+
+describe("assertConnectorType", () => {
+  it("allows a dataset to use the matching database connector", () => {
+    expect(() => assertConnectorType("mysql", "mysql")).not.toThrow();
+    expect(() => assertConnectorType("mssql", "mssql")).not.toThrow();
+  });
+
+  it("rejects accidental cross-database connector configuration", () => {
+    expect(() => assertConnectorType("mssql", "mysql")).toThrow(/does not match/);
+    expect(() => assertConnectorType("mysql", "mssql")).toThrow(/does not match/);
   });
 });
