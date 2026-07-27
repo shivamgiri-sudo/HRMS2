@@ -32,6 +32,20 @@ jobs:
           status=${PIPESTATUS[0]}
           echo "$status" > ../performance-full-tests.status
           exit 0
+      - name: Extract failure summary
+        if: always()
+        working-directory: .
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          raw = Path('performance-full-tests.log').read_text(errors='replace') if Path('performance-full-tests.log').exists() else ''
+          raw = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', raw)
+          pattern = re.compile(r'(Failed Tests|FAIL\s|AssertionError|Error:|Test Files|Tests\s|Duration|\u276f|expected|received|\.test\.ts|\.spec\.ts)', re.I)
+          selected = [line[:1200] for line in raw.splitlines() if pattern.search(line)]
+          Path('performance-full-tests-summary.log').write_text('\n'.join(selected[-180:]) or 'No concise failure lines found.')
+          PY
       - name: Update validation diagnostic comment
         if: always()
         working-directory: .
@@ -47,7 +61,7 @@ jobs:
             echo "Exit status: \`$status\`"
             echo
             echo '```text'
-            tail -n 420 performance-full-tests.log 2>/dev/null || echo "No test log was produced."
+            cat performance-full-tests-summary.log 2>/dev/null || echo "No test summary was produced."
             echo '```'
           } > performance-full-test-comment.md
           gh api repos/${{ github.repository }}/issues/comments/5090546380 \
