@@ -33,6 +33,7 @@ Successful mutations record:
 - Actor user ID and effective role context
 - Action code
 - Entity type and entity/dataset ID
+- Sanitised pre-change snapshot
 - Sanitised request metadata
 - Sanitised response evidence
 - Timestamp
@@ -49,6 +50,21 @@ Covered actions include:
 - Run-now requests
 
 Potential credential, token, password, secret, and private-key fields are redacted before JSON is written. Audit write failures are logged but do not rewrite or hide the primary operation result.
+
+## Performance Hub audit viewer
+
+Authorised roles see **Performance governance audit** inside Performance Hub. The API applies the same backend process and branch scope used by the source administration module.
+
+The viewer supports:
+
+- Dataset filtering
+- Action filtering
+- Actor, entity, process, branch, and timestamp review
+- Before-change evidence
+- Response evidence
+- Sanitised request metadata
+
+Process- and branch-scoped users cannot query audit records belonging to another dataset scope by changing frontend parameters.
 
 ## Staging verification
 
