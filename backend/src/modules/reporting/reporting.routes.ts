@@ -70,6 +70,7 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
   const EXCLUDED_STATUSES = new Set(['deprecated', 'disabled']);
   const SENSITIVE_LEVELS  = new Set<SensitivityLevel>(['restricted', 'highly_restricted']);
   const IMMEDIATE_LEVELS  = new Set<SensitivityLevel>(['internal', 'confidential']);
+  const isSuperAdmin      = userRoles.has('super_admin');
 
   const data = REPORT_CATALOG
     .filter(r => !EXCLUDED_STATUSES.has((r.availabilityStatus ?? 'under_validation') as ReportAvailabilityStatus))
@@ -77,14 +78,14 @@ router.get('/catalog', requireAuth, h(async (req, res) => {
       const level         = (r.sensitivityLevel ?? 'confidential') as SensitivityLevel;
       const isSensitive   = SENSITIVE_LEVELS.has(level);
       const enabled       = ['validated', 'validated_with_limitations'].includes(r.availabilityStatus ?? 'under_validation');
-      const viewAllowed   = r.viewRoles.length === 0 || r.viewRoles.some(role => userRoles.has(role));
-      const exportAllowed = r.exportRoles.length === 0 || r.exportRoles.some(role => userRoles.has(role));
+      const viewAllowed   = isSuperAdmin || r.viewRoles.length === 0 || r.viewRoles.some(role => userRoles.has(role));
+      const exportAllowed = isSuperAdmin || r.exportRoles.length === 0 || r.exportRoles.some(role => userRoles.has(role));
 
-      // immediateExportAllowed: sensitivity level permits it AND user can export AND report is validated
-      const immediateExportAllowed =
-        IMMEDIATE_LEVELS.has(level) &&
-        exportAllowed &&
-        enabled;
+      // super_admin can immediately download ALL reports regardless of sensitivity
+      // All other roles: only internal/confidential + exportAllowed + enabled
+      const immediateExportAllowed = isSuperAdmin
+        ? exportAllowed && enabled
+        : IMMEDIATE_LEVELS.has(level) && exportAllowed && enabled;
 
       const deliveryModes: string[] = ['screen'];
       if (immediateExportAllowed)              deliveryModes.push('xlsx');

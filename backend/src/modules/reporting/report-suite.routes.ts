@@ -121,8 +121,10 @@ function fallbackReport(code: string) {
 reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: CATALOG })));
 
 // ── GET /api/reports/suite/:code/export ──────────────────────────────────────
-// Immediate XLSX download — only for internal/confidential, non-sensitive reports with ≤500 rows.
-// Returns 403 if immediateExportAllowed:false, 422 if row count > 500 or file > 20 MB.
+// Immediate XLSX download.
+// super_admin: allowed for ALL reports regardless of sensitivity.
+// All other roles: only internal/confidential reports with ≤500 rows.
+// Returns 403 if not allowed, 422 if row count > 500 or file > 20 MB.
 const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 500);
 const EXPORT_BYTE_CAP = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520);
 const IMMEDIATE_LEVELS = new Set<SensitivityLevel>(['internal', 'confidential']);
@@ -138,11 +140,13 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
   const level = (catalogEntry.sensitivityLevel ?? 'confidential') as SensitivityLevel;
   const scope = await resolveFullScope(userId);
   const userRoles = new Set(scope.roles);
+  const isSuperAdmin = userRoles.has('super_admin');
 
   // Verify export permission
-  const exportAllowed = catalogEntry.exportRoles.length === 0 ||
+  const exportAllowed = isSuperAdmin || catalogEntry.exportRoles.length === 0 ||
     catalogEntry.exportRoles.some(r => userRoles.has(r));
-  const immediateAllowed = IMMEDIATE_LEVELS.has(level) && exportAllowed;
+  // super_admin bypasses sensitivity restriction; others need internal/confidential
+  const immediateAllowed = isSuperAdmin ? exportAllowed : IMMEDIATE_LEVELS.has(level) && exportAllowed;
 
   if (!immediateAllowed) {
     res.status(403).json({
