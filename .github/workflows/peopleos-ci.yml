@@ -10,31 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  apply-typing-passage-import-policy:
-    name: Apply typing passage import policy
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout typing fix branch
-        uses: actions/checkout@v4
-        with:
-          ref: fix/typing-test-scoring-accuracy
-          fetch-depth: 0
-
-      - name: Apply guarded passage import validation
-        run: python .github/scripts/apply-typing-passage-import-validation.py
-
-      - name: Commit passage import policy
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/src/modules/ats-assessment/question-bank.service.ts
-          git status --short
-          git commit -m "fix(assessment): validate typing passages and governed benchmarks"
-          git push origin HEAD:fix/typing-test-scoring-accuracy
-
   validate:
     name: Build, typecheck and test
     runs-on: ubuntu-latest
