@@ -5,6 +5,7 @@ import { EnterprisePageShell } from "@/components/enterprise/EnterprisePageShell
 import { ErrorState } from "@/components/enterprise/ErrorState";
 import { Button } from "@/components/ui/button";
 import { PerformanceDataSourceAdmin } from "@/components/performance-hub/PerformanceDataSourceAdmin";
+import { PerformanceGovernanceAuditAdmin } from "@/components/performance-hub/PerformanceGovernanceAuditAdmin";
 import { PerformanceMetricGrid } from "@/components/performance-hub/PerformanceMetricGrid";
 import { PerformanceRoleLens } from "@/components/performance-hub/PerformanceRoleLens";
 import { PerformancePeopleTable } from "@/components/performance-hub/PerformancePeopleTable";
@@ -91,6 +92,7 @@ export default function PerformanceHub() {
             <PerformanceRoleLens context={contextQuery.data} />
             <PerformanceDataSourceAdmin context={contextQuery.data} />
             <PerformanceScheduleAdmin context={contextQuery.data} />
+            <PerformanceGovernanceAuditAdmin context={contextQuery.data} />
 
             <PerformanceScopeBar
               context={contextQuery.data}
