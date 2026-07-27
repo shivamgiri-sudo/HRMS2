@@ -502,35 +502,42 @@ async function getRealtimePunchMapForMappings(
   const dateTimeColumn = env.NCOSEC_DATETIME_COLUMN || 'Edatetime';
   const eventTable = env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn';
 
-  const pool = await getNcosecPool();
-  const request = pool.request();
-  request.input('dateStart', dateStart);
-  request.input('dateEnd', dateEnd);
+  let result: sql.IResult<any>;
+  try {
+    const pool = await getNcosecPool();
+    const request = pool.request();
+    request.input('dateStart', dateStart);
+    request.input('dateEnd', dateEnd);
 
-  const idParams: string[] = [];
-  userIds.forEach((userId, index) => {
-    const key = `userId${index}`;
-    request.input(key, userId);
-    idParams.push(`@${key}`);
-  });
+    const idParams: string[] = [];
+    userIds.forEach((userId, index) => {
+      const key = `userId${index}`;
+      request.input(key, userId);
+      idParams.push(`@${key}`);
+    });
 
-  const result = await queryWithTimeout(
-    request.query(`
-      SELECT
-        CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
-        CONVERT(CHAR(19), MIN(${dateTimeColumn}), 120) AS first_punch,
-        CONVERT(CHAR(19), MAX(${dateTimeColumn}), 120) AS last_punch,
-        COUNT(*) AS total_punches,
-        DATEDIFF(MINUTE, MIN(${dateTimeColumn}), MAX(${dateTimeColumn})) AS raw_minutes
-      FROM ${eventTable}
-      WHERE ${dateTimeColumn} >= @dateStart
-        AND ${dateTimeColumn} <= @dateEnd
-        AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(', ')})
-      GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
-    `),
-    5000,
-    'monthly live COSEC overlay',
-  );
+    result = await queryWithTimeout(
+      request.query(`
+        SELECT
+          CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
+          CONVERT(CHAR(19), MIN(${dateTimeColumn}), 120) AS first_punch,
+          CONVERT(CHAR(19), MAX(${dateTimeColumn}), 120) AS last_punch,
+          COUNT(*) AS total_punches,
+          DATEDIFF(MINUTE, MIN(${dateTimeColumn}), MAX(${dateTimeColumn})) AS raw_minutes
+        FROM ${eventTable}
+        WHERE ${dateTimeColumn} >= @dateStart
+          AND ${dateTimeColumn} <= @dateEnd
+          AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(', ')})
+        GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
+      `),
+      10000,
+      'monthly live COSEC overlay',
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[realtime-ncosec] Live COSEC overlay unavailable for ${shiftDate} (${userIds.length} user(s)): ${message}`);
+    return new Map();
+  }
 
   const tagIST = (value: string | null | undefined) => (value ? value.replace(' ', 'T') + '+05:30' : null);
   const livePunches = new Map<string, RealTimePunch>();

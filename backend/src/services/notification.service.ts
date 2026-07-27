@@ -4,6 +4,7 @@ import twilio from "twilio";
 import type { Twilio } from "twilio";
 import Handlebars from "handlebars";
 import type { RowDataPacket } from "mysql2";
+import { env } from "../config/env.js";
 
 // Web Push — loaded lazily so the service starts even without web-push installed
 let webpush: typeof import("web-push") | null = null;
@@ -91,6 +92,70 @@ export class NotificationService {
   private twilioClient: Twilio | null = null;
   private smtpConfig: SmtpConfig | null = null;
   private smsConfig: SmsConfig | null = null;
+  private warnedMissingSmtp = false;
+  private warnedMissingSms = false;
+
+  private warnOnce(kind: "smtp" | "sms", message: string): void {
+    if (kind === "smtp") {
+      if (this.warnedMissingSmtp) return;
+      this.warnedMissingSmtp = true;
+    } else {
+      if (this.warnedMissingSms) return;
+      this.warnedMissingSms = true;
+    }
+    console.warn(message);
+  }
+
+  private buildEmailTransporter(config: SmtpConfig): Transporter {
+    return nodemailer.createTransport({
+      host: config.smtp_host,
+      port: config.smtp_port,
+      secure: config.smtp_secure === 1,
+      auth: {
+        user: config.smtp_user,
+        pass: config.smtp_pass,
+      },
+    });
+  }
+
+  private getEnvSmtpConfig(): SmtpConfig | null {
+    if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
+      return null;
+    }
+
+    return {
+      smtp_host: env.SMTP_HOST,
+      smtp_port: Number(env.SMTP_PORT || 587),
+      smtp_secure: Number(env.SMTP_PORT || 587) === 465 ? 1 : 0,
+      smtp_user: env.SMTP_USER,
+      smtp_pass: env.SMTP_PASS,
+      from_email: env.SMTP_FROM || env.SMTP_USER,
+      from_name: env.SMTP_FROM_NAME || "MAS Callnet HRMS",
+    };
+  }
+
+  private getEnvTwilioConfig(): SmsConfig | null {
+    const provider = String(process.env.SMS_PROVIDER || "").trim().toLowerCase();
+    if (provider && provider !== "twilio") {
+      return null;
+    }
+
+    const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+    const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+    const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim()
+      || process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+
+    if (!accountSid || !authToken || !fromNumber) {
+      return null;
+    }
+
+    return {
+      provider: "twilio",
+      account_sid: accountSid,
+      auth_token: authToken,
+      from_number: fromNumber,
+    };
+  }
 
   /**
    * Initialize email transporter from database config
@@ -99,27 +164,33 @@ export class NotificationService {
     if (this.emailTransporter) return this.emailTransporter;
 
     try {
-      const [rows] = await (db.execute(
-        "SELECT * FROM smtp_config WHERE active_status = 1 ORDER BY id DESC LIMIT 1"
-      ) as Promise<[RowDataPacket[], unknown]>);
+      let config: SmtpConfig | null = null;
 
-      if (!rows || rows.length === 0) {
-        console.warn("[NotificationService] No active SMTP config found");
+      if (db) {
+        try {
+          const [rows] = await (db.execute(
+            "SELECT * FROM smtp_config WHERE active_status = 1 ORDER BY id DESC LIMIT 1"
+          ) as Promise<[RowDataPacket[], unknown]>);
+
+          if (rows && rows.length > 0) {
+            config = rows[0] as SmtpConfig;
+          }
+        } catch (error: any) {
+          console.warn("[NotificationService] SMTP config lookup failed, falling back to env:", error.message);
+        }
+      }
+
+      if (!config) {
+        config = this.getEnvSmtpConfig();
+      }
+
+      if (!config) {
+        this.warnOnce("smtp", "[NotificationService] SMTP runtime not configured in DB or env");
         return null;
       }
 
-      const config = rows[0] as SmtpConfig;
       this.smtpConfig = config;
-
-      this.emailTransporter = nodemailer.createTransport({
-        host: config.smtp_host,
-        port: config.smtp_port,
-        secure: config.smtp_secure === 1,
-        auth: {
-          user: config.smtp_user,
-          pass: config.smtp_pass,
-        },
-      });
+      this.emailTransporter = this.buildEmailTransporter(config);
 
       // Verify connection
       await this.emailTransporter!.verify();
@@ -138,20 +209,36 @@ export class NotificationService {
     if (this.twilioClient) return this.twilioClient;
 
     try {
-      const [rows] = await (db.execute(
-        "SELECT * FROM sms_config WHERE active_status = 1 AND provider = 'twilio' ORDER BY id DESC LIMIT 1"
-      ) as Promise<[RowDataPacket[], unknown]>);
+      let config: SmsConfig | null = null;
 
-      if (!rows || rows.length === 0) {
-        console.warn("[NotificationService] No active Twilio config found");
+      if (db) {
+        try {
+          const [rows] = await (db.execute(
+            "SELECT * FROM sms_config WHERE active_status = 1 AND provider = 'twilio' ORDER BY id DESC LIMIT 1"
+          ) as Promise<[RowDataPacket[], unknown]>);
+
+          if (rows && rows.length > 0) {
+            config = rows[0] as SmsConfig;
+          }
+        } catch (error: any) {
+          console.warn("[NotificationService] SMS config lookup failed, falling back to env:", error.message);
+        }
+      }
+
+      if (!config) {
+        config = this.getEnvTwilioConfig();
+      }
+
+      if (!config) {
+        const provider = String(process.env.SMS_PROVIDER || "twilio").trim().toLowerCase() || "twilio";
+        this.warnOnce("sms", `[NotificationService] SMS runtime not configured for legacy notification service (provider=${provider})`);
         return null;
       }
 
-      const config = rows[0] as SmsConfig;
       this.smsConfig = config;
 
       if (!config.account_sid || !config.auth_token) {
-        console.warn("[NotificationService] Twilio credentials incomplete");
+        this.warnOnce("sms", "[NotificationService] Twilio credentials incomplete");
         return null;
       }
 
@@ -333,11 +420,19 @@ export class NotificationService {
     }
 
     // Determine channels
-    const useEmail = (channel || template.channel) === "email" || (channel || template.channel) === "both";
-    const useSms = (channel || template.channel) === "sms" || (channel || template.channel) === "both";
+    const effectiveChannel = channel || template.channel;
+    const wantsEmail = effectiveChannel === "email" || effectiveChannel === "both";
+    const wantsSms = effectiveChannel === "sms" || effectiveChannel === "both";
+    const useEmail = wantsEmail && !!(await this.initEmailTransporter());
+    const useSms = wantsSms && !!(await this.initSmsClient());
 
     let sent = 0;
     let failed = 0;
+
+    if ((wantsEmail ? !useEmail : true) && (wantsSms ? !useSms : true)) {
+      console.warn(`[NotificationService] Template ${template_code} skipped - no active delivery runtime`);
+      return { sent: 0, failed: recipients.length };
+    }
 
     // Send to each recipient
     for (const recipient of recipients) {
