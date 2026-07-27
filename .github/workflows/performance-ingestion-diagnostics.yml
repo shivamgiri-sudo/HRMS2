@@ -1,0 +1,40 @@
+name: Performance Ingestion Diagnostics
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-typecheck:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Capture TypeScript output
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck 2>&1 | tee ../performance-typecheck.log
+          status=${PIPESTATUS[0]}
+          echo "$status" > ../performance-typecheck.status
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: performance-typecheck-log
+          path: |
+            performance-typecheck.log
+            performance-typecheck.status
+          retention-days: 3
