@@ -15,10 +15,31 @@ import type {
   ValidationIssue,
 } from "./performance-ingestion.types.js";
 
+type IngestionTrigger = "manual" | "schedule" | "retry";
+
+type MetricDefinition = {
+  id: string;
+  aggregation: PerformanceAggregation;
+};
+
+type Accumulator = {
+  template: NormalisedMetricFact;
+  aggregation: PerformanceAggregation;
+  sum: number;
+  count: number;
+  numerator: number;
+  denominator: number;
+  recordCount: number;
+};
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined || value === "") return fallback;
   if (typeof value === "string") {
-    try { return JSON.parse(value) as T; } catch { return fallback; }
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
   }
   return value as T;
 }
@@ -59,7 +80,9 @@ function stableValue(value: unknown): unknown {
 }
 
 function rowHash(row: SourceRow): string {
-  return createHash("sha256").update(JSON.stringify(stableValue(row))).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(stableValue(row)))
+    .digest("hex");
 }
 
 function text(value: unknown): string {
@@ -79,15 +102,19 @@ function numberOrNull(value: unknown): number | null {
 }
 
 function dateOnly(value: unknown): string | null {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
   const raw = text(value);
   if (!raw) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+
   const dmy = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (dmy) {
     const [, day, month, year] = dmy;
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
+
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
@@ -100,25 +127,46 @@ function field(row: SourceRow, name?: string): unknown {
   return found ? row[found] : undefined;
 }
 
-async function loadDataset(idOrKey: string, requireApproved = false): Promise<PerformanceDataset> {
+function configFlag(dataset: PerformanceDataset, key: string): boolean {
+  return (dataset.config as Record<string, unknown>)[key] === true;
+}
+
+async function loadDataset(
+  idOrKey: string,
+  requireApproved = false,
+): Promise<PerformanceDataset> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM performance_source_dataset
-      WHERE (id = ? OR dataset_key = ?) AND active_status = 1
+    `SELECT *
+       FROM performance_source_dataset
+      WHERE (id = ? OR dataset_key = ?)
+        AND active_status = 1
       LIMIT 1`,
     [idOrKey, idOrKey],
   );
-  if (!rows[0]) throw Object.assign(new Error("Performance dataset not found"), { statusCode: 404 });
+  if (!rows[0]) {
+    throw Object.assign(new Error("Performance dataset not found or inactive"), {
+      statusCode: 404,
+    });
+  }
+
   const dataset = datasetFromRow(rows[0]);
   if (requireApproved && dataset.approvalStatus !== "active") {
-    throw Object.assign(new Error("Dataset must be approved before publishing"), { statusCode: 409 });
+    throw Object.assign(new Error("Dataset must be approved before publishing"), {
+      statusCode: 409,
+    });
   }
   if (!dataset.mapping.metrics?.length) {
-    throw Object.assign(new Error("Dataset has no metric bindings"), { statusCode: 409 });
+    throw Object.assign(new Error("Dataset has no metric bindings"), {
+      statusCode: 409,
+    });
   }
   return dataset;
 }
 
-async function activeMappingVersion(datasetId: string, eventDate: string): Promise<string | null> {
+async function activeMappingVersion(
+  datasetId: string,
+  eventDate: string,
+): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id
        FROM performance_mapping_version
@@ -137,11 +185,19 @@ async function mapEmployee(
   sourceKey: string,
   externalIdentifier: string,
   eventDate: string,
-): Promise<{ employeeId: string; processId: string | null; branchId: string | null } | null> {
+): Promise<{
+  employeeId: string;
+  processId: string | null;
+  branchId: string | null;
+} | null> {
   const [mapped] = await db.execute<RowDataPacket[]>(
-    `SELECT pim.employee_id, COALESCE(pim.process_id, e.process_id) AS process_id, e.branch_id
+    `SELECT pim.employee_id,
+            COALESCE(pim.process_id, e.process_id) AS process_id,
+            e.branch_id
        FROM performance_identity_map pim
-       JOIN employees e ON e.id = pim.employee_id AND e.active_status = 1
+       JOIN employees e
+         ON e.id = pim.employee_id
+        AND e.active_status = 1
       WHERE pim.source_key = ?
         AND UPPER(TRIM(pim.external_identifier)) = UPPER(TRIM(?))
         AND pim.mapping_status = 'verified'
@@ -163,8 +219,10 @@ async function mapEmployee(
     `SELECT id AS employee_id, process_id, branch_id
        FROM employees
       WHERE active_status = 1
-        AND (UPPER(TRIM(employee_code)) = UPPER(TRIM(?))
-          OR UPPER(TRIM(COALESCE(biometric_code, ''))) = UPPER(TRIM(?)))
+        AND (
+          UPPER(TRIM(employee_code)) = UPPER(TRIM(?))
+          OR UPPER(TRIM(COALESCE(biometric_code, ''))) = UPPER(TRIM(?))
+        )
       ORDER BY updated_at DESC
       LIMIT 2`,
     [externalIdentifier, externalIdentifier],
@@ -201,19 +259,38 @@ async function mapProcess(
   };
 }
 
-async function metricMap(bindings: DatasetMetricBinding[]): Promise<Map<string, { id: string; aggregation: PerformanceAggregation }>> {
-  const codes = [...new Set(bindings.map((binding) => text(binding.metricCode).toUpperCase()).filter(Boolean))];
+async function metricMap(
+  bindings: DatasetMetricBinding[],
+): Promise<Map<string, MetricDefinition>> {
+  const codes = [
+    ...new Set(
+      bindings
+        .map((binding) => text(binding.metricCode).toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
   if (!codes.length) return new Map();
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, metric_code, COALESCE(aggregation_method, 'average') AS aggregation_method
+    `SELECT id,
+            metric_code,
+            COALESCE(aggregation_method, 'average') AS aggregation_method
        FROM kpi_metric_master
-      WHERE active_status = 1 AND metric_code IN (${codes.map(() => "?").join(",")})`,
+      WHERE active_status = 1
+        AND metric_code IN (${codes.map(() => "?").join(",")})`,
     codes,
   );
-  return new Map(rows.map((row) => [String(row.metric_code).toUpperCase(), {
-    id: String(row.id),
-    aggregation: String(row.aggregation_method ?? "average") as PerformanceAggregation,
-  }]));
+  return new Map(
+    rows.map((row) => [
+      String(row.metric_code).toUpperCase(),
+      {
+        id: String(row.id),
+        aggregation: String(
+          row.aggregation_method ?? "average",
+        ) as PerformanceAggregation,
+      },
+    ]),
+  );
 }
 
 async function insertRawRecord(
@@ -227,19 +304,32 @@ async function insertRawRecord(
   const sourceRecordKey = text(field(row, mapping.sourceRecordKeyField)) || null;
   const [result] = await db.execute<ResultSetHeader>(
     `INSERT INTO performance_raw_record
-       (run_id, source_record_key, source_event_date, external_employee_identifier,
-        external_process_identifier, source_row_json, row_hash)
+       (run_id, source_record_key, source_event_date,
+        external_employee_identifier, external_process_identifier,
+        source_row_json, row_hash)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-    [runId, sourceRecordKey, eventDate, externalIdentifier || null, externalProcess || null, JSON.stringify(row), rowHash(row)],
+    [
+      runId,
+      sourceRecordKey,
+      eventDate,
+      externalIdentifier || null,
+      externalProcess || null,
+      JSON.stringify(row),
+      rowHash(row),
+    ],
   );
   return Number(result.insertId);
 }
 
-async function recordIssue(runId: string, issue: ValidationIssue): Promise<void> {
+async function recordIssue(
+  runId: string,
+  issue: ValidationIssue,
+): Promise<void> {
   await db.execute(
     `INSERT INTO performance_validation_result
-       (run_id, raw_record_id, validation_code, severity, field_name, invalid_value, validation_message)
+       (run_id, raw_record_id, validation_code, severity,
+        field_name, invalid_value, validation_message)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
@@ -247,25 +337,44 @@ async function recordIssue(runId: string, issue: ValidationIssue): Promise<void>
       issue.code,
       issue.severity,
       issue.fieldName ?? null,
-      issue.invalidValue === undefined ? null : text(issue.invalidValue).slice(0, 1000),
+      issue.invalidValue === undefined
+        ? null
+        : text(issue.invalidValue).slice(0, 1000),
       issue.message.slice(0, 1000),
     ],
   );
+}
+
+async function recordIssues(
+  runId: string,
+  issues: ValidationIssue[],
+  destination: ValidationIssue[],
+): Promise<void> {
+  for (const issue of issues) {
+    destination.push(issue);
+    await recordIssue(runId, issue);
+  }
 }
 
 async function recordMappingException(input: {
   runId: string;
   dataset: PerformanceDataset;
   externalIdentifier: string;
-  exceptionType: "employee_unmapped" | "process_unmapped" | "metric_unmapped" | "invalid_value";
+  exceptionType:
+    | "employee_unmapped"
+    | "process_unmapped"
+    | "metric_unmapped"
+    | "invalid_value";
   detail: string;
 }): Promise<void> {
   await db.execute(
     `INSERT INTO integration_mapping_exception
-       (id, integration_run_id, source_system, source_entity, external_identifier,
-        exception_type, exception_detail, status)
+       (id, integration_run_id, source_system, source_entity,
+        external_identifier, exception_type, exception_detail, status)
      VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'open')
-     ON DUPLICATE KEY UPDATE exception_detail = VALUES(exception_detail), updated_at = NOW()`,
+     ON DUPLICATE KEY UPDATE
+       exception_detail = VALUES(exception_detail),
+       updated_at = NOW()`,
     [
       input.runId,
       input.dataset.datasetKey,
@@ -276,16 +385,6 @@ async function recordMappingException(input: {
     ],
   ).catch(() => undefined);
 }
-
-type Accumulator = {
-  template: NormalisedMetricFact;
-  aggregation: PerformanceAggregation;
-  sum: number;
-  count: number;
-  numerator: number;
-  denominator: number;
-  recordCount: number;
-};
 
 function addFact(
   accumulator: Map<string, Accumulator>,
@@ -311,45 +410,87 @@ function addFact(
   accumulator.set(key, current);
 }
 
-function finalFacts(accumulator: Map<string, Accumulator>, bindings: DatasetMetricBinding[]): NormalisedMetricFact[] {
-  const multiplierByMetric = new Map(bindings.map((binding) => [text(binding.metricCode).toUpperCase(), Number(binding.ratioMultiplier ?? 100)]));
+function finalFacts(
+  accumulator: Map<string, Accumulator>,
+  bindings: DatasetMetricBinding[],
+): NormalisedMetricFact[] {
+  const multiplierByMetric = new Map(
+    bindings.map((binding) => [
+      text(binding.metricCode).toUpperCase(),
+      Number(binding.ratioMultiplier ?? 100),
+    ]),
+  );
+
   return [...accumulator.values()].map((item) => {
     let actual = item.template.actualValue;
     if (item.aggregation === "sum") actual = item.sum;
-    if (item.aggregation === "average") actual = item.count ? item.sum / item.count : 0;
+    if (item.aggregation === "average") {
+      actual = item.count ? item.sum / item.count : 0;
+    }
     if (item.aggregation === "ratio") {
       actual = item.denominator > 0
-        ? (item.numerator / item.denominator) * (multiplierByMetric.get(item.template.metricCode) ?? 100)
-        : item.count ? item.sum / item.count : 0;
+        ? (item.numerator / item.denominator) *
+          (multiplierByMetric.get(item.template.metricCode) ?? 100)
+        : item.count
+          ? item.sum / item.count
+          : 0;
     }
+
     return {
       ...item.template,
       actualValue: Math.round(actual * 1_000_000) / 1_000_000,
-      numeratorValue: item.aggregation === "ratio" ? item.numerator : item.template.numeratorValue,
-      denominatorValue: item.aggregation === "ratio" ? item.denominator : item.template.denominatorValue,
+      numeratorValue:
+        item.aggregation === "ratio"
+          ? item.numerator
+          : item.template.numeratorValue,
+      denominatorValue:
+        item.aggregation === "ratio"
+          ? item.denominator
+          : item.template.denominatorValue,
       sourceRecordCount: item.recordCount,
     };
   });
 }
 
-async function saveReconciliation(runId: string, code: string, expected: number, actual: number): Promise<void> {
+async function saveReconciliation(
+  runId: string,
+  code: string,
+  expected: number,
+  actual: number,
+): Promise<void> {
   const variance = actual - expected;
   await db.execute(
     `INSERT INTO performance_reconciliation_result
-       (id, run_id, reconciliation_code, expected_value, actual_value, variance_value, tolerance_value, passed)
+       (id, run_id, reconciliation_code, expected_value,
+        actual_value, variance_value, tolerance_value, passed)
      VALUES (UUID(), ?, ?, ?, ?, ?, 0, ?)
-     ON DUPLICATE KEY UPDATE expected_value = VALUES(expected_value), actual_value = VALUES(actual_value),
-       variance_value = VALUES(variance_value), passed = VALUES(passed)`,
+     ON DUPLICATE KEY UPDATE
+       expected_value = VALUES(expected_value),
+       actual_value = VALUES(actual_value),
+       variance_value = VALUES(variance_value),
+       passed = VALUES(passed)`,
     [runId, code, expected, actual, variance, variance === 0 ? 1 : 0],
   );
 }
 
-async function updateRun(runId: string, result: Omit<IngestionRunResult, "runId" | "mode" | "sample" | "issues">): Promise<void> {
+async function updateRun(
+  runId: string,
+  result: Omit<
+    IngestionRunResult,
+    "runId" | "mode" | "sample" | "issues"
+  >,
+): Promise<void> {
   await db.execute(
     `UPDATE performance_ingestion_run
-        SET status = ?, source_row_count = ?, staged_row_count = ?, mapped_row_count = ?,
-            invalid_row_count = ?, published_fact_count = ?, error_count = ?,
-            error_summary = ?, finished_at = NOW()
+        SET status = ?,
+            source_row_count = ?,
+            staged_row_count = ?,
+            mapped_row_count = ?,
+            invalid_row_count = ?,
+            published_fact_count = ?,
+            error_count = ?,
+            error_summary = ?,
+            finished_at = NOW()
       WHERE id = ?`,
     [
       result.status,
@@ -365,95 +506,65 @@ async function updateRun(runId: string, result: Omit<IngestionRunResult, "runId"
   );
 }
 
+async function ensureNoActiveRun(datasetId: string): Promise<void> {
+  await db.execute(
+    `UPDATE performance_ingestion_run
+        SET status = 'failed',
+            error_count = GREATEST(error_count, 1),
+            error_summary = COALESCE(
+              error_summary,
+              'Run automatically closed after exceeding the two-hour safety window'
+            ),
+            finished_at = COALESCE(finished_at, NOW())
+      WHERE dataset_id = ?
+        AND status = 'running'
+        AND started_at < DATE_SUB(NOW(), INTERVAL 2 HOUR)`,
+    [datasetId],
+  );
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM performance_ingestion_run
+      WHERE dataset_id = ?
+        AND status = 'running'
+      LIMIT 1`,
+    [datasetId],
+  );
+  if (rows.length) {
+    throw Object.assign(
+      new Error("Another ingestion run is already active for this dataset"),
+      { statusCode: 409 },
+    );
+  }
+}
+
+function publicationBlockedError(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 409 });
+}
+
 export const performanceIngestionService = {
-  async listDatasets(): Promise<PerformanceDataset[]> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM performance_source_dataset ORDER BY active_status DESC, dataset_name ASC`,
-    );
-    return rows.map(datasetFromRow);
-  },
-
-  async getDataset(idOrKey: string): Promise<PerformanceDataset> {
-    return loadDataset(idOrKey, false);
-  },
-
-  async saveDataset(input: {
-    id?: string;
-    datasetKey: string;
-    datasetName: string;
-    sourceType: string;
-    connectorKey?: string | null;
-    sourceEntity?: string | null;
-    processId?: string | null;
-    branchId?: string | null;
-    timezoneName?: string;
-    config: Record<string, unknown>;
-    mapping: DatasetMapping;
-    activeStatus?: boolean;
-    userId?: string | null;
-  }): Promise<string> {
-    const id = input.id ?? randomUUID();
-    await db.execute(
-      `INSERT INTO performance_source_dataset
-         (id, dataset_key, dataset_name, source_type, connector_key, source_entity,
-          process_id, branch_id, timezone_name, config_json, mapping_json, active_status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         dataset_name = VALUES(dataset_name), source_type = VALUES(source_type),
-         connector_key = VALUES(connector_key), source_entity = VALUES(source_entity),
-         process_id = VALUES(process_id), branch_id = VALUES(branch_id),
-         timezone_name = VALUES(timezone_name), config_json = VALUES(config_json),
-         mapping_json = VALUES(mapping_json), active_status = VALUES(active_status), updated_at = NOW()`,
-      [
-        id,
-        input.datasetKey.trim(),
-        input.datasetName.trim(),
-        input.sourceType,
-        input.connectorKey ?? null,
-        input.sourceEntity ?? null,
-        input.processId ?? null,
-        input.branchId ?? null,
-        input.timezoneName ?? "Asia/Kolkata",
-        JSON.stringify(input.config ?? {}),
-        JSON.stringify(input.mapping),
-        input.activeStatus === false ? 0 : 1,
-        input.userId ?? null,
-      ],
-    );
-    return id;
-  },
-
-  async approveDataset(idOrKey: string, userId: string): Promise<void> {
-    const dataset = await loadDataset(idOrKey, false);
-    const [versions] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(MAX(version_no), 0) AS max_version FROM performance_mapping_version WHERE dataset_id = ?`,
-      [dataset.id],
-    );
-    const version = Number(versions[0]?.max_version ?? 0) + 1;
-    await db.execute(
-      `INSERT INTO performance_mapping_version
-         (id, dataset_id, version_no, mapping_json, effective_from, status, approved_by, approved_at, created_by)
-       VALUES (UUID(), ?, ?, ?, CURDATE(), 'active', ?, NOW(), ?)`,
-      [dataset.id, version, JSON.stringify(dataset.mapping), userId, userId],
-    );
-    await db.execute(
-      `UPDATE performance_source_dataset
-          SET approval_status = 'active', approved_by = ?, approved_at = NOW(), updated_at = NOW()
-        WHERE id = ?`,
-      [userId, dataset.id],
-    );
-  },
-
   async run(input: {
     datasetId: string;
     mode: PerformanceRunMode;
     from: string;
     to: string;
+    triggerType?: IngestionTrigger;
     requestedBy?: string | null;
     uploadBuffer?: Buffer | null;
     sourceFileName?: string | null;
   }): Promise<IngestionRunResult> {
-    const dataset = await loadDataset(input.datasetId, input.mode === "publish");
+    if (input.from > input.to) {
+      throw Object.assign(new Error("from must be on or before to"), {
+        statusCode: 400,
+      });
+    }
+
+    const dataset = await loadDataset(
+      input.datasetId,
+      input.mode === "publish",
+    );
+    await ensureNoActiveRun(dataset.id);
+
     const runId = randomUUID();
     const sourceFileHash = input.uploadBuffer
       ? createHash("sha256").update(input.uploadBuffer).digest("hex")
@@ -461,22 +572,41 @@ export const performanceIngestionService = {
 
     if (input.mode === "publish" && sourceFileHash) {
       const [duplicate] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM performance_ingestion_run
-          WHERE dataset_id = ? AND source_file_hash = ? AND status = 'published'
+        `SELECT id
+           FROM performance_ingestion_run
+          WHERE dataset_id = ?
+            AND source_file_hash = ?
+            AND status = 'published'
           LIMIT 1`,
         [dataset.id, sourceFileHash],
       );
       if (duplicate[0]) {
-        throw Object.assign(new Error("This file has already been published for the selected dataset"), { statusCode: 409 });
+        throw Object.assign(
+          new Error(
+            "This file has already been published for the selected dataset",
+          ),
+          { statusCode: 409 },
+        );
       }
     }
 
     await db.execute(
       `INSERT INTO performance_ingestion_run
-         (id, dataset_id, run_mode, trigger_type, status, window_from, window_to,
-          source_file_name, source_file_hash, requested_by, started_at)
-       VALUES (?, ?, ?, 'manual', 'running', ?, ?, ?, ?, ?, NOW())`,
-      [runId, dataset.id, input.mode, input.from, input.to, input.sourceFileName ?? null, sourceFileHash, input.requestedBy ?? null],
+         (id, dataset_id, run_mode, trigger_type, status,
+          window_from, window_to, source_file_name, source_file_hash,
+          requested_by, started_at)
+       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, NOW())`,
+      [
+        runId,
+        dataset.id,
+        input.mode,
+        input.triggerType ?? "manual",
+        input.from,
+        input.to,
+        input.sourceFileName ?? null,
+        sourceFileHash,
+        input.requestedBy ?? null,
+      ],
     );
 
     const issues: ValidationIssue[] = [];
@@ -490,10 +620,15 @@ export const performanceIngestionService = {
 
     try {
       const [checkpoints] = await db.execute<RowDataPacket[]>(
-        `SELECT checkpoint_value FROM performance_ingestion_checkpoint WHERE dataset_id = ?`,
+        `SELECT checkpoint_value
+           FROM performance_ingestion_checkpoint
+          WHERE dataset_id = ?`,
         [dataset.id],
       );
-      const checkpoint = checkpoints[0]?.checkpoint_value ? String(checkpoints[0].checkpoint_value) : null;
+      const checkpoint = checkpoints[0]?.checkpoint_value
+        ? String(checkpoints[0].checkpoint_value)
+        : null;
+
       const rows = await readPerformanceSourceRows(dataset, {
         from: input.from,
         to: input.to,
@@ -502,141 +637,356 @@ export const performanceIngestionService = {
       });
       sourceRows = rows.length;
       sample = rows.slice(0, 20);
+
       const metrics = await metricMap(dataset.mapping.metrics);
       const accumulator = new Map<string, Accumulator>();
-      let mappingVersionId: string | null = null;
+      const mappingVersionCache = new Map<string, string | null>();
 
       for (const row of rows) {
-        const eventDate = dateOnly(field(row, dataset.mapping.eventDateField));
-        const rawRecordId = await insertRawRecord(runId, row, dataset.mapping, eventDate);
+        const eventDate = dateOnly(
+          field(row, dataset.mapping.eventDateField),
+        );
+        const rawRecordId = await insertRawRecord(
+          runId,
+          row,
+          dataset.mapping,
+          eventDate,
+        );
         stagedRows += 1;
+
         const rowIssues: ValidationIssue[] = [];
-        const externalIdentifier = text(field(row, dataset.mapping.employeeIdentifierField));
-        const externalProcess = text(field(row, dataset.mapping.externalProcessField));
+        const externalIdentifier = text(
+          field(row, dataset.mapping.employeeIdentifierField),
+        );
+        const externalProcess = text(
+          field(row, dataset.mapping.externalProcessField),
+        );
 
         if (!eventDate) {
-          rowIssues.push({ rawRecordId, code: "INVALID_EVENT_DATE", severity: "error", fieldName: dataset.mapping.eventDateField, invalidValue: field(row, dataset.mapping.eventDateField), message: "A valid performance event date is required" });
+          rowIssues.push({
+            rawRecordId,
+            code: "INVALID_EVENT_DATE",
+            severity: "error",
+            fieldName: dataset.mapping.eventDateField,
+            invalidValue: field(row, dataset.mapping.eventDateField),
+            message: "A valid performance event date is required",
+          });
+        } else if (eventDate < input.from || eventDate > input.to) {
+          rowIssues.push({
+            rawRecordId,
+            code: "EVENT_DATE_OUTSIDE_WINDOW",
+            severity: "error",
+            fieldName: dataset.mapping.eventDateField,
+            invalidValue: eventDate,
+            message: `Performance date must be between ${input.from} and ${input.to}`,
+          });
         }
+
         if (!externalIdentifier) {
-          rowIssues.push({ rawRecordId, code: "MISSING_EMPLOYEE_IDENTIFIER", severity: "error", fieldName: dataset.mapping.employeeIdentifierField, message: "Employee identifier is blank" });
+          rowIssues.push({
+            rawRecordId,
+            code: "MISSING_EMPLOYEE_IDENTIFIER",
+            severity: "error",
+            fieldName: dataset.mapping.employeeIdentifierField,
+            message: "Employee identifier is blank",
+          });
         }
 
         if (rowIssues.length) {
           invalidRows += 1;
-          for (const issue of rowIssues) { issues.push(issue); await recordIssue(runId, issue); }
+          await recordIssues(runId, rowIssues, issues);
           continue;
         }
 
-        mappingVersionId = mappingVersionId ?? await activeMappingVersion(dataset.id, eventDate!);
-        const employee = await mapEmployee(dataset.datasetKey, externalIdentifier, eventDate!);
-        if (!employee) {
-          const issue: ValidationIssue = { rawRecordId, code: "EMPLOYEE_UNMAPPED", severity: "error", fieldName: dataset.mapping.employeeIdentifierField, invalidValue: externalIdentifier, message: "External employee identifier is not mapped to one active HRMS employee" };
-          issues.push(issue); await recordIssue(runId, issue);
-          await recordMappingException({ runId, dataset, externalIdentifier, exceptionType: "employee_unmapped", detail: issue.message });
+        let mappingVersionId = mappingVersionCache.get(eventDate!);
+        if (mappingVersionId === undefined) {
+          mappingVersionId = await activeMappingVersion(dataset.id, eventDate!);
+          mappingVersionCache.set(eventDate!, mappingVersionId);
+        }
+        if (input.mode === "publish" && !mappingVersionId) {
+          const issue: ValidationIssue = {
+            rawRecordId,
+            code: "MAPPING_VERSION_MISSING",
+            severity: "error",
+            fieldName: dataset.mapping.eventDateField,
+            invalidValue: eventDate,
+            message:
+              "No approved dataset mapping is effective for this performance date",
+          };
           invalidRows += 1;
+          await recordIssues(runId, [issue], issues);
+          continue;
+        }
+
+        const employee = await mapEmployee(
+          dataset.datasetKey,
+          externalIdentifier,
+          eventDate!,
+        );
+        if (!employee) {
+          const issue: ValidationIssue = {
+            rawRecordId,
+            code: "EMPLOYEE_UNMAPPED",
+            severity: "error",
+            fieldName: dataset.mapping.employeeIdentifierField,
+            invalidValue: externalIdentifier,
+            message:
+              "External employee identifier is not mapped to one active HRMS employee",
+          };
+          invalidRows += 1;
+          await recordIssues(runId, [issue], issues);
+          await recordMappingException({
+            runId,
+            dataset,
+            externalIdentifier,
+            exceptionType: "employee_unmapped",
+            detail: issue.message,
+          });
           continue;
         }
 
         let processId = dataset.processId ?? employee.processId;
         let branchId = dataset.branchId ?? employee.branchId;
         if (externalProcess) {
-          const process = await mapProcess(dataset.datasetKey, externalProcess, eventDate!);
+          const process = await mapProcess(
+            dataset.datasetKey,
+            externalProcess,
+            eventDate!,
+          );
           if (!process && !processId) {
-            const issue: ValidationIssue = { rawRecordId, code: "PROCESS_UNMAPPED", severity: "error", fieldName: dataset.mapping.externalProcessField, invalidValue: externalProcess, message: "External process is not mapped to an HRMS process" };
-            issues.push(issue); await recordIssue(runId, issue);
-            await recordMappingException({ runId, dataset, externalIdentifier: externalProcess, exceptionType: "process_unmapped", detail: issue.message });
+            const issue: ValidationIssue = {
+              rawRecordId,
+              code: "PROCESS_UNMAPPED",
+              severity: "error",
+              fieldName: dataset.mapping.externalProcessField,
+              invalidValue: externalProcess,
+              message:
+                "External process is not mapped to an HRMS process",
+            };
             invalidRows += 1;
+            await recordIssues(runId, [issue], issues);
+            await recordMappingException({
+              runId,
+              dataset,
+              externalIdentifier: externalProcess,
+              exceptionType: "process_unmapped",
+              detail: issue.message,
+            });
             continue;
           }
-          if (process) { processId = process.processId; branchId = process.branchId ?? branchId; }
+          if (process) {
+            processId = process.processId;
+            branchId = process.branchId ?? branchId;
+          }
         }
 
-        let factCountForRow = 0;
+        if (!processId) {
+          const issue: ValidationIssue = {
+            rawRecordId,
+            code: "PROCESS_CONTEXT_MISSING",
+            severity: "error",
+            fieldName: dataset.mapping.externalProcessField ?? null,
+            invalidValue: externalProcess || null,
+            message:
+              "No effective HRMS process is available for this employee performance row",
+          };
+          invalidRows += 1;
+          await recordIssues(runId, [issue], issues);
+          continue;
+        }
+
+        const metricIssues: ValidationIssue[] = [];
+        const rowFacts: Array<{
+          fact: NormalisedMetricFact;
+          aggregation: PerformanceAggregation;
+        }> = [];
+
         for (const binding of dataset.mapping.metrics) {
           const metricCode = text(binding.metricCode).toUpperCase();
           const metric = metrics.get(metricCode);
           if (!metric) {
-            const issue: ValidationIssue = { rawRecordId, code: "METRIC_UNMAPPED", severity: "error", invalidValue: metricCode, message: `Metric ${metricCode} is not active in KPI master` };
-            issues.push(issue); await recordIssue(runId, issue);
-            await recordMappingException({ runId, dataset, externalIdentifier: metricCode, exceptionType: "metric_unmapped", detail: issue.message });
+            const issue: ValidationIssue = {
+              rawRecordId,
+              code: "METRIC_UNMAPPED",
+              severity: "error",
+              invalidValue: metricCode,
+              message: `Metric ${metricCode} is not active in KPI master`,
+            };
+            metricIssues.push(issue);
+            await recordMappingException({
+              runId,
+              dataset,
+              externalIdentifier: metricCode,
+              exceptionType: "metric_unmapped",
+              detail: issue.message,
+            });
             continue;
           }
+
           const value = numberOrNull(field(row, binding.valueField));
           const numerator = numberOrNull(field(row, binding.numeratorField));
           const denominator = numberOrNull(field(row, binding.denominatorField));
           const aggregation = binding.aggregation ?? metric.aggregation;
-          const derived = aggregation === "ratio" && numerator !== null && denominator !== null && denominator > 0
-            ? (numerator / denominator) * Number(binding.ratioMultiplier ?? 100)
-            : value;
+          const derived =
+            aggregation === "ratio" &&
+            numerator !== null &&
+            denominator !== null &&
+            denominator > 0
+              ? (numerator / denominator) *
+                Number(binding.ratioMultiplier ?? 100)
+              : value;
+
           if (derived === null) {
-            const issue: ValidationIssue = { rawRecordId, code: "INVALID_METRIC_VALUE", severity: "error", fieldName: binding.valueField ?? binding.numeratorField ?? metricCode, invalidValue: field(row, binding.valueField), message: `No valid numeric value is available for ${metricCode}` };
-            issues.push(issue); await recordIssue(runId, issue);
+            metricIssues.push({
+              rawRecordId,
+              code: "INVALID_METRIC_VALUE",
+              severity: "error",
+              fieldName:
+                binding.valueField ?? binding.numeratorField ?? metricCode,
+              invalidValue: field(row, binding.valueField),
+              message: `No valid numeric value is available for ${metricCode}`,
+            });
             continue;
           }
-          addFact(accumulator, {
-            employeeId: employee.employeeId,
-            metricId: metric.id,
-            metricCode,
-            scoreDate: eventDate!,
-            actualValue: derived,
-            numeratorValue: numerator,
-            denominatorValue: denominator,
-            sourceRecordCount: numberOrNull(field(row, binding.sourceRecordCountField)) ?? 1,
-            sourceRecordKey: text(field(row, dataset.mapping.sourceRecordKeyField)) || rowHash(row),
-            rawRecordId,
-            processIdAtEvent: processId,
-            branchIdAtEvent: branchId,
-          }, aggregation);
-          factCountForRow += 1;
+
+          rowFacts.push({
+            aggregation,
+            fact: {
+              employeeId: employee.employeeId,
+              metricId: metric.id,
+              metricCode,
+              scoreDate: eventDate!,
+              mappingVersionId,
+              actualValue: derived,
+              numeratorValue: numerator,
+              denominatorValue: denominator,
+              sourceRecordCount:
+                numberOrNull(field(row, binding.sourceRecordCountField)) ?? 1,
+              sourceRecordKey:
+                text(field(row, dataset.mapping.sourceRecordKeyField)) ||
+                rowHash(row),
+              rawRecordId,
+              processIdAtEvent: processId,
+              branchIdAtEvent: branchId,
+            },
+          });
         }
-        if (factCountForRow > 0) mappedRows += 1;
-        else invalidRows += 1;
+
+        if (metricIssues.length || !rowFacts.length) {
+          invalidRows += 1;
+          if (!metricIssues.length) {
+            metricIssues.push({
+              rawRecordId,
+              code: "NO_PUBLISHABLE_METRICS",
+              severity: "error",
+              message: "No publishable metric was generated for this row",
+            });
+          }
+          await recordIssues(runId, metricIssues, issues);
+          continue;
+        }
+
+        for (const rowFact of rowFacts) {
+          addFact(accumulator, rowFact.fact, rowFact.aggregation);
+        }
+        mappedRows += 1;
       }
 
       const facts = finalFacts(accumulator, dataset.mapping.metrics);
+      await saveReconciliation(
+        runId,
+        "SOURCE_TO_STAGING_ROWS",
+        sourceRows,
+        stagedRows,
+      );
+      await saveReconciliation(
+        runId,
+        "STAGING_TO_CLASSIFIED_ROWS",
+        stagedRows,
+        mappedRows + invalidRows,
+      );
+
       if (input.mode === "publish") {
+        const allowPartial = configFlag(dataset, "allowPartialPublication");
+        const allowEmpty = configFlag(dataset, "allowEmptyPublication");
+
+        if (invalidRows > 0 && !allowPartial) {
+          throw publicationBlockedError(
+            `Publication blocked because ${invalidRows} source row(s) failed validation or mapping`,
+          );
+        }
+        if ((sourceRows === 0 || facts.length === 0) && !allowEmpty) {
+          throw publicationBlockedError(
+            "Publication blocked because the source produced no publishable facts. Enable allowEmptyPublication only for an intentional data withdrawal.",
+          );
+        }
+
         publishedFacts = await publishPerformanceFacts({
           dataset,
           runId,
-          mappingVersionId,
           requestedBy: input.requestedBy ?? null,
           windowFrom: input.from,
           windowTo: input.to,
           facts,
         });
+        await saveReconciliation(
+          runId,
+          "AGGREGATED_TO_PUBLISHED_FACTS",
+          facts.length,
+          publishedFacts,
+        );
       }
 
-      await saveReconciliation(runId, "SOURCE_TO_STAGING_ROWS", sourceRows, stagedRows);
-      await saveReconciliation(runId, "STAGING_TO_CLASSIFIED_ROWS", stagedRows, mappedRows + invalidRows);
-      if (input.mode === "publish") await saveReconciliation(runId, "AGGREGATED_TO_PUBLISHED_FACTS", facts.length, publishedFacts);
+      const status =
+        input.mode === "publish" ? "published" : "preview_complete";
+      await updateRun(runId, {
+        status,
+        sourceRows,
+        stagedRows,
+        mappedRows,
+        invalidRows,
+        publishedFacts,
+        errors,
+      });
 
-      const status = input.mode === "publish" ? "published" : "preview_complete";
-      await updateRun(runId, { status, sourceRows, stagedRows, mappedRows, invalidRows, publishedFacts, errors });
       if (input.mode === "publish") {
         await db.execute(
-          `INSERT INTO performance_ingestion_checkpoint (dataset_id, checkpoint_value, last_successful_run_id)
+          `INSERT INTO performance_ingestion_checkpoint
+             (dataset_id, checkpoint_value, last_successful_run_id)
            VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE checkpoint_value = VALUES(checkpoint_value),
-             last_successful_run_id = VALUES(last_successful_run_id), updated_at = NOW()`,
+           ON DUPLICATE KEY UPDATE
+             checkpoint_value = VALUES(checkpoint_value),
+             last_successful_run_id = VALUES(last_successful_run_id),
+             updated_at = NOW()`,
           [dataset.id, input.to, runId],
         );
       }
-      return { runId, mode: input.mode, status, sourceRows, stagedRows, mappedRows, invalidRows, publishedFacts, errors, issues: issues.slice(0, 200), sample };
+
+      return {
+        runId,
+        mode: input.mode,
+        status,
+        sourceRows,
+        stagedRows,
+        mappedRows,
+        invalidRows,
+        publishedFacts,
+        errors,
+        issues: issues.slice(0, 200),
+        sample,
+      };
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
-      await updateRun(runId, { status: "failed", sourceRows, stagedRows, mappedRows, invalidRows, publishedFacts, errors });
+      await updateRun(runId, {
+        status: "failed",
+        sourceRows,
+        stagedRows,
+        mappedRows,
+        invalidRows,
+        publishedFacts,
+        errors,
+      });
       throw error;
     }
-  },
-
-  async runDetail(runId: string): Promise<Record<string, unknown>> {
-    const [[runs], [validations], [reconciliations], [exceptions]] = await Promise.all([
-      db.execute<RowDataPacket[]>(`SELECT * FROM performance_ingestion_run WHERE id = ? LIMIT 1`, [runId]),
-      db.execute<RowDataPacket[]>(`SELECT * FROM performance_validation_result WHERE run_id = ? ORDER BY severity DESC, id ASC LIMIT 500`, [runId]),
-      db.execute<RowDataPacket[]>(`SELECT * FROM performance_reconciliation_result WHERE run_id = ? ORDER BY reconciliation_code`, [runId]),
-      db.execute<RowDataPacket[]>(`SELECT * FROM integration_mapping_exception WHERE integration_run_id = ? ORDER BY created_at ASC LIMIT 500`, [runId]),
-    ]);
-    if (!runs[0]) throw Object.assign(new Error("Ingestion run not found"), { statusCode: 404 });
-    return { run: runs[0], validations, reconciliations, mappingExceptions: exceptions };
   },
 };
