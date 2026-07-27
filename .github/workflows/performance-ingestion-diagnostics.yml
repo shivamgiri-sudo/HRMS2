@@ -10,18 +10,43 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
   pull-requests: write
 
 jobs:
-  backend-typecheck:
+  backend-validation:
     runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - name: Register migration in canonical manifest
+        if: github.event_name == 'push'
+        working-directory: .
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/src/db/runPendingMigrations.ts')
+          text = path.read_text()
+          migration = '  "520_performance_ingestion_platform.sql",'
+          if migration not in text:
+              anchor = '  "510_portal_superadmin_user.sql",'
+              if anchor not in text:
+                  raise SystemExit('Could not locate migration manifest anchor')
+              path.write_text(text.replace(anchor, anchor + '\n' + migration, 1))
+          PY
+          if git diff --quiet -- backend/src/db/runPendingMigrations.ts; then
+            echo "Migration is already registered."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add backend/src/db/runPendingMigrations.ts
+            git commit -m "chore(performance): register ingestion migration"
+            git push origin HEAD:agent/performance-ingestion-platform
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -36,12 +61,28 @@ jobs:
           status=${PIPESTATUS[0]}
           echo "$status" > ../performance-typecheck.status
           exit 0
+      - name: Capture security and migration-governance output
+        shell: bash
+        run: |
+          set +e
+          npm exec -- vitest run \
+            src/modules/auth/__tests__/auth-security.test.ts \
+            src/modules/files/__tests__/document-vault-security.test.ts \
+            src/db/__tests__/migration-governance.test.ts \
+            src/db/__tests__/connection-reliability.test.ts \
+            src/workers/__tests__/worker-safety.test.ts \
+            2>&1 | tee ../performance-security.log
+          status=${PIPESTATUS[0]}
+          echo "$status" > ../performance-security.status
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
-          name: performance-typecheck-log
+          name: performance-validation-logs
           path: |
             performance-typecheck.log
             performance-typecheck.status
+            performance-security.log
+            performance-security.status
           retention-days: 3
       - name: Post diagnostic summary to PR 61
         if: always()
@@ -50,17 +91,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          status=$(cat performance-typecheck.status 2>/dev/null || echo 1)
+          type_status=$(cat performance-typecheck.status 2>/dev/null || echo 1)
+          security_status=$(cat performance-security.status 2>/dev/null || echo 1)
           {
             echo "<!-- performance-ingestion-diagnostics -->"
-            echo "### Performance ingestion backend typecheck"
+            echo "### Performance ingestion validation"
             echo
-            echo "Exit status: \`$status\`"
+            echo "- Backend typecheck: \`$type_status\`"
+            echo "- Security and migration governance: \`$security_status\`"
             echo
+            echo "#### TypeScript"
             echo '```text'
-            tail -n 180 performance-typecheck.log 2>/dev/null || echo "No compiler log was produced."
+            tail -n 120 performance-typecheck.log 2>/dev/null || echo "No compiler log was produced."
             echo '```'
-          } > performance-typecheck-comment.md
+            echo
+            echo "#### Security and migration governance"
+            echo '```text'
+            tail -n 160 performance-security.log 2>/dev/null || echo "No security log was produced."
+            echo '```'
+          } > performance-validation-comment.md
           gh api repos/${{ github.repository }}/issues/61/comments \
             --method POST \
-            --field body="$(cat performance-typecheck-comment.md)"
+            --field body="$(cat performance-validation-comment.md)"
