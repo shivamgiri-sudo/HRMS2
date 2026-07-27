@@ -312,6 +312,9 @@ export async function getMyReportRequests(
   );
   const total = parseInt(String((countRows[0] as { total: unknown }).total ?? 0), 10);
 
+  // Use inline literal LIMIT/OFFSET (not parameterised) to avoid ER_WRONG_ARGUMENTS on some MySQL versions
+  const limitInt  = parseInt(String(safePageSize), 10);
+  const offsetInt = parseInt(String(offset), 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, request_reference, report_code, report_name_snapshot,
             requested_filters_json, official_email, status,
@@ -319,8 +322,8 @@ export async function getMyReportRequests(
      FROM report_request
      WHERE requested_by_user_id = ?
      ORDER BY requested_at DESC
-     LIMIT ? OFFSET ?`,
-    [userId, parseInt(String(safePageSize), 10), parseInt(String(offset), 10)]
+     LIMIT ${limitInt} OFFSET ${offsetInt}`,
+    [userId]
   );
 
   return {
