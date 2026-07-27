@@ -600,6 +600,8 @@ export const performanceIngestionService = {
           runId,
           mappingVersionId,
           requestedBy: input.requestedBy ?? null,
+          windowFrom: input.from,
+          windowTo: input.to,
           facts,
         });
       }
