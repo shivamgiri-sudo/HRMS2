@@ -1,0 +1,103 @@
+name: Performance Validation Diagnostics
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  validation-diagnostics:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run full backend suite
+        shell: bash
+        run: |
+          set +e
+          npm test 2>&1 | tee ../performance-full-tests.log
+          echo "${PIPESTATUS[0]}" > ../performance-full-tests.status
+          exit 0
+      - name: Run security subset
+        shell: bash
+        run: |
+          set +e
+          npm exec -- vitest run \
+            src/modules/auth/__tests__/auth-security.test.ts \
+            src/modules/files/__tests__/document-vault-security.test.ts \
+            src/db/__tests__/migration-governance.test.ts \
+            src/db/__tests__/connection-reliability.test.ts \
+            src/workers/__tests__/worker-safety.test.ts \
+            2>&1 | tee ../performance-security-tests.log
+          echo "${PIPESTATUS[0]}" > ../performance-security-tests.status
+          exit 0
+      - name: Extract concise failures
+        if: always()
+        working-directory: .
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def summarize(source: str, target: str):
+              raw = Path(source).read_text(errors='replace') if Path(source).exists() else ''
+              raw = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', raw)
+              lines = raw.splitlines()
+              keep = []
+              patterns = re.compile(
+                  r'(Failed Tests|FAIL\s|AssertionError|TypeError|ReferenceError|Error:|'
+                  r'Test Files|Tests\s|Duration|\u276f|expected|received|'
+                  r'\.test\.ts|\.spec\.ts|SQL files NOT registered|Manifest entries)',
+                  re.I,
+              )
+              for line in lines:
+                  if patterns.search(line):
+                      keep.append(line[:1600])
+              Path(target).write_text('\n'.join(keep[-240:]) or 'No concise failure lines found.')
+
+          summarize('performance-full-tests.log', 'performance-full-tests-summary.log')
+          summarize('performance-security-tests.log', 'performance-security-tests-summary.log')
+          PY
+      - name: Update PR diagnostic comment
+        if: always()
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          full_status=$(cat performance-full-tests.status 2>/dev/null || echo 1)
+          security_status=$(cat performance-security-tests.status 2>/dev/null || echo 1)
+          {
+            echo "<!-- performance-validation-diagnostics -->"
+            echo "### Performance platform validation diagnostics"
+            echo
+            echo "- Full backend suite: \`$full_status\`"
+            echo "- Security subset: \`$security_status\`"
+            echo
+            echo "#### Full backend suite"
+            echo '```text'
+            cat performance-full-tests-summary.log 2>/dev/null || true
+            echo '```'
+            echo
+            echo "#### Security subset"
+            echo '```text'
+            cat performance-security-tests-summary.log 2>/dev/null || true
+            echo '```'
+          } > performance-validation-comment.md
+          gh api repos/${{ github.repository }}/issues/comments/5090546380 \
+            --method PATCH \
+            --field body="$(cat performance-validation-comment.md)"
