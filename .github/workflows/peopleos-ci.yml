@@ -10,31 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  apply-typing-result-ui:
-    name: Apply typing result UI clarity
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout typing fix branch
-        uses: actions/checkout@v4
-        with:
-          ref: fix/typing-test-scoring-accuracy
-          fetch-depth: 0
-
-      - name: Apply guarded UI patch
-        run: python .github/scripts/apply-typing-result-ui.py
-
-      - name: Commit result UI
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/src/modules/ats-assessment/assessment.page.ts \
-                  backend/src/modules/ats-assessment/assessment.admin.page.ts
-          git commit -m "fix(assessment): show typing accuracy and completion separately"
-          git push origin HEAD:fix/typing-test-scoring-accuracy
-
   validate:
     name: Build, typecheck and test
     runs-on: ubuntu-latest
