@@ -11,7 +11,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  changed-module-tests:
+  full-backend-tests:
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -24,16 +24,13 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - name: Run changed performance module tests
+      - name: Run full backend test suite
         shell: bash
         run: |
           set +e
-          npm exec -- vitest run \
-            src/modules/performance-intelligence \
-            src/modules/performance-ingestion \
-            2>&1 | tee ../performance-module-tests.log
+          npm test 2>&1 | tee ../performance-full-tests.log
           status=${PIPESTATUS[0]}
-          echo "$status" > ../performance-module-tests.status
+          echo "$status" > ../performance-full-tests.status
           exit 0
       - name: Update validation diagnostic comment
         if: always()
@@ -42,17 +39,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          status=$(cat performance-module-tests.status 2>/dev/null || echo 1)
+          status=$(cat performance-full-tests.status 2>/dev/null || echo 1)
           {
-            echo "<!-- performance-module-test-diagnostics -->"
-            echo "### Performance module tests"
+            echo "<!-- performance-full-test-diagnostics -->"
+            echo "### Full backend test suite"
             echo
             echo "Exit status: \`$status\`"
             echo
             echo '```text'
-            tail -n 260 performance-module-tests.log 2>/dev/null || echo "No test log was produced."
+            tail -n 420 performance-full-tests.log 2>/dev/null || echo "No test log was produced."
             echo '```'
-          } > performance-module-test-comment.md
+          } > performance-full-test-comment.md
           gh api repos/${{ github.repository }}/issues/comments/5090546380 \
             --method PATCH \
-            --field body="$(cat performance-module-test-comment.md)"
+            --field body="$(cat performance-full-test-comment.md)"
