@@ -38,6 +38,26 @@ const BASE_URL                = process.env.BACKEND_URL ?? 'http://localhost:505
 
 let intervalTimer: NodeJS.Timeout | null = null;
 
+function isMissingReportTableError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && String((error as { code?: unknown }).code ?? '') === 'ER_NO_SUCH_TABLE';
+}
+
+async function reportGenerationTablesAvailable(): Promise<boolean> {
+  try {
+    await db.execute<RowDataPacket[]>(`SELECT id FROM report_request LIMIT 1`);
+    return true;
+  } catch (error) {
+    if (isMissingReportTableError(error)) {
+      console.warn(`[${WORKER_NAME}] report_request table missing - worker disabled until reporting schema is migrated`);
+      return false;
+    }
+    throw error;
+  }
+}
+
 // ── Sensitivity helpers ────────────────────────────────────────────────────────
 
 type SensitivityLevel = 'internal' | 'confidential' | 'restricted' | 'highly_restricted';
@@ -499,6 +519,9 @@ async function runGenerationWorker(): Promise<void> {
 }
 
 export async function startReportGenerationWorker(): Promise<void> {
+  if (!(await reportGenerationTablesAvailable())) {
+    return;
+  }
   console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 1000}s, chunk: ${CHUNK_SIZE})`);
   void runGenerationWorker();
   intervalTimer = setInterval(() => void runGenerationWorker(), INTERVAL_MS);

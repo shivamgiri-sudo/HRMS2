@@ -64,7 +64,7 @@ async function runOnboardingIncompleteReminders(): Promise<void> {
       // Recruiter inbox nudge
       if (row.recruiter_employee_id) {
         const [userRows] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM users WHERE employee_id = ? LIMIT 1`,
+          `SELECT user_id AS id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
           [row.recruiter_employee_id]
         );
         const userId = userRows[0]?.id as string | null;
@@ -147,12 +147,22 @@ async function runRequisitionApprovalNudge(): Promise<void> {
     try {
       // Notify all approver-role users for the branch
       const [approvers] = await db.execute<RowDataPacket[]>(
-        `SELECT u.id FROM users u
-         WHERE u.active_status = 1
-           AND u.role IN ('super_admin','hr','branch_head','management')
-           AND (u.branch_name = ? OR u.role IN ('super_admin','management'))
+        `SELECT DISTINCT ur.user_id AS id
+           FROM user_roles ur
+           LEFT JOIN employees e
+             ON e.user_id = ur.user_id
+            AND e.active_status = 1
+           LEFT JOIN branch_master b
+             ON b.id = e.branch_id
+         WHERE ur.active_status = 1
+           AND ur.role_key IN ('super_admin','hr','branch_head','management')
+           AND (
+             ur.role_key IN ('super_admin','management')
+             OR b.branch_name = ?
+             OR b.branch_code = ?
+           )
          LIMIT 20`,
-        [row.branch_name]
+        [row.branch_name, row.branch_name]
       );
 
       await Promise.allSettled(

@@ -140,6 +140,23 @@ jobs:
             exit 1
           fi
 
+          ensure_backend_pm2_processes() {
+            mkdir -p /var/www/HRMS2/backend/logs
+            if pm2 describe hrms2-backend >/dev/null 2>&1; then
+              pm2 delete hrms2-backend --no-color || true
+            fi
+            if pm2 describe hrms2-workers >/dev/null 2>&1; then
+              pm2 delete hrms2-workers --no-color || true
+            fi
+            (
+              cd "$DEPLOY_ROOT/backend"
+              NODE_ENV=production PORT=5055 WORKERS_PROCESS=external ENABLE_SCHEDULERS=false \
+                pm2 start dist/src/server.js --name hrms2-backend --cwd "$DEPLOY_ROOT/backend" --time
+              NODE_ENV=production ENABLE_SCHEDULERS=true \
+                pm2 start dist/src/workers/all-workers.js --name hrms2-workers --cwd "$DEPLOY_ROOT/backend" --time
+            )
+          }
+
           wait_for_backend_health() {
             for attempt in $(seq 1 30); do
               if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
@@ -162,7 +179,7 @@ jobs:
             if [[ -d "$BACKUP_DIR" ]]; then
               mv "$BACKUP_DIR" "$LIVE_DIR"
             fi
-            pm2 restart hrms2-backend --update-env --no-color || true
+            ensure_backend_pm2_processes || true
           }
 
           if [[ -d "$LIVE_DIR" ]]; then
@@ -173,7 +190,7 @@ jobs:
 
           mv "$STAGE_DIR" "$LIVE_DIR"
 
-          pm2 restart hrms2-backend --update-env --no-color
+          ensure_backend_pm2_processes
 
           if ! wait_for_backend_health; then
             echo "Backend health check failed, restoring previous dist"
@@ -205,6 +222,7 @@ jobs:
           fi
 
           pm2 status hrms2-backend --no-color
+          pm2 status hrms2-workers --no-color
           pm2 save --no-color
 
       - name: Deploy frontend dist atomically
@@ -229,6 +247,12 @@ jobs:
           mkdir -p "$STAGE_DIR"
           cp -a "$ARTIFACT"/. "$STAGE_DIR"/
 
+          stop_frontend_preview() {
+            if pm2 describe hrms2-frontend >/dev/null 2>&1; then
+              pm2 delete hrms2-frontend --no-color || true
+            fi
+          }
+
           rollback_frontend() {
             if [[ -d "$LIVE_DIR" ]]; then
               mv "$LIVE_DIR" "${LIVE_DIR}.failed-$STAMP"
@@ -236,8 +260,7 @@ jobs:
             if [[ -d "$BACKUP_DIR" ]]; then
               mv "$BACKUP_DIR" "$LIVE_DIR"
             fi
-            pm2 restart hrms2-frontend --update-env --no-color || true
-            sleep 3 || true
+            stop_frontend_preview
           }
 
           if [[ -d "$LIVE_DIR" ]]; then
@@ -248,22 +271,20 @@ jobs:
 
           mv "$STAGE_DIR" "$LIVE_DIR"
 
-          pm2 restart hrms2-frontend --update-env --no-color
-          sleep 3
+          stop_frontend_preview
 
-          if ! curl -fsSI http://127.0.0.1:8085/auth >/dev/null; then
+          if ! curl -fsSI -H "Host: mcnhrms.teammas.in" https://127.0.0.1/auth -k >/dev/null; then
             echo "Frontend auth route failed after deploy"
             rollback_frontend
             exit 1
           fi
 
-          if ! curl -fsSI http://127.0.0.1:8085/dashboard >/dev/null; then
+          if ! curl -fsSI -H "Host: mcnhrms.teammas.in" https://127.0.0.1/dashboard -k >/dev/null; then
             echo "Frontend dashboard route failed after deploy"
             rollback_frontend
             exit 1
           fi
 
-          pm2 status hrms2-frontend --no-color
           pm2 save --no-color
 
       - name: Deployment summary

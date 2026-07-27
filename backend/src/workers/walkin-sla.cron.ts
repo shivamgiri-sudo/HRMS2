@@ -49,13 +49,12 @@ async function checkSubmissionSla(): Promise<void> {
        COALESCE(c.role_applied, c.applied_for_process)    AS applied_role,
        COALESCE(qt.branch_name, c.branch_display_name)    AS branch_name,
        TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) AS mins_since_arrival,
-       u.id                                               AS recruiter_user_id,
+       emp.user_id                                        AS recruiter_user_id,
        rr.name                                            AS recruiter_name
      FROM ats_queue_token qt
      JOIN ats_candidate c ON c.id = qt.candidate_id
      LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
      LEFT JOIN employees emp ON emp.id = rr.employee_id
-     LEFT JOIN users u ON u.employee_id = emp.id
      WHERE qt.queue_status = 'in_interview'
        AND qt.interview_completed_at IS NULL
        AND TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) >= ?
@@ -105,13 +104,12 @@ async function checkPendingFeedback(): Promise<void> {
        COALESCE(c.role_applied, c.applied_for_process)    AS applied_role,
        COALESCE(qt.branch_name, c.branch_display_name)    AS branch_name,
        TIMESTAMPDIFF(MINUTE, qt.interview_completed_at, NOW()) AS mins_since_complete,
-       u.id                                               AS recruiter_user_id,
+       emp.user_id                                        AS recruiter_user_id,
        rr.name                                            AS recruiter_name
      FROM ats_queue_token qt
      JOIN ats_candidate c ON c.id = qt.candidate_id
      LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
      LEFT JOIN employees emp ON emp.id = rr.employee_id
-     LEFT JOIN users u ON u.employee_id = emp.id
      WHERE qt.queue_status = 'completed'
        AND qt.interview_completed_at IS NOT NULL
        AND c.candidate_status IN ('registered', 'in_process', 'walkin_registered')

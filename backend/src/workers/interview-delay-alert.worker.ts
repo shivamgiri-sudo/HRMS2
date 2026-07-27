@@ -149,12 +149,11 @@ async function findDelayedInterviews(): Promise<any[]> {
          rr.email                                        AS recruiter_email,
          rr.reporting_manager                            AS reporting_manager,
          TIMESTAMPDIFF(MINUTE, qt.called_at, NOW())      AS delay_minutes,
-         u.id                                            AS recruiter_user_id
+         emp.user_id                                     AS recruiter_user_id
        FROM ats_queue_token qt
        JOIN ats_candidate c ON c.id = qt.candidate_id
        LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
        LEFT JOIN employees emp ON emp.id = rr.employee_id
-       LEFT JOIN users u ON u.employee_id = emp.id
        WHERE qt.queue_status IN ('called', 'in_interview')
          AND qt.called_at IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, qt.called_at, NOW()) >= ?

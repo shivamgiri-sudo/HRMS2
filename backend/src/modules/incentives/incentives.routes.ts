@@ -513,9 +513,15 @@ incentivesRouter.post('/batches/:batchId/step-reject',
 incentivesRouter.get('/batches/:batchId/approval-steps',
   h(async (req: AuthenticatedRequest, res) => {
     const [steps] = await db.execute<RowDataPacket[]>(
-      `SELECT ias.*, u.full_name as actioned_by_name
+      `SELECT ias.*,
+              COALESCE(
+                NULLIF(actioned_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(actioned_emp.first_name, ''), ' ', COALESCE(actioned_emp.last_name, ''))), ''),
+                actioned_user.email
+              ) as actioned_by_name
        FROM incentive_approval_step ias
-       LEFT JOIN users u ON u.id = ias.approver_user_id
+       LEFT JOIN auth_user actioned_user ON actioned_user.id = ias.approver_user_id
+       LEFT JOIN employees actioned_emp ON actioned_emp.user_id = actioned_user.id AND actioned_emp.active_status = 1
        WHERE ias.batch_id = ?
        ORDER BY ias.step_number`,
       [req.params.batchId]
@@ -602,11 +608,16 @@ incentivesRouter.get('/register',
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ipr.*, iub.pay_month, im.incentive_name, im.incentive_code,
-              u.full_name as finalized_by_name
+              COALESCE(
+                NULLIF(finalized_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(finalized_emp.first_name, ''), ' ', COALESCE(finalized_emp.last_name, ''))), ''),
+                finalized_user.email
+              ) as finalized_by_name
        FROM incentive_payroll_register ipr
        JOIN incentive_upload_batch iub ON iub.id = ipr.batch_id
        JOIN incentive_master im ON im.id = iub.incentive_id
-       LEFT JOIN users u ON u.id = ipr.finalized_by
+       LEFT JOIN auth_user finalized_user ON finalized_user.id = ipr.finalized_by
+       LEFT JOIN employees finalized_emp ON finalized_emp.user_id = finalized_user.id AND finalized_emp.active_status = 1
        WHERE ${where}
        ORDER BY ipr.finalized_at DESC`,
       params

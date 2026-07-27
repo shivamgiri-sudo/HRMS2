@@ -11,6 +11,26 @@ const STALE_SENDING_MINUTES = 5;
 
 let intervalTimer: NodeJS.Timeout | null = null;
 
+function isMissingReportTableError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && String((error as { code?: unknown }).code ?? '') === 'ER_NO_SUCH_TABLE';
+}
+
+async function reportRecoveryTablesAvailable(): Promise<boolean> {
+  try {
+    await db.execute<RowDataPacket[]>(`SELECT id FROM report_request LIMIT 1`);
+    return true;
+  } catch (error) {
+    if (isMissingReportTableError(error)) {
+      console.warn(`[${WORKER_NAME}] reporting tables missing - worker disabled until reporting schema is migrated`);
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function runRecovery(): Promise<void> {
   let recoveredCount = 0;
   let expiredCount = 0;
@@ -198,6 +218,9 @@ async function runStaleRecovery(): Promise<void> {
 }
 
 export async function startReportStaleRecoveryWorker(): Promise<void> {
+  if (!(await reportRecoveryTablesAvailable())) {
+    return;
+  }
   console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 60000}m)`);
   void runStaleRecovery();
   intervalTimer = setInterval(() => void runStaleRecovery(), INTERVAL_MS);

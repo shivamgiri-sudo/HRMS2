@@ -108,14 +108,18 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
             b.branch_name, d.dept_name AS department_name,
             p.process_name, des.designation_name,
             rm.full_name AS reporting_manager_name,
-            u.full_name AS system_user_name
+            COALESCE(
+              NULLIF(e.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))), ''),
+              au.email
+            ) AS system_user_name
        FROM employees e
        LEFT JOIN branch_master      b   ON b.id   = e.branch_id
        LEFT JOIN department_master  d   ON d.id   = e.department_id
        LEFT JOIN process_master     p   ON p.id   = e.process_id
        LEFT JOIN designation_master des ON des.id = e.designation_id
        LEFT JOIN employees          rm  ON rm.id  = e.reporting_manager_id
-       LEFT JOIN users              u   ON u.id   = e.user_id
+       LEFT JOIN auth_user          au  ON au.id  = e.user_id
       WHERE e.id = ?
       LIMIT 1`,
     [empId]
@@ -131,17 +135,32 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
             c.created_at AS applied_at,
             ob.id AS onboarding_id, ob.status AS onboarding_status,
             ob.created_at AS onboarding_created_at, ob.updated_at AS onboarding_updated_at,
-            req_u.full_name AS onboarding_requested_by_name,
-            asgn_u.full_name AS onboarding_assigned_to_name,
+            COALESCE(
+              NULLIF(req_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(req_emp.first_name, ''), ' ', COALESCE(req_emp.last_name, ''))), ''),
+              req_u.email
+            ) AS onboarding_requested_by_name,
+            COALESCE(
+              NULLIF(asgn_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(asgn_emp.first_name, ''), ' ', COALESCE(asgn_emp.last_name, ''))), ''),
+              asgn_u.email
+            ) AS onboarding_assigned_to_name,
             off.date_of_joining AS offered_doj, off.offered_ctc, off.emp_type,
             off.created_at AS offer_created_at,
-            off_u.full_name AS offer_prepared_by_name
+            COALESCE(
+              NULLIF(off_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(off_emp.first_name, ''), ' ', COALESCE(off_emp.last_name, ''))), ''),
+              off_u.email
+            ) AS offer_prepared_by_name
        FROM ats_candidate c
        LEFT JOIN ats_onboarding_request ob  ON ob.candidate_id = c.id
-       LEFT JOIN users req_u                ON req_u.id = ob.requested_by
-       LEFT JOIN users asgn_u               ON asgn_u.id = ob.assigned_to
+       LEFT JOIN auth_user req_u            ON req_u.id = ob.requested_by
+       LEFT JOIN employees req_emp          ON req_emp.user_id = req_u.id AND req_emp.active_status = 1
+       LEFT JOIN auth_user asgn_u           ON asgn_u.id = ob.assigned_to
+       LEFT JOIN employees asgn_emp         ON asgn_emp.user_id = asgn_u.id AND asgn_emp.active_status = 1
        LEFT JOIN ats_employment_offer off   ON off.onboarding_request_id = ob.id
-       LEFT JOIN users off_u                ON off_u.id = off.prepared_by
+       LEFT JOIN auth_user off_u            ON off_u.id = off.prepared_by
+       LEFT JOIN employees off_emp          ON off_emp.user_id = off_u.id AND off_emp.active_status = 1
       WHERE c.converted_employee_id = ?
       LIMIT 1`,
     [empId]
@@ -153,11 +172,16 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
     `SELECT pr.id, pr.request_type, pr.task_code, pr.assigned_role,
             pr.status, pr.requested_at, pr.actioned_at,
             pr.evidence_note, pr.locked,
-            actor.full_name AS actioned_by_name,
+            COALESCE(
+              NULLIF(actor_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(actor_emp.first_name, ''), ' ', COALESCE(actor_emp.last_name, ''))), ''),
+              actor.email
+            ) AS actioned_by_name,
             pr.official_email, pr.domain_account, pr.asset_tag,
             pr.biometric_enrolled, pr.id_card_printed
        FROM it_provisioning_request pr
-       LEFT JOIN users actor ON actor.id = pr.actioned_by
+       LEFT JOIN auth_user actor ON actor.id = pr.actioned_by
+       LEFT JOIN employees actor_emp ON actor_emp.user_id = actor.id AND actor_emp.active_status = 1
       WHERE pr.employee_id = ?
       ORDER BY pr.requested_at ASC`,
     [empId]
@@ -173,11 +197,21 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
             er.admin_actioned_at, er.exit_confirmed_at,
             er.revoked_at, er.revoke_reason,
             er.initiated_by, er.initiated_by_user_id,
-            init_u.full_name AS initiated_by_name,
-            revoke_u.full_name AS revoked_by_name
+            COALESCE(
+              NULLIF(init_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(init_emp.first_name, ''), ' ', COALESCE(init_emp.last_name, ''))), ''),
+              init_u.email
+            ) AS initiated_by_name,
+            COALESCE(
+              NULLIF(revoke_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(revoke_emp.first_name, ''), ' ', COALESCE(revoke_emp.last_name, ''))), ''),
+              revoke_u.email
+            ) AS revoked_by_name
        FROM exit_request er
-       LEFT JOIN users init_u   ON init_u.id = er.initiated_by_user_id
-       LEFT JOIN users revoke_u ON revoke_u.id = er.revoked_by
+       LEFT JOIN auth_user init_u   ON init_u.id = er.initiated_by_user_id
+       LEFT JOIN employees init_emp ON init_emp.user_id = init_u.id AND init_emp.active_status = 1
+       LEFT JOIN auth_user revoke_u ON revoke_u.id = er.revoked_by
+       LEFT JOIN employees revoke_emp ON revoke_emp.user_id = revoke_u.id AND revoke_emp.active_status = 1
       WHERE er.employee_id = ?
       ORDER BY er.created_at DESC
       LIMIT 1`,
@@ -189,9 +223,15 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
   const [auditRows] = await db.execute<RowDataPacket[]>(
     `SELECT sal.action_type, sal.module_key, sal.change_summary,
             sal.acted_at, sal.ip_address,
-            actor.full_name AS actor_name, actor.email AS actor_email
+            COALESCE(
+              NULLIF(actor_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(actor_emp.first_name, ''), ' ', COALESCE(actor_emp.last_name, ''))), ''),
+              actor.email
+            ) AS actor_name,
+            actor.email AS actor_email
        FROM sensitive_action_log sal
-       LEFT JOIN users actor ON actor.id = sal.actor_user_id
+       LEFT JOIN auth_user actor ON actor.id = sal.actor_user_id
+       LEFT JOIN employees actor_emp ON actor_emp.user_id = actor.id AND actor_emp.active_status = 1
       WHERE sal.entity_id = ? AND sal.entity_type IN ('employee','user','exit_request','it_provisioning_request')
       ORDER BY sal.acted_at ASC
       LIMIT 500`,
@@ -202,9 +242,14 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
   const [journeyRows] = await db.execute<RowDataPacket[]>(
     `SELECT jl.event_type, jl.event_date, jl.description, jl.old_value, jl.new_value,
             jl.module, jl.metadata, jl.created_at,
-            actor.full_name AS triggered_by_name
+            COALESCE(
+              NULLIF(actor_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(actor_emp.first_name, ''), ' ', COALESCE(actor_emp.last_name, ''))), ''),
+              actor.email
+            ) AS triggered_by_name
        FROM employee_journey_log jl
-       LEFT JOIN users actor ON actor.id = jl.triggered_by
+       LEFT JOIN auth_user actor ON actor.id = jl.triggered_by
+       LEFT JOIN employees actor_emp ON actor_emp.user_id = actor.id AND actor_emp.active_status = 1
       WHERE jl.employee_id = ?
       ORDER BY jl.event_date ASC, jl.created_at ASC`,
     [empId]

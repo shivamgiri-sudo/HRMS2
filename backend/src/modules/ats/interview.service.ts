@@ -281,7 +281,7 @@ async function handleCandidateSelection(candidateId: string) {
       const empId = rosterRows[0]?.employee_id as string | null;
       if (!empId) return;
       const [userRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM users WHERE employee_id = ? LIMIT 1`,
+        `SELECT user_id AS id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
         [empId]
       );
       const userId = userRows[0]?.id as string | null;

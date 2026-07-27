@@ -145,19 +145,34 @@ employeeReactivationRouter.get("/reactivation/:id", async (req: AuthenticatedReq
       SELECT
         r.*,
         e.employee_code,
-        CONCAT(e.first_name, ' ', e.last_name) as employee_name,
-        b.name as branch_name,
-        cc.name as cost_centre_name,
-        CONCAT(u1.first_name, ' ', u1.last_name) as initiated_by_name,
-        CONCAT(u2.first_name, ' ', u2.last_name) as branch_head_name,
-        CONCAT(u3.first_name, ' ', u3.last_name) as hr_final_name
+        COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))) as employee_name,
+        b.branch_name as branch_name,
+        cc.cost_centre_name as cost_centre_name,
+        COALESCE(
+          NULLIF(initiator.full_name, ''),
+          NULLIF(TRIM(CONCAT(COALESCE(initiator.first_name, ''), ' ', COALESCE(initiator.last_name, ''))), ''),
+          init_user.email
+        ) as initiated_by_name,
+        COALESCE(
+          NULLIF(branch_head_actor.full_name, ''),
+          NULLIF(TRIM(CONCAT(COALESCE(branch_head_actor.first_name, ''), ' ', COALESCE(branch_head_actor.last_name, ''))), ''),
+          branch_head_user.email
+        ) as branch_head_name,
+        COALESCE(
+          NULLIF(hr_final_actor.full_name, ''),
+          NULLIF(TRIM(CONCAT(COALESCE(hr_final_actor.first_name, ''), ' ', COALESCE(hr_final_actor.last_name, ''))), ''),
+          hr_final_user.email
+        ) as hr_final_name
       FROM employee_reactivation_requests r
       JOIN employees e ON r.employee_id = e.id
-      LEFT JOIN branches b ON e.branch_id = b.id
-      LEFT JOIN cost_centres cc ON e.cost_centre_id = cc.id
-      LEFT JOIN users u1 ON r.initiated_by = u1.id
-      LEFT JOIN users u2 ON r.branch_head_actioned_by = u2.id
-      LEFT JOIN users u3 ON r.hr_final_actioned_by = u3.id
+      LEFT JOIN branch_master b ON e.branch_id = b.id
+      LEFT JOIN cost_centre_master cc ON e.cost_centre_id = cc.id
+      LEFT JOIN auth_user init_user ON r.initiated_by = init_user.id
+      LEFT JOIN employees initiator ON initiator.user_id = init_user.id AND initiator.active_status = 1
+      LEFT JOIN auth_user branch_head_user ON r.branch_head_actioned_by = branch_head_user.id
+      LEFT JOIN employees branch_head_actor ON branch_head_actor.user_id = branch_head_user.id AND branch_head_actor.active_status = 1
+      LEFT JOIN auth_user hr_final_user ON r.hr_final_actioned_by = hr_final_user.id
+      LEFT JOIN employees hr_final_actor ON hr_final_actor.user_id = hr_final_user.id AND hr_final_actor.active_status = 1
       WHERE r.id = ?
     `;
 

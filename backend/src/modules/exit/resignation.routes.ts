@@ -74,9 +74,15 @@ resignationRouter.get(
   requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute(
-      `SELECT rd.*, u.full_name AS discussed_by_name
+      `SELECT rd.*,
+              COALESCE(
+                NULLIF(discussed_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(discussed_emp.first_name, ''), ' ', COALESCE(discussed_emp.last_name, ''))), ''),
+                discussed_user.email
+              ) AS discussed_by_name
        FROM resignation_discussion rd
-       LEFT JOIN users u ON u.id = rd.discussed_by
+       LEFT JOIN auth_user discussed_user ON discussed_user.id = rd.discussed_by
+       LEFT JOIN employees discussed_emp ON discussed_emp.user_id = discussed_user.id AND discussed_emp.active_status = 1
        WHERE rd.exit_request_id = ?
        ORDER BY rd.discussion_date DESC, rd.created_at DESC`,
       [req.params.exitId]
@@ -203,9 +209,15 @@ resignationRouter.get(
   requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute(
-      `SELECT ro.*, u.full_name AS offered_by_name
+      `SELECT ro.*,
+              COALESCE(
+                NULLIF(offered_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(offered_emp.first_name, ''), ' ', COALESCE(offered_emp.last_name, ''))), ''),
+                offered_user.email
+              ) AS offered_by_name
        FROM retention_offer ro
-       LEFT JOIN users u ON u.id = ro.offered_by
+       LEFT JOIN auth_user offered_user ON offered_user.id = ro.offered_by
+       LEFT JOIN employees offered_emp ON offered_emp.user_id = offered_user.id AND offered_emp.active_status = 1
        WHERE ro.exit_request_id = ?
        ORDER BY ro.offered_at DESC`,
       [req.params.exitId]
@@ -345,9 +357,15 @@ resignationRouter.get(
   requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute(
-      `SELECT era.*, u.full_name AS performed_by_name
+      `SELECT era.*,
+              COALESCE(
+                NULLIF(performed_emp.full_name, ''),
+                NULLIF(TRIM(CONCAT(COALESCE(performed_emp.first_name, ''), ' ', COALESCE(performed_emp.last_name, ''))), ''),
+                performed_user.email
+              ) AS performed_by_name
        FROM exit_retention_action era
-       LEFT JOIN users u ON u.id = era.performed_by
+       LEFT JOIN auth_user performed_user ON performed_user.id = era.performed_by
+       LEFT JOIN employees performed_emp ON performed_emp.user_id = performed_user.id AND performed_emp.active_status = 1
        WHERE era.exit_request_id = ?
        ORDER BY era.performed_at ASC`,
       [req.params.exitId]

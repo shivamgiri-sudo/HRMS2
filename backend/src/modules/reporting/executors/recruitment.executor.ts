@@ -284,13 +284,19 @@ export async function recruiterProductivity(
 
   const base = `
     SELECT c.assigned_recruiter_id,
-           COALESCE(u.full_name, c.assigned_recruiter_name) AS recruiter_name,
+           COALESCE(
+             NULLIF(recruiter_emp.full_name, ''),
+             NULLIF(TRIM(CONCAT(COALESCE(recruiter_emp.first_name, ''), ' ', COALESCE(recruiter_emp.last_name, ''))), ''),
+             recruiter_user.email,
+             c.assigned_recruiter_name
+           ) AS recruiter_name,
            COUNT(*) AS total_candidates,
            SUM(CASE WHEN c.application_status = 'selected'    THEN 1 ELSE 0 END) AS offers_made,
            SUM(CASE WHEN c.joining_date IS NOT NULL            THEN 1 ELSE 0 END) AS joinings
       FROM ats_candidate c
       LEFT JOIN job_posting jd ON jd.id = c.job_id
-      LEFT JOIN users u            ON u.id  = c.assigned_recruiter_id
+      LEFT JOIN auth_user recruiter_user ON recruiter_user.id = c.assigned_recruiter_id
+      LEFT JOIN employees recruiter_emp ON recruiter_emp.user_id = recruiter_user.id AND recruiter_emp.active_status = 1
      WHERE ${clauses.join(" AND ")}
      GROUP BY c.assigned_recruiter_id, recruiter_name
      ORDER BY total_candidates DESC`;
