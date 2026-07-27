@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   backend-typecheck:
@@ -38,3 +40,24 @@ jobs:
             performance-typecheck.log
             performance-typecheck.status
           retention-days: 3
+      - name: Post diagnostic summary to PR 61
+        if: always()
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(cat performance-typecheck.status 2>/dev/null || echo 1)
+          {
+            echo "<!-- performance-ingestion-diagnostics -->"
+            echo "### Performance ingestion backend typecheck"
+            echo
+            echo "Exit status: \`$status\`"
+            echo
+            echo '```text'
+            tail -n 180 performance-typecheck.log 2>/dev/null || echo "No compiler log was produced."
+            echo '```'
+          } > performance-typecheck-comment.md
+          gh api repos/${{ github.repository }}/issues/61/comments \
+            --method POST \
+            --field body="$(cat performance-typecheck-comment.md)"
