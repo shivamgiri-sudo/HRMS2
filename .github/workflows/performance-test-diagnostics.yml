@@ -1,0 +1,58 @@
+name: Performance Test Diagnostics
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  changed-module-tests:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run changed performance module tests
+        shell: bash
+        run: |
+          set +e
+          npm exec -- vitest run \
+            src/modules/performance-intelligence \
+            src/modules/performance-ingestion \
+            2>&1 | tee ../performance-module-tests.log
+          status=${PIPESTATUS[0]}
+          echo "$status" > ../performance-module-tests.status
+          exit 0
+      - name: Post changed-module test summary
+        if: always()
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          status=$(cat performance-module-tests.status 2>/dev/null || echo 1)
+          {
+            echo "<!-- performance-module-test-diagnostics -->"
+            echo "### Performance module tests"
+            echo
+            echo "Exit status: \`$status\`"
+            echo
+            echo '```text'
+            tail -n 260 performance-module-tests.log 2>/dev/null || echo "No test log was produced."
+            echo '```'
+          } > performance-module-test-comment.md
+          gh api repos/${{ github.repository }}/issues/61/comments \
+            --method POST \
+            --field body="$(cat performance-module-test-comment.md)"
