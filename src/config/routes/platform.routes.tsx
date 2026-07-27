@@ -189,12 +189,12 @@ export const platformRouteElements = (
       <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
 
       {/* Communication */}
-      <Route path="/communication/templates"     element={<ProtectedRoute roles={['admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />
+      <Route path="/communication/templates"     element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />
       <Route path="/settings/email-templates/bulk-import" element={<ProtectedRoute roles={['admin','super_admin']}><Suspense fallback={<PageLoader />}><NativeEmailTemplateBulkImport /></Suspense></ProtectedRoute>} />
-      <Route path="/communication/dispatch"      element={<ProtectedRoute roles={['admin','hr']}><NativeDispatchCenter /></ProtectedRoute>} />
-      <Route path="/communication/history"       element={<ProtectedRoute roles={['admin','hr']}><NativeDispatchHistory /></ProtectedRoute>} />
+      <Route path="/communication/dispatch"      element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeDispatchCenter /></ProtectedRoute>} />
+      <Route path="/communication/history"       element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeDispatchHistory /></ProtectedRoute>} />
       <Route path="/communication/preferences"   element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
-      <Route path="/settings/communication-config" element={<ProtectedRoute roles={['admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
-      <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
+      <Route path="/settings/communication-config" element={<ProtectedRoute roles={['super_admin','admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
+      <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['super_admin','admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
   </>
 );

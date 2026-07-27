@@ -5,12 +5,15 @@ import { getNcosecPool } from "../../db/ncosecDb.js";
 import { env } from "../../config/env.js";
 import { nowIST } from "../../shared/timezone.js";
 import { cosecSyncService } from "./cosec-sync.service.js";
+import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
 
 type IssueType =
   | "unmapped_cosec_user"
+  | "inactive_cosec_user_activity"
   | "missing_ibd"
   | "zero_minute_attendance"
   | "missing_punch_with_usable_source"
+  | "dialler_source_without_evidence"
   | "missing_adr";
 
 type ReconciliationIssue = {
@@ -53,12 +56,6 @@ function issueKey(issue: ReconciliationIssue): string {
     issue.employeeCode ?? "",
     issue.cosecUserId ?? "",
   ].join("__");
-}
-
-function employeeCandidates(row: any): string[] {
-  return [row.cosec_user_id, row.biometric_code, row.employee_code]
-    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "")
-    .map((value) => String(value).trim());
 }
 
 async function pullSourceGroups(from: string, to: string) {
@@ -160,19 +157,22 @@ export const attendanceReconciliationService = {
     const sourceGroups = await pullSourceGroups(options.from, options.to);
     const usableSource = sourceGroups.filter((row) => row.totalPunches > 1 && row.workingMinutes > 2);
 
+    const [excludedRows] = await db.query<RowDataPacket[]>(
+      `SELECT cosec_user_id
+         FROM attendance_reconciliation_cosec_exclusion
+        WHERE active_status = 1`,
+    );
+
     const [employeeRows] = await db.query<RowDataPacket[]>(
-      `SELECT e.id AS employee_id, e.employee_code, e.biometric_code, ebe.cosec_user_id
+      `SELECT e.id AS employee_id, e.employee_code, e.biometric_code, e.active_status, e.employment_status, ebe.cosec_user_id
          FROM employees e
          LEFT JOIN employee_biometric_enrollment ebe
-           ON ebe.employee_id = e.id AND ebe.is_active = 1
-        WHERE e.active_status = 1`,
+           ON ebe.employee_id = e.id`,
     );
-    const employeeBySourceUser = new Map<string, any>();
-    for (const row of employeeRows as any[]) {
-      for (const candidate of employeeCandidates(row)) {
-        if (!employeeBySourceUser.has(candidate)) employeeBySourceUser.set(candidate, row);
-      }
-    }
+    const sourceMaps = buildSourceUserMaps(
+      employeeRows as any[],
+      (excludedRows as any[]).map((row) => String(row.cosec_user_id ?? "")),
+    );
 
     const [ibdRows] = await db.query<RowDataPacket[]>(
       `SELECT employee_code, DATE_FORMAT(activity_date, '%Y-%m-%d') AS record_date,
@@ -186,7 +186,8 @@ export const attendanceReconciliationService = {
 
     const [adrRows] = await db.query<RowDataPacket[]>(
       `SELECT employee_id, DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
-              attendance_status, biometric_minutes, is_locked, mismatch_flag
+              attendance_status, attendance_source, source_system,
+              raw_minutes, dialler_minutes, biometric_minutes, is_locked, mismatch_flag
          FROM attendance_daily_record
         WHERE record_date BETWEEN ? AND ?`,
       [options.from, options.to],
@@ -194,10 +195,53 @@ export const attendanceReconciliationService = {
     const adrByEmployeeDate = new Map<string, any>();
     for (const row of adrRows as any[]) adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 
+    const [aprRows] = await db.query<RowDataPacket[]>(
+      `SELECT e.employee_code, DATE_FORMAT(a.ReportDate, '%Y-%m-%d') AS record_date,
+              ROUND(SUM(TIME_TO_SEC(a.Net_Login)) / 60) AS apr_minutes
+         FROM apr a
+         JOIN employees e ON e.employee_code = a.UserID
+        WHERE a.ReportDate BETWEEN ? AND ?
+        GROUP BY e.employee_code, DATE_FORMAT(a.ReportDate, '%Y-%m-%d')`,
+      [options.from, options.to],
+    );
+    const aprByEmployeeDate = new Map<string, any>();
+    for (const row of aprRows as any[]) aprByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
+
+    const [diallerRows] = await db.query<RowDataPacket[]>(
+      `SELECT employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS record_date,
+              COALESCE(SUM(login_minutes), 0) AS dialler_minutes
+         FROM dialer_session_log
+        WHERE session_date BETWEEN ? AND ?
+        GROUP BY employee_id, DATE_FORMAT(session_date, '%Y-%m-%d')`,
+      [options.from, options.to],
+    );
+    const diallerByEmployeeDate = new Map<string, any>();
+    for (const row of diallerRows as any[]) diallerByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
+
     const issues: ReconciliationIssue[] = [];
     for (const source of usableSource) {
-      const employee = employeeBySourceUser.get(source.cosecUserId);
-      if (!employee) {
+      const sourceUser = classifySourceUser(source.cosecUserId, sourceMaps);
+      if (sourceUser.kind === "excluded") continue;
+      if (sourceUser.kind === "inactive") {
+        issues.push({
+          issueDate: source.punchDate,
+          employeeId: sourceUser.employee.employee_id ?? null,
+          employeeCode: sourceUser.employee.employee_code ?? null,
+          cosecUserId: source.cosecUserId,
+          issueType: "inactive_cosec_user_activity",
+          severity: "warning",
+          sourceMinutes: source.workingMinutes,
+          payload: {
+            employmentStatus: sourceUser.employee.employment_status ?? null,
+            activeStatus: Number(sourceUser.employee.active_status ?? 0),
+            firstPunch: source.firstPunch,
+            lastPunch: source.lastPunch,
+            totalPunches: source.totalPunches,
+          },
+        });
+        continue;
+      }
+      if (sourceUser.kind === "unmapped") {
         issues.push({
           issueDate: source.punchDate,
           cosecUserId: source.cosecUserId,
@@ -208,9 +252,12 @@ export const attendanceReconciliationService = {
         });
         continue;
       }
+      const employee = sourceUser.employee;
 
       const ibd = ibdByEmployeeDate.get(`${employee.employee_code}__${source.punchDate}`);
       const adr = adrByEmployeeDate.get(`${employee.employee_id}__${source.punchDate}`);
+      const apr = aprByEmployeeDate.get(`${employee.employee_code}__${source.punchDate}`);
+      const dialler = diallerByEmployeeDate.get(`${employee.employee_id}__${source.punchDate}`);
       if (!ibd) {
         issues.push({
           issueDate: source.punchDate,
@@ -253,6 +300,40 @@ export const attendanceReconciliationService = {
           hrmsMinutes: adrMinutes,
           adrStatus: adr.attendance_status,
           payload: source,
+        });
+      }
+
+      const aprMinutes = Number(apr?.apr_minutes ?? 0);
+      const diallerMinutes = Number(dialler?.dialler_minutes ?? 0);
+      if (
+        adr?.attendance_source === "dialler"
+        && source.workingMinutes > 2
+        && Number(adr?.biometric_minutes ?? 0) > 0
+        && Number(adr?.raw_minutes ?? 0) === 0
+        && aprMinutes === 0
+        && diallerMinutes === 0
+      ) {
+        issues.push({
+          issueDate: source.punchDate,
+          employeeId: employee.employee_id,
+          employeeCode: employee.employee_code,
+          cosecUserId: source.cosecUserId,
+          issueType: "dialler_source_without_evidence",
+          severity: "blocker",
+          sourceMinutes: source.workingMinutes,
+          hrmsMinutes: Number(adr?.raw_minutes ?? 0),
+          adrStatus: adr?.attendance_status ?? null,
+          payload: {
+            adrSource: adr?.attendance_source ?? null,
+            adrSourceSystem: adr?.source_system ?? null,
+            adrDiallerMinutes: Number(adr?.dialler_minutes ?? 0),
+            adrBiometricMinutes: Number(adr?.biometric_minutes ?? 0),
+            aprMinutes,
+            diallerMinutes,
+            firstPunch: source.firstPunch,
+            lastPunch: source.lastPunch,
+            totalPunches: source.totalPunches,
+          },
         });
       }
     }

@@ -56,7 +56,7 @@ export const workforceRouteElements = (
       <Route path="/attendance/billing-config"  element={<ProtectedRoute><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
-      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['admin','hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
+      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={
         <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm']}>
           <AdminAttendanceView />
@@ -68,7 +68,7 @@ export const workforceRouteElements = (
       <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />
       <Route path="/leave/requests"  element={<Navigate to="/leaves" replace />} />
       <Route path="/leave-types"  element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
-      <Route path="/maternity-leave" element={<ProtectedRoute roles={['admin','hr']}><NativeMaternityLeave /></ProtectedRoute>} />
+      <Route path="/maternity-leave" element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeMaternityLeave /></ProtectedRoute>} />
 
       {/* WFM / Roster */}
       <Route path="/wfm/roster"        element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />

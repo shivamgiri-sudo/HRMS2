@@ -7,7 +7,16 @@ import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { templateService } from "./template.service.js";
 import { dispatchService } from "./dispatch.service.js";
 import { notificationPreferencesService } from "./notification-preferences.service.js";
-import type { Channel, DispatchLogFilters, DispatchStatus, TemplateCategory, TemplateFilters } from "./communication.types.js";
+import { providerConfigService } from "./provider-config.service.js";
+import { providerFactory } from "./providers/provider.factory.js";
+import type {
+  Channel,
+  DispatchLogFilters,
+  DispatchStatus,
+  SaveProviderConfigDTO,
+  TemplateCategory,
+  TemplateFilters,
+} from "./communication.types.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -16,6 +25,96 @@ const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =
   (req: Request, res: Response, next: NextFunction) => {
     void fn(req as AuthenticatedRequest, res).catch(next);
   };
+
+function parseChannel(value: unknown): Channel | null {
+  return value === "email" || value === "sms" || value === "whatsapp" ? value : null;
+}
+
+function buildTestPayload(channel: Channel) {
+  const stamp = new Date().toISOString();
+  if (channel === "email") {
+    return {
+      subject: "MAS HRMS communication provider test",
+      body: `<p>This is a test email from MAS HRMS.</p><p>Generated at ${stamp}.</p>`,
+    };
+  }
+  if (channel === "sms") {
+    return { subject: "", body: `MAS HRMS SMS test at ${stamp}` };
+  }
+  return { subject: "", body: `MAS HRMS WhatsApp test at ${stamp}` };
+}
+
+router.get("/config", requireRole("admin", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const data = await providerConfigService.listAll();
+  return res.json({ success: true, data });
+}));
+
+router.get("/config/:channel", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  const { config } = await providerConfigService.getWithSecrets(channel);
+  return res.json({ success: true, data: config });
+}));
+
+router.put("/config/:channel", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  const userId = req.authUser?.id;
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  await providerConfigService.save(channel, req.body as SaveProviderConfigDTO, userId);
+  providerFactory.clearCache();
+  return res.json({ success: true, message: `${channel} configuration saved` });
+}));
+
+router.post("/config/:channel/enable", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  const userId = req.authUser?.id;
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  await providerConfigService.setEnabled(channel, true, userId);
+  providerFactory.clearCache();
+  return res.json({ success: true, message: `${channel} enabled` });
+}));
+
+router.post("/config/:channel/disable", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  const userId = req.authUser?.id;
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+  await providerConfigService.setEnabled(channel, false, userId);
+  providerFactory.clearCache();
+  return res.json({ success: true, message: `${channel} disabled` });
+}));
+
+router.post("/config/:channel/test", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const channel = parseChannel(req.params.channel);
+  const userId = req.authUser?.id;
+  if (!channel) return res.status(400).json({ success: false, error: "Invalid channel" });
+  if (!userId) return res.status(401).json({ success: false, error: "Unauthorized" });
+
+  const testRecipient = String(req.body?.test_recipient ?? "").trim();
+  if (!testRecipient) {
+    return res.status(400).json({ success: false, error: "test_recipient is required" });
+  }
+
+  const { config, secrets } = await providerConfigService.getWithSecrets(channel);
+  providerFactory.clearCache();
+  const provider = await providerFactory.getProviderAsync(channel, {
+    provider_type: config.provider_type,
+    config: config.config_json as Record<string, unknown>,
+    secrets,
+  });
+
+  if (!provider.validateRecipient(testRecipient)) {
+    await providerConfigService.saveTestResult(channel, false, "Invalid test recipient format", userId);
+    return res.status(400).json({ success: false, error: "Invalid test recipient format", provider: provider.getName() });
+  }
+
+  const payload = buildTestPayload(channel);
+  const result = await provider.send(testRecipient, payload.subject, payload.body);
+  await providerConfigService.saveTestResult(channel, result.success, result.error ?? null, userId);
+  return res.json({ success: result.success, error: result.error, provider: provider.getName(), channel });
+}));
 
 // GET /api/communication/preferences — get employee notification preferences
 router.get("/preferences", h(async (req: AuthenticatedRequest, res: Response) => {

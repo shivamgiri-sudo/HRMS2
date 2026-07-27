@@ -95,6 +95,48 @@ router.get("/filter-options", h(async (_req: Request, res: Response) => {
   });
 }));
 
+router.get("/", h(async (_req: Request, res: Response) => {
+  const [
+    branches,
+    departments,
+    designations,
+    processes,
+    lobs,
+    locations,
+    policies,
+    costCentres,
+    gradeBands,
+    campaigns,
+  ] = await Promise.all([
+    branchService.list(),
+    departmentService.list(),
+    designationService.list(),
+    processService.list(),
+    lobService.list(),
+    locationService.list(),
+    policyService.list(),
+    costCentreService.list(),
+    gradeBandService.list(),
+    campaignService.list(),
+  ]);
+
+  return res.json({
+    success: true,
+    data: {
+      branches,
+      departments,
+      designations,
+      processes,
+      lobs,
+      locations,
+      policies,
+      cost_centres: costCentres,
+      grade_bands: gradeBands,
+      campaigns,
+    },
+  });
+}));
+
 // Call Centre Code: register GET before buildCrud to avoid /:id swallowing the static segment
 router.get("/branches/cc-code-map",
   requireAuth,

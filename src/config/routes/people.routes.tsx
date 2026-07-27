@@ -104,7 +104,7 @@ export const peopleRouteElements = (
 
       {/* Team */}
       <Route path="/my-team" element={
-        <ProtectedRoute roles={['manager','process_manager','tl','team_leader','assistant_manager','branch_head','admin','hr']}>
+        <ProtectedRoute roles={['super_admin','manager','process_manager','tl','team_leader','assistant_manager','branch_head','admin','hr']}>
           <MyTeamPage />
         </ProtectedRoute>
       } />

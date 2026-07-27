@@ -422,4 +422,64 @@ describe("attendance engine night-shift process flow", () => {
     expect(result.source).toBe("dialler");
     expect(result.sourceSystem).not.toBe("cosec_policy_absence");
   });
+
+  it("does not let a global dialler rule override biometric attendance for non-APR employees", async () => {
+    dbExecute
+      .mockResolvedValueOnce([[
+        {
+          employee_code: "MAS47814",
+          designation_id: "desig-manager",
+          department_id: "dept-quality",
+          process_id: "proc-1",
+          branch_id: "branch-1",
+          cost_centre_id: "cc-1",
+          date_of_joining: "2026-01-01",
+          reporting_manager_id: "mgr-1",
+          dept_name: "training and quality",
+          designation_name: "manager",
+        },
+      ], []])
+      .mockResolvedValueOnce([[{
+        shift_start_time: null,
+        shift_end_time: null,
+      }], []])
+      .mockResolvedValueOnce([[{
+        id: "arc-apr-ops-exec",
+        rule_name: "Operations Executive APR Rule",
+        scope_type: "global",
+        designation_id: null,
+        process_id: null,
+        branch_id: null,
+        attendance_source: "dialler",
+        full_day_minutes: 480,
+        half_day_minutes: 240,
+        grace_minutes: 0,
+        effective_from: "2026-06-13",
+        effective_to: null,
+        active_status: 1,
+      }], []])
+      .mockResolvedValueOnce([[{ cnt: 1 }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{
+        minutes: 557,
+        source_system: "integration:cosec_sqlserver",
+        source_reference: "ibd-1",
+      }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []]);
+
+    const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
+
+    expect(result.source).toBe("biometric");
+    expect(result.sourceSystem).toBe("integration:cosec_sqlserver");
+    expect(result.rawMinutes).toBe(557);
+    expect(result.biometricMinutes).toBe(557);
+    expect(result.diallerMinutes).toBeNull();
+    expect(result.status).toBe("present");
+    expect(result.mismatchFlag).toBe(0);
+  });
 });

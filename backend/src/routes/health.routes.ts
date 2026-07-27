@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { pingDb } from "../db/mysql.js";
-import { getMigrationHealth } from "../db/runPendingMigrations.js";
+import { getMigrationHealth, verifySchemaVersion } from "../db/runPendingMigrations.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import { requireRole } from "../middleware/requireRole.js";
 
@@ -15,6 +15,8 @@ interface ReadinessCheck {
   owner: string;
 }
 
+type SchemaStatus = Awaited<ReturnType<typeof verifySchemaVersion>>;
+
 async function getDatabaseStatus(): Promise<"ok" | "error"> {
   try {
     await pingDb();
@@ -24,9 +26,7 @@ async function getDatabaseStatus(): Promise<"ok" | "error"> {
   }
 }
 
-function buildReadinessChecks(dbStatus: "ok" | "error"): ReadinessCheck[] {
-  const migrations = getMigrationHealth();
-
+function buildReadinessChecks(dbStatus: "ok" | "error", schemaStatus: SchemaStatus): ReadinessCheck[] {
   return [
     {
       area: "database",
@@ -36,12 +36,10 @@ function buildReadinessChecks(dbStatus: "ok" | "error"): ReadinessCheck[] {
     },
     {
       area: "migrations",
-      status: migrations.status === "failed" ? "error" : migrations.skipped.length > 0 ? "warning" : "ok",
-      message: migrations.status === "failed"
-        ? "One or more migrations failed. Production should not start with incomplete schema."
-        : migrations.skipped.length > 0
-          ? "Some migrations were skipped. Confirm this is expected for the current database."
-          : "Migration runner completed without reported failures.",
+      status: schemaStatus.valid ? "ok" : "error",
+      message: schemaStatus.valid
+        ? "Schema verification confirms all required migrations are applied."
+        : `Schema verification found ${schemaStatus.pendingCount} pending migration(s).`,
       owner: "Backend / DBA",
     },
     {
@@ -89,8 +87,8 @@ healthRouter.get("/live", (_req, res) => {
  */
 healthRouter.get("/", async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
-  const migrations = getMigrationHealth();
-  const healthy = dbStatus === "ok" && migrations.status !== "failed";
+  const schemaStatus = await verifySchemaVersion();
+  const healthy = dbStatus === "ok" && schemaStatus.valid;
 
   // SECURITY: Do not expose migration failure details to unauthenticated users
   return res.status(healthy ? 200 : 503).json({
@@ -126,8 +124,9 @@ healthRouter.get("/ready", async (_req, res) => {
  */
 healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
   const dbStatus = await getDatabaseStatus();
+  const schemaStatus = await verifySchemaVersion();
   const migrations = getMigrationHealth();
-  const checks = buildReadinessChecks(dbStatus);
+  const checks = buildReadinessChecks(dbStatus, schemaStatus);
   const hasError = checks.some((check) => check.status === "error");
   const hasWarning = checks.some((check) => check.status === "warning");
 
@@ -141,9 +140,13 @@ healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"),
       warnings: checks.filter((check) => check.status === "warning").length,
       ok: checks.filter((check) => check.status === "ok").length,
       migrations: {
-        status: migrations.status,
-        applied_count: migrations.applied.length,
-        skipped_count: migrations.skipped.length,
+        status: schemaStatus.valid ? "ok" : "failed",
+        applied_count: schemaStatus.appliedCount,
+        pending_count: schemaStatus.pendingCount,
+        pending_files: schemaStatus.pendingFiles,
+        runner_status: migrations.status,
+        runner_applied_count: migrations.applied.length,
+        runner_skipped_count: migrations.skipped.length,
         failed_count: migrations.failed.length,
         // Only include failure details in protected endpoint
         failed: migrations.failed,

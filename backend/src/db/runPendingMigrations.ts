@@ -392,6 +392,8 @@ const MIGRATION_MANIFEST: string[] = [
   "536_attendance_reconciliation_apr_issue_types.sql", // APR payroll attendance reconciliation issue types
   "537_payroll_attendance_conflict_review.sql", // Payroll attendance control tower review ledger
   "538_route_page_access_backfill.sql",         // Backfill route-mapped page codes and grants
+  "542_attendance_reconciliation_source_conflict_issue_type.sql", // Reconciliation issue type for dialler rows without source evidence
+  "543_cosec_exclusion_and_inactive_issue_type.sql", // Ignore intentional COSEC identities and separate inactive punch activity
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   ];
@@ -775,6 +777,7 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
     );
 
     // Ensure schema_migrations tracking table exists with governance columns
+    let schemaMigrationsCapabilities: SchemaMigrationsCapabilities;
     {
       const conn = await mysql.createConnection(connConfig);
       try {
@@ -806,6 +809,7 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
         `).catch(() => {
           // MariaDB/older MySQL may not support ADD COLUMN IF NOT EXISTS
         });
+        schemaMigrationsCapabilities = await getSchemaMigrationsCapabilities(conn, env.DB_NAME);
       } finally {
         await conn.end();
       }
@@ -827,7 +831,7 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
       const conn = await mysql.createConnection(connConfig);
       try {
         const [rows] = await conn.query<RowDataPacket[]>(
-          "SELECT filename, checksum_sha256 FROM schema_migrations WHERE success = 1"
+          buildSchemaMigrationsAppliedRowsQuery(schemaMigrationsCapabilities!)
         );
         for (const row of rows as RowDataPacket[]) {
           appliedMap.set(String(row.filename), row.checksum_sha256 ?? null);
@@ -899,10 +903,20 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
 
         // Record as applied with governance metadata
         await conn.query(
-          `INSERT INTO schema_migrations
-           (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-          [file, currentChecksum, environment, startTime, endTime, durationMs, executor]
+          buildSchemaMigrationsInsertStatement(schemaMigrationsCapabilities!, { success: true }),
+          buildSchemaMigrationsInsertParams(
+            schemaMigrationsCapabilities!,
+            {
+              filename: file,
+              checksumSha256: currentChecksum,
+              environment,
+              startTime,
+              endTime,
+              durationMs,
+              executor,
+            },
+            { success: true }
+          )
         );
         migrationHealth.applied.push(file);
         console.log(`[migration] applied: ${file} (${durationMs}ms)`);
@@ -922,11 +936,21 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
           const conn2 = await mysql.createConnection(connConfig);
           try {
             await conn2.query(
-              `INSERT INTO schema_migrations
-               (filename, checksum_sha256, environment, start_time, end_time, duration_ms, executor, success, error_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-               ON DUPLICATE KEY UPDATE success = 0, error_message = VALUES(error_message), end_time = VALUES(end_time)`,
-              [file, currentChecksum, environment, startTime, endTime, durationMs, executor, message]
+              buildSchemaMigrationsInsertStatement(schemaMigrationsCapabilities!, { success: false }),
+              buildSchemaMigrationsInsertParams(
+                schemaMigrationsCapabilities!,
+                {
+                  filename: file,
+                  checksumSha256: currentChecksum,
+                  environment,
+                  startTime,
+                  endTime,
+                  durationMs,
+                  executor,
+                  errorMessage: message,
+                },
+                { success: false }
+              )
             );
           } finally {
             await conn2.end();
@@ -987,6 +1011,131 @@ export function buildSchemaMigrationsAppliedQuery(hasSuccessColumn: boolean): st
     : "SELECT filename FROM schema_migrations";
 }
 
+type SchemaMigrationsCapabilities = {
+  hasChecksumSha256: boolean;
+  hasEnvironment: boolean;
+  hasStartTime: boolean;
+  hasEndTime: boolean;
+  hasDurationMs: boolean;
+  hasExecutor: boolean;
+  hasSuccess: boolean;
+  hasErrorMessage: boolean;
+};
+
+async function getSchemaMigrationsCapabilities(
+  conn: mysql.Connection,
+  dbName: string
+): Promise<SchemaMigrationsCapabilities> {
+  const [rows] = await conn.execute<RowDataPacket[]>(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
+    [dbName]
+  );
+
+  const columnSet = new Set(
+    (rows as Array<{ COLUMN_NAME?: string | null }>).map((row) => String(row.COLUMN_NAME ?? ""))
+  );
+
+  return {
+    hasChecksumSha256: columnSet.has("checksum_sha256"),
+    hasEnvironment: columnSet.has("environment"),
+    hasStartTime: columnSet.has("start_time"),
+    hasEndTime: columnSet.has("end_time"),
+    hasDurationMs: columnSet.has("duration_ms"),
+    hasExecutor: columnSet.has("executor"),
+    hasSuccess: columnSet.has("success"),
+    hasErrorMessage: columnSet.has("error_message"),
+  };
+}
+
+export function buildSchemaMigrationsAppliedRowsQuery(
+  capabilities: Pick<SchemaMigrationsCapabilities, "hasChecksumSha256" | "hasSuccess">
+): string {
+  const checksumSelect = capabilities.hasChecksumSha256
+    ? "checksum_sha256"
+    : "NULL AS checksum_sha256";
+  const successWhere = capabilities.hasSuccess
+    ? " WHERE success = 1 OR success IS NULL"
+    : "";
+  return `SELECT filename, ${checksumSelect} FROM schema_migrations${successWhere}`;
+}
+
+export function buildSchemaMigrationsInsertStatement(
+  capabilities: SchemaMigrationsCapabilities,
+  options: { success: boolean }
+): string {
+  const columns = ["filename"];
+  const values = ["?"];
+  const updates: string[] = [];
+
+  if (capabilities.hasChecksumSha256) {
+    columns.push("checksum_sha256");
+    values.push("?");
+  }
+  if (capabilities.hasEnvironment) {
+    columns.push("environment");
+    values.push("?");
+  }
+  if (capabilities.hasStartTime) {
+    columns.push("start_time");
+    values.push("?");
+  }
+  if (capabilities.hasEndTime) {
+    columns.push("end_time");
+    values.push("?");
+    updates.push("end_time = VALUES(end_time)");
+  }
+  if (capabilities.hasDurationMs) {
+    columns.push("duration_ms");
+    values.push("?");
+  }
+  if (capabilities.hasExecutor) {
+    columns.push("executor");
+    values.push("?");
+  }
+  if (capabilities.hasSuccess) {
+    columns.push("success");
+    values.push(options.success ? "1" : "0");
+    if (!options.success) updates.push("success = 0");
+  }
+  if (!options.success && capabilities.hasErrorMessage) {
+    columns.push("error_message");
+    values.push("?");
+    updates.push("error_message = VALUES(error_message)");
+  }
+
+  const sql = `INSERT INTO schema_migrations (${columns.join(", ")}) VALUES (${values.join(", ")})`;
+  return !options.success && updates.length > 0
+    ? `${sql} ON DUPLICATE KEY UPDATE ${updates.join(", ")}`
+    : sql;
+}
+
+function buildSchemaMigrationsInsertParams(
+  capabilities: SchemaMigrationsCapabilities,
+  values: {
+    filename: string;
+    checksumSha256: string | null;
+    environment: string;
+    startTime: Date;
+    endTime: Date;
+    durationMs: number;
+    executor: string;
+    errorMessage?: string;
+  },
+  options: { success: boolean }
+): unknown[] {
+  const params: unknown[] = [values.filename];
+  if (capabilities.hasChecksumSha256) params.push(values.checksumSha256);
+  if (capabilities.hasEnvironment) params.push(values.environment);
+  if (capabilities.hasStartTime) params.push(values.startTime);
+  if (capabilities.hasEndTime) params.push(values.endTime);
+  if (capabilities.hasDurationMs) params.push(values.durationMs);
+  if (capabilities.hasExecutor) params.push(values.executor);
+  if (!options.success && capabilities.hasErrorMessage) params.push(values.errorMessage ?? null);
+  return params;
+}
+
 export function getSchemaVerificationState(): SchemaVerificationState {
   return { ...verificationState, pendingFiles: [...verificationState.pendingFiles] };
 }
@@ -1036,18 +1185,12 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
         return getSchemaVerificationState();
       }
 
-      const [successColumnRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT COLUMN_NAME
-         FROM INFORMATION_SCHEMA.COLUMNS
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations' AND COLUMN_NAME = 'success'`,
-        [dbName]
-      );
-      const hasSuccessColumn = successColumnRows.length > 0;
+      const capabilities = await getSchemaMigrationsCapabilities(conn, dbName);
 
       // Get applied migrations, tolerating older schema_migrations layouts that
       // do not yet have a success column.
       const [applied] = await conn.execute<RowDataPacket[]>(
-        buildSchemaMigrationsAppliedQuery(hasSuccessColumn)
+        buildSchemaMigrationsAppliedQuery(capabilities.hasSuccess)
       );
       const appliedSet = new Set((applied as Array<{ filename: string }>).map((r) => r.filename));
 

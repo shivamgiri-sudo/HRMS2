@@ -52,7 +52,7 @@ export const recruitmentRouteElements = (
       <Route path="/ats/dashboard-v2"   element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardV2 /></Gate></ProtectedRoute>} />
       {/* Old spelling — redirect to canonical */}
       <Route path="/ats/command-centre" element={
-        <ProtectedRoute roles={['admin','manager','hr','recruiter','recruitment_hr']}>
+        <ProtectedRoute roles={['super_admin','admin','manager','hr','recruiter','recruitment_hr']}>
           <Navigate to="/ats/command-center" replace />
         </ProtectedRoute>
       } />

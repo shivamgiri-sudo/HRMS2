@@ -606,7 +606,9 @@ export const attendanceEngineService = {
     // and for mismatch detection even when employee is APR-eligible.
     const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
     const biometricMinutes = biometricEvidence.minutes;
-    let isAprEmployee = configuredAprEmployee || rule.attendance_source === 'dialler';
+    const hasScopedDiallerRule = rule.attendance_source === 'dialler'
+      && Boolean(rule.designation_id || rule.process_id || rule.branch_id);
+    let isAprEmployee = configuredAprEmployee || hasScopedDiallerRule;
     let forcedAprMinutes: number | null = null;
     let forcedAprSourceSystem: string | null = null;
 

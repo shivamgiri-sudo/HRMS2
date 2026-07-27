@@ -7,6 +7,7 @@ import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js"
 import { tableExists } from "../../shared/dbHelpers.js";
 import { logger } from "../../lib/logger.js";
 import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
+import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
 
 export type PunchGroup = {
   cosecUserId: string;
@@ -27,6 +28,8 @@ type SyncResult = {
   pulledEvents: number;
   groupedDays: number;
   migratedDays: number;
+  ignoredExcludedUsers: number;
+  inactiveUsers: Array<{ cosecUserId: string; punchDate: string; totalPunches: number }>;
   unmappedUsers: Array<{ cosecUserId: string; punchDate: string; totalPunches: number }>;
   failed: Array<{ cosecUserId: string; punchDate: string; error: string }>;
 };
@@ -617,6 +620,8 @@ export const cosecSyncService = {
       pulledEvents: 0,
       groupedDays: 0,
       migratedDays: 0,
+      ignoredExcludedUsers: 0,
+      inactiveUsers: [],
       unmappedUsers: [],
       failed: [],
     };
@@ -628,10 +633,36 @@ export const cosecSyncService = {
       const groups = await mergeNightShiftRollover(rawGroups);
       result.pulledEvents = groups.reduce((total, group) => total + group.totalPunches, 0);
       result.groupedDays = groups.length;
+      const [excludedRows, employeeRows] = await Promise.all([
+        db.query<RowDataPacket[]>(
+          `SELECT cosec_user_id
+             FROM attendance_reconciliation_cosec_exclusion
+            WHERE active_status = 1`,
+        ),
+        db.query<RowDataPacket[]>(
+          `SELECT e.id AS employee_id, e.employee_code, e.biometric_code, e.active_status, e.employment_status, ebe.cosec_user_id
+             FROM employees e
+             LEFT JOIN employee_biometric_enrollment ebe
+               ON ebe.employee_id = e.id`,
+        ),
+      ]);
+      const sourceMaps = buildSourceUserMaps(
+        employeeRows[0] as any[],
+        (excludedRows[0] as any[]).map((row) => String(row.cosec_user_id ?? "")),
+      );
 
       for (const group of groups) {
         const isMissingPunch = !!(group as any).missingPunch;
         try {
+          const sourceUser = classifySourceUser(group.cosecUserId, sourceMaps);
+          if (sourceUser.kind === "excluded") {
+            result.ignoredExcludedUsers += 1;
+            continue;
+          }
+          if (sourceUser.kind === "inactive") {
+            result.inactiveUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
+            continue;
+          }
           if (isMissingPunch) {
             // Guard 3: night-shift start with rostered week-off and no exit punch
             const employee = await resolveEmployee(group.cosecUserId);
@@ -686,6 +717,13 @@ export const cosecSyncService = {
             `${result.unmappedUsers.length} unmapped COSEC user(s) for ${from}→${to}: ${result.unmappedUsers.slice(0, 5).map(u => u.cosecUserId).join(", ")}`,
           ]
         ).catch(() => { /* non-critical — don't mask the sync result */ });
+      }
+
+      if (result.inactiveUsers.length > 0) {
+        logger.warn(
+          { inactiveCount: result.inactiveUsers.length, from, to, users: result.inactiveUsers.slice(0, 20) },
+          "[COSEC Sync] Inactive or resigned COSEC users are still generating punches."
+        );
       }
 
       lastSyncResult = result;
