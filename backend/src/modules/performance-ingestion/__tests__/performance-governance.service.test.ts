@@ -86,3 +86,33 @@ describe("performance ingestion governance route contract", () => {
     expect(routeCode).toMatch(/function runRoute[\s\S]*requireWriteAccess/);
   });
 });
+
+
+describe("performance final governance controls", () => {
+  const routeCode = fs.readFileSync(
+    path.resolve(__dirname, "../performance-ingestion.routes.ts"),
+    "utf8",
+  );
+  const guardCode = fs.readFileSync(
+    path.resolve(__dirname, "../performance-dataset-mutation.guard.ts"),
+    "utf8",
+  );
+  const auditCode = fs.readFileSync(
+    path.resolve(__dirname, "../performance-governance-audit.middleware.ts"),
+    "utf8",
+  );
+
+  it("keeps dataset keys immutable and exceptional publication controls admin-only", () => {
+    expect(guardCode).toContain("PERFORMANCE_DATASET_KEY_IMMUTABLE");
+    expect(guardCode).toContain("PERFORMANCE_EXCEPTIONAL_CONTROL_ADMIN_ONLY");
+    expect(guardCode).toContain("allowPartialPublication");
+    expect(guardCode).toContain("allowEmptyPublication");
+  });
+
+  it("audits successful governance mutations with redaction", () => {
+    expect(routeCode).toContain("performanceGovernanceAuditMiddleware");
+    expect(auditCode).toContain("performance_governance_audit");
+    expect(auditCode).toContain("[REDACTED]");
+  });
+});
+

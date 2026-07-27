@@ -209,6 +209,7 @@ export function PerformanceSourceEditor({
             <Input
               id="performance-dataset-key"
               value={form.datasetKey}
+              disabled={editing}
               onChange={(event) => setForm((current) => ({ ...current, datasetKey: event.target.value }))}
               placeholder="onfido_quality"
               autoComplete="off"

@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { performanceDatasetMutationGuard } from "./performance-dataset-mutation.guard.js";
+import { performanceGovernanceAuditMiddleware } from "./performance-governance-audit.middleware.js";
 import { performanceGovernanceService } from "./performance-governance.service.js";
 import { performanceIngestionService } from "./performance-ingestion.service.js";
 
@@ -202,6 +204,8 @@ function validationError(res: Response, error: z.ZodError) {
 }
 
 router.use(requireAuth);
+router.use(performanceDatasetMutationGuard);
+router.use(performanceGovernanceAuditMiddleware);
 
 router.get(
   "/reference-data",

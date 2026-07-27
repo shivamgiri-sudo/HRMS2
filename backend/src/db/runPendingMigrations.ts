@@ -305,6 +305,7 @@ const MIGRATION_MANIFEST: string[] = [
   "510_portal_superadmin_user.sql",
   "520_performance_ingestion_platform.sql",
   "521_performance_multi_source_lineage.sql",
+  "522_performance_governance_audit.sql",
   // ── Additional migrations not yet in manifest ──────────────────────────────
   "330_payroll_recalc_queue_and_config.sql",
   "331_salary_prep_line_extended_columns.sql",

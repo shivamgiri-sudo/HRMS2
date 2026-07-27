@@ -7,6 +7,7 @@ import mysql from "mysql2/promise";
 const INGESTION_MIGRATIONS = [
   "520_performance_ingestion_platform.sql",
   "521_performance_multi_source_lineage.sql",
+  "522_performance_governance_audit.sql",
 ] as const;
 
 function requireApplyFlag(): void {
@@ -44,7 +45,8 @@ async function main() {
          (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'performance_ingestion_run') AS ingestion_table,
          (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_daily_actual' AND COLUMN_NAME = 'source_dataset_id') AS lineage_column,
          (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'performance_fact_lineage' AND COLUMN_NAME = 'source_dataset_id') AS multi_source_lineage_column,
-         (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_metric_master' AND COLUMN_NAME = 'aggregation_method') AS dynamic_metric_column`,
+         (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_metric_master' AND COLUMN_NAME = 'aggregation_method') AS dynamic_metric_column,
+         (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'performance_governance_audit') AS governance_audit_table`,
     );
     console.log(JSON.stringify({
       installed: true,
