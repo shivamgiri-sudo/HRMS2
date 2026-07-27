@@ -611,10 +611,10 @@ export async function approveOfferLegacy(offerId: string, approverId: string, re
               COALESCE(p.personal_email_id, c.email) AS personal_email,
               c.mobile AS personal_phone,
               p.alt_mobile_number AS alternate_mobile,
-              COALESCE(p.pan_number, c.pan_number) AS pan_number,
-              COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number,
-              COALESCE(p.uan_number, c.uan_number) AS uan_number,
-              p.present_address AS current_address,
+              c.pan_number AS pan_number,
+              c.aadhar_number AS aadhar_number,
+              COALESCE(NULLIF(p.uan_number, ''), NULLIF(p.uan, ''), c.uan_number) AS uan_number,
+              COALESCE(p.current_address, p.present_address, c.current_address) AS current_address,
               p.personal_email_id
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id

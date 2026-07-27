@@ -27,12 +27,35 @@ async function getFaceMatch() {
 type ActorType = "candidate" | "hr" | "system";
 type AuthenticatedUser = NonNullable<AuthenticatedRequest["authUser"]>;
 export type OnboardingScopeFilter = { sql: string; params: unknown[] };
+type AsyncBgvTriggerContext = {
+  candidate: {
+    full_name: string | null;
+    mobile: string | null;
+    email: string | null;
+    pan_number: string | null;
+    aadhar_number: string | null;
+    uan_number: string | null;
+    date_of_birth: string | null;
+    father_name: string | null;
+    current_address: string | null;
+  };
+  bank: {
+    accountNo: string | null;
+    ifscCode: string | null;
+    accountHolderName: string | null;
+  };
+};
 
 function normDate(value: unknown): string | null {
   if (value == null) return null;
   const s = String(value).trim();
   if (!s || s === "0000-00-00" || s === "dd-mm-yyyy") return null;
   return s;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
 }
 
 function normalizeCandidateScopeSql(sql: string) {
@@ -604,37 +627,18 @@ async function triggerRealBgvChecksAsync(
   candidateId: string,
   meta?: { ip?: string; userAgent?: string }
 ): Promise<void> {
-  // Fetch candidate identity data
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       c.full_name, c.mobile, c.email,
-       COALESCE(p.pan_number, c.pan_number) AS pan_number,
-       COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number,
-       COALESCE(p.uan_number, c.uan_number) AS uan_number,
-       p.account_number, p.ifsc_code, p.account_holder_name,
-       c.date_of_birth, c.father_name, c.current_address
-     FROM ats_candidate c
-     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
-     LEFT JOIN candidate_onboarding_bank_detail b ON b.candidate_id = c.id
-     WHERE c.id = ? LIMIT 1`,
-    [candidateId]
-  );
-
-  if (!rows.length) {
-    console.error('[BGV] Candidate not found for BGV trigger:', candidateId);
-    return;
+  let context: AsyncBgvTriggerContext;
+  try {
+    context = await loadAsyncBgvTriggerContext(candidateId);
+  } catch (error) {
+    if ((error as { statusCode?: number })?.statusCode === 404) {
+      console.error('[BGV] Candidate not found for BGV trigger:', candidateId);
+      return;
+    }
+    throw error;
   }
 
-  const cand = rows[0] as any;
-
-  // Get bank details separately (dedicated table)
-  const [bankRows] = await db.execute<RowDataPacket[]>(
-    `SELECT account_number, ifsc_code, account_holder_name
-     FROM candidate_onboarding_bank_detail
-     WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
-  );
-  const bank = (bankRows[0] as any) ?? {};
+  const { candidate: cand, bank } = context;
 
   let adapter;
   try {
@@ -665,14 +669,14 @@ async function triggerRealBgvChecksAsync(
   }
 
   // Bank (Penny Drop) verification
-  const accountNo = String(bank.account_number ?? cand.account_number ?? '').trim();
-  const ifscCode = String(bank.ifsc_code ?? cand.ifsc_code ?? '').trim();
+  const accountNo = String(bank.accountNo ?? '').trim();
+  const ifscCode = String(bank.ifscCode ?? '').trim();
   if (accountNo && ifscCode) {
     try {
       const result = await adapter.verifyBank({
         accountNo,
         ifscCode,
-        accountHolderName: bank.account_holder_name ?? cand.full_name ?? null,
+        accountHolderName: bank.accountHolderName ?? cand.full_name ?? null,
         candidateName: cand.full_name ?? null,
       });
       await storeBgvCheckResult(candidateId, 'bank', result, adapter.providerKey);
@@ -715,6 +719,72 @@ async function triggerRealBgvChecksAsync(
 
   // Sync all checks to overall BGV report
   await syncBgvReport(candidateId, adapter.providerKey);
+}
+
+export async function loadAsyncBgvTriggerContext(
+  candidateId: string,
+  decryptAccountNumber: (value: string) => string = decrypt,
+): Promise<AsyncBgvTriggerContext> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       c.full_name,
+       c.mobile,
+       c.email,
+       c.pan_number,
+       c.aadhar_number,
+       COALESCE(NULLIF(p.uan_number, ''), NULLIF(p.uan, ''), c.uan_number) AS uan_number,
+       c.date_of_birth,
+       c.father_name,
+       COALESCE(p.current_address, p.present_address, c.current_address) AS current_address,
+       c.bank_ifsc,
+       c.bank_account_no_encrypted
+     FROM ats_candidate c
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+     WHERE c.id = ? LIMIT 1`,
+    [candidateId],
+  );
+
+  if (!rows.length) {
+    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  }
+
+  const candidateRow = rows[0] as RowDataPacket & Record<string, unknown>;
+  const [bankRows] = await db.execute<RowDataPacket[]>(
+    `SELECT account_no_encrypted, ifsc_code, account_holder_name
+       FROM candidate_onboarding_bank_detail
+      WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const bankRow = (bankRows[0] as (RowDataPacket & Record<string, unknown>) | undefined) ?? undefined;
+
+  let accountNo: string | null = null;
+  const encryptedAccount = nonEmptyString(bankRow?.account_no_encrypted) ?? nonEmptyString(candidateRow.bank_account_no_encrypted);
+  if (encryptedAccount) {
+    try {
+      accountNo = nonEmptyString(decryptAccountNumber(encryptedAccount));
+    } catch (error) {
+      console.error("[BGV] Failed to decrypt onboarding bank account for async trigger:", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  return {
+    candidate: {
+      full_name: nonEmptyString(candidateRow.full_name),
+      mobile: nonEmptyString(candidateRow.mobile),
+      email: nonEmptyString(candidateRow.email),
+      pan_number: nonEmptyString(candidateRow.pan_number),
+      aadhar_number: nonEmptyString(candidateRow.aadhar_number),
+      uan_number: nonEmptyString(candidateRow.uan_number),
+      date_of_birth: nonEmptyString(candidateRow.date_of_birth),
+      father_name: nonEmptyString(candidateRow.father_name),
+      current_address: nonEmptyString(candidateRow.current_address),
+    },
+    bank: {
+      accountNo,
+      ifscCode: nonEmptyString(bankRow?.ifsc_code) ?? nonEmptyString(candidateRow.bank_ifsc),
+      accountHolderName: nonEmptyString(bankRow?.account_holder_name),
+    },
+  };
 }
 
 /**

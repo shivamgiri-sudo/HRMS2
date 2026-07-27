@@ -145,6 +145,22 @@ export async function migrateLegacyIntegrationSecrets(): Promise<number> {
 const mssqlPools = new Map<string, sql.ConnectionPool>();
 const mysqlPools = new Map<string, mysql.Pool>();
 
+export class ExternalDbCredentialError extends Error {
+  readonly integrationKey: string;
+  readonly nonRetryable = true;
+  readonly disableSchedule = true;
+  readonly code = "EXTERNAL_DB_CREDENTIAL_DECRYPT_FAILED";
+
+  constructor(integrationKey: string, cause?: unknown) {
+    super(`Stored credentials for integration ${integrationKey} could not be decrypted. Re-save the connector credentials.`);
+    this.name = "ExternalDbCredentialError";
+    this.integrationKey = integrationKey;
+    if (cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = cause;
+    }
+  }
+}
+
 export async function getCredentialsForKey(key: string): Promise<DbCredentials | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT encrypted_credentials, config_json FROM integration_config WHERE integration_key = ?`,
@@ -153,7 +169,11 @@ export async function getCredentialsForKey(key: string): Promise<DbCredentials |
   const row = (rows as any[])[0];
   if (!row) return null;
   if (row.encrypted_credentials) {
-    return decryptCredentials(row.encrypted_credentials);
+    try {
+      return decryptCredentials(row.encrypted_credentials);
+    } catch (error) {
+      throw new ExternalDbCredentialError(key, error);
+    }
   }
   return null;
 }

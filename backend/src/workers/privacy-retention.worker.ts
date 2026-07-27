@@ -44,10 +44,10 @@ const ENTITY_QUERIES: Record<string, string> = {
     LIMIT 500
   `,
   employees: `
-    SELECT id AS entity_id, COALESCE(exit_date, updated_at) AS record_date
+    SELECT id AS entity_id, COALESCE(date_of_exit, date_of_leaving, resignation_date, updated_at) AS record_date
     FROM employees
     WHERE employment_status IN ('resigned','terminated','absconding')
-      AND DATEDIFF(NOW(), COALESCE(exit_date, updated_at)) > ?
+      AND DATEDIFF(NOW(), COALESCE(date_of_exit, date_of_leaving, resignation_date, updated_at)) > ?
     LIMIT 500
   `,
   data_consent: `

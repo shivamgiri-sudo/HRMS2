@@ -2,7 +2,7 @@ import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
-import { validateOnboardingToken } from "./onboarding-full.service.js";
+import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
 
 const hashValue = (value: unknown) => {
   const normalized = String(value ?? "").trim().toUpperCase();
@@ -35,6 +35,23 @@ export function resolveBankVerificationMethod(result: {
   }
   if (rawMode.includes("upi")) return "upi";
   return "penny_drop";
+}
+
+function buildBankManualReviewFallback(reason: string, detail: Record<string, unknown> = {}) {
+  return {
+    status: "manual_review" as const,
+    providerKey: "system",
+    providerRequestId: randomUUID(),
+    providerReferenceId: randomUUID(),
+    matchScore: null,
+    matchedName: null,
+    resultSummary: reason,
+    riskFlags: ["BANK_INPUT_MISSING"],
+    raw: {
+      mode: "missing_bank_input_fallback",
+      ...detail,
+    },
+  };
 }
 
 async function logEvent(candidateId: string, eventType: string, payload?: unknown, checkId?: string | null, meta?: { actorType?: "candidate" | "hr" | "system" | "provider"; actorId?: string | null; ip?: string; userAgent?: string }) {
@@ -357,10 +374,12 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   let accountNo = String(input.accountNo ?? "").trim();
   let ifscCode = String(input.ifscCode ?? "").trim().toUpperCase();
   let accountHolderName = input.accountHolderName;
+  let bankDetailId: string | null = null;
   if (!accountNo || !ifscCode) {
     const [bankRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-    const bank = bankRows[0] as RowDataPacket & { ifsc_code?: string | null; account_holder_name?: string | null; account_no_encrypted?: string | null } | undefined;
+    const bank = bankRows[0] as RowDataPacket & { id?: string | null; ifsc_code?: string | null; account_holder_name?: string | null; account_no_encrypted?: string | null } | undefined;
     if (!bank) throw Object.assign(new Error("Bank details are required before verification"), { statusCode: 400 });
+    bankDetailId = String(bank.id ?? "").trim() || null;
     ifscCode = ifscCode || String(bank.ifsc_code ?? "");
     accountHolderName = accountHolderName || String(bank.account_holder_name ?? "");
     // Try to decrypt stored encrypted account number (no re-entry needed)
@@ -372,30 +391,43 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
         console.error("[BGV] Failed to decrypt account number:", (e as Error).message);
       }
     }
+
+    if (!accountNo || !ifscCode) {
+      const context = await loadAsyncBgvTriggerContext(candidateId);
+      accountNo = accountNo || String(context.bank.accountNo ?? "").trim();
+      ifscCode = ifscCode || String(context.bank.ifscCode ?? "").trim().toUpperCase();
+      accountHolderName = accountHolderName || context.bank.accountHolderName || undefined;
+    }
   }
-  if (!accountNo) throw Object.assign(new Error("Raw account number is required for digital verification"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
   let result;
-  try {
-    result = await adapter.verifyBank({ candidateName: candidate.employee_name ?? candidate.full_name, accountHolderName, accountNo, ifscCode });
-  } catch (error: any) {
-    // If IP whitelist or provider unavailable, fall back to manual_review
-    if (error.statusCode === 503 || error.isIpWhitelistError) {
-      console.error(`[BGV] Bank verification provider unavailable: ${error.message}`);
-      result = {
-        status: "manual_review" as const,
-        providerKey: "luckpay",
-        providerRequestId: randomUUID(),
-        providerReferenceId: randomUUID(),
-        matchScore: null,
-        matchedName: null,
-        resultSummary: "Bank verification service temporarily unavailable. Bank details saved for manual HR review.",
-        riskFlags: ['PROVIDER_UNAVAILABLE'],
-        raw: { mode: "provider_error_fallback", error_message: error.message },
-      };
-    } else {
-      throw error;
+  if (!accountNo) {
+    result = buildBankManualReviewFallback(
+      "Bank verification queued for manual HR review because the raw account number is unavailable in saved onboarding records.",
+      { candidateId, ifscCode, bankDetailId },
+    );
+  } else {
+    try {
+      result = await adapter.verifyBank({ candidateName: candidate.employee_name ?? candidate.full_name, accountHolderName, accountNo, ifscCode });
+    } catch (error: any) {
+      // If IP whitelist or provider unavailable, fall back to manual_review
+      if (error.statusCode === 503 || error.isIpWhitelistError) {
+        console.error(`[BGV] Bank verification provider unavailable: ${error.message}`);
+        result = {
+          status: "manual_review" as const,
+          providerKey: "luckpay",
+          providerRequestId: randomUUID(),
+          providerReferenceId: randomUUID(),
+          matchScore: null,
+          matchedName: null,
+          resultSummary: "Bank verification service temporarily unavailable. Bank details saved for manual HR review.",
+          riskFlags: ['PROVIDER_UNAVAILABLE'],
+          raw: { mode: "provider_error_fallback", error_message: error.message },
+        };
+      } else {
+        throw error;
+      }
     }
   }
   const checkId = await createOrUpdateCheck(candidateId, "bank", result.status, {
@@ -410,16 +442,17 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   });
   await db.execute(
     `INSERT INTO candidate_bank_verification
-       (id, candidate_id, account_no_last4, account_no_hash, ifsc_code, input_account_holder_name,
+       (id, candidate_id, bank_detail_id, account_no_last4, account_no_hash, ifsc_code, input_account_holder_name,
         provider_account_holder_name, name_match_score, verification_method, provider_key, provider_reference_id,
         verification_status, result_json, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
     [
       randomUUID(),
       candidateId,
-      String(accountNo).slice(-4),
-      hashValue(accountNo),
-      ifscCode,
+      bankDetailId,
+      accountNo ? String(accountNo).slice(-4) : null,
+      accountNo ? hashValue(accountNo) : null,
+      ifscCode || null,
       accountHolderName ?? null,
       result.matchedName ?? null,
       result.matchScore ?? null,
@@ -433,16 +466,27 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   );
   await db.execute(
     `UPDATE candidate_onboarding_bank_detail
-        SET account_no_masked = ?, account_no_hash = ?, ifsc_code = ?, verification_status = ?,
+        SET account_no_masked = COALESCE(?, account_no_masked), account_no_hash = COALESCE(?, account_no_hash),
+            ifsc_code = COALESCE(?, ifsc_code), verification_status = ?,
             provider_name = ?, verification_ref = ?, verified_account_holder_name = ?, verified_at = ?, updated_at = NOW()
       WHERE candidate_id = ?`,
-    [maskLast4(accountNo), hashValue(accountNo), ifscCode, result.status, result.providerKey, result.providerReferenceId, result.matchedName ?? null, result.status === "verified" ? new Date() : null, candidateId]
+    [
+      accountNo ? maskLast4(accountNo) : null,
+      accountNo ? hashValue(accountNo) : null,
+      ifscCode || null,
+      result.status,
+      result.providerKey,
+      result.providerReferenceId,
+      result.matchedName ?? null,
+      result.status === "verified" ? new Date() : null,
+      candidateId,
+    ]
   );
   await db.execute(
     `INSERT INTO candidate_bgv_api_request_log
        (id, candidate_id, check_id, provider_key, endpoint_key, request_ref, request_payload_hash, response_status_code, response_payload, duration_ms, success_flag)
-     VALUES (?, ?, ?, ?, 'BANK_VERIFY', ?, ?, 200, ?, ?, ?)`,
-    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, hashValue(`${accountNo}|${ifscCode}`), JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
+     VALUES (?, ?, ?, ?, 'BANK_VERIFY', ?, ?, 200, ?, ?, ?)` ,
+    [randomUUID(), candidateId, checkId, result.providerKey, result.providerRequestId, accountNo ? hashValue(`${accountNo}|${ifscCode}`) : null, JSON.stringify(result.raw ?? result), Date.now() - started, result.status === "verified" ? 1 : 0]
   );
   await logEvent(candidateId, "BANK_VERIFICATION_COMPLETED", result, checkId, meta);
   return getBgvStatusForCandidate(candidateId);

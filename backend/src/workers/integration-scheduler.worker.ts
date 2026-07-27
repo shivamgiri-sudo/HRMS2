@@ -19,6 +19,13 @@ function isDedicatedWorkerIntegration(integrationKey: string): boolean {
   return integrationKey === "cosec_biometric";
 }
 
+function shouldDisableScheduleForError(error: unknown): boolean {
+  return Boolean(
+    (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)?.nonRetryable
+    && (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)?.disableSchedule,
+  );
+}
+
 function lockName(integrationKey: string): string {
   const digest = createHash("sha256").update(integrationKey).digest("hex").slice(0, 40);
   return `hrms:integration:${digest}`;
@@ -59,6 +66,37 @@ async function recordSchedulerFailure(
     );
   } catch (logError) {
     console.error(`[integration-scheduler] could not record failure for ${integrationKey}:`, logError);
+  }
+}
+
+async function disableScheduleForFailure(
+  connection: PoolConnection,
+  integrationKey: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  await connection.execute(
+    `UPDATE integration_schedule
+        SET enabled = 0,
+            next_run_at = NULL,
+            last_run_at = NOW()
+      WHERE integration_key = ?`,
+    [integrationKey],
+  );
+
+  try {
+    await db.execute(
+      `INSERT INTO integration_event_log
+         (id, integration_key, event_type, description, metadata)
+       VALUES (UUID(), ?, 'scheduled_run_disabled', ?, ?)`,
+      [
+        integrationKey,
+        message,
+        JSON.stringify({ reason: "permanent_configuration_failure" }),
+      ],
+    );
+  } catch (logError) {
+    console.error(`[integration-scheduler] could not record disabled schedule for ${integrationKey}:`, logError);
   }
 }
 
@@ -146,7 +184,12 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
       await executeWithRetries(schedule);
       console.log(`[integration-scheduler] ${integrationKey} completed; next run ${nextRunAt.toISOString()}`);
     } catch (error) {
-      console.error(`[integration-scheduler] ${integrationKey} failed:`, error);
+      if (shouldDisableScheduleForError(error)) {
+        await disableScheduleForFailure(connection, integrationKey, error);
+        console.error(`[integration-scheduler] ${integrationKey} disabled after permanent configuration failure:`, error);
+      } else {
+        console.error(`[integration-scheduler] ${integrationKey} failed:`, error);
+      }
     } finally {
       await connection.execute(
         `UPDATE integration_schedule
