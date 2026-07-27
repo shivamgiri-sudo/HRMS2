@@ -219,13 +219,16 @@ export function calculateTypingScore(input: {
   const minutes = elapsedSeconds / 60;
   const characterAnalysis = analyzeCharacters(referenceText, typedText);
   const typedCharacterCount = Array.from(typedText).length;
-  const referenceCharacterCount = Array.from(referenceText).length;
 
   const grossWpm = (typedCharacterCount / 5) / minutes;
-  const penaltyWords = characterAnalysis.editDistance / 5;
-  const netWpm = Math.max(0, grossWpm - (penaltyWords / minutes));
-  const denominator = Math.max(referenceCharacterCount, typedCharacterCount, 1);
-  const accuracy = Math.max(0, ((denominator - characterAnalysis.editDistance) / denominator) * 100);
+  // Net WPM: only correct characters count as productive typing (industry standard).
+  // Using full-passage edit distance as penalty inflated errors for partial completions.
+  const netWpm = Math.max(0, characterAnalysis.correctCharacters / 5 / minutes);
+  // Accuracy: over the portion the candidate actually typed, not the full passage.
+  // Full-passage denominator penalised candidates who typed quickly but didn't finish.
+  const accuracy = typedCharacterCount === 0
+    ? 0
+    : Math.max(0, (characterAnalysis.correctCharacters / typedCharacterCount) * 100);
   const wordDiff = buildWordDiff(referenceText, typedText);
   const speedScore = Math.min(100, (netWpm / Math.max(1, input.minNetWpm)) * 100);
   const score = round((speedScore * 0.4) + (accuracy * 0.6));

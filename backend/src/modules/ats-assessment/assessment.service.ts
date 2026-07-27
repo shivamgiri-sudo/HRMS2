@@ -1362,7 +1362,8 @@ export async function submitTypingAttempt(
 
     const started = dateMs(typing.started_at) ?? Date.now();
     const actualElapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
-    const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS);
+    // Cap at duration only — grace window is for network latency, not for WPM denominator.
+    const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds));
     const scored = calculateTypingScore({
       referenceText: typing.reference_text,
       typedText: String(input.typedText ?? ""),
@@ -1817,10 +1818,12 @@ export async function listAssessmentAttempts(filters: {
        a.q_token_snapshot, a.status, a.result, a.percentage,
        a.manual_review_required, a.assigned_at, a.started_at, a.submitted_at,
        a.completed_at, t.template_name, t.template_code, t.process_key, t.role_key,
-       (SELECT MAX(net_wpm) FROM ats_typing_test_attempt x
-        WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL) AS best_net_wpm,
-       (SELECT MAX(accuracy_percentage) FROM ats_typing_test_attempt x
-        WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL) AS best_accuracy,
+       (SELECT net_wpm FROM ats_typing_test_attempt x
+        WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL
+        ORDER BY net_wpm DESC LIMIT 1) AS best_net_wpm,
+       (SELECT accuracy_percentage FROM ats_typing_test_attempt x
+        WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL
+        ORDER BY net_wpm DESC LIMIT 1) AS best_accuracy,
        JSON_LENGTH(COALESCE(a.integrity_flags, JSON_ARRAY())) AS integrity_flag_count
      FROM ats_candidate_assessment a
      JOIN ats_candidate c ON c.id = a.candidate_id
