@@ -23,6 +23,9 @@ import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-b
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
 import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
 import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
+import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
+import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
+import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
@@ -117,6 +120,18 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "walkin-sla",
     start: () => { startWalkinSlaCron(); return Promise.resolve(); },
   },
+  {
+    name: "report-generation",
+    start: startReportGenerationWorker,
+  },
+  {
+    name: "report-email-delivery",
+    start: startReportEmailDeliveryWorker,
+  },
+  {
+    name: "report-stale-recovery",
+    start: startReportStaleRecoveryWorker,
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -163,6 +178,9 @@ function shutdown(): void {
   stopPayrollWindowClosureScheduler();
   stopBreachSlaCron();
   stopWalkinSlaCron();
+  stopReportGenerationWorker();
+  stopReportEmailDeliveryWorker();
+  stopReportStaleRecoveryWorker();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);
 }

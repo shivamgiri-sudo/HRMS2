@@ -16,6 +16,7 @@ import {
   CircleDollarSign,
   Database,
   Download,
+  Mail,
   ExternalLink,
   FileCheck2,
   FileSearch,
@@ -255,31 +256,8 @@ function detectDuplicates(rows: Record<string, unknown>[], keys: string[]) {
   return count;
 }
 
-async function exportReport(
-  report: DetailedReport,
-  filters: Record<string, string>,
-  canExport: boolean
-) {
-  if (!canExport) throw new Error("Export permission is required for this dataset");
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => value && params.set(key, value));
-  params.set("export", "true");
-  const response = await hrmsApi.get<ReportResponse>(`/api/reports/suite/${report.code}?${params.toString()}`, 120_000);
-  const rows = response.data ?? [];
-  const XLSX = await import("xlsx");
-  const exportRows = rows.map((row) => {
-    const output: Record<string, unknown> = {};
-    report.columns.forEach((column) => {
-      output[column.label] = formatValue(row[column.key], column.format);
-    });
-    return output;
-  });
-  const sheet = XLSX.utils.json_to_sheet(exportRows);
-  const book = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(book, sheet, report.name.slice(0, 31));
-  XLSX.writeFile(book, `${report.code}_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  return rows.length;
-}
+// Direct browser downloads have been removed.
+// Reports are requested via the secure email delivery workflow.
 
 function StateBadge({ state }: { state: SourceHealth["state"] }) {
   const config = state === "available"
@@ -423,16 +401,19 @@ export default function NativeReportsCenterV3() {
     }
   }
 
-  async function handleExport() {
+  async function handleRequestReport() {
     if (!selectedReport) return;
+    setExportMessage("Submitting report request…");
     try {
-      setExportMessage("Preparing complete export…");
-      const count = await exportReport(selectedReport, filters, canExportSelected);
-      setExportMessage(`Exported ${count.toLocaleString("en-IN")} rows`);
+      const res = await hrmsApi.post<{ requestReference: string; recipientEmailMasked: string; message: string }>(
+        `/api/reports/${selectedReport.code}/request`,
+        { filters }
+      );
+      setExportMessage(`Request ${res.requestReference} queued. Report will be emailed to ${res.recipientEmailMasked}.`);
     } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : "Export failed");
+      setExportMessage(error instanceof Error ? error.message : "Request failed");
     } finally {
-      window.setTimeout(() => setExportMessage(""), 4000);
+      window.setTimeout(() => setExportMessage(""), 8000);
     }
   }
 
@@ -808,12 +789,12 @@ export default function NativeReportsCenterV3() {
                         </button>
                         <button
                           type="button"
-                          onClick={handleExport}
+                          onClick={() => void handleRequestReport()}
                           disabled={!canExportSelected}
-                          title={canExportSelected ? "Export complete filtered dataset" : "Your role cannot export this report"}
-                          className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+                          title={canExportSelected ? "Request report — will be sent to your official email" : "Your role cannot export this report"}
+                          className="inline-flex h-9 items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-3 text-xs font-bold text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          <Download className="h-4 w-4" /> Export
+                          <Mail className="h-4 w-4" /> Request by Email
                         </button>
                       </div>
                     </div>

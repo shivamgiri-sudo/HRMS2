@@ -76,6 +76,7 @@ export interface RunningSalary {
   earned_payable_days: number;
   eligible_weekoff_till_date: number;
   eligible_holiday_till_date: number;
+  lwp_till_date?: number;
   earned_salary_till_date: number;
   earned_net_till_date: number;
   projected_payable_days: number;
