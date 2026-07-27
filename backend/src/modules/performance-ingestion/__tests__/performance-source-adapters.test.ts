@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertReadOnlyQuery } from "../performance-source-adapters.js";
+import {
+  assertAllowedGoogleSheetUrl,
+  assertReadOnlyQuery,
+} from "../performance-source-adapters.js";
 
 describe("assertReadOnlyQuery", () => {
   it("allows SELECT and CTE-based reporting queries", () => {
@@ -14,5 +17,22 @@ describe("assertReadOnlyQuery", () => {
     "CREATE TABLE unsafe(id INT)",
   ])("blocks mutating or multi-statement SQL: %s", (query) => {
     expect(() => assertReadOnlyQuery(query)).toThrow();
+  });
+});
+
+describe("assertAllowedGoogleSheetUrl", () => {
+  it("accepts approved Google Sheet export hosts", () => {
+    expect(assertAllowedGoogleSheetUrl(
+      "https://docs.google.com/spreadsheets/d/example/export?format=csv&gid=0",
+    ).hostname).toBe("docs.google.com");
+  });
+
+  it.each([
+    "http://docs.google.com/spreadsheets/d/example/export?format=csv",
+    "https://127.0.0.1/internal.csv",
+    "https://example.com/report.csv",
+    "https://user:password@docs.google.com/report.csv",
+  ])("rejects unsafe or non-Google export URLs: %s", (url) => {
+    expect(() => assertAllowedGoogleSheetUrl(url)).toThrow();
   });
 });
