@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { db } from "../../db/mysql.js";
+import { performanceGovernanceService } from "./performance-governance.service.js";
 import { performanceIngestionService } from "./performance-ingestion.service.js";
 
 const router = Router();
@@ -13,8 +13,21 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024, files: 1 },
 });
 
-const asyncHandler = (handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>): RequestHandler =>
-  (req, res, next: NextFunction) => Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
+const sourceReaders = [
+  "super_admin",
+  "admin",
+  "hr",
+  "process_manager",
+  "qa_manager",
+  "quality_lead",
+] as const;
+const sourceManagers = ["super_admin", "admin", "process_manager", "qa_manager"] as const;
+const mappingManagers = ["super_admin", "admin", "hr", "process_manager", "qa_manager"] as const;
+
+const asyncHandler = (
+  handler: (req: AuthenticatedRequest, res: Response) => Promise<unknown>,
+): RequestHandler => (req, res, next: NextFunction) =>
+  Promise.resolve(handler(req as AuthenticatedRequest, res)).catch(next);
 
 const metricBindingSchema = z.object({
   metricCode: z.string().trim().min(1).max(100),
@@ -26,7 +39,11 @@ const metricBindingSchema = z.object({
   sourceRecordCountField: z.string().trim().max(255).optional(),
 }).superRefine((value, context) => {
   if (!value.valueField && !value.numeratorField) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["valueField"], message: "valueField or numeratorField is required" });
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["valueField"],
+      message: "valueField or numeratorField is required",
+    });
   }
   if (value.aggregation === "ratio" && (!value.numeratorField || !value.denominatorField)) {
     context.addIssue({
@@ -93,12 +110,20 @@ const runSchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 }).superRefine((value, context) => {
-  if (value.from > value.to) context.addIssue({ code: z.ZodIssueCode.custom, path: ["from"], message: "from must be on or before to" });
+  if (value.from > value.to) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["from"],
+      message: "from must be on or before to",
+    });
+  }
 });
 
 const approveSchema = z.object({
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
+
+const datasetStatusSchema = z.object({ activeStatus: z.boolean() });
 
 const identityMapSchema = z.object({
   sourceKey: z.string().trim().min(1).max(100),
@@ -110,7 +135,11 @@ const identityMapSchema = z.object({
   effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 }).superRefine((value, context) => {
   if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["effectiveTo"],
+      message: "effectiveTo must be on or after effectiveFrom",
+    });
   }
 });
 
@@ -123,33 +152,112 @@ const processMapSchema = z.object({
   effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 }).superRefine((value, context) => {
   if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["effectiveTo"],
+      message: "effectiveTo must be on or after effectiveFrom",
+    });
   }
 });
+
+const exceptionResolutionSchema = z.object({
+  action: z.enum(["map_employee", "map_process", "resolve", "ignore"]),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  employeeId: z.string().trim().max(100).nullable().optional(),
+  processId: z.string().trim().max(100).nullable().optional(),
+  branchId: z.string().trim().max(100).nullable().optional(),
+  identifierType: z.string().trim().max(50).nullable().optional(),
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.action === "map_employee" && !value.employeeId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["employeeId"],
+      message: "employeeId is required for employee mapping",
+    });
+  }
+  if (value.action === "map_process" && !value.processId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["processId"],
+      message: "processId is required for process mapping",
+    });
+  }
+  if (value.effectiveTo && value.effectiveFrom && value.effectiveTo < value.effectiveFrom) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["effectiveTo"],
+      message: "effectiveTo must be on or after effectiveFrom",
+    });
+  }
+});
+
+function validationError(res: Response, error: z.ZodError) {
+  return res.status(400).json({
+    success: false,
+    error: "Validation failed",
+    details: error.flatten(),
+  });
+}
 
 router.use(requireAuth);
 
 router.get(
+  "/reference-data",
+  requireRole(...sourceReaders),
+  asyncHandler(async (req, res) => {
+    const data = await performanceGovernanceService.referenceData(
+      req.authUser!.id,
+      String(req.query.search ?? ""),
+    );
+    return res.json({ success: true, data });
+  }),
+);
+
+router.get(
   "/datasets",
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager", "quality_lead"),
-  asyncHandler(async (_req, res) => res.json({ success: true, data: await performanceIngestionService.listDatasets() })),
+  requireRole(...sourceReaders),
+  asyncHandler(async (req, res) => {
+    const data = await performanceGovernanceService.listDatasets(req.authUser!.id);
+    return res.json({ success: true, data });
+  }),
 );
 
 router.get(
   "/datasets/:id",
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager", "quality_lead"),
-  asyncHandler(async (req, res) => res.json({ success: true, data: await performanceIngestionService.getDataset(req.params.id) })),
+  requireRole(...sourceReaders),
+  asyncHandler(async (req, res) => {
+    const data = await performanceGovernanceService.getDataset(req.authUser!.id, req.params.id);
+    return res.json({ success: true, data });
+  }),
 );
 
 router.post(
   "/datasets",
   requireWriteAccess,
-  requireRole("super_admin", "admin", "process_manager", "qa_manager"),
+  requireRole(...sourceManagers),
   asyncHandler(async (req, res) => {
     const parsed = datasetSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ success: false, error: "Validation failed", details: parsed.error.flatten() });
-    const id = await performanceIngestionService.saveDataset({ ...parsed.data, userId: req.authUser?.id ?? null });
-    return res.status(201).json({ success: true, data: { id } });
+    if (!parsed.success) return validationError(res, parsed.error);
+    const id = await performanceGovernanceService.saveDataset(req.authUser!.id, parsed.data);
+    return res.status(parsed.data.id ? 200 : 201).json({ success: true, data: { id } });
+  }),
+);
+
+router.patch(
+  "/datasets/:id/status",
+  requireWriteAccess,
+  requireRole(...sourceManagers),
+  asyncHandler(async (req, res) => {
+    const parsed = datasetStatusSchema.safeParse(req.body);
+    if (!parsed.success) return validationError(res, parsed.error);
+    await performanceGovernanceService.setDatasetActive(
+      req.authUser!.id,
+      req.params.id,
+      parsed.data.activeStatus,
+    );
+    return res.json({ success: true });
   }),
 );
 
@@ -159,9 +267,13 @@ router.post(
   requireRole("super_admin", "admin"),
   asyncHandler(async (req, res) => {
     const parsed = approveSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ success: false, error: "Validation failed", details: parsed.error.flatten() });
-    await performanceIngestionService.approveDataset(req.params.id, req.authUser!.id, parsed.data.effectiveFrom);
-    return res.json({ success: true });
+    if (!parsed.success) return validationError(res, parsed.error);
+    const data = await performanceGovernanceService.approveDataset(
+      req.authUser!.id,
+      req.params.id,
+      parsed.data.effectiveFrom,
+    );
+    return res.json({ success: true, data });
   }),
 );
 
@@ -171,13 +283,14 @@ function runRoute(mode: "preview" | "publish"): RequestHandler[] {
     upload.single("file"),
     asyncHandler(async (req, res) => {
       const parsed = runSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ success: false, error: "Validation failed", details: parsed.error.flatten() });
+      if (!parsed.success) return validationError(res, parsed.error);
+      await performanceGovernanceService.assertDatasetAccess(req.authUser!.id, req.params.id);
       const result = await performanceIngestionService.run({
         datasetId: req.params.id,
         mode,
         from: parsed.data.from,
         to: parsed.data.to,
-        requestedBy: req.authUser?.id ?? null,
+        requestedBy: req.authUser!.id,
         uploadBuffer: req.file?.buffer ?? null,
         sourceFileName: req.file?.originalname ?? null,
       });
@@ -188,40 +301,47 @@ function runRoute(mode: "preview" | "publish"): RequestHandler[] {
 
 router.post(
   "/datasets/:id/preview",
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager", "quality_lead"),
+  requireRole(...sourceReaders),
   ...runRoute("preview"),
 );
 
 router.post(
   "/datasets/:id/publish",
-  requireRole("super_admin", "admin", "process_manager", "qa_manager"),
+  requireRole(...sourceManagers),
   ...runRoute("publish"),
 );
 
 router.get(
+  "/datasets/:id/runs",
+  requireRole(...sourceReaders),
+  asyncHandler(async (req, res) => {
+    const data = await performanceGovernanceService.listRuns(
+      req.authUser!.id,
+      req.params.id,
+      Number(req.query.page ?? 1),
+      Number(req.query.pageSize ?? 25),
+    );
+    return res.json({ success: true, data });
+  }),
+);
+
+router.get(
   "/runs/:runId",
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager", "quality_lead"),
-  asyncHandler(async (req, res) => res.json({ success: true, data: await performanceIngestionService.runDetail(req.params.runId) })),
+  requireRole(...sourceReaders),
+  asyncHandler(async (req, res) => {
+    const data = await performanceGovernanceService.runDetail(req.authUser!.id, req.params.runId);
+    return res.json({ success: true, data });
+  }),
 );
 
 router.post(
   "/identity-maps",
   requireWriteAccess,
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager"),
+  requireRole(...mappingManagers),
   asyncHandler(async (req, res) => {
     const parsed = identityMapSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ success: false, error: "Validation failed", details: parsed.error.flatten() });
-    await db.execute(
-      `INSERT INTO performance_identity_map
-         (id, source_key, external_identifier, identifier_type, employee_id, process_id,
-          mapping_method, mapping_status, effective_from, effective_to, verified_by, verified_at)
-       VALUES (UUID(), ?, ?, ?, ?, ?, 'manual', 'verified', ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE employee_id = VALUES(employee_id), process_id = VALUES(process_id),
-         identifier_type = VALUES(identifier_type), effective_to = VALUES(effective_to),
-         mapping_status = 'verified', verified_by = VALUES(verified_by), verified_at = NOW(), updated_at = NOW()`,
-      [parsed.data.sourceKey, parsed.data.externalIdentifier, parsed.data.identifierType, parsed.data.employeeId,
-        parsed.data.processId ?? null, parsed.data.effectiveFrom, parsed.data.effectiveTo ?? null, req.authUser!.id],
-    );
+    if (!parsed.success) return validationError(res, parsed.error);
+    await performanceGovernanceService.saveIdentityMap(req.authUser!.id, parsed.data);
     return res.status(201).json({ success: true });
   }),
 );
@@ -229,38 +349,46 @@ router.post(
 router.post(
   "/process-maps",
   requireWriteAccess,
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager"),
+  requireRole(...mappingManagers),
   asyncHandler(async (req, res) => {
     const parsed = processMapSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ success: false, error: "Validation failed", details: parsed.error.flatten() });
-    await db.execute(
-      `INSERT INTO performance_process_map
-         (id, source_key, external_process, process_id, branch_id, effective_from, effective_to,
-          mapping_status, verified_by, verified_at)
-       VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'verified', ?, NOW())
-       ON DUPLICATE KEY UPDATE process_id = VALUES(process_id), branch_id = VALUES(branch_id),
-         effective_to = VALUES(effective_to), mapping_status = 'verified',
-         verified_by = VALUES(verified_by), verified_at = NOW(), updated_at = NOW()`,
-      [parsed.data.sourceKey, parsed.data.externalProcess, parsed.data.processId, parsed.data.branchId ?? null,
-        parsed.data.effectiveFrom, parsed.data.effectiveTo ?? null, req.authUser!.id],
-    );
+    if (!parsed.success) return validationError(res, parsed.error);
+    await performanceGovernanceService.saveProcessMap(req.authUser!.id, parsed.data);
     return res.status(201).json({ success: true });
   }),
 );
 
 router.get(
   "/mapping-exceptions",
-  requireRole("super_admin", "admin", "hr", "process_manager", "qa_manager", "quality_lead"),
+  requireRole(...sourceReaders),
   asyncHandler(async (req, res) => {
-    const status = String(req.query.status ?? "open");
-    const [rows] = await db.execute(
-      `SELECT * FROM integration_mapping_exception
-        WHERE status = ?
-        ORDER BY created_at DESC
-        LIMIT 500`,
-      [status],
+    const status = String(req.query.status ?? "open").trim().toLowerCase();
+    if (!["open", "resolved", "ignored"].includes(status)) {
+      return res.status(400).json({ success: false, error: "Invalid exception status" });
+    }
+    const data = await performanceGovernanceService.listMappingExceptions(req.authUser!.id, {
+      status,
+      datasetId: req.query.datasetId ? String(req.query.datasetId) : null,
+      page: Number(req.query.page ?? 1),
+      pageSize: Number(req.query.pageSize ?? 25),
+    });
+    return res.json({ success: true, data });
+  }),
+);
+
+router.post(
+  "/mapping-exceptions/:id/resolve",
+  requireWriteAccess,
+  requireRole(...mappingManagers),
+  asyncHandler(async (req, res) => {
+    const parsed = exceptionResolutionSchema.safeParse(req.body);
+    if (!parsed.success) return validationError(res, parsed.error);
+    await performanceGovernanceService.resolveMappingException(
+      req.authUser!.id,
+      req.params.id,
+      parsed.data,
     );
-    return res.json({ success: true, data: rows });
+    return res.json({ success: true });
   }),
 );
 
