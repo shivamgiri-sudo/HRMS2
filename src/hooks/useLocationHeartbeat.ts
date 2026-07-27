@@ -4,7 +4,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { storeJwtForSW, clearJwtFromSW, enqueuePosition } from "@/lib/locationDb";
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
-const MAX_ACCURACY_METERS = 50; // only accept GPS-quality readings (≤50m)
+const MAX_ACCURACY_METERS = 500; // accept cell-tower readings too (was 50m GPS-only)
 
 export function useLocationHeartbeat() {
   const { user } = useAuth();

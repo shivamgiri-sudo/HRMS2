@@ -95,7 +95,7 @@ router.get("/live", requireRole("super_admin"), h(async (_req: AuthenticatedRequ
        ell.process_name,
        ell.designation
      FROM employee_live_location ell
-     WHERE ell.captured_at >= NOW() - INTERVAL 5 MINUTE
+     WHERE ell.captured_at >= NOW() - INTERVAL 15 MINUTE
      ORDER BY ell.full_name ASC`,
   );
 
