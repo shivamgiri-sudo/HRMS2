@@ -1,0 +1,150 @@
+from pathlib import Path
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label} mismatch: {count}")
+    return text.replace(old, new, 1)
+
+
+# Keep the established character-error Net WPM penalty, but apply it only to
+# the attempted reference span calculated by scoring v2.
+scoring = Path("backend/src/modules/ats-assessment/typing-scoring.ts")
+text = scoring.read_text()
+text = replace_once(
+    text,
+    """  // Net WPM is correct-character-equivalent speed. It is deliberately derived
+  // from Gross WPM and Levenshtein accuracy so speed and correctness remain
+  // mathematically consistent and Net WPM can never exceed Gross WPM.
+  const netWpmRaw = Math.max(0, grossWpmRaw * (accuracyRaw / 100));""",
+    """  // Convert character-level Levenshtein errors into standard five-character
+  // word equivalents. The untouched suffix is not part of editDistance, so it
+  // affects speed/completion without being double-counted as an accuracy error.
+  const errorAdjustedCharactersRaw = Math.max(0, analysis.typedCharacters - analysis.editDistance);
+  const netWpmRaw = (errorAdjustedCharactersRaw / 5) / minutes;""",
+    "scoring Net WPM block",
+)
+text = replace_once(
+    text,
+    "  const errorAdjustedCharacters = round(analysis.typedCharacters * (accuracyRaw / 100), 4);",
+    "  const errorAdjustedCharacters = round(errorAdjustedCharactersRaw, 4);",
+    "scoring adjusted characters",
+)
+text = replace_once(
+    text,
+    '      netWpm: "gross WPM × (accuracy / 100)",',
+    '      netWpm: "max(0, typed characters - Levenshtein errors) / 5 / elapsed minutes",',
+    "scoring formula metadata",
+)
+scoring.write_text(text)
+
+
+service = Path("backend/src/modules/ats-assessment/assessment.service.ts")
+text = service.read_text()
+text = replace_once(
+    text,
+    """    const actualElapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
+    const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS);
+    const scored = calculateTypingScore({""",
+    """    const actualElapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
+    const durationLimitSeconds = Number(typing.duration_limit_seconds);
+    // TYPING_GRACE_SECONDS permits a delayed network submission. It must not
+    // be counted as typing time because doing so unfairly lowers WPM.
+    const elapsed = Math.min(actualElapsed, durationLimitSeconds);
+    const scored = calculateTypingScore({""",
+    "service elapsed block",
+)
+text = replace_once(
+    text,
+    """      minAccuracy: definition.typing.minAccuracy,
+    });
+    const pasteAttempts""",
+    """      minAccuracy: definition.typing.minAccuracy,
+    });
+    // Prevent gaming through a tiny perfect sample. A manual early submission
+    // must attempt the complete fixed passage. A two-second tolerance protects
+    // automatic timer submission from browser/server scheduling jitter.
+    if (actualElapsed < durationLimitSeconds - 2 && scored.completionPercentage < 100) {
+      throw appError(
+        "Continue typing the complete passage or wait until the typing timer ends",
+        400,
+        "TYPING_SAMPLE_INCOMPLETE",
+      );
+    }
+    const pasteAttempts""",
+    "service incomplete sample guard",
+)
+old_order = "ORDER BY score_percentage DESC, attempt_no ASC"
+order_count = text.count(old_order)
+if order_count < 2:
+    raise SystemExit(f"best-attempt ordering mismatch: {order_count}")
+text = text.replace(
+    old_order,
+    "ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC",
+)
+text = replace_once(
+    text,
+    """        netWpm: scored.netWpm,
+        accuracy: scored.accuracy,
+        pasteAttempts,""",
+    """        grossWpm: scored.grossWpm,
+        netWpm: scored.netWpm,
+        accuracy: scored.accuracy,
+        completionPercentage: scored.completionPercentage,
+        scoringVersion: scored.scoringVersion,
+        pasteAttempts,""",
+    "service audit evidence",
+)
+service.write_text(text)
+
+
+catalog = Path("backend/src/modules/ats-assessment/assessment.catalog.ts")
+text = catalog.read_text()
+text = replace_once(
+    text,
+    '  minAccuracy: role === "executive" ? 92 : 95,',
+    '  minAccuracy: process === "document" ? 98 : role === "quality_auditor" ? 97 : 95,',
+    "typing accuracy benchmarks",
+)
+catalog.write_text(text)
+
+
+# Match live aggregate accuracy to the authoritative attempted-span calculation,
+# without exposing correction positions to candidates.
+page = Path("backend/src/modules/ats-assessment/assessment.page.ts")
+text = page.read_text()
+old = r'''function levenshtein(left,right){const a=Array.from(left),b=Array.from(right);let previous=Array.from({length:b.length+1},(_,index)=>index);for(let row=1;row<=a.length;row++){const current=[row];for(let column=1;column<=b.length;column++){current[column]=Math.min(current[column-1]+1,previous[column]+1,previous[column-1]+(a[row-1]===b[column-1]?0:1))}previous=current}return previous[b.length]}
+function liveMetrics(){if(!typingState||!$("typingInput"))return;const text=$("typingInput").value;const started=new Date(typingState.startedAt).getTime();const elapsed=Math.max(1,Math.floor((Date.now()-started)/1000));const gross=(Array.from(text).length/5)/(elapsed/60);const distance=levenshtein(typingState.passage,text);const denominator=Math.max(Array.from(typingState.passage).length,Array.from(text).length,1);const accuracy=Math.max(0,(denominator-distance)/denominator*100);$("typingElapsed").textContent=formatTime(elapsed);$("typingWpm").textContent=gross.toFixed(1);$("typingAccuracy").textContent=accuracy.toFixed(1)+"%";$("typingCharacters").textContent=Array.from(text).length;const remaining=Number(typingState.durationSeconds)-elapsed;$("typingRemaining").textContent=formatTime(remaining);if(remaining<=0)submitTyping(true)}'''
+new = r'''function attemptedTypingMetrics(reference,typed){const a=Array.from(String(reference??"").replace(/\r\n?/g,"\n").replace(/\u00a0/g," ").normalize("NFC"));const b=Array.from(String(typed??"").replace(/\r\n?/g,"\n").replace(/\u00a0/g," ").normalize("NFC"));if(!b.length)return{distance:0,prefixLength:0,accuracy:0};let previous=Array.from({length:b.length+1},(_,index)=>index);let bestDistance=previous[b.length],bestPrefix=0;for(let row=1;row<=a.length;row++){const current=[row];for(let column=1;column<=b.length;column++){current[column]=Math.min(current[column-1]+1,previous[column]+1,previous[column-1]+(a[row-1]===b[column-1]?0:1))}const distance=current[b.length];if(distance<bestDistance||(distance===bestDistance&&row>bestPrefix)){bestDistance=distance;bestPrefix=row}previous=current}const denominator=Math.max(bestPrefix,b.length,1);return{distance:bestDistance,prefixLength:bestPrefix,accuracy:Math.max(0,(denominator-bestDistance)/denominator*100)}}
+function liveMetrics(){if(!typingState||!$("typingInput"))return;const text=$("typingInput").value;const started=new Date(typingState.startedAt).getTime();const elapsed=Math.max(1,Math.floor((Date.now()-started)/1000));const gross=(Array.from(text).length/5)/(elapsed/60);const attempted=attemptedTypingMetrics(typingState.passage,text);$("typingElapsed").textContent=formatTime(elapsed);$("typingWpm").textContent=gross.toFixed(1);$("typingAccuracy").textContent=attempted.accuracy.toFixed(1)+"%";$("typingCharacters").textContent=Array.from(text).length;const remaining=Number(typingState.durationSeconds)-elapsed;$("typingRemaining").textContent=formatTime(remaining);if(remaining<=0)submitTyping(true)}'''
+text = replace_once(text, old, new, "candidate live metrics")
+text = replace_once(
+    text,
+    "Live speed and overall estimated accuracy are shown.",
+    "Live speed and attempted-text estimated accuracy are shown.",
+    "candidate typing note",
+)
+page.write_text(text)
+
+
+readme = Path("backend/src/modules/ats-assessment/README.md")
+text = readme.read_text()
+text = replace_once(
+    text,
+    """- gross WPM based on five characters per word
+- edit-distance-based accuracy
+- net WPM after error penalty
+- aligned correct, substituted, missing, and extra word feedback
+- configured process-role speed and accuracy benchmarks""",
+    """- gross WPM = typed characters / 5 / elapsed minutes
+- Levenshtein accuracy over the portion of the passage actually attempted
+- untouched passage remainder tracked as completion/speed, not false accuracy errors
+- net WPM = max(0, typed characters - Levenshtein errors) / 5 / elapsed minutes
+- 60% accuracy / 40% speed ranking score
+- passed attempts ranked above failed attempts; ties use score, accuracy, then net WPM
+- aligned correct, substituted, missing, and extra word feedback
+- standard data-entry accuracy benchmark of 95%, QA benchmark of 97%, and critical document benchmark of 98%""",
+    "README formulas",
+)
+readme.write_text(text)
