@@ -1723,8 +1723,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Attrition % = (Exits / Avg HC) × 100. Avg HC = (Opening + Closing) / 2.",
     branchScoped: true,
     processScoped: true,
-    sensitivityLevel: "internal",
-    containsPII: false,
+    sensitivityLevel: "confidential",
+    containsPII: true,
     containsFinancialData: false,
     availabilityStatus: "under_validation",
   },
@@ -2069,6 +2069,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["quality_audit", "employees"],
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {

@@ -28,14 +28,32 @@ Last updated: 2026-07-27
 | `daily-shrinkage-report` | Attendance/BPO | internal | false | false | attendance_daily_record, employees | under_validation | None — aggregate from attendance |
 | `uan-status-report` | Identity | restricted | true | false | employees (uan_number, esic_number, pan_number) | under_validation | UAN/ESIC/PAN masked when !canViewSensitiveFields |
 
+## Cross-DB sources (other databases on same server)
+
+| Database | Table/View | Used by |
+|----------|-----------|---------|
+| `db_audit` | `call_quality_assessment` | quality-audit-log, fatal-error-register |
+| `Shivamgiri` | `v_call_master_unified_kpi` | KPI live data (used by performance-feedback module) |
+
+Access via `sourceDb.ts` (`querySource()`) using DB_HOST with SOURCE_DB_USER credentials. Queries use fully-qualified `db_audit.call_quality_assessment` refs. Employee scope enforced via sub-query on `mas_hrms.employees`.
+
 ## Blocked codes — reasons and remediation
 
 | Code | Reason | Remediation |
 |------|--------|-------------|
-| `agent-performance-summary` | `kpi_score` table stores per-metric rows (kpi_score_record was wrong table name). A pivot/aggregation query is needed to produce per-employee composite scores. | Build KPI score aggregation view or update executor once KPI pipeline is operational. Set `availabilityStatus: 'under_validation'` after. |
+| `agent-performance-summary` | `kpi_score` table stores per-metric rows (metric_id, actual_value, period). No pre-aggregated composite score. `Shivamgiri.v_call_master_unified_kpi` is a possible source but requires investigation. | Build KPI score aggregation view or update executor once KPI pipeline is operational. |
 | `team-performance-summary` | Same — depends on kpi_score per-metric data | Same as above |
 | `training-completion-status` | LMS is external. Training completion data requires LMS sync tables to be populated via the integration layer. | Complete LMS integration (Phase 7). Set `availabilityStatus: 'under_validation'` after first sync. |
 | `document-expiry-tracker` | No `document_expiry` or `employee_document_expiry` table exists. | Add migration for employee document tracking. |
+
+## Unblocked by cross-DB discovery
+
+| Code | Was | Now | Source |
+|------|-----|-----|--------|
+| `quality-audit-log` | blocked (quality_audit_record missing) | under_validation | `db_audit.call_quality_assessment` via sourceDb |
+| `fatal-error-register` | blocked (quality_audit_record missing) | under_validation | `db_audit.call_quality_assessment` via sourceDb |
+| `fnf-settlement-register` | blocked (employee_fnf_settlement missing) | under_validation | `full_final_calculation` (011_exit_management.sql) |
+| `clearance-status-register` | blocked (employee_clearance missing) | under_validation | `exit_clearance_checklist` (011_exit_management.sql) |
 
 ## Known schema corrections applied
 

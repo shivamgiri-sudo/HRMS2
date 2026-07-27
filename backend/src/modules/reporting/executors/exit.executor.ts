@@ -129,9 +129,7 @@ export async function fnfPendingRegister(
 
 // ---------------------------------------------------------------------------
 // fnf-settlement-register
-// NOTE: Uses employee_fnf_settlement via LEFT JOIN. If that table does not yet
-// exist in your schema, the LEFT JOIN will throw a runtime SQL error. In that
-// case, remove the LEFT JOIN and replace fs.* columns with NULL AS column_name.
+// Actual table: full_final_calculation (011_exit_management.sql), joined via exit_request.
 // ---------------------------------------------------------------------------
 export async function fnfSettlementRegister(
   filters: ExecFilters,
@@ -146,8 +144,8 @@ export async function fnfSettlementRegister(
   const params: unknown[]  = [scope.companyId];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.fnf_status = 'completed'");
-  clauses.push("COALESCE(fs.settlement_date, e.last_working_day) BETWEEN ? AND ?");
+  clauses.push("e.employment_status IN ('Exited','Separated','Resigned')");
+  clauses.push("COALESCE(ffc.finalized_at, e.date_of_exit, e.last_working_day) BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -159,15 +157,17 @@ export async function fnfSettlementRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(fs.settlement_date, e.last_working_day) AS settlement_date,
-           fs.total_earnings,
-           fs.total_deductions,
-           fs.net_payable,
-           COALESCE(fs.payment_status, e.fnf_status) AS payment_status,
-           LEFT(COALESCE(fs.settlement_date, e.last_working_day), 7) AS settlement_month,
+           COALESCE(ffc.finalized_at, e.date_of_exit, e.last_working_day) AS settlement_date,
+           COALESCE(ffc.gross_earnings, 0)    AS total_earnings,
+           COALESCE(ffc.total_deductions, 0)  AS total_deductions,
+           COALESCE(ffc.net_payable, 0)       AS net_payable,
+           COALESCE(ffc.status, 'pending')    AS payment_status,
+           ffc.is_ff_provisional,
+           LEFT(COALESCE(ffc.finalized_at, e.date_of_exit, e.last_working_day), 7) AS settlement_month,
            b.branch_name, p.process_name
       FROM employees e
-      LEFT JOIN employee_fnf_settlement fs ON fs.employee_id = e.id
+      LEFT JOIN exit_request er            ON er.employee_id = e.id
+      LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
       LEFT JOIN branch_master b            ON b.id = e.branch_id
       LEFT JOIN process_master p           ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
@@ -184,9 +184,8 @@ export async function fnfSettlementRegister(
 
 // ---------------------------------------------------------------------------
 // clearance-status-register
-// NOTE: Uses employee_clearance via LEFT JOIN. If that table does not exist,
-// remove the LEFT JOIN; ec.* columns will return NULL, giving a plain exited-
-// employee list with empty clearance fields.
+// Actual table: exit_clearance_checklist (011_exit_management.sql).
+// One row per dept per exit — aggregate across depts for a summary view.
 // ---------------------------------------------------------------------------
 export async function clearanceStatusRegister(
   filters: ExecFilters,
@@ -208,17 +207,20 @@ export async function clearanceStatusRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           ec.clearance_type,
-           ec.clearance_status,
-           ec.cleared_by,
-           ec.clearance_date,
-           ec.remarks,
+           er.status AS exit_status,
+           er.last_working_day_confirmed AS last_working_day,
+           SUM(CASE WHEN ec.status = 'cleared' THEN 1 ELSE 0 END) AS depts_cleared,
+           COUNT(ec.id) AS depts_total,
+           MAX(CASE WHEN ec.status NOT IN ('cleared','waived') THEN ec.department ELSE NULL END) AS pending_dept,
            b.branch_name, p.process_name
       FROM employees e
-      LEFT JOIN employee_clearance ec ON ec.employee_id = e.id
-      LEFT JOIN branch_master b       ON b.id = e.branch_id
-      LEFT JOIN process_master p      ON p.id = e.process_id
+      LEFT JOIN exit_request er              ON er.employee_id = e.id
+      LEFT JOIN exit_clearance_checklist ec  ON ec.exit_request_id = er.id
+      LEFT JOIN branch_master b              ON b.id = e.branch_id
+      LEFT JOIN process_master p             ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
+     GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name,
+              er.status, er.last_working_day_confirmed, b.branch_name, p.process_name
      ORDER BY e.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;

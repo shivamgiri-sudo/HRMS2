@@ -11,6 +11,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
+import { querySource } from "../../../db/sourceDb.js";
 import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import {
   appendScopeConditions,
@@ -21,17 +22,29 @@ import {
   ReportScopeAccessDeniedError,
 } from "./types.js";
 
+const OPS_SCHEMA_ERRORS = new Set(['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR']);
+
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
-  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-  return rows;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+    return rows;
+  } catch (err: unknown) {
+    if (OPS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return [];
+    throw err;
+  }
 }
 
 async function count(baseSql: string, params: unknown[]): Promise<number> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
-  );
-  return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
+      params
+    );
+    return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
+  } catch (err: unknown) {
+    if (OPS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return 0;
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +144,8 @@ export async function teamPerformanceSummary(
 
 // ---------------------------------------------------------------------------
 // quality-audit-log
+// Source: db_audit.call_quality_assessment (cross-DB via sourceDb / qualified refs)
+// Joins to mas_hrms.employees on employee_code = cqa.User for scope filtering.
 // ---------------------------------------------------------------------------
 export async function qualityAuditLog(
   filters: ExecFilters,
@@ -141,47 +156,53 @@ export async function qualityAuditLog(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
-  appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
-  clauses.push("qar.audit_date BETWEEN ? AND ?");
-  params.push(from, to);
+  const eClauses: string[] = ["e.company_id = ?"];
+  const eParams: unknown[]  = [scope.companyId];
+  appendScopeConditions(scope, eClauses, eParams);
+  appendFilterConditions(filters, eClauses, eParams);
 
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("qar.id > ?");
-    params.push(options.cursor);
+  // Build scoped employee code list then query db_audit
+  const empSql = `SELECT e.employee_code FROM mas_hrms.employees e
+    LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
+    LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+   WHERE ${eClauses.join(" AND ")}`;
+  const empRows = await querySource<{ employee_code: string }>(empSql, eParams as (string|number|null)[]);
+  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+
+  const codes = empRows.map(r => r.employee_code);
+  const placeholders = codes.map(() => "?").join(",");
+  const qParams: (string|number|null)[] = [...codes, from, to];
+  const cursor = options.cursor;
+  let cursorClause = "";
+  if (options.mode === "worker" && cursor != null) {
+    cursorClause = ` AND cqa.id > ?`;
+    qParams.push(cursor as string);
   }
 
-  const base = `
-    SELECT qar.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           qar.audit_date,
-           qar.call_id,
-           qar.score,
-           qar.fatal_error,
-           qar.auditor_name,
-           qar.feedback,
-           b.branch_name, p.process_name
-      FROM quality_audit_record qar
-      JOIN employees e         ON e.id  = qar.employee_id
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY qar.id ASC`;
+  const sql = `
+    SELECT cqa.id AS call_id,
+           cqa.User AS employee_code,
+           cqa.CallDate AS audit_date,
+           ROUND(cqa.quality_percentage, 2) AS score,
+           CASE WHEN cqa.quality_percentage < 50
+                 AND (cqa.professionalism_maintained = 0 OR cqa.active_listening = 0)
+                THEN 1 ELSE 0 END AS fatal_error,
+           cqa.Campaign AS process_name
+      FROM db_audit.call_quality_assessment cqa
+     WHERE cqa.User IN (${placeholders})
+       AND cqa.CallDate BETWEEN ? AND ?
+       ${cursorClause}
+     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const rows = await querySource<Record<string,unknown>>(sql, qParams);
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    ? (rows[rows.length - 1].call_id as string) : null;
+  return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
 // fatal-error-register
+// Source: db_audit.call_quality_assessment — fatal = low score + missing competency
 // ---------------------------------------------------------------------------
 export async function fatalErrorRegister(
   filters: ExecFilters,
@@ -192,43 +213,44 @@ export async function fatalErrorRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
-  appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
-  clauses.push("qar.audit_date BETWEEN ? AND ?");
-  params.push(from, to);
-  // Accept any of the three possible column names across schema versions
-  clauses.push("(qar.fatal_error = 1 OR qar.score = 0 OR qar.is_fatal = 1)");
+  const eClauses: string[] = ["e.company_id = ?"];
+  const eParams: unknown[]  = [scope.companyId];
+  appendScopeConditions(scope, eClauses, eParams);
+  appendFilterConditions(filters, eClauses, eParams);
 
-  if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("qar.id > ?");
-    params.push(options.cursor);
+  const empSql = `SELECT e.employee_code FROM mas_hrms.employees e
+    LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
+    LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+   WHERE ${eClauses.join(" AND ")}`;
+  const empRows = await querySource<{ employee_code: string }>(empSql, eParams as (string|number|null)[]);
+  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+
+  const codes = empRows.map(r => r.employee_code);
+  const placeholders = codes.map(() => "?").join(",");
+  const qParams: (string|number|null)[] = [...codes, from, to];
+  const cursor = options.cursor;
+  let cursorClause = "";
+  if (options.mode === "worker" && cursor != null) {
+    cursorClause = ` AND cqa.id > ?`;
+    qParams.push(cursor as string);
   }
 
-  const base = `
-    SELECT qar.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           qar.audit_date,
-           qar.call_id,
-           qar.score,
-           qar.fatal_error,
-           qar.auditor_name,
-           qar.feedback,
-           b.branch_name, p.process_name
-      FROM quality_audit_record qar
-      JOIN employees e         ON e.id  = qar.employee_id
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY qar.id ASC`;
+  const sql = `
+    SELECT cqa.id AS call_id,
+           cqa.User AS employee_code,
+           cqa.CallDate AS audit_date,
+           ROUND(cqa.quality_percentage, 2) AS score,
+           cqa.Campaign AS process_name
+      FROM db_audit.call_quality_assessment cqa
+     WHERE cqa.User IN (${placeholders})
+       AND cqa.CallDate BETWEEN ? AND ?
+       AND cqa.quality_percentage < 50
+       AND (cqa.professionalism_maintained = 0 OR cqa.active_listening = 0)
+       ${cursorClause}
+     ORDER BY cqa.id ASC${options.mode === "worker" ? ` LIMIT ${options.limit}` : ` LIMIT ${options.limit} OFFSET ${options.offset}`}`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const rows = await querySource<Record<string,unknown>>(sql, qParams);
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    ? (rows[rows.length - 1].call_id as string) : null;
+  return { rows, rowCount: rows.length, isTruncated: rows.length === options.limit, nextCursor };
 }
