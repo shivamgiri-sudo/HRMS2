@@ -945,27 +945,10 @@ export default function NativeReportsCenterV2() {
 
   return (
     <HrmsModernShell
-      eyebrow="Reports"
-      title="Reports Center"
-      description="Production-grade workforce, attendance, payroll, and compliance reports with full data export."
+      eyebrow="REPORTS"
+      title="Report Library"
+      description="Workforce, attendance, payroll and compliance reports."
       icon={<BarChart3 size={22} />}
-      actions={
-        <div className="relative w-full sm:w-[320px]">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            className="w-full h-10 pl-10 pr-10 text-sm rounded-lg bg-white border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Search reports..."
-            value={searchQ}
-            onChange={e => setSearchQ(e.target.value)}
-          />
-          {searchQ && (
-            <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
-              <X size={14} />
-            </button>
-          )}
-        </div>
-      }
     >
       <div className="flex min-h-0 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shadow-sm">
         {/* Sidebar */}

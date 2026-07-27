@@ -421,27 +421,8 @@ export default function NativeReportsCenterV3() {
     <HrmsModernShell
       eyebrow="REPORTS"
       title="Decision Center"
-      description="A limited set of decision-ready section packs with executive controls, detailed registers, exceptions, reconciliation and compliance evidence."
+      description="Decision-ready section packs with registers, exceptions and compliance evidence."
       icon={<BarChart3 className="h-5 w-5" />}
-      actions={
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-64 max-w-full">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search sections or reports"
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <Link
-            to="/reports/library"
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <Library className="h-4 w-4" /> Detailed Library
-          </Link>
-        </div>
-      }
     >
       <div className="grid min-h-[calc(100vh-150px)] gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="rounded-xl border border-slate-200 bg-white shadow-sm">

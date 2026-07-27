@@ -301,30 +301,8 @@ export default function BpoMasterReports() {
     <HrmsModernShell
       eyebrow="REPORTS"
       title="BPO Master Reports"
-      description="Source-governed BPO master reports covering operations, workforce, payroll, quality, finance and compliance with full field lineage and accuracy certification."
+      description="Source-governed master reports with field lineage and accuracy certification."
       icon={<FileSpreadsheet className="h-5 w-5" />}
-      actions={
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-64 max-w-full">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="SEARCH MASTER REPORTS"
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs font-semibold uppercase outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <Link to="/reports/source-validation" className="inline-flex h-10 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800 hover:bg-emerald-100">
-            <FileSearch className="h-4 w-4" /> SOURCE ACCURACY
-          </Link>
-          <Link to="/reports/control-room" className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50">
-            <ShieldCheck className="h-4 w-4" /> CONTROL ROOM
-          </Link>
-          <Link to="/reports/library" className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:bg-slate-50">
-            <Library className="h-4 w-4" /> DETAILED LIBRARY
-          </Link>
-        </div>
-      }
     >
       <div className="space-y-4">
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">

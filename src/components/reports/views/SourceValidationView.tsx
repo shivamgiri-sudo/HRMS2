@@ -127,20 +127,6 @@ export default function BpoReportSourceValidation() {
       title="Source Validation"
       description="Schema coverage, data accuracy and source availability checks for all BPO master reports."
       icon={<ShieldCheck className="h-5 w-5" />}
-      actions={
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="month"
-            value={month}
-            onChange={(event) => setMonth(event.target.value)}
-            className="w-40"
-          />
-          <Button variant="outline" onClick={() => void validationQuery.refetch()} disabled={validationQuery.isFetching}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${validationQuery.isFetching ? "animate-spin" : ""}`} />
-            Validate Sources
-          </Button>
-        </div>
-      }
     >
       <div className="space-y-4">
         <main className="space-y-4">
