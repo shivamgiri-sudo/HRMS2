@@ -8,6 +8,7 @@ import { PerformanceDataSourceAdmin } from "@/components/performance-hub/Perform
 import { PerformanceMetricGrid } from "@/components/performance-hub/PerformanceMetricGrid";
 import { PerformanceRoleLens } from "@/components/performance-hub/PerformanceRoleLens";
 import { PerformancePeopleTable } from "@/components/performance-hub/PerformancePeopleTable";
+import { PerformanceScheduleAdmin } from "@/components/performance-hub/PerformanceScheduleAdmin";
 import { PerformanceScopeBar } from "@/components/performance-hub/PerformanceScopeBar";
 import { PerformanceTrendPanel } from "@/components/performance-hub/PerformanceTrendPanel";
 import {
@@ -89,6 +90,7 @@ export default function PerformanceHub() {
           <>
             <PerformanceRoleLens context={contextQuery.data} />
             <PerformanceDataSourceAdmin context={contextQuery.data} />
+            <PerformanceScheduleAdmin context={contextQuery.data} />
 
             <PerformanceScopeBar
               context={contextQuery.data}
