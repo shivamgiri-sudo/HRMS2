@@ -29,15 +29,27 @@ export function useLocationHeartbeat() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user || !("geolocation" in navigator)) return;
+    if (!user) {
+      console.log("[LocationHeartbeat] No user, skipping");
+      return;
+    }
+    if (!("geolocation" in navigator)) {
+      console.log("[LocationHeartbeat] Geolocation API not available");
+      return;
+    }
+
+    console.log("[LocationHeartbeat] Starting for user:", user.id);
 
     async function postLocation(latitude: number, longitude: number, accuracy: number) {
       lastPostRef.current = Date.now();
+      console.log("[LocationHeartbeat] Posting:", { latitude, longitude, accuracy });
       try {
         await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
+        console.log("[LocationHeartbeat] Posted successfully");
         await enqueuePosition({ latitude, longitude, accuracy });
         triggerBackgroundSync();
-      } catch {
+      } catch (err) {
+        console.error("[LocationHeartbeat] Post failed:", err);
         void enqueuePosition({ latitude, longitude, accuracy })
           .then(() => triggerBackgroundSync());
       }
@@ -45,20 +57,30 @@ export function useLocationHeartbeat() {
 
     function onPosition(pos: GeolocationPosition) {
       const { latitude, longitude, accuracy } = pos.coords;
-      // Ignore low-quality readings (e.g. cell-tower only, accuracy 1000m+)
-      if (accuracy > MAX_ACCURACY_METERS) return;
+      console.log("[LocationHeartbeat] Got position:", { latitude, longitude, accuracy });
+      if (accuracy > MAX_ACCURACY_METERS) {
+        console.log("[LocationHeartbeat] Accuracy too low, ignoring (max:", MAX_ACCURACY_METERS, ")");
+        return;
+      }
       latestPosRef.current = { latitude, longitude, accuracy };
       const now = Date.now();
       if (now - lastPostRef.current >= HEARTBEAT_INTERVAL_MS) {
         void postLocation(latitude, longitude, accuracy);
+      } else {
+        console.log("[LocationHeartbeat] Throttled, last post was", Math.round((now - lastPostRef.current) / 1000), "s ago");
       }
+    }
+
+    function onError(err: GeolocationPositionError) {
+      console.error("[LocationHeartbeat] Geolocation error:", err.code, err.message);
+      // 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
     }
 
     // watchPosition is OS-level — Android Chrome keeps it running in background.
     // setInterval/setTimeout are frozen by the browser after ~60s when backgrounded.
     watchIdRef.current = navigator.geolocation.watchPosition(
       onPosition,
-      () => { /* permission denied or unavailable — silent */ },
+      onError,
       {
         enableHighAccuracy: true,
         maximumAge: 0,        // always get a fresh GPS fix, never serve stale cache
