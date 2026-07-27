@@ -3,6 +3,9 @@ import { z } from "zod";
 import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { breakManagementService } from "./break-management.service.js";
+import { resolveFullScope } from "../reporting/reporting.scope.js";
+import { executeReport } from "../reporting/executors/index.js";
+import type { ExecFilters, ExecOptions } from "../reporting/executors/types.js";
 
 export const breakManagementRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -39,19 +42,38 @@ breakManagementRouter.get("/reports", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
+// Delegates to canonical break-daily-summary executor (no .slice(), DB-level pagination)
 breakManagementRouter.get("/reports/daily-summary", h(async (req, res) => {
   const query = z.object({
-    date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     branch_id: z.string().optional(),
     process_id: z.string().optional(),
     department_id: z.string().optional(),
     manager_id: z.string().optional(),
     employee_id: z.string().optional(),
-    limit: z.coerce.number().optional(),
+    offset: z.coerce.number().optional(),
   }).parse(req.query);
-  const data = await breakManagementService.getDailySummaryReport(query);
-  return res.json({ success: true, data });
+
+  const scope = await resolveFullScope(req.authUser.id);
+  const filters: ExecFilters = {
+    from:           query.date_from,
+    to:             query.date_to,
+    branchId:       query.branch_id,
+    processId:      query.process_id,
+    departmentId:   query.department_id,
+    managerId:      query.manager_id,
+    employeeCode:   query.employee_id,
+  };
+  const options: ExecOptions = {
+    limit: 100,
+    offset: Number(query.offset ?? 0),
+    cursor: null,
+    includeTotal: true,
+    mode: 'preview',
+  };
+  const result = await executeReport('break-daily-summary', filters, scope, options);
+  return res.json({ success: true, rows: result.rows, total: result.rowCount, previewLimit: 100, isTruncated: result.isTruncated });
 }));
 
 breakManagementRouter.get("/settings", requireBreakAdmin, h(async (_req, res) => {

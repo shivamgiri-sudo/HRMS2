@@ -178,7 +178,7 @@ router.get('/download/:token', requireAuth, h(async (req, res) => {
      WHERE id = ? AND download_status = 'AVAILABLE'`,
     [tok.id]
   );
-  const claimRows = (claimResult as { affectedRows: number }).affectedRows;
+  const claimRows = (claimResult as unknown as { affectedRows: number }).affectedRows;
   if (claimRows !== 1) {
     res.status(410).json({ error: 'ALREADY_USED' }); return;
   }
