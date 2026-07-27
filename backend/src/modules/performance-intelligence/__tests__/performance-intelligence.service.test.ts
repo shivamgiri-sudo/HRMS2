@@ -23,6 +23,7 @@ function scope(level: DashboardScope["level"], role: string): DashboardScope {
     userId: `${role}-user`,
     branchIds: [],
     processIds: [],
+    employeeIds: [],
   };
 }
 
@@ -30,6 +31,10 @@ function repository(): PerformanceRepository {
   return {
     findSubjectEmployeeId: vi.fn().mockResolvedValue("self-employee"),
     canAccessEmployee: vi.fn().mockResolvedValue(true),
+    listFilterOptions: vi.fn().mockResolvedValue({
+      branches: [{ id: "branch-1", label: "Noida" }],
+      processes: [{ id: "process-1", label: "Onfido" }],
+    }),
     listMetricFacts: vi.fn().mockResolvedValue([]),
     listDailyTrendFacts: vi.fn().mockResolvedValue([]),
     listPeople: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
@@ -67,6 +72,8 @@ describe("performance intelligence scope enforcement", () => {
     expect(result.scopeLevel).toBe("TEAM_ONLY");
     expect(result.canSelectProcess).toBe(false);
     expect(result.canViewPeople).toBe(true);
+    expect(result.branchOptions).toEqual([{ id: "branch-1", label: "Noida" }]);
+    expect(result.processOptions).toEqual([{ id: "process-1", label: "Onfido" }]);
   });
 
   it("preserves process entitlement when narrowing a process manager by branch", async () => {
