@@ -11,7 +11,7 @@ import {
   type AssessmentTemplateDefinition,
 } from "./assessment.catalog.js";
 import { ensureAssessmentSchema } from "./assessment.schema.js";
-import { calculateTypingScore } from "./typing-scoring.js";
+import { calculateTypingScore, MAX_TYPING_SCORE_CHARACTERS } from "./typing-scoring.js";
 import { questionBankService } from "./question-bank.service.js";
 import { emailService } from "../communication/email.service.js";
 import { assessmentInvitationEmail } from "../ats/email.templates.js";
@@ -191,7 +191,7 @@ type SectionScore = {
 };
 
 const MAX_TEXT_ANSWER_LENGTH = 10_000;
-const MAX_TYPING_TEXT_LENGTH = 20_000;
+const MAX_TYPING_TEXT_LENGTH = MAX_TYPING_SCORE_CHARACTERS;
 const ASSIGNMENT_START_WINDOW_HOURS = 12;
 const ASSESSMENT_GRACE_SECONDS = 120;
 const TYPING_GRACE_SECONDS = 30;
@@ -924,6 +924,9 @@ function candidateQuestion(question: AssessmentQuestionDefinition) {
 }
 
 function serializeTyping(row: TypingRow, includeReference = false) {
+  const result = row.submitted_at
+    ? parseJson<Record<string, unknown>>(row.result_json, {})
+    : null;
   return {
     id: row.id,
     attemptNo: Number(row.attempt_no),
@@ -936,9 +939,12 @@ function serializeTyping(row: TypingRow, includeReference = false) {
     accuracy: row.accuracy_percentage,
     score: row.score_percentage,
     passedBenchmark: row.passed_benchmark === null ? null : Boolean(row.passed_benchmark),
+    completionPercentage: result ? Number(result.completionPercentage ?? 0) : null,
+    typedCharacters: result ? Number(result.typedCharacters ?? 0) : null,
+    scoringVersion: result ? String(result.scoringVersion ?? "typing-score-v1") : null,
     backspaceCount: Number(row.backspace_count ?? 0),
     pasteAttempts: Number(row.paste_attempts ?? 0),
-    result: row.submitted_at ? parseJson(row.result_json, null) : null,
+    result,
     active: !row.submitted_at,
     ...(includeReference ? { passage: row.reference_text } : {}),
   };
@@ -1257,6 +1263,17 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
     if (!definition.typing.required) {
       throw appError("Typing test is not required for this assessment", 400, "TYPING_NOT_REQUIRED");
     }
+    const assessmentSecondsRemaining = getRemainingSeconds(attempt);
+    if (
+      assessmentSecondsRemaining !== null
+      && assessmentSecondsRemaining < definition.typing.durationSeconds + 5
+    ) {
+      throw appError(
+        "Not enough assessment time remains to start a complete typing attempt",
+        409,
+        "INSUFFICIENT_TIME_FOR_TYPING",
+      );
+    }
 
     const active = await rows<TypingRow>(
       executor,
@@ -1362,7 +1379,10 @@ export async function submitTypingAttempt(
 
     const started = dateMs(typing.started_at) ?? Date.now();
     const actualElapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
-    const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS);
+    const durationLimitSeconds = Number(typing.duration_limit_seconds);
+    // TYPING_GRACE_SECONDS permits a delayed network submission. It must not
+    // be counted as typing time because doing so unfairly lowers WPM.
+    const elapsed = Math.min(actualElapsed, durationLimitSeconds);
     const scored = calculateTypingScore({
       referenceText: typing.reference_text,
       typedText: String(input.typedText ?? ""),
@@ -1370,6 +1390,16 @@ export async function submitTypingAttempt(
       minNetWpm: definition.typing.minNetWpm,
       minAccuracy: definition.typing.minAccuracy,
     });
+    // Prevent gaming through a tiny perfect sample. A manual early submission
+    // must attempt the complete fixed passage. A two-second tolerance protects
+    // automatic timer submission from browser/server scheduling jitter.
+    if (actualElapsed < durationLimitSeconds - 2 && scored.completionPercentage < 100) {
+      throw appError(
+        "Continue typing the complete passage or wait until the typing timer ends",
+        400,
+        "TYPING_SAMPLE_INCOMPLETE",
+      );
+    }
     const pasteAttempts = Math.max(0, Math.min(10_000, Math.floor(Number(input.pasteAttempts ?? 0))));
     const backspaceCount = Math.max(0, Math.min(1_000_000, Math.floor(Number(input.backspaceCount ?? 0))));
 
@@ -1419,8 +1449,11 @@ export async function submitTypingAttempt(
       "TYPING_ATTEMPT_SUBMITTED",
       {
         attemptNo: typing.attempt_no,
+        grossWpm: scored.grossWpm,
         netWpm: scored.netWpm,
         accuracy: scored.accuracy,
+        completionPercentage: scored.completionPercentage,
+        scoringVersion: scored.scoringVersion,
         pasteAttempts,
       },
       { ...meta, actorType: "candidate" },
@@ -1547,7 +1580,7 @@ async function finalizeAssessment(
     `SELECT *
      FROM ats_typing_test_attempt
      WHERE assessment_id = ? AND submitted_at IS NOT NULL
-     ORDER BY score_percentage DESC, attempt_no ASC
+     ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC
      LIMIT 1
      FOR UPDATE`,
     [attempt.id],
@@ -1739,7 +1772,7 @@ export async function getCandidateAssessmentSummary(candidateId: string) {
     `SELECT *
      FROM ats_typing_test_attempt
      WHERE assessment_id = ? AND submitted_at IS NOT NULL
-     ORDER BY score_percentage DESC, attempt_no ASC
+     ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC
      LIMIT 1`,
     [attempt.id],
   );
@@ -1769,6 +1802,12 @@ export async function getCandidateAssessmentSummary(candidateId: string) {
           netWpm: typing[0].net_wpm,
           accuracy: typing[0].accuracy_percentage,
           score: typing[0].score_percentage,
+          completionPercentage: Number(
+            parseJson<Record<string, unknown>>(typing[0].result_json, {}).completionPercentage ?? 0,
+          ),
+          scoringVersion: String(
+            parseJson<Record<string, unknown>>(typing[0].result_json, {}).scoringVersion ?? "typing-score-v1",
+          ),
           passedBenchmark: Boolean(typing[0].passed_benchmark),
         }
       : null,
@@ -1817,14 +1856,23 @@ export async function listAssessmentAttempts(filters: {
        a.q_token_snapshot, a.status, a.result, a.percentage,
        a.manual_review_required, a.assigned_at, a.started_at, a.submitted_at,
        a.completed_at, t.template_name, t.template_code, t.process_key, t.role_key,
-       (SELECT MAX(net_wpm) FROM ats_typing_test_attempt x
-        WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL) AS best_net_wpm,
-       (SELECT MAX(accuracy_percentage) FROM ats_typing_test_attempt x
-        WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL) AS best_accuracy,
+       best_typing.net_wpm AS best_net_wpm,
+       best_typing.accuracy_percentage AS best_accuracy,
+       CAST(JSON_UNQUOTE(JSON_EXTRACT(best_typing.result_json, '$.completionPercentage')) AS DECIMAL(7,2))
+         AS best_completion_percentage,
        JSON_LENGTH(COALESCE(a.integrity_flags, JSON_ARRAY())) AS integrity_flag_count
      FROM ats_candidate_assessment a
      JOIN ats_candidate c ON c.id = a.candidate_id
      JOIN ats_assessment_template t ON t.id = a.template_id
+     LEFT JOIN ats_typing_test_attempt best_typing
+       ON best_typing.id = (
+         SELECT x.id
+         FROM ats_typing_test_attempt x
+         WHERE x.assessment_id = a.id AND x.submitted_at IS NOT NULL
+         ORDER BY x.passed_benchmark DESC, x.score_percentage DESC,
+                  x.accuracy_percentage DESC, x.net_wpm DESC, x.attempt_no ASC
+         LIMIT 1
+       )
      WHERE ${conditions.join(" AND ")}
      ORDER BY a.assigned_at DESC
      LIMIT ${limit} OFFSET ${offset}`,
@@ -1967,7 +2015,7 @@ export async function reviewAssessment(input: {
       `SELECT *
        FROM ats_typing_test_attempt
        WHERE assessment_id = ? AND submitted_at IS NOT NULL
-       ORDER BY score_percentage DESC, attempt_no ASC
+       ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC
        LIMIT 1`,
       [attempt.id],
     );

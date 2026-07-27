@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { mergeTypingDefinition, typingBenchmarksFor } from "./assessment.catalog.js";
 import type {
   AssessmentProcess,
   AssessmentQuestionDefinition,
@@ -231,6 +232,8 @@ export async function selectRandomPassage(
        AND set_number = ?
        AND (process_key = ? OR process_key = 'any')
        AND (role_key = ? OR role_key = 'any')
+       AND word_count >= 30
+       AND character_count BETWEEN 150 AND 2500
      ORDER BY RAND()
      LIMIT 1`,
     [selectedSet, process, role],
@@ -271,7 +274,7 @@ export async function buildRandomizedTemplate(
     config: {
       ...baseTemplate,
       questions: questionResult?.questions ?? baseTemplate.questions,
-      typing: passageResult?.typing ?? baseTemplate.typing,
+      typing: passageResult ? mergeTypingDefinition(baseTemplate.typing, passageResult.typing) : baseTemplate.typing,
     },
     fromBank,
   };
@@ -432,8 +435,37 @@ export async function importPassages(
 
   for (const p of passages) {
     try {
-      const wordCount = p.passageText.trim().split(/\s+/).length;
-      const charCount = p.passageText.length;
+      const passageCode = String(p.passageCode ?? "").trim();
+      const title = String(p.title ?? "").trim();
+      const passageText = String(p.passageText ?? "").trim();
+      if (!passageCode || !title || !passageText) {
+        throw new Error("Passage code, title and passage text are required");
+      }
+      const wordCount = passageText.split(/\s+/).filter(Boolean).length;
+      const charCount = Array.from(passageText).length;
+      if (wordCount < 30 || charCount < 150) {
+        throw new Error("Typing passage must contain at least 30 words and 150 characters");
+      }
+      if (charCount > 2500) throw new Error("Typing passage cannot exceed 2500 characters");
+
+      const durationSeconds = Number(p.recommendedDurationSeconds ?? 180);
+      if (!Number.isFinite(durationSeconds) || durationSeconds < 60 || durationSeconds > 600) {
+        throw new Error("Typing duration must be between 60 and 600 seconds");
+      }
+      const policy = typingBenchmarksFor(
+        p.processKey === "any" ? "backoffice" : p.processKey,
+        p.roleKey === "any" ? "executive" : p.roleKey,
+      );
+      const requestedWpm = Number(p.minWpmBenchmark ?? policy.minNetWpm);
+      const requestedAccuracy = Number(p.minAccuracyBenchmark ?? policy.minAccuracy);
+      if (!Number.isFinite(requestedWpm) || requestedWpm < 10 || requestedWpm > 100) {
+        throw new Error("Net WPM benchmark must be between 10 and 100");
+      }
+      if (!Number.isFinite(requestedAccuracy) || requestedAccuracy < 80 || requestedAccuracy > 100) {
+        throw new Error("Accuracy benchmark must be between 80 and 100");
+      }
+      const minWpmBenchmark = Math.max(policy.minNetWpm, requestedWpm);
+      const minAccuracyBenchmark = Math.max(policy.minAccuracy, requestedAccuracy);
 
       await db.execute(
         `INSERT INTO ats_typing_passage_bank (
@@ -455,17 +487,17 @@ export async function importPassages(
           set_number = VALUES(set_number)`,
         [
           randomUUID(),
-          p.passageCode,
+          passageCode,
           p.processKey,
           p.roleKey,
           p.difficultyLevel,
-          p.title,
-          p.passageText,
+          title,
+          passageText,
           wordCount,
           charCount,
-          p.recommendedDurationSeconds ?? 180,
-          p.minWpmBenchmark ?? 30,
-          p.minAccuracyBenchmark ?? 92,
+          durationSeconds,
+          minWpmBenchmark,
+          minAccuracyBenchmark,
           p.setNumber,
           createdBy,
         ],
