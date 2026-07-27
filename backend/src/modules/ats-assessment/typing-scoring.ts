@@ -337,14 +337,15 @@ export function calculateTypingScore(input: {
 
   const grossWpmRaw = (analysis.typedCharacters / 5) / minutes;
   const accuracyRaw = analysis.accuracy;
-  // Net WPM is correct-character-equivalent speed. It is deliberately derived
-  // from Gross WPM and Levenshtein accuracy so speed and correctness remain
-  // mathematically consistent and Net WPM can never exceed Gross WPM.
-  const netWpmRaw = Math.max(0, grossWpmRaw * (accuracyRaw / 100));
+  // Convert character-level Levenshtein errors into standard five-character
+  // word equivalents. The untouched suffix is not part of editDistance, so it
+  // affects speed/completion without being double-counted as an accuracy error.
+  const errorAdjustedCharactersRaw = Math.max(0, analysis.typedCharacters - analysis.editDistance);
+  const netWpmRaw = (errorAdjustedCharactersRaw / 5) / minutes;
   const grossWpm = round(grossWpmRaw);
   const netWpm = round(netWpmRaw);
   const accuracy = round(accuracyRaw);
-  const errorAdjustedCharacters = round(analysis.typedCharacters * (accuracyRaw / 100), 4);
+  const errorAdjustedCharacters = round(errorAdjustedCharactersRaw, 4);
   const wordDiff = buildWordDiff(analysis.attemptedReference, analysis.typed);
   const speedScore = Math.min(100, (netWpm / Math.max(1, input.minNetWpm)) * 100);
   const score = round((speedScore * 0.4) + (accuracy * 0.6));
@@ -378,7 +379,7 @@ export function calculateTypingScore(input: {
     },
     formula: {
       grossWpm: "(typed characters / 5) / elapsed minutes",
-      netWpm: "gross WPM × (accuracy / 100)",
+      netWpm: "max(0, typed characters - Levenshtein errors) / 5 / elapsed minutes",
       accuracy: "(max(attempted reference characters, typed characters) - Levenshtein distance) / max(...) × 100",
       score: "40% speed score + 60% accuracy",
     },

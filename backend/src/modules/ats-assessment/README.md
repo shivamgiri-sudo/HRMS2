@@ -84,11 +84,14 @@ The screen does not highlight or identify any correct, incorrect, missing, or ex
 
 The server calculates final typing results using:
 
-- gross WPM based on five characters per word
-- edit-distance-based accuracy
-- net WPM after error penalty
+- gross WPM = typed characters / 5 / elapsed minutes
+- Levenshtein accuracy over the portion of the passage actually attempted
+- untouched passage remainder tracked as completion/speed, not false accuracy errors
+- net WPM = max(0, typed characters - Levenshtein errors) / 5 / elapsed minutes
+- 60% accuracy / 40% speed ranking score
+- passed attempts ranked above failed attempts; ties use score, accuracy, then net WPM
 - aligned correct, substituted, missing, and extra word feedback
-- configured process-role speed and accuracy benchmarks
+- standard data-entry accuracy benchmark of 95%, QA benchmark of 97%, and critical document benchmark of 98%
 
 ## Assessment coverage
 

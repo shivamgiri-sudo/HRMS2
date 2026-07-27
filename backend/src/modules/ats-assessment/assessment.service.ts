@@ -1362,7 +1362,10 @@ export async function submitTypingAttempt(
 
     const started = dateMs(typing.started_at) ?? Date.now();
     const actualElapsed = Math.max(1, Math.floor((Date.now() - started) / 1000));
-    const elapsed = Math.min(actualElapsed, Number(typing.duration_limit_seconds) + TYPING_GRACE_SECONDS);
+    const durationLimitSeconds = Number(typing.duration_limit_seconds);
+    // TYPING_GRACE_SECONDS permits a delayed network submission. It must not
+    // be counted as typing time because doing so unfairly lowers WPM.
+    const elapsed = Math.min(actualElapsed, durationLimitSeconds);
     const scored = calculateTypingScore({
       referenceText: typing.reference_text,
       typedText: String(input.typedText ?? ""),
@@ -1370,6 +1373,16 @@ export async function submitTypingAttempt(
       minNetWpm: definition.typing.minNetWpm,
       minAccuracy: definition.typing.minAccuracy,
     });
+    // Prevent gaming through a tiny perfect sample. A manual early submission
+    // must attempt the complete fixed passage. A two-second tolerance protects
+    // automatic timer submission from browser/server scheduling jitter.
+    if (actualElapsed < durationLimitSeconds - 2 && scored.completionPercentage < 100) {
+      throw appError(
+        "Continue typing the complete passage or wait until the typing timer ends",
+        400,
+        "TYPING_SAMPLE_INCOMPLETE",
+      );
+    }
     const pasteAttempts = Math.max(0, Math.min(10_000, Math.floor(Number(input.pasteAttempts ?? 0))));
     const backspaceCount = Math.max(0, Math.min(1_000_000, Math.floor(Number(input.backspaceCount ?? 0))));
 
@@ -1419,8 +1432,11 @@ export async function submitTypingAttempt(
       "TYPING_ATTEMPT_SUBMITTED",
       {
         attemptNo: typing.attempt_no,
+        grossWpm: scored.grossWpm,
         netWpm: scored.netWpm,
         accuracy: scored.accuracy,
+        completionPercentage: scored.completionPercentage,
+        scoringVersion: scored.scoringVersion,
         pasteAttempts,
       },
       { ...meta, actorType: "candidate" },
@@ -1547,7 +1563,7 @@ async function finalizeAssessment(
     `SELECT *
      FROM ats_typing_test_attempt
      WHERE assessment_id = ? AND submitted_at IS NOT NULL
-     ORDER BY score_percentage DESC, attempt_no ASC
+     ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC
      LIMIT 1
      FOR UPDATE`,
     [attempt.id],
@@ -1739,7 +1755,7 @@ export async function getCandidateAssessmentSummary(candidateId: string) {
     `SELECT *
      FROM ats_typing_test_attempt
      WHERE assessment_id = ? AND submitted_at IS NOT NULL
-     ORDER BY score_percentage DESC, attempt_no ASC
+     ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC
      LIMIT 1`,
     [attempt.id],
   );
@@ -1967,7 +1983,7 @@ export async function reviewAssessment(input: {
       `SELECT *
        FROM ats_typing_test_attempt
        WHERE assessment_id = ? AND submitted_at IS NOT NULL
-       ORDER BY score_percentage DESC, attempt_no ASC
+       ORDER BY passed_benchmark DESC, score_percentage DESC, accuracy_percentage DESC, net_wpm DESC, attempt_no ASC
        LIMIT 1`,
       [attempt.id],
     );

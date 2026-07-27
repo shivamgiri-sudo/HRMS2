@@ -1306,7 +1306,7 @@ const typingFor = (process: AssessmentProcess, role: AssessmentRole): TypingDefi
   required: ["backoffice", "document", "email"].includes(process),
   durationSeconds: 180,
   minNetWpm: role === "team_leader" ? 35 : role === "quality_auditor" ? 32 : 30,
-  minAccuracy: role === "executive" ? 92 : 95,
+  minAccuracy: process === "document" ? 98 : role === "quality_auditor" ? 97 : 95,
   maxAttempts: 2,
   passage: PASSAGES[process],
 });
