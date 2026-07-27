@@ -1,4 +1,5 @@
 import type { NextFunction, Response } from "express";
+import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
@@ -66,6 +67,41 @@ function entityFor(path: string): { entityType: string; entityId: string | null;
   return { entityType: "performance_governance", entityId: null, datasetId: null };
 }
 
+async function resolveDatasetId(
+  req: AuthenticatedRequest,
+  entityDatasetId: string | null,
+  createdDatasetId: string | null,
+): Promise<string | null> {
+  if (createdDatasetId) return createdDatasetId;
+  if (entityDatasetId) return entityDatasetId;
+
+  const sourceKey = String(
+    (req.body as Record<string, unknown> | undefined)?.sourceKey ?? "",
+  ).trim();
+  if (sourceKey) {
+    const [datasets] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM performance_source_dataset WHERE dataset_key = ? LIMIT 1`,
+      [sourceKey],
+    );
+    if (datasets[0]?.id) return String(datasets[0].id);
+  }
+
+  const exceptionId = req.path.match(/^\/mapping-exceptions\/([^/]+)/)?.[1];
+  if (exceptionId) {
+    const [datasets] = await db.execute<RowDataPacket[]>(
+      `SELECT psd.id
+         FROM integration_mapping_exception ime
+         JOIN performance_source_dataset psd ON psd.dataset_key = ime.source_system
+        WHERE ime.id = ?
+        LIMIT 1`,
+      [exceptionId],
+    );
+    if (datasets[0]?.id) return String(datasets[0].id);
+  }
+
+  return null;
+}
+
 async function recordAudit(input: {
   req: AuthenticatedRequest;
   statusCode: number;
@@ -80,7 +116,7 @@ async function recordAudit(input: {
   const createdDatasetId = path === "/datasets"
     ? String((responseData.data as Record<string, unknown> | undefined)?.id ?? "") || null
     : null;
-  const datasetId = createdDatasetId ?? entity.datasetId;
+  const datasetId = await resolveDatasetId(req, entity.datasetId, createdDatasetId);
 
   await db.execute(
     `INSERT INTO performance_governance_audit
