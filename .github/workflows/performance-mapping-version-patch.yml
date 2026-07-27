@@ -1,0 +1,155 @@
+name: Performance Mapping Version Patch
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply effective-dated mapping governance
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/src/modules/performance-ingestion/performance-ingestion.service.ts')
+          text = path.read_text()
+
+          old_update = """         mapping_json = VALUES(mapping_json), active_status = VALUES(active_status), updated_at = NOW()`"""
+          new_update = """         mapping_json = VALUES(mapping_json), active_status = VALUES(active_status),
+         approval_status = 'draft', approved_by = NULL, approved_at = NULL, updated_at = NOW()`"""
+          if old_update in text:
+              text = text.replace(old_update, new_update, 1)
+
+          start = text.index('  async approveDataset(')
+          end = text.index('  async run(', start)
+          approve = '''  async approveDataset(idOrKey: string, userId: string, effectiveFrom: string): Promise<void> {
+    const dataset = await loadDataset(idOrKey, false);
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [versions] = await connection.execute<RowDataPacket[]>(
+        `SELECT version_no, DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_from
+           FROM performance_mapping_version
+          WHERE dataset_id = ?
+          ORDER BY version_no DESC
+          LIMIT 1
+          FOR UPDATE`,
+        [dataset.id],
+      );
+      const latest = versions[0];
+      if (latest?.effective_from && effectiveFrom <= String(latest.effective_from)) {
+        throw Object.assign(
+          new Error(`Mapping effective date must be after ${String(latest.effective_from)}`),
+          { statusCode: 409 },
+        );
+      }
+      const version = Number(latest?.version_no ?? 0) + 1;
+      await connection.execute(
+        `UPDATE performance_mapping_version
+            SET effective_to = DATE_SUB(?, INTERVAL 1 DAY)
+          WHERE dataset_id = ?
+            AND status = 'active'
+            AND effective_to IS NULL`,
+        [effectiveFrom, dataset.id],
+      );
+      await connection.execute(
+        `INSERT INTO performance_mapping_version
+           (id, dataset_id, version_no, mapping_json, effective_from, status,
+            approved_by, approved_at, created_by)
+         VALUES (UUID(), ?, ?, ?, ?, 'active', ?, NOW(), ?)`,
+        [dataset.id, version, JSON.stringify(dataset.mapping), effectiveFrom, userId, userId],
+      );
+      await connection.execute(
+        `UPDATE performance_source_dataset
+            SET approval_status = 'active', approved_by = ?, approved_at = NOW(), updated_at = NOW()
+          WHERE id = ?`,
+        [userId, dataset.id],
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback().catch(() => undefined);
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+'''
+          text = text[:start] + approve + text[end:]
+
+          old_cache = '''      const metrics = await metricMap(dataset.mapping.metrics);
+      const accumulator = new Map<string, Accumulator>();
+      let mappingVersionId: string | null = null;
+'''
+          new_cache = '''      const metrics = await metricMap(dataset.mapping.metrics);
+      const accumulator = new Map<string, Accumulator>();
+      const mappingVersionCache = new Map<string, string | null>();
+'''
+          if old_cache not in text:
+              raise SystemExit('Could not locate mapping-version cache block')
+          text = text.replace(old_cache, new_cache, 1)
+
+          old_row_mapping = '''        mappingVersionId = mappingVersionId ?? await activeMappingVersion(dataset.id, eventDate!);
+        const employee = await mapEmployee(dataset.datasetKey, externalIdentifier, eventDate!);
+'''
+          new_row_mapping = '''        let mappingVersionId = mappingVersionCache.get(eventDate!);
+        if (mappingVersionId === undefined) {
+          mappingVersionId = await activeMappingVersion(dataset.id, eventDate!);
+          mappingVersionCache.set(eventDate!, mappingVersionId);
+        }
+        if (input.mode === "publish" && !mappingVersionId) {
+          const issue: ValidationIssue = {
+            rawRecordId,
+            code: "MAPPING_VERSION_MISSING",
+            severity: "error",
+            fieldName: dataset.mapping.eventDateField,
+            invalidValue: eventDate,
+            message: "No approved dataset mapping is effective for this performance date",
+          };
+          issues.push(issue);
+          await recordIssue(runId, issue);
+          invalidRows += 1;
+          continue;
+        }
+        const employee = await mapEmployee(dataset.datasetKey, externalIdentifier, eventDate!);
+'''
+          if old_row_mapping not in text:
+              raise SystemExit('Could not locate row mapping-version assignment')
+          text = text.replace(old_row_mapping, new_row_mapping, 1)
+
+          old_fact = '''            metricCode,
+            scoreDate: eventDate!,
+            actualValue: derived,
+'''
+          new_fact = '''            metricCode,
+            scoreDate: eventDate!,
+            mappingVersionId: mappingVersionId ?? null,
+            actualValue: derived,
+'''
+          if old_fact not in text:
+              raise SystemExit('Could not locate normalised fact mapping')
+          text = text.replace(old_fact, new_fact, 1)
+
+          text = text.replace('          mappingVersionId,\n          requestedBy:', '          requestedBy:', 1)
+          path.write_text(text)
+          PY
+
+          if git diff --quiet -- backend/src/modules/performance-ingestion/performance-ingestion.service.ts; then
+            echo "Effective-dated mapping governance is already applied."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add backend/src/modules/performance-ingestion/performance-ingestion.service.ts
+            git commit -m "feat(performance): enforce effective-dated mapping versions"
+            git push origin HEAD:agent/performance-ingestion-platform
+          fi
