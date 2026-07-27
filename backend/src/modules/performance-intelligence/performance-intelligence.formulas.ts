@@ -1,50 +1,14 @@
 import {
-  PERFORMANCE_METRIC_CODES,
   type CalculationStatus,
   type MetricFact,
   type MetricStatus,
   type PerformanceDirection,
-  type PerformanceMetricCode,
   type PerformanceMetricResult,
 } from "./performance-intelligence.contracts.js";
 
-const METRIC_META: Record<
-  PerformanceMetricCode,
-  { label: string; unit: PerformanceMetricResult["unit"] }
-> = {
-  CALLS: { label: "Handled calls", unit: "count" },
-  AHT: { label: "Average handle time", unit: "seconds" },
-  ADHERENCE: { label: "Schedule adherence", unit: "percent" },
-  UTILIZATION: { label: "Utilization", unit: "percent" },
-  QUALITY_SCORE: { label: "Quality score", unit: "percent" },
-  FATAL_RATE: { label: "Fatal error rate", unit: "percent" },
-  CONVERSION_RATE: { label: "Conversion rate", unit: "percent" },
-  SALES_COUNT: { label: "Sales count", unit: "count" },
-  REVENUE: { label: "Revenue", unit: "currency" },
-  AOV: { label: "Average order value", unit: "currency" },
-  COD_SHARE: { label: "COD share", unit: "percent" },
-  RTO_RATE: { label: "RTO rate", unit: "percent" },
-};
-
-const RATIO_METRICS = new Set<PerformanceMetricCode>([
-  "ADHERENCE",
-  "UTILIZATION",
-  "QUALITY_SCORE",
-  "FATAL_RATE",
-  "CONVERSION_RATE",
-  "AOV",
-  "COD_SHARE",
-  "RTO_RATE",
-]);
-
-const SUM_METRICS = new Set<PerformanceMetricCode>([
-  "CALLS",
-  "SALES_COUNT",
-  "REVENUE",
-]);
-
 function round(value: number, decimals = 2): number {
-  const factor = 10 ** decimals;
+  const bounded = Math.max(0, Math.min(6, Math.trunc(decimals)));
+  const factor = 10 ** bounded;
   return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
@@ -58,14 +22,15 @@ export function calculateAchievement(
   value: number | null,
   target: number | null,
   direction: PerformanceDirection,
+  maxAchievementPct = 120,
 ): number | null {
   if (value === null || target === null || target <= 0 || value < 0) return null;
-  if (direction === "lower_is_better" && value === 0) return 999.99;
+  if (direction === "lower_is_better" && value === 0) return Math.max(0, maxAchievementPct);
 
   const raw = direction === "lower_is_better"
     ? (target / value) * 100
     : (value / target) * 100;
-  return round(Math.min(raw, 999.99));
+  return round(Math.min(raw, Math.max(0, maxAchievementPct)));
 }
 
 function metricStatus(
@@ -80,78 +45,76 @@ function metricStatus(
   return "off_track";
 }
 
-function aggregateGroup(
-  metricCode: PerformanceMetricCode,
-  facts: MetricFact[],
-): PerformanceMetricResult {
-  const actualValues = facts
-    .map((fact) => finiteOrNull(fact.actualValue))
-    .filter((value): value is number => value !== null);
-  const componentFacts = facts.filter((fact) =>
-    finiteOrNull(fact.numeratorValue) !== null &&
-    finiteOrNull(fact.denominatorValue) !== null,
-  );
-  const hasVerifiedLineage =
-    componentFacts.length > 0 &&
-    componentFacts.length === facts.filter((fact) => fact.actualValue !== null).length &&
-    componentFacts.every((fact) => Boolean(fact.formulaVersion));
+function aggregateGroup(facts: MetricFact[]): PerformanceMetricResult {
+  const ordered = [...facts].sort((left, right) =>
+    left.scoreDate.localeCompare(right.scoreDate) || left.computedAt.localeCompare(right.computedAt));
+  const first = ordered[0];
+  const actualFacts = ordered.filter((fact) => finiteOrNull(fact.actualValue) !== null);
+  const actualValues = actualFacts.map((fact) => Number(fact.actualValue));
+  const componentFacts = actualFacts.filter((fact) =>
+    finiteOrNull(fact.numeratorValue) !== null && finiteOrNull(fact.denominatorValue) !== null);
+  const method = String(first?.aggregationMethod ?? "average").toLowerCase();
+  const decimals = first?.decimalPlaces ?? 2;
+  const allFormulaVersioned = actualFacts.length > 0 && actualFacts.every((fact) => Boolean(fact.formulaVersion));
 
   let value: number | null = null;
   let calculationStatus: CalculationStatus = "missing";
 
-  if (SUM_METRICS.has(metricCode) && actualValues.length > 0) {
-    value = round(actualValues.reduce((sum, current) => sum + current, 0));
-    calculationStatus = facts.every((fact) => Boolean(fact.formulaVersion))
-      ? "verified"
-      : "legacy_unverified";
-  } else if ((metricCode === "AHT" || RATIO_METRICS.has(metricCode)) && componentFacts.length > 0) {
-    const numerator = componentFacts.reduce(
-      (sum, fact) => sum + Number(fact.numeratorValue),
-      0,
-    );
-    const denominator = componentFacts.reduce(
-      (sum, fact) => sum + Number(fact.denominatorValue),
-      0,
-    );
+  if (method === "sum" && actualValues.length > 0) {
+    value = round(actualValues.reduce((sum, current) => sum + current, 0), decimals);
+    calculationStatus = allFormulaVersioned ? "verified" : "legacy_unverified";
+  } else if (method === "latest" && actualFacts.length > 0) {
+    value = round(Number(actualFacts.at(-1)?.actualValue), decimals);
+    calculationStatus = allFormulaVersioned ? "verified" : "legacy_unverified";
+  } else if (method === "ratio" && componentFacts.length > 0) {
+    const numerator = componentFacts.reduce((sum, fact) => sum + Number(fact.numeratorValue), 0);
+    const denominator = componentFacts.reduce((sum, fact) => sum + Number(fact.denominatorValue), 0);
     if (denominator > 0) {
-      value = round(metricCode === "AHT" || metricCode === "AOV"
-        ? numerator / denominator
-        : (numerator / denominator) * 100);
-      calculationStatus = hasVerifiedLineage ? "verified" : "legacy_unverified";
+      const multiplier = first?.unit === "percent" ? 100 : 1;
+      value = round((numerator / denominator) * multiplier, decimals);
+      calculationStatus = componentFacts.length === actualFacts.length && allFormulaVersioned
+        ? "verified"
+        : "legacy_unverified";
     }
+  } else if (actualValues.length > 0) {
+    value = round(actualValues.reduce((sum, current) => sum + current, 0) / actualValues.length, decimals);
+    calculationStatus = allFormulaVersioned ? "verified" : "legacy_unverified";
   }
 
+  // Preserve visibility for older facts that do not yet carry numerator/denominator lineage.
   if (value === null && actualValues.length > 0) {
-    value = round(
-      actualValues.reduce((sum, current) => sum + current, 0) / actualValues.length,
-    );
+    value = round(actualValues.reduce((sum, current) => sum + current, 0) / actualValues.length, decimals);
     calculationStatus = "legacy_unverified";
   }
 
-  const target = facts
+  const target = ordered
     .map((fact) => finiteOrNull(fact.targetValue))
     .find((candidate): candidate is number => candidate !== null) ?? null;
-  const direction = facts[0]?.direction ?? "higher_is_better";
-  const achievementPct = calculateAchievement(value, target, direction);
+  const direction = first?.direction ?? "higher_is_better";
+  const maxAchievementPct = Math.max(...ordered.map((fact) => Number(fact.maxAchievementPct ?? 120)), 0);
+  const achievementPct = calculateAchievement(value, target, direction, maxAchievementPct || 120);
   const sourceSystems = Array.from(new Set(
-    facts.map((fact) => fact.sourceSystem?.trim()).filter((source): source is string => Boolean(source)),
+    ordered.map((fact) => fact.sourceSystem?.trim()).filter((source): source is string => Boolean(source)),
   )).sort();
-  const latestComputedAt = facts
+  const latestComputedAt = ordered
     .map((fact) => fact.computedAt)
     .filter(Boolean)
     .sort()
     .at(-1) ?? null;
 
   return {
-    metricCode,
-    ...METRIC_META[metricCode],
+    metricCode: first?.metricCode ?? "UNKNOWN",
+    label: first?.metricName ?? first?.metricCode ?? "Metric",
+    unit: first?.unit ?? "count",
     value,
     target,
+    weightage: Math.max(0, Number(first?.weightage ?? 100)),
+    displayOrder: Number(first?.displayOrder ?? 100),
     achievementPct,
     status: metricStatus(value, target, achievementPct),
     calculationStatus,
     sourceSystems,
-    recordCount: facts.reduce(
+    recordCount: ordered.reduce(
       (sum, fact) => sum + Math.max(0, Number(fact.sourceRecordCount ?? 0)),
       0,
     ),
@@ -160,13 +123,13 @@ function aggregateGroup(
 }
 
 export function aggregateMetricFacts(facts: MetricFact[]): PerformanceMetricResult[] {
-  const grouped = new Map<PerformanceMetricCode, MetricFact[]>();
-  for (const metricCode of PERFORMANCE_METRIC_CODES) grouped.set(metricCode, []);
+  const grouped = new Map<string, MetricFact[]>();
   for (const fact of facts) {
-    grouped.get(fact.metricCode)?.push(fact);
+    const rows = grouped.get(fact.metricCode) ?? [];
+    rows.push(fact);
+    grouped.set(fact.metricCode, rows);
   }
-
-  return PERFORMANCE_METRIC_CODES
-    .filter((metricCode) => (grouped.get(metricCode)?.length ?? 0) > 0)
-    .map((metricCode) => aggregateGroup(metricCode, grouped.get(metricCode) ?? []));
+  return [...grouped.values()]
+    .map(aggregateGroup)
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.label.localeCompare(right.label));
 }
