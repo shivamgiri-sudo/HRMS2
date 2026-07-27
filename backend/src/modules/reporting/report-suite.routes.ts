@@ -5,7 +5,11 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { buildIdentityMappingExceptionsSql } from "./identity-mapping-report.js";
 import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } from "./identity-source-snapshot.js";
-import { resolveBranchScope } from "./reporting.scope.js";
+import {
+  addScopedEmployeeFilters,
+  reportCatalogAccessMiddleware,
+  reportScopeMiddleware,
+} from "./reporting-access.js";
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -56,13 +60,6 @@ function isExportRequest(query: any): boolean {
   return exportParam === "true" || exportParam === "1" || exportParam === "yes";
 }
 
-function addEmployeeFilters(query: any, clauses: string[], params: unknown[], alias = "e") {
-  if (query.branchId) { clauses.push(`${alias}.branch_id = ?`); params.push(String(query.branchId)); }
-  if (query.departmentId) { clauses.push(`${alias}.department_id = ?`); params.push(String(query.departmentId)); }
-  if (query.processId) { clauses.push(`${alias}.process_id = ?`); params.push(String(query.processId)); }
-  if (query.costCentreId) { clauses.push(`${alias}.cost_centre_id = ?`); params.push(String(query.costCentreId)); }
-  if (query.managerId) { clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`); params.push(String(query.managerId), String(query.managerId)); }
-}
 
 async function queryRows(sql: string, params: unknown[], limit: number, offset = 0) {
   let finalSql = sql;
@@ -213,7 +210,7 @@ reportSuiteRouter.post("/identity-source-snapshot/sync", requireRole("admin", "s
   return res.json({ success: true, data: result });
 }));
 
-reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo", "operations", "quality", "recruiter", "recruitment_head", "trainer"), h(async (req, res) => {
+reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddleware, h(async (req, res) => {
   const code = String(req.params.code);
   const isExport = isExportRequest(req.query);
   const limit = limitParam(req.query.limit, isExport);
@@ -221,29 +218,9 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
   const clauses: string[] = [];
   let sql = "";
 
-  // Enforce branch scope: authenticated user must be within their authorized branch set.
-  // This prevents users from changing branchId param to see unauthorized data.
-  const userId = (req as any).user?.id ?? (req as any).user?.userId;
-  if (userId) {
-    const scope = await resolveBranchScope(String(userId));
-    if (!scope.isSuperAdmin && scope.branchIds.length > 0) {
-      // User-supplied branchId must be within their scope; if not supplied, restrict to scope
-      const requestedBranchId = req.query.branchId ? String(req.query.branchId) : null;
-      if (requestedBranchId && !scope.branchIds.includes(requestedBranchId)) {
-        return res.status(403).json({ success: false, error: "Branch not in your authorized scope." });
-      }
-      if (!requestedBranchId) {
-        // Apply scope automatically — use IN clause
-        const placeholders = scope.branchIds.map(() => "?").join(",");
-        clauses.push(`e.branch_id IN (${placeholders})`);
-        params.push(...scope.branchIds);
-      }
-    }
-  }
-
   switch (code) {
     case "employee-master":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.official_email, e.mobile, e.employment_status, e.date_of_joining, e.date_of_exit,
                     b.branch_name, d.dept_name AS department_name, p.process_name, cc.cost_centre_name,
@@ -258,7 +235,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               ORDER BY e.employee_code`;
       break;
     case "headcount":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
       sql = `SELECT b.branch_name, d.dept_name AS department_name, p.process_name, COUNT(*) AS active_headcount
                FROM employees e
@@ -272,7 +249,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "employee-movement": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
       params.push(from, to, from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -289,7 +266,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
     }
     case "manager-mapping":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.reporting_manager_id, e.manager_id,
@@ -305,7 +282,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "attendance-daily": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       // Pre-aggregate wfm_attendance_session to avoid multi-session row duplication.
@@ -358,7 +335,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
     case "attendance-summary": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     SUM(adr.attendance_status='present') AS present_days,
@@ -377,7 +354,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "biometric-reconciliation": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       if (req.query.reconciliationStatus) {
         clauses.push(`CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day') THEN 'NO_BIOMETRIC_FOR_PRESENT'
@@ -414,7 +391,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
     }
     case "leave-balance":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lbl.balance_year = ?"); params.push(Number(req.query.year ?? new Date().getFullYear()));
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.used_days, lbl.adjusted_days,
@@ -427,7 +404,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "leave-utilization": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lr.from_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT lr.from_date, lr.to_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     lt.leave_code, lt.leave_name, lr.total_days, lr.status
@@ -439,7 +416,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
     case "payroll-register": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT spr.run_month AS payroll_month,
@@ -488,7 +465,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       const month = monthParam(req.query.month);
       const minVarianceAmount = Number(req.query.minVarianceAmount ?? 0);
       const minVariancePct = Number(req.query.minVariancePct ?? 0);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code,
@@ -546,7 +523,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
     case "payslip-status": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       sql = `SELECT spr.run_month, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     sp.payslip_ref, sp.file_url, sp.acknowledged_at,
@@ -558,7 +535,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
     }
     case "statutory-missing":
-      addEmployeeFilters(req.query, clauses, params); clauses.push("e.active_status = 1");
+      addScopedEmployeeFilters(req, clauses, params); clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.pan_number, eu.uan, e.epf_number, e.esic_number,
                     CONCAT_WS(',', IF(COALESCE(e.pan_number,'')='', 'PAN_MISSING', NULL), IF(eu.uan IS NULL, 'UAN_MISSING', NULL), IF(COALESCE(e.esic_number,'')='', 'ESIC_MISSING', NULL)) AS missing_items
@@ -568,7 +545,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               ORDER BY employee_name`;
       break;
     case "bank-missing":
-      addEmployeeFilters(req.query, clauses, params); clauses.push("e.active_status = 1");
+      addScopedEmployeeFilters(req, clauses, params); clauses.push("e.active_status = 1");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status
                FROM employees e LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
@@ -577,7 +554,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
               ORDER BY bank_status DESC, employee_name`;
       break;
     case "increment-requests":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT sir.id, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     b.branch_name, p.process_name,
                     sir.current_ctc, sir.proposed_ctc, sir.increment_percentage, sir.effective_from, sir.status,
@@ -662,7 +639,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "lifecycle-events": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ele.effective_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     ele.event_type, ele.effective_date AS event_date,
@@ -679,7 +656,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "increment-promotion-history": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ejh.effective_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     ejh.change_type, ejh.effective_date,
@@ -696,7 +673,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "birthday-list":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1", "e.date_of_birth IS NOT NULL");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_birth,
@@ -716,7 +693,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       break;
 
     case "anniversary-list":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_joining,
@@ -739,7 +716,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "daily-hc-shift": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date,
                     b.branch_name,
@@ -771,7 +748,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "shift-adherence-detail": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       // Aggregate sessions to prevent multi-session duplication before joining.
@@ -838,7 +815,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "overtime-summary": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
@@ -883,7 +860,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "habitual-absentee-list": {
       const month = monthParam(req.query.month);
       const threshold = Number(req.query.threshold ?? 3);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
@@ -916,7 +893,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "daily-shrinkage-report": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, b.branch_name, p.process_name,
@@ -942,7 +919,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "monthly-shrinkage-trend": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       // Derived table required — MySQL forbids window functions over aggregates in the same SELECT level.
@@ -1000,7 +977,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // ─── A3: Leave ────────────────────────────────────────────────────────────
     case "leave-allocation-register": {
       const year = Number(req.query.year ?? new Date().getFullYear());
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lbl.balance_year = ?"); params.push(year);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.adjusted_days,
@@ -1033,7 +1010,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "leave-lwp-reconciliation": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     SUM(adr.lwp_value) AS lwp_days_attendance,
@@ -1052,7 +1029,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "maternity-paternity-register": {
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lt.leave_code IN ('MAT','PAT','MATERNITY','PATERNITY','ML','PL')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.gender, lt.leave_code, lt.leave_name,
@@ -1068,7 +1045,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "leave-lapse-summary": {
       const currentYear = new Date().getFullYear();
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("lbl.balance_year < ?"); params.push(currentYear);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     lt.leave_code, lt.leave_name, lbl.balance_year,
@@ -1113,7 +1090,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
         monthFrom = `${cy}-01`;
         monthTo   = `${cy}-12`;
       }
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       // Only include calculated/processed runs (exclude drafts)
       clauses.push("spr.run_month BETWEEN ? AND ?"); params.push(monthFrom, monthTo);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
@@ -1138,7 +1115,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "cost-centre-salary-summary": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -1160,7 +1137,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "process-lob-salary-cost": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT COALESCE(p.process_name, 'Unassigned') AS process_name,
@@ -1183,7 +1160,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "salary-advance-register":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     sal.advance_date, sal.advance_amount, sal.recovery_start_month,
                     sal.total_recovered, sal.outstanding_amount, sal.status, sal.remarks
@@ -1195,7 +1172,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "lwp-deduction-register": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1215,7 +1192,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "bank-change-requests":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("ebd.verified = 0");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_holder_name,
@@ -1248,7 +1225,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "pf-esi-optout-register":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     eso.override_type AS opt_out_type,
                     eso.effective_from_month AS effective_month,
@@ -1261,7 +1238,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "grade-salary-distribution": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       sql = `SELECT COALESCE(CONCAT(gb.grade_code,' - ',gb.grade_name), 'Ungraded') AS grade_band,
                     COUNT(DISTINCT e.id) AS headcount,
@@ -1282,7 +1259,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "neft-transfer-file": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       clauses.push("spl.net_salary > 0");
@@ -1349,7 +1326,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "uan-master-register":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1", "eu.uan IS NOT NULL");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     eu.uan, e.epf_number, eu.member_id AS pf_member_id,
@@ -1383,7 +1360,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "pt-monthly-register": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1399,7 +1376,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "pf-esic-salary-register": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1427,7 +1404,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "tds-working-sheet": {
       const year = Number(req.query.year ?? new Date().getFullYear());
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("YEAR(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')) = ?"); params.push(year);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1447,7 +1424,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "gratuity-liability-register":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1", "e.date_of_joining IS NOT NULL");
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.date_of_joining,
@@ -1629,7 +1606,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "exit-movement-report": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("er.submitted_at BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     er.submitted_at AS resignation_date,
@@ -1748,7 +1725,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // ─── A8: Performance & KPI ────────────────────────────────────────────────
     case "kpi-score-summary": {
       const period = String(req.query.period ?? "");
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     p.process_name,
@@ -1766,7 +1743,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "kpi-leaderboard": {
       const period = String(req.query.period ?? "");
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT kss.rank_in_process AS rank_no, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1784,7 +1761,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "below-target-kpi": {
       const period = String(req.query.period ?? "");
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("LOWER(kss.rating) IN ('below target','needs improvement','poor','unsatisfactory')");
       if (period) { clauses.push("ksp.id = ?"); params.push(period); }
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1823,7 +1800,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "pip-register":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     dp.overall_notes AS plan_notes,
                     dp.plan_start_date AS pip_start, dp.plan_end_date AS pip_end,
@@ -1843,7 +1820,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "roster-adherence": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1865,7 +1842,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "workforce-mandate-vs-actual": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, p.process_name, b.branch_name,
                     COALESCE(wm.mandated_hc, 0) AS mandated_hc,
@@ -1889,7 +1866,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "dialer-hours-report": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1906,7 +1883,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "process-hc-vs-mandate":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       sql = `SELECT p.process_name, b.branch_name,
                     COUNT(e.id) AS current_hc,
@@ -1973,7 +1950,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     }
 
     case "employee-document-compliance":
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       // Use checklist counts when available (employees onboarded via ATS),
       // fall back to employee_documents for legacy/direct uploads.
@@ -2025,7 +2002,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // ─── A11: Productivity / APR ──────────────────────────────────────────────
     case "productivity-individual-scorecard": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     p.process_name,
@@ -2051,7 +2028,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "productivity-team-rollup": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT p.process_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS headcount,
@@ -2075,7 +2052,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-top-bottom-performers": {
       const month = monthParam(req.query.month);
       const tier = String(req.query.tier ?? "top");
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     p.process_name,
@@ -2103,7 +2080,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "dialer-aht-trend": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
@@ -2120,7 +2097,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "schedule-adherence-vs-kpi": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     p.process_name,
@@ -2149,7 +2126,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
       const minLateMinutes = Number(req.query.minLateMinutes ?? 0);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       clauses.push("adr.late_mark = 1");
       if (minLateMinutes > 0) {
@@ -2192,7 +2169,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "regularization-summary": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?"); params.push(month);
@@ -2228,7 +2205,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "attendance-dispute-summary": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       if (req.query.status) { clauses.push("arr.status = ?"); params.push(String(req.query.status)); }
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
       if (req.query.disputeType) { clauses.push("arr.dispute_type = ?"); params.push(String(req.query.disputeType)); }
@@ -2273,7 +2250,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // ─── Missing Leave ────────────────────────────────────────────────────────
     case "leave-encashment-register": {
       const year = String(req.query.year ?? new Date().getFullYear());
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("YEAR(le.encashment_date) = ?"); params.push(year);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -2368,7 +2345,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "form16-data": {
       const financialYear = String(req.query.financialYear ?? `${new Date().getFullYear() - 1}-${String(new Date().getFullYear()).slice(2)}`);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     e.pan_number, b.branch_name,
@@ -2387,7 +2364,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "gratuity-monthly-accrual": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(gal.accrual_month,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -2406,7 +2383,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "posh-compliance-register": {
       const year = String(req.query.year ?? new Date().getFullYear());
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("YEAR(pc.complaint_date) = ?"); params.push(year);
       sql = `SELECT pc.complaint_id, pc.complaint_date,
                     b.branch_name, p.process_name,
@@ -2424,7 +2401,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "labour-compliance-register": {
       const year = String(req.query.year ?? new Date().getFullYear());
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("YEAR(lce.due_date) = ?"); params.push(year);
       sql = `SELECT lce.compliance_type, lce.act_name, lce.form_number,
                     b.branch_name, lce.state_code,
@@ -2976,7 +2953,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-daily-heatmap": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date,
                     e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -3006,7 +2983,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-process-summary": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT p.process_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS active_agents,
@@ -3031,7 +3008,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-aht-trend": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m') AS month, p.process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
@@ -3049,7 +3026,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-branch-summary": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT b.branch_name,
                     COUNT(DISTINCT e.id) AS active_agents,
@@ -3072,7 +3049,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-cost-centre-summary": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT cc.cost_centre_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS active_agents,
@@ -3117,7 +3094,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-occupancy-utilization": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT p.process_name, b.branch_name,
                     adr.record_date,
@@ -3139,7 +3116,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
 
     case "productivity-adherence-vs-kpi": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     p.process_name,
@@ -3166,7 +3143,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "productivity-shrinkage-impact": {
       const from = dateParam(req.query.from, new Date().toISOString().slice(0, 10));
       const to = dateParam(req.query.to, from);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT adr.record_date, p.process_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS total_scheduled,
@@ -3273,7 +3250,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
       const firstDay = `${month}-01`;
       const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
 
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       clauses.push("adr.record_date BETWEEN ? AND ?");
       params.push(firstDay, lastDay);
@@ -3387,7 +3364,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "leave-balance-export": {
       const month = monthParam(req.query.month);
       const balYear = month.slice(0, 4);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
 
       sql = `
@@ -3425,7 +3402,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "left-employee-export": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit')");
       clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
       params.push(from, to);
@@ -3472,7 +3449,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     case "new-join-export": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to   = dateParam(req.query.to,   new Date().toISOString().slice(0, 10));
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.date_of_joining BETWEEN ? AND ?");
       params.push(from, to);
 
@@ -3512,7 +3489,7 @@ reportSuiteRouter.get("/:code", requireRole("admin", "hr", "hr_head", "finance",
     // ─── Salary Sheet Export (90-column full payroll) ─────────────────────────
     case "salary-sheet-export": {
       const month = monthParam(req.query.month);
-      addEmployeeFilters(req.query, clauses, params);
+      addScopedEmployeeFilters(req, clauses, params);
       clauses.push("spr.run_month = ?"); params.push(month);
       clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
 

@@ -1,0 +1,99 @@
+name: BPO Master & Deep Section Reports
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/pages/BpoMasterReports.tsx"
+      - "src/pages/NativeReportsCenterV3.tsx"
+      - "src/pages/NativeReportsCenterV2.tsx"
+      - "src/lib/report-catalog.ts"
+      - "src/config/routes/platform.routes.tsx"
+      - "backend/src/modules/reporting/**"
+      - "docs/reports/**"
+      - ".github/workflows/deep-section-reports.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpo-master-reports-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Frontend typecheck
+        id: frontend-typecheck
+        shell: bash
+        run: |
+          if ! npm run typecheck > /tmp/reports-frontend-typecheck.log 2>&1; then
+            tail -n 220 /tmp/reports-frontend-typecheck.log
+            exit 1
+          fi
+
+      - name: Backend typecheck
+        id: backend-typecheck
+        shell: bash
+        run: |
+          if ! npm --prefix backend run typecheck > /tmp/reports-backend-typecheck.log 2>&1; then
+            tail -n 220 /tmp/reports-backend-typecheck.log
+            exit 1
+          fi
+
+      - name: Report architecture and source contracts
+        id: report-tests
+        shell: bash
+        run: |
+          if ! npm --prefix backend exec -- vitest run \
+            src/modules/reporting/__tests__/deep-report-packs.contract.test.ts \
+            src/modules/reporting/__tests__/bpo-master-report-catalog.contract.test.ts \
+            src/modules/reporting/__tests__/bpo-master-source-safety.contract.test.ts \
+            > /tmp/deep-report-tests.log 2>&1; then
+            cat /tmp/deep-report-tests.log
+            exit 1
+          fi
+          cat /tmp/deep-report-tests.log
+
+      - name: Frontend production build
+        id: frontend-build
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-key-for-build
+
+      - name: Backend production build
+        id: backend-build
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpo-master-report-diagnostics
+          path: |
+            /tmp/reports-frontend-typecheck.log
+            /tmp/reports-backend-typecheck.log
+            /tmp/deep-report-tests.log
+          if-no-files-found: ignore
+          retention-days: 5

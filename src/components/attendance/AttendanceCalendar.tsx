@@ -658,8 +658,8 @@ function DayDetailSheet({
                       <Label className="text-xs">Reason Code</Label>
                       <Select value={regReasonCode} onValueChange={setRegReasonCode}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select reason code (optional)" /></SelectTrigger>
-                        <SelectContent>
-                          {reasonCodes.map(r => <SelectItem key={r.code} value={r.code} className="text-xs">{r.label}</SelectItem>)}
+                        <SelectContent className="bg-white border border-slate-200 shadow-md z-[9999]">
+                          {reasonCodes.map(r => <SelectItem key={r.code} value={r.code} className="text-xs text-slate-900 hover:bg-slate-100">{r.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -667,9 +667,9 @@ function DayDetailSheet({
                       <Label className="text-xs">Requested Status</Label>
                       <Select value={regStatus} onValueChange={(v) => setRegStatus(v as 'present' | 'half_day')}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="present" className="text-xs">Present</SelectItem>
-                          <SelectItem value="half_day" className="text-xs">Half Day</SelectItem>
+                        <SelectContent className="bg-white border border-slate-200 shadow-md z-[9999]">
+                          <SelectItem value="present" className="text-xs text-slate-900">Present</SelectItem>
+                          <SelectItem value="half_day" className="text-xs text-slate-900">Half Day</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -702,8 +702,8 @@ function DayDetailSheet({
                       <Label className="text-xs">Leave Type <span className="text-red-500">*</span></Label>
                       <Select value={leaveTypeId} onValueChange={setLeaveTypeId}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select leave type" /></SelectTrigger>
-                        <SelectContent>
-                          {leaveTypes.map(lt => <SelectItem key={lt.id} value={lt.id} className="text-xs">{lt.leave_name}</SelectItem>)}
+                        <SelectContent className="bg-white border border-slate-200 shadow-md z-[9999]">
+                          {leaveTypes.map(lt => <SelectItem key={lt.id} value={lt.id} className="text-xs text-slate-900 hover:bg-slate-100">{lt.leave_name}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -746,18 +746,18 @@ function DayDetailSheet({
                       <Label className="text-xs">Dispute Type <span className="text-red-500">*</span></Label>
                       <Select value={disputeType} onValueChange={setDisputeType}>
                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select dispute type" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="missing_punch" className="text-xs">Missing Punch</SelectItem>
-                          <SelectItem value="wrong_punch" className="text-xs">Wrong Punch</SelectItem>
-                          <SelectItem value="late_mark_dispute" className="text-xs">Late Mark Dispute</SelectItem>
-                          <SelectItem value="early_logout_dispute" className="text-xs">Early Logout Dispute</SelectItem>
-                          <SelectItem value="half_day_dispute" className="text-xs">Half Day Dispute</SelectItem>
-                          <SelectItem value="absent_wrongly_marked" className="text-xs">Absent Wrongly Marked</SelectItem>
-                          <SelectItem value="week_off_worked" className="text-xs">Week Off Worked</SelectItem>
-                          <SelectItem value="holiday_worked" className="text-xs">Holiday Worked</SelectItem>
-                          <SelectItem value="shift_mismatch" className="text-xs">Shift Mismatch</SelectItem>
-                          <SelectItem value="cosec_sync_issue" className="text-xs">COSEC Sync Issue</SelectItem>
-                          <SelectItem value="manual_punch_correction" className="text-xs">Manual Punch Correction</SelectItem>
+                        <SelectContent className="bg-white border border-slate-200 shadow-md z-[9999]">
+                          <SelectItem value="missing_punch" className="text-xs text-slate-900">Missing Punch</SelectItem>
+                          <SelectItem value="wrong_punch" className="text-xs text-slate-900">Wrong Punch</SelectItem>
+                          <SelectItem value="late_mark_dispute" className="text-xs text-slate-900">Late Mark Dispute</SelectItem>
+                          <SelectItem value="early_logout_dispute" className="text-xs text-slate-900">Early Logout Dispute</SelectItem>
+                          <SelectItem value="half_day_dispute" className="text-xs text-slate-900">Half Day Dispute</SelectItem>
+                          <SelectItem value="absent_wrongly_marked" className="text-xs text-slate-900">Absent Wrongly Marked</SelectItem>
+                          <SelectItem value="week_off_worked" className="text-xs text-slate-900">Week Off Worked</SelectItem>
+                          <SelectItem value="holiday_worked" className="text-xs text-slate-900">Holiday Worked</SelectItem>
+                          <SelectItem value="shift_mismatch" className="text-xs text-slate-900">Shift Mismatch</SelectItem>
+                          <SelectItem value="cosec_sync_issue" className="text-xs text-slate-900">COSEC Sync Issue</SelectItem>
+                          <SelectItem value="manual_punch_correction" className="text-xs text-slate-900">Manual Punch Correction</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

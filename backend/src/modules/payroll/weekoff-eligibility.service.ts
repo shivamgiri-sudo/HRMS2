@@ -1,5 +1,3 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ─── Slab helper ──────────────────────────────────────────────────────────────
@@ -30,72 +28,17 @@ function lastDayOfMonth(runMonth: string): number {
 // ─── Actual week-off count resolver ──────────────────────────────────────────
 
 /**
- * Resolves the actual number of week-offs for an employee in the given run month.
- *
- * Priority:
- * 1. WFM roster assignments flagged is_week_off=1 (active statuses)
- * 2. Process-level week-off day rule (process_weekoff_day_rule)
- * 3. Fallback: count of Sundays in the month
+ * Returns the number of weekly-off days for an employee in the given run month.
+ * Weekly-off count is always the number of Sundays in the calendar month,
+ * regardless of shift pattern or roster. Roster determines WHICH day is the
+ * weekly off; payroll eligibility count is always Sunday-based.
  */
 export async function resolveActualWeekoffCount(
-  employeeId: string,
+  _employeeId: string,
   runMonth: string
 ): Promise<number> {
   const [year, month] = runMonth.split("-").map(Number);
   const lastDay = lastDayOfMonth(runMonth);
-  const dateFrom = `${runMonth}-01`;
-  const dateTo   = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
-
-  // ── 1. WFM roster assignments ──────────────────────────────────────────────
-  const [rosterRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt
-     FROM wfm_roster_assignment
-     WHERE employee_id = ?
-       AND is_week_off = 1
-       AND roster_date BETWEEN ? AND ?
-       AND final_roster_status NOT IN ('rejected', 'cancelled')`,
-    [employeeId, dateFrom, dateTo]
-  );
-  const rosterCount = Number((rosterRows as Array<{ cnt: number }>)[0]?.cnt ?? 0);
-  if (rosterCount > 0) return rosterCount;
-
-  // ── 2. Process week-off day rule ───────────────────────────────────────────
-  // Fetch employee's process_id first
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_id FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
-  );
-  const processId = (empRows as Array<{ process_id: string | null }>)[0]?.process_id ?? null;
-
-  if (processId) {
-    // Find rules whose week_start_date falls within this month
-    const [ruleRows] = await db.execute<RowDataPacket[]>(
-      `SELECT max_weekoff_sunday, max_weekoff_monday, max_weekoff_tuesday,
-              max_weekoff_wednesday, max_weekoff_thursday, max_weekoff_friday, max_weekoff_saturday
-       FROM process_weekoff_day_rule
-       WHERE process_id = ?
-         AND week_start_date BETWEEN ? AND ?
-         AND is_active = 1`,
-      [processId, dateFrom, dateTo]
-    );
-
-    if (ruleRows.length > 0) {
-      let total = 0;
-      for (const row of ruleRows as Array<Record<string, number>>) {
-        total +=
-          (row.max_weekoff_sunday    ?? 0) +
-          (row.max_weekoff_monday    ?? 0) +
-          (row.max_weekoff_tuesday   ?? 0) +
-          (row.max_weekoff_wednesday ?? 0) +
-          (row.max_weekoff_thursday  ?? 0) +
-          (row.max_weekoff_friday    ?? 0) +
-          (row.max_weekoff_saturday  ?? 0);
-      }
-      if (total > 0) return total;
-    }
-  }
-
-  // ── 3. Fallback: count Sundays in the month ────────────────────────────────
   let sundays = 0;
   for (let day = 1; day <= lastDay; day++) {
     if (new Date(year, month - 1, day).getDay() === 0) sundays++;
