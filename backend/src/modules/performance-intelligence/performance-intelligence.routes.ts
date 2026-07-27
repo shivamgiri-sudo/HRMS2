@@ -3,6 +3,7 @@ import {
   requireAuth,
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
+import { performanceGovernanceAuditRouter } from "../performance-ingestion/performance-governance-audit.routes.js";
 import { performanceIngestionRouter } from "../performance-ingestion/performance-ingestion.routes.js";
 import { performanceSchedulerRouter } from "../performance-ingestion/performance-scheduler.routes.js";
 import { performanceIntelligenceRepository } from "./performance-intelligence.repository.js";
@@ -66,6 +67,7 @@ export function createPerformanceIntelligenceRouter(
   // Child routers apply role, backend scope and write-access guards.
   router.use("/ingestion", performanceIngestionRouter);
   router.use("/ingestion", performanceSchedulerRouter);
+  router.use("/ingestion", performanceGovernanceAuditRouter);
 
   router.get("/context", asyncHandler(async (req, res) => {
     return sendData(res, await service.context(auth(req)));
