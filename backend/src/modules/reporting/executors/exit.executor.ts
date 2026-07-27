@@ -67,7 +67,7 @@ export async function resignationRegister(
            COALESCE(eer.notice_period_served, 0) AS notice_days,
            b.branch_name, p.process_name
       FROM employees e
-      LEFT JOIN employee_exit_request eer ON eer.employee_id = e.id
+      LEFT JOIN exit_request eer ON eer.employee_id = e.id
       LEFT JOIN branch_master b           ON b.id = e.branch_id
       LEFT JOIN process_master p          ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}

@@ -143,6 +143,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["employees", "branch_master", "department_master", "process_master"],
     branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -198,6 +202,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["employees"],
     branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -455,6 +463,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Punch times from wfm_attendance_session. Productive minutes from attendance_daily_record.raw_minutes. Status reflects regularization if applied.",
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -816,6 +828,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Total Shrinkage = (Scheduled - Present) / Scheduled * 100. Unplanned = Absent only (excludes approved leave, WO, holiday).",
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -904,6 +920,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["leave_balance_ledger", "leave_type_master", "employees"],
     branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1161,6 +1181,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     branchScoped: true,
     processScoped: true,
     requiresRunSelector: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1196,6 +1220,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Compares finalized current month vs previous month payroll. Variance Reason shows major contributing factor.",
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "highly_restricted",
+    containsPII: false,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1340,6 +1368,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["salary_prep_line_component", "salary_prep_line", "employees"],
     calculationNotes: "PF @ 12% of PF Basic (capped at 15000). EPS @ 8.33% (capped). Employer PF = 12% - EPS.",
     branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1566,6 +1598,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["employee_resignation", "employees"],
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1625,6 +1661,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin", "hr_head", "finance", "payroll"],
     sourceTables: ["employee_fnf", "employee_fnf_component", "employees"],
     branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: true,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1683,6 +1723,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Attrition % = (Exits / Avg HC) × 100. Avg HC = (Opening + Closing) / 2.",
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1786,6 +1830,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["ats_candidate", "ats_job_requisition"],
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -1960,6 +2008,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["agent_kpi_daily", "employees"],
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "blocked",
   },
 
   {
@@ -2078,6 +2130,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["wfm_roster_assignment", "wfm_shift_master", "employees"],
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -2194,6 +2250,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin", "hr"],
     sourceTables: ["asset_master", "asset_assignment"],
     branchScoped: true,
+    sensitivityLevel: "internal",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -2282,6 +2342,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Data synced from LMS via integration layer",
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "blocked",
   },
 
   {
@@ -2369,6 +2433,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["employee_document", "employees"],
     branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "blocked",
   },
 
   {
@@ -2451,6 +2519,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin", "finance", "payroll"],
     sourceTables: ["employee_pf_details", "employees"],
     branchScoped: true,
+    sensitivityLevel: "restricted",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -2556,6 +2628,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     exportRoles: ["super_admin", "admin"],
     sourceTables: ["employees", "employee_kyc", "employee_pf_details", "employee_esic_details"],
     branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 ];
 

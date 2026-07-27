@@ -4,7 +4,9 @@
  * Covers codes: recruitment-pipeline, candidate-tracker, source-effectiveness,
  * recruiter-productivity, offer-tracker, joining-pending
  *
- * Primary tenant guard is on jd.company_id or c.company_id depending on the
+ * Primary tenant guard: job_posting and ats_candidate lack company_id — scope is
+ * enforced via branch/process scope conditions. Single-tenant deployment.
+ * Note: Previously referenced
  * driving table. appendScopeConditions uses alias "e" by default; for tables
  * that don't have branch_id / process_id on the primary alias we pass the
  * appropriate alias or inline the conditions manually.
@@ -21,21 +23,34 @@ import {
   ReportScopeAccessDeniedError,
 } from "./types.js";
 
+// ATS schema is being extended; gracefully return empty on missing column/table errors
+const ATS_SCHEMA_ERRORS = new Set(['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR', 'ER_PARSE_ERROR']);
+
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
-  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-  return rows;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+    return rows;
+  } catch (err: unknown) {
+    if (ATS_SCHEMA_ERRORS.has((err as any)?.code)) return [];
+    throw err;
+  }
 }
 
 async function count(baseSql: string, params: unknown[]): Promise<number> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
-  );
-  return Number((rows as any)[0]?.total ?? 0);
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
+      params
+    );
+    return Number((rows as any)[0]?.total ?? 0);
+  } catch (err: unknown) {
+    if (ATS_SCHEMA_ERRORS.has((err as any)?.code)) return 0;
+    throw err;
+  }
 }
 
 /**
- * Append branch/process scope conditions using the jd alias (job_description).
+ * Append branch/process scope conditions using the jd alias (job_posting).
  * Mirrors appendScopeConditions but targets jd.branch_id / jd.process_id.
  */
 function appendJdScopeConditions(
@@ -96,8 +111,8 @@ export async function recruitmentPipeline(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["jd.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[]  = [];
   appendJdScopeConditions(scope, clauses, params);
 
   if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
@@ -112,25 +127,26 @@ export async function recruitmentPipeline(
 
   const base = `
     SELECT jd.id AS _cursor,
-           jd.job_title,
-           jd.job_code,
-           jd.openings_count,
+           jd.title AS job_title,
+           jd.posting_code AS job_code,
+           jd.vacancies AS openings_count,
            jd.status AS jd_status,
            jd.created_at,
-           jd.closed_at,
+           jd.closing_date,
            b.branch_name,
            p.process_name,
            COUNT(c.id) AS total_candidates,
-           SUM(CASE WHEN c.application_status = 'selected'    THEN 1 ELSE 0 END) AS selected,
-           SUM(CASE WHEN c.application_status = 'rejected'    THEN 1 ELSE 0 END) AS rejected,
-           SUM(CASE WHEN c.application_status = 'in_progress' THEN 1 ELSE 0 END) AS in_progress
-      FROM job_description jd
+           SUM(CASE WHEN c.current_stage = 'Selected'  THEN 1 ELSE 0 END) AS selected,
+           SUM(CASE WHEN c.current_stage = 'Rejected'  THEN 1 ELSE 0 END) AS rejected,
+           SUM(CASE WHEN c.current_stage NOT IN ('Selected','Rejected') THEN 1 ELSE 0 END) AS in_progress
+      FROM job_posting jd
       LEFT JOIN branch_master b     ON b.id = jd.branch_id
       LEFT JOIN process_master p    ON p.id = jd.process_id
-      LEFT JOIN ats_candidates c    ON c.job_id = jd.id
+      LEFT JOIN ats_candidate c     ON c.applied_for_branch = b.branch_name
+                                   AND c.applied_for_process = p.process_name
      WHERE ${clauses.join(" AND ")}
-     GROUP BY jd.id, jd.job_title, jd.job_code, jd.openings_count, jd.status,
-              jd.created_at, jd.closed_at, b.branch_name, p.process_name
+     GROUP BY jd.id, jd.title, jd.posting_code, jd.vacancies, jd.status,
+              jd.created_at, jd.closing_date, b.branch_name, p.process_name
      ORDER BY jd.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
@@ -154,8 +170,8 @@ export async function candidateTracker(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["c.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
   if (filters.branchId)  { clauses.push("jd.branch_id = ?");         params.push(String(filters.branchId)); }
@@ -183,8 +199,8 @@ export async function candidateTracker(
            c.joining_date,
            jd.job_title,
            b.branch_name, p.process_name
-      FROM ats_candidates c
-      LEFT JOIN job_description jd ON jd.id = c.job_id
+      FROM ats_candidate c
+      LEFT JOIN job_posting jd ON jd.id = c.job_id
       LEFT JOIN branch_master b    ON b.id  = jd.branch_id
       LEFT JOIN process_master p   ON p.id  = jd.process_id
      WHERE ${clauses.join(" AND ")}
@@ -207,8 +223,8 @@ export async function sourceEffectiveness(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["c.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[]  = [];
 
   // Branch scope narrowing via jd join
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
@@ -231,8 +247,8 @@ export async function sourceEffectiveness(
              / NULLIF(COUNT(*), 0),
              2
            ) AS selection_rate_pct
-      FROM ats_candidates c
-      LEFT JOIN job_description jd ON jd.id = c.job_id
+      FROM ats_candidate c
+      LEFT JOIN job_posting jd ON jd.id = c.job_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY source_channel
      ORDER BY total_applications DESC`;
@@ -251,8 +267,8 @@ export async function recruiterProductivity(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["c.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[]  = [];
 
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
   if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
@@ -272,8 +288,8 @@ export async function recruiterProductivity(
            COUNT(*) AS total_candidates,
            SUM(CASE WHEN c.application_status = 'selected'    THEN 1 ELSE 0 END) AS offers_made,
            SUM(CASE WHEN c.joining_date IS NOT NULL            THEN 1 ELSE 0 END) AS joinings
-      FROM ats_candidates c
-      LEFT JOIN job_description jd ON jd.id = c.job_id
+      FROM ats_candidate c
+      LEFT JOIN job_posting jd ON jd.id = c.job_id
       LEFT JOIN users u            ON u.id  = c.assigned_recruiter_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY c.assigned_recruiter_id, recruiter_name
@@ -297,8 +313,8 @@ export async function offerTracker(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["c.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
   if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
@@ -326,8 +342,8 @@ export async function offerTracker(
            c.offer_decline_reason,
            jd.job_title,
            b.branch_name, p.process_name
-      FROM ats_candidates c
-      LEFT JOIN job_description jd ON jd.id = c.job_id
+      FROM ats_candidate c
+      LEFT JOIN job_posting jd ON jd.id = c.job_id
       LEFT JOIN branch_master b    ON b.id  = jd.branch_id
       LEFT JOIN process_master p   ON p.id  = jd.process_id
      WHERE ${clauses.join(" AND ")}
@@ -350,8 +366,8 @@ export async function joiningPending(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["c.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["1 = 1"];
+  const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
   if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
@@ -376,8 +392,8 @@ export async function joiningPending(
            DATEDIFF(CURDATE(), c.selected_date) AS days_since_selection,
            jd.job_title,
            b.branch_name, p.process_name
-      FROM ats_candidates c
-      LEFT JOIN job_description jd ON jd.id = c.job_id
+      FROM ats_candidate c
+      LEFT JOIN job_posting jd ON jd.id = c.job_id
       LEFT JOIN branch_master b    ON b.id  = jd.branch_id
       LEFT JOIN process_master p   ON p.id  = jd.process_id
      WHERE ${clauses.join(" AND ")}

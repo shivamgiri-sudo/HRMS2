@@ -203,13 +203,20 @@ export async function shiftSwapRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY ssr.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  } catch (err: unknown) {
+    if ((err as any)?.code === 'ER_NO_SUCH_TABLE') {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

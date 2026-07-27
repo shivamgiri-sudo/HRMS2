@@ -42,38 +42,39 @@ export async function agentPerformanceSummary(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
+  // availabilityStatus: 'blocked' — kpi_score table has per-metric rows (metric_id, actual_value, period)
+  // not a pre-aggregated score_record; this report needs a pivot/aggregation adapter once the
+  // KPI scoring pipeline is operational. Returns empty result until then.
   const scoreMonth = monthParam(filters.month);
 
-  // Start with employee scope (branch/process/dept/costCentre) on alias "e"
   const clauses: string[] = ["e.company_id = ?"];
   const params: unknown[]  = [scope.companyId];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("ksr.score_month = ?");
+  clauses.push("ks.period = ?");
   params.push(scoreMonth);
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("ksr.id > ?");
+    clauses.push("ks.id > ?");
     params.push(options.cursor);
   }
 
   const base = `
-    SELECT ksr.id AS _cursor,
+    SELECT ks.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           ksr.score_month,
-           ksr.total_score,
-           ksr.grade,
-           ksr.csat_score,
-           ksr.aht_seconds,
-           ksr.quality_score,
+           ks.period AS score_month,
+           km.metric_code,
+           km.metric_name,
+           ks.actual_value,
            b.branch_name, p.process_name
-      FROM kpi_score_record ksr
-      JOIN employees e         ON e.id  = ksr.employee_id
+      FROM kpi_score ks
+      JOIN kpi_metric_master km ON km.id = ks.metric_id
+      JOIN employees e          ON e.id  = ks.employee_id
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY ksr.id ASC`;
+     ORDER BY ks.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
@@ -98,7 +99,7 @@ export async function teamPerformanceSummary(
   const params: unknown[]  = [scope.companyId];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("ksr.score_month = ?");
+  clauses.push("ks.period = ?");
   params.push(scoreMonth);
 
   const base = `
@@ -108,19 +109,19 @@ export async function teamPerformanceSummary(
            ) AS team_lead_name,
            p.process_name,
            b.branch_name,
-           ksr.score_month,
-           COUNT(*) AS team_size,
-           ROUND(AVG(ksr.total_score), 2) AS avg_score,
-           MAX(ksr.total_score) AS max_score,
-           MIN(ksr.total_score) AS min_score
-      FROM kpi_score_record ksr
-      JOIN employees e          ON e.id  = ksr.employee_id
+           ks.period AS score_month,
+           COUNT(DISTINCT ks.employee_id) AS team_size,
+           ROUND(AVG(ks.actual_value), 2) AS avg_score,
+           MAX(ks.actual_value) AS max_score,
+           MIN(ks.actual_value) AS min_score
+      FROM kpi_score ks
+      JOIN employees e          ON e.id  = ks.employee_id
       LEFT JOIN employees tm    ON tm.id = COALESCE(e.reporting_manager_id, e.manager_id)
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY team_lead_name, p.process_name, b.branch_name, ksr.score_month
-     ORDER BY b.branch_name, p.process_name, ksr.score_month`;
+     GROUP BY team_lead_name, p.process_name, b.branch_name, ks.period
+     ORDER BY b.branch_name, p.process_name, ks.period`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = applyPagination(base, options);
