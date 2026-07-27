@@ -10,11 +10,13 @@ on:
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
       - "backend/src/server.ts"
+      - "backend/src/workers/all-workers.ts"
       - "src/components/performance-hub/**"
       - "src/pages/PerformanceHub.tsx"
       - "src/types/performanceHub.ts"
       - "src/types/performanceIngestion.ts"
       - "docs/performance-ingestion-platform.md"
+      - "docs/performance-scheduled-sync.md"
       - ".github/workflows/performance-platform-validation.yml"
   push:
     branches:
@@ -26,11 +28,13 @@ on:
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
       - "backend/src/server.ts"
+      - "backend/src/workers/all-workers.ts"
       - "src/components/performance-hub/**"
       - "src/pages/PerformanceHub.tsx"
       - "src/types/performanceHub.ts"
       - "src/types/performanceIngestion.ts"
       - "docs/performance-ingestion-platform.md"
+      - "docs/performance-scheduled-sync.md"
       - ".github/workflows/performance-platform-validation.yml"
 
 permissions:
