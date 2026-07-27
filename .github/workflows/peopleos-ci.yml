@@ -26,16 +26,11 @@ jobs:
       - name: Apply guarded passage import validation
         run: python .github/scripts/apply-typing-passage-import-validation.py
 
-      - name: Restore permanent workflow and remove helper
-        run: |
-          git checkout ac97abc94872f553ad2a9e81df3f24f1e8561ee7 -- .github/workflows/peopleos-ci.yml
-          rm -f .github/scripts/apply-typing-passage-import-validation.py
-
       - name: Commit passage import policy
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add backend/src/modules/ats-assessment/question-bank.service.ts
           git status --short
           git commit -m "fix(assessment): validate typing passages and governed benchmarks"
           git push origin HEAD:fix/typing-test-scoring-accuracy
