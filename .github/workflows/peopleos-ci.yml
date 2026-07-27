@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  apply-typing-passage-policy:
-    name: Apply typing passage runtime policy
+  apply-typing-passage-import-policy:
+    name: Apply typing passage import policy
     if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
     runs-on: ubuntu-latest
     permissions:
@@ -23,22 +23,22 @@ jobs:
           ref: fix/typing-test-scoring-accuracy
           fetch-depth: 0
 
-      - name: Apply guarded passage policy
-        run: python .github/scripts/apply-typing-question-bank-runtime.py
+      - name: Apply guarded passage import validation
+        run: python .github/scripts/apply-typing-passage-import-validation.py
 
       - name: Restore permanent workflow and remove helper
         run: |
-          git checkout HEAD^ -- .github/workflows/peopleos-ci.yml
-          rm -f .github/scripts/apply-typing-question-bank-runtime.py
+          git checkout ac97abc94872f553ad2a9e81df3f24f1e8561ee7 -- .github/workflows/peopleos-ci.yml
+          rm -f .github/scripts/apply-typing-passage-import-validation.py
 
-      - name: Commit runtime policy
+      - name: Commit passage import policy
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/src/modules/ats-assessment/question-bank.service.ts \
                   .github/workflows/peopleos-ci.yml \
-                  .github/scripts/apply-typing-question-bank-runtime.py
-          git commit -m "fix(assessment): enforce template floors on passage-bank typing tests"
+                  .github/scripts/apply-typing-passage-import-validation.py
+          git commit -m "fix(assessment): validate typing passages and governed benchmarks"
           git push origin HEAD:fix/typing-test-scoring-accuracy
 
   validate:
