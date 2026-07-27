@@ -58,7 +58,7 @@ describe("performance ingestion governance route contract", () => {
 
   it("requires effective-dated approval and backend write access", () => {
     expect(routeCode).toContain("effectiveFrom");
-    expect(routeCode).toMatch(/\/datasets\/:id\/approve[\s\S]*requireWriteAccess/);
+    expect(routeCode).toMatch(/router\.post\(\s*"\/datasets\/:id\/approve",\s*requireWriteAccess/);
     expect(routeCode).toContain("performanceGovernanceService.approveDataset");
   });
 
@@ -70,20 +70,19 @@ describe("performance ingestion governance route contract", () => {
   });
 
   it("guards every ingestion mutation with requireWriteAccess", () => {
-    const protectedRoutes = [
-      '"/datasets"',
-      '"/datasets/:id/status"',
-      '"/datasets/:id/approve"',
-      '"/identity-maps"',
-      '"/process-maps"',
-      '"/mapping-exceptions/:id/resolve"',
+    const protectedRoutePatterns = [
+      /router\.post\(\s*"\/datasets",\s*requireWriteAccess/,
+      /router\.patch\(\s*"\/datasets\/:id\/status",\s*requireWriteAccess/,
+      /router\.post\(\s*"\/datasets\/:id\/approve",\s*requireWriteAccess/,
+      /router\.post\(\s*"\/identity-maps",\s*requireWriteAccess/,
+      /router\.post\(\s*"\/process-maps",\s*requireWriteAccess/,
+      /router\.post\(\s*"\/mapping-exceptions\/:id\/resolve",\s*requireWriteAccess/,
     ];
 
-    for (const route of protectedRoutes) {
-      const start = routeCode.indexOf(route);
-      expect(start).toBeGreaterThan(-1);
-      const routeBlock = routeCode.slice(start, start + 450);
-      expect(routeBlock).toContain("requireWriteAccess");
+    for (const pattern of protectedRoutePatterns) {
+      expect(routeCode).toMatch(pattern);
     }
+    expect(routeCode).toContain("function runRoute");
+    expect(routeCode).toMatch(/function runRoute[\s\S]*requireWriteAccess/);
   });
 });
