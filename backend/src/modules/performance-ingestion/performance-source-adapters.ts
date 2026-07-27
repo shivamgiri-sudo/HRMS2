@@ -14,6 +14,11 @@ import type {
 
 const MUTATING_SQL = /\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|EXEC(?:UTE)?|CALL|REPLACE|LOAD\s+DATA|INTO\s+OUTFILE)\b/i;
 const STARTS_READ_ONLY = /^\s*(SELECT|WITH)\b/i;
+const GOOGLE_SHEET_HOSTS = new Set([
+  "docs.google.com",
+  "drive.google.com",
+  "sheets.googleapis.com",
+]);
 
 export function assertReadOnlyQuery(query: string): void {
   const normalised = String(query ?? "").trim();
@@ -27,6 +32,27 @@ export function assertReadOnlyQuery(query: string): void {
   if (normalised.replace(/;\s*$/, "").includes(";")) {
     throw new Error("Multiple SQL statements are not allowed");
   }
+}
+
+function isAllowedGoogleHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return GOOGLE_SHEET_HOSTS.has(host) || host.endsWith(".googleusercontent.com");
+}
+
+export function assertAllowedGoogleSheetUrl(rawUrl: string): URL {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("Google Sheet dataset requires a valid CSV export URL");
+  }
+  if (url.protocol !== "https:" || !isAllowedGoogleHost(url.hostname)) {
+    throw new Error("Google Sheet exports are restricted to approved Google HTTPS hosts");
+  }
+  if (url.username || url.password) {
+    throw new Error("Google Sheet export URLs cannot contain embedded credentials");
+  }
+  return url;
 }
 
 function boundedMaxRows(dataset: PerformanceDataset): number {
@@ -89,15 +115,20 @@ function workbookRows(buffer: Buffer, maxRows: number): SourceRow[] {
 }
 
 async function googleSheetRows(dataset: PerformanceDataset): Promise<SourceRow[]> {
-  const csvUrl = String((dataset.config as { csvUrl?: string }).csvUrl ?? "").trim();
-  if (!csvUrl || !/^https:\/\//i.test(csvUrl)) {
-    throw new Error("Google Sheet dataset requires an HTTPS CSV export URL");
-  }
-  const response = await axios.get<ArrayBuffer>(csvUrl, {
+  const rawUrl = String((dataset.config as { csvUrl?: string }).csvUrl ?? "").trim();
+  const csvUrl = assertAllowedGoogleSheetUrl(rawUrl);
+  const response = await axios.get<ArrayBuffer>(csvUrl.toString(), {
     responseType: "arraybuffer",
     timeout: 30_000,
     maxContentLength: 20 * 1024 * 1024,
     maxBodyLength: 20 * 1024 * 1024,
+    maxRedirects: 3,
+    beforeRedirect: (options) => {
+      const redirectedHost = String(options.hostname ?? options.host ?? "");
+      if (!isAllowedGoogleHost(redirectedHost)) {
+        throw new Error("Google Sheet export redirect left the approved Google host allow-list");
+      }
+    },
   });
   return workbookRows(Buffer.from(response.data), boundedMaxRows(dataset));
 }
