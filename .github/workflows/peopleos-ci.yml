@@ -10,27 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  sync-latest-main:
-    name: Sync typing fix with latest main
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout typing fix branch
-        uses: actions/checkout@v4
-        with:
-          ref: fix/typing-test-scoring-accuracy
-          fetch-depth: 0
-
-      - name: Merge current main
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git merge --no-edit origin/main
-          git push origin HEAD:fix/typing-test-scoring-accuracy
-
   validate:
     name: Build, typecheck and test
     runs-on: ubuntu-latest
