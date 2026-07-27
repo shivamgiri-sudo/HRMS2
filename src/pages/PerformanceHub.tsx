@@ -94,9 +94,25 @@ export default function PerformanceHub() {
               context={contextQuery.data}
               from={filters.from}
               to={filters.to}
+              branchId={filters.branchId}
+              processId={filters.processId}
               latestComputedAt={latestComputedAt}
               onPeriodChange={(field, value) => {
                 setFilters((current) => ({ ...current, [field]: value, page: 1 }));
+              }}
+              onScopeChange={(field, value) => {
+                setFilters((current) => field === "branchId"
+                  ? {
+                      ...current,
+                      branchId: value || undefined,
+                      processId: undefined,
+                      page: 1,
+                    }
+                  : {
+                      ...current,
+                      processId: value || undefined,
+                      page: 1,
+                    });
               }}
             />
 
