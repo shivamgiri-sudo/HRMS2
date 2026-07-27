@@ -106,17 +106,20 @@ function buildAnnouncementText(
   return `Attention please. Token number ${digits}${namePhrase}${recruiterPhrase}${rolePhrase}. Please approach the Interview Room. Thank you.`;
 }
 
-// Microsoft Neural voice priority list
+// Microsoft Neural voice priority list — Indian English voices FIRST
 const MS_NEURAL_PRIORITY = [
+  // Indian English Neural voices (highest priority)
   "Microsoft Neerja Online (Natural) - English (India)",
   "Microsoft Prabhat Online (Natural) - English (India)",
+  "Microsoft Neerja - English (India)",
+  "Microsoft Prabhat - English (India)",
+  // UK English (closer accent to Indian English)
+  "Microsoft Libby Online (Natural) - English (United Kingdom)",
+  "Microsoft Ryan Online (Natural) - English (United Kingdom)",
+  // US English fallback
   "Microsoft Aria Online (Natural) - English (United States)",
   "Microsoft Jenny Online (Natural) - English (United States)",
   "Microsoft Guy Online (Natural) - English (United States)",
-  "Microsoft Libby Online (Natural) - English (United Kingdom)",
-  "Microsoft Ryan Online (Natural) - English (United Kingdom)",
-  "Microsoft Neerja - English (India)",
-  "Microsoft Prabhat - English (India)",
   "Microsoft Aria - English (United States)",
   "Microsoft Jenny - English (United States)",
   "Microsoft Zira - English (United States)",
@@ -124,23 +127,71 @@ const MS_NEURAL_PRIORITY = [
 ];
 
 function pickBestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  // Debug: log all available voices (remove in production)
+  if (voices.length > 0) {
+    console.log("[TTS] Available voices:", voices.map(v => `${v.name} (${v.lang})`).join(", "));
+  }
+
+  // 1. Try exact name match from priority list
   for (const name of MS_NEURAL_PRIORITY) {
     const v = voices.find((v) => v.name === name);
-    if (v) return v;
+    if (v) {
+      console.log("[TTS] Selected voice (exact match):", v.name);
+      return v;
+    }
   }
+
+  // 2. Any Microsoft Online voice with en-IN locale
   const msOnlineIN = voices.find((v) => /microsoft/i.test(v.name) && /online/i.test(v.name) && v.lang === "en-IN");
-  if (msOnlineIN) return msOnlineIN;
-  const msOnlineEN = voices.find((v) => /microsoft/i.test(v.name) && /online/i.test(v.name) && v.lang.startsWith("en"));
-  if (msOnlineEN) return msOnlineEN;
+  if (msOnlineIN) {
+    console.log("[TTS] Selected voice (MS Online en-IN):", msOnlineIN.name);
+    return msOnlineIN;
+  }
+
+  // 3. Any Microsoft voice with en-IN locale (non-Online)
   const msIN = voices.find((v) => /microsoft/i.test(v.name) && v.lang === "en-IN");
-  if (msIN) return msIN;
-  const msEN = voices.find((v) => /microsoft/i.test(v.name) && v.lang.startsWith("en"));
-  if (msEN) return msEN;
-  const gIN = voices.find((v) => /google/i.test(v.name) && v.lang === "en-IN");
-  if (gIN) return gIN;
+  if (msIN) {
+    console.log("[TTS] Selected voice (MS en-IN):", msIN.name);
+    return msIN;
+  }
+
+  // 4. Any voice with en-IN locale (Google, etc.)
   const anyIN = voices.find((v) => v.lang === "en-IN");
-  if (anyIN) return anyIN;
-  return voices.find((v) => v.lang.startsWith("en")) ?? null;
+  if (anyIN) {
+    console.log("[TTS] Selected voice (any en-IN):", anyIN.name);
+    return anyIN;
+  }
+
+  // 5. Microsoft Online English (any region)
+  const msOnlineEN = voices.find((v) => /microsoft/i.test(v.name) && /online/i.test(v.name) && v.lang.startsWith("en"));
+  if (msOnlineEN) {
+    console.log("[TTS] Selected voice (MS Online en-*):", msOnlineEN.name);
+    return msOnlineEN;
+  }
+
+  // 6. Any Microsoft English voice
+  const msEN = voices.find((v) => /microsoft/i.test(v.name) && v.lang.startsWith("en"));
+  if (msEN) {
+    console.log("[TTS] Selected voice (MS en-*):", msEN.name);
+    return msEN;
+  }
+
+  // 7. Google Indian English
+  const gIN = voices.find((v) => /google/i.test(v.name) && v.lang === "en-IN");
+  if (gIN) {
+    console.log("[TTS] Selected voice (Google en-IN):", gIN.name);
+    return gIN;
+  }
+
+  // 8. Any English voice as last resort
+  const anyEN = voices.find((v) => v.lang.startsWith("en"));
+  if (anyEN) {
+    console.log("[TTS] Selected voice (fallback en-*):", anyEN.name);
+    return anyEN;
+  }
+
+  console.log("[TTS] No suitable voice found");
+  return null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -330,11 +381,17 @@ export default function WaitingRoomDisplay() {
         const utt = new SpeechSynthesisUtterance(text);
         // Prefer cached voice (pre-warmed on mount); fall back to live lookup
         const voice = cachedVoiceRef.current ?? pickBestVoice(window.speechSynthesis.getVoices());
-        if (voice) utt.voice = voice;
-        utt.lang = voice?.lang ?? "en-IN";
+        if (voice) {
+          utt.voice = voice;
+          utt.lang = voice.lang;
+        } else {
+          // Force Indian English even without a matching voice
+          utt.lang = "en-IN";
+        }
         utt.rate = 0.88;
         utt.pitch = 1.0;
         utt.volume = 1.0;
+        console.log("[TTS] Speaking with voice:", voice?.name ?? "browser default", "lang:", utt.lang);
         // Safety watchdog: Chrome sometimes silently drops the utterance (idle engine bug)
         // or pauses when the tab loses focus without firing onend/onerror.
         const safetyTimer = setTimeout(() => {
