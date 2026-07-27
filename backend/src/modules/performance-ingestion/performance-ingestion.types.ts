@@ -62,7 +62,7 @@ export interface NormalisedMetricFact {
   metricId: string;
   metricCode: string;
   scoreDate: string;
-  mappingVersionId: string | null;
+  mappingVersionId?: string | null;
   actualValue: number;
   numeratorValue: number | null;
   denominatorValue: number | null;
