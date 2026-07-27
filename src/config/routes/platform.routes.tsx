@@ -63,6 +63,7 @@ const NativeReportsControlRoom      = lazy(() => import("@/pages/NativeReportsCe
 const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));
 const MyReportRequests              = lazy(() => import("@/pages/MyReportRequests"));
 const ReportAuditPage               = lazy(() => import("@/pages/ReportAuditPage"));
+const ReportsHub                    = lazy(() => import("@/pages/ReportsHub"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
@@ -184,13 +185,27 @@ export const platformRouteElements = (
       <Route path="/engagement/surveys"          element={<ProtectedRoute><NativeSurveys /></ProtectedRoute>} />
       <Route path="/engagement/leaderboard"      element={<ProtectedRoute><NativeLeaderboard /></ProtectedRoute>} />
 
-      {/* Reports */}
-      <Route path="/reports" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoMasterReports /></Gate></ProtectedRoute>} />
-      <Route path="/reports/source-validation" element={<ProtectedRoute roles={REPORT_VALIDATION_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoReportSourceValidation /></Gate></ProtectedRoute>} />
-      <Route path="/reports/control-room" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
-      <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
-      <Route path="/my-report-requests" element={<ProtectedRoute><MyReportRequests /></ProtectedRoute>} />
-      <Route path="/admin/report-audit" element={<ProtectedRoute roles={['super_admin']}><ReportAuditPage /></ProtectedRoute>} />
+      {/* Reports Hub — auth-only; per-view role gates enforced inside ReportsHub */}
+      <Route path="/reports" element={<ProtectedRoute><ReportsHub /></ProtectedRoute>} />
+
+      {/* Legacy report routes — permanent redirects to hub with correct ?view= param */}
+      <Route path="/reports/library"           element={<Navigate to="/reports?view=library"      replace />} />
+      <Route path="/reports/control-room"      element={<Navigate to="/reports?view=control-room" replace />} />
+      <Route path="/reports/source-validation" element={<Navigate to="/reports?view=validation"   replace />} />
+      <Route path="/my-report-requests"        element={<Navigate to="/reports?view=requests"     replace />} />
+      <Route path="/admin/report-audit"        element={<Navigate to="/reports?view=audit"        replace />} />
+      {/* Module-specific report routes → hub library with pre-selected report */}
+      <Route path="/break-reports"             element={<Navigate to="/reports?view=library&report=break-daily-summary"  replace />} />
+      <Route path="/payroll/variance"          element={<Navigate to="/reports?view=library&report=payroll-variance"     replace />} />
+      <Route path="/payroll/cost-summary"      element={<Navigate to="/reports?view=library&report=payroll-cost-summary" replace />} />
+
+      {/* Legacy pages kept alive — only used during parallel validation phase; deleted in Step I */}
+      <Route path="/reports-legacy/bpo"            element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoMasterReports /></Gate></ProtectedRoute>} />
+      <Route path="/reports-legacy/source-validation" element={<ProtectedRoute roles={REPORT_VALIDATION_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoReportSourceValidation /></Gate></ProtectedRoute>} />
+      <Route path="/reports-legacy/control-room"   element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
+      <Route path="/reports-legacy/library"        element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
+      <Route path="/reports-legacy/my-requests"    element={<ProtectedRoute><MyReportRequests /></ProtectedRoute>} />
+      <Route path="/reports-legacy/audit"          element={<ProtectedRoute roles={['super_admin']}><ReportAuditPage /></ProtectedRoute>} />
 
       {/* Communication */}
       <Route path="/communication/templates"     element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />
