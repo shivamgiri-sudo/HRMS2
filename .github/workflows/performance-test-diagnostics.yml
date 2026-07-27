@@ -35,7 +35,7 @@ jobs:
           status=${PIPESTATUS[0]}
           echo "$status" > ../performance-module-tests.status
           exit 0
-      - name: Post changed-module test summary
+      - name: Update validation diagnostic comment
         if: always()
         working-directory: .
         env:
@@ -53,6 +53,6 @@ jobs:
             tail -n 260 performance-module-tests.log 2>/dev/null || echo "No test log was produced."
             echo '```'
           } > performance-module-test-comment.md
-          gh api repos/${{ github.repository }}/issues/61/comments \
-            --method POST \
+          gh api repos/${{ github.repository }}/issues/comments/5090546380 \
+            --method PATCH \
             --field body="$(cat performance-module-test-comment.md)"
