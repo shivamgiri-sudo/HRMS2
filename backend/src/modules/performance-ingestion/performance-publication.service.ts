@@ -21,6 +21,7 @@ type PreviousFactRow = RowDataPacket & {
 
 type CurrentLineageRow = RowDataPacket & {
   source_dataset_id: string | null;
+  mapping_version_id: string | null;
   dataset_key: string | null;
   actual_value: number | string | null;
   numerator_value: number | string | null;
@@ -95,6 +96,7 @@ async function currentLineage(
   const [rows] = await connection.execute<CurrentLineageRow[]>(
     `SELECT
        pfl.source_dataset_id,
+       pfl.mapping_version_id,
        psd.dataset_key,
        pfl.actual_value,
        pfl.numerator_value,
@@ -136,7 +138,6 @@ async function writeCanonicalFact(input: {
   connection: PoolConnection;
   dataset: PerformanceDataset;
   runId: string;
-  mappingVersionId: string | null;
   publicationBatchId: string;
   fact: FactKey;
 }): Promise<void> {
@@ -148,13 +149,13 @@ async function writeCanonicalFact(input: {
 
   const canonical = canonicalValue(rows);
   const datasetIds = uniqueNonBlank(rows.map((row) => row.source_dataset_id));
+  const mappingVersionIds = uniqueNonBlank(rows.map((row) => row.mapping_version_id));
   const datasetKeys = uniqueNonBlank(rows.map((row) => row.dataset_key));
   const processIds = uniqueNonBlank(rows.map((row) => row.process_id_at_event));
   const branchIds = uniqueNonBlank(rows.map((row) => row.branch_id_at_event));
   const sourceSystem = datasetKeys.length === 1
     ? datasetKeys[0].slice(0, 50)
     : `performance_multi_source:${datasetKeys.length}`.slice(0, 50);
-  const soleDatasetIsCurrent = datasetIds.length === 1 && datasetIds[0] === input.dataset.id;
 
   await input.connection.execute(
     `INSERT INTO kpi_daily_actual
@@ -195,7 +196,7 @@ async function writeCanonicalFact(input: {
       canonical.denominatorValue,
       sourceSystem,
       datasetIds.length === 1 ? datasetIds[0] : null,
-      soleDatasetIsCurrent ? input.mappingVersionId : null,
+      mappingVersionIds.length === 1 ? mappingVersionIds[0] : null,
       input.publicationBatchId,
       processIds.length === 1 ? processIds[0] : input.fact.processIdAtEvent,
       branchIds.length === 1 ? branchIds[0] : input.fact.branchIdAtEvent,
@@ -209,7 +210,6 @@ async function writeCanonicalFact(input: {
 export async function publishPerformanceFacts(input: {
   dataset: PerformanceDataset;
   runId: string;
-  mappingVersionId: string | null;
   requestedBy: string | null;
   windowFrom: string;
   windowTo: string;
@@ -264,15 +264,16 @@ export async function publishPerformanceFacts(input: {
     for (const fact of input.facts) {
       await connection.execute(
         `INSERT INTO performance_fact_lineage
-           (publication_batch_id, run_id, source_dataset_id, raw_record_id,
+           (publication_batch_id, run_id, source_dataset_id, mapping_version_id, raw_record_id,
             employee_id, metric_id, score_date, source_record_key,
             actual_value, numerator_value, denominator_value, source_record_count,
             process_id_at_event, branch_id_at_event)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           publicationBatchId,
           input.runId,
           input.dataset.id,
+          fact.mappingVersionId,
           fact.rawRecordId,
           fact.employeeId,
           fact.metricId,
@@ -294,7 +295,6 @@ export async function publishPerformanceFacts(input: {
         connection,
         dataset: input.dataset,
         runId: input.runId,
-        mappingVersionId: input.mappingVersionId,
         publicationBatchId,
         fact,
       });
