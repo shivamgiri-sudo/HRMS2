@@ -13,6 +13,30 @@ const maskLast4 = (value: unknown, prefix = "XXXXXX") => {
   return clean ? `${prefix}${clean.slice(-4)}` : null;
 };
 
+type BankVerificationMethod = "penny_drop" | "penny_less" | "upi" | "manual" | "mock";
+
+export function resolveBankVerificationMethod(result: {
+  status: string;
+  providerKey?: string | null;
+  raw?: unknown;
+}): BankVerificationMethod {
+  const providerKey = String(result.providerKey ?? "").trim().toLowerCase();
+  const raw = result.raw && typeof result.raw === "object"
+    ? result.raw as Record<string, unknown>
+    : null;
+  const rawMode = String(raw?.mode ?? raw?.verificationMode ?? "").trim().toLowerCase();
+
+  if (providerKey.includes("mock")) return "mock";
+  if (result.status === "manual_review" || rawMode === "provider_error_fallback" || rawMode === "manual_fallback") {
+    return "manual";
+  }
+  if (providerKey === "digio" || providerKey === "infinity_ai" || rawMode.includes("pennyless")) {
+    return "penny_less";
+  }
+  if (rawMode.includes("upi")) return "upi";
+  return "penny_drop";
+}
+
 async function logEvent(candidateId: string, eventType: string, payload?: unknown, checkId?: string | null, meta?: { actorType?: "candidate" | "hr" | "system" | "provider"; actorId?: string | null; ip?: string; userAgent?: string }) {
   const eventStatus =
     payload && typeof payload === "object" && "status" in payload
@@ -399,7 +423,7 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
       accountHolderName ?? null,
       result.matchedName ?? null,
       result.matchScore ?? null,
-      result.providerKey ?? "unknown",
+      resolveBankVerificationMethod(result),
       result.providerKey,
       result.providerReferenceId,
       result.status,

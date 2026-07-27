@@ -15,6 +15,10 @@ type DueSchedule = IntegrationSchedule & IntegrationConfig;
 let pollTimer: NodeJS.Timeout | undefined;
 let pollRunning = false;
 
+function isDedicatedWorkerIntegration(integrationKey: string): boolean {
+  return integrationKey === "cosec_biometric";
+}
+
 function lockName(integrationKey: string): string {
   const digest = createHash("sha256").update(integrationKey).digest("hex").slice(0, 40);
   return `hrms:integration:${digest}`;
@@ -68,6 +72,11 @@ async function executeWithRetries(connector: IntegrationConfig): Promise<void> {
     return;
   }
 
+  if (isDedicatedWorkerIntegration(connector.integration_key)) {
+    console.log("[integration-scheduler] cosec_biometric is owned by cosec-sync worker; skipping generic scheduler run");
+    return;
+  }
+
   for (let attempt = 1; attempt <= env.INTEGRATION_SCHEDULER_MAX_RETRIES; attempt += 1) {
     try {
       const result = await executeConnector(connector, null, {}, "schedule");
@@ -106,6 +115,7 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
          FROM integration_schedule s
          JOIN integration_config ic ON ic.integration_key = s.integration_key
         WHERE s.integration_key = ?
+          AND s.integration_key <> 'cosec_biometric'
           AND s.enabled = 1
           AND ic.active_status = 1
           AND s.next_run_at IS NOT NULL
@@ -115,6 +125,7 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
     );
     const schedule = rows[0] as DueSchedule | undefined;
     if (!schedule) return false;
+    if (isDedicatedWorkerIntegration(schedule.integration_key)) return false;
 
     const nextRunAt = nextCronRun(
       schedule.cron_expression,
@@ -162,6 +173,7 @@ export async function pollIntegrationSchedules(): Promise<number> {
          FROM integration_schedule s
          JOIN integration_config ic ON ic.integration_key = s.integration_key
         WHERE s.enabled = 1
+          AND s.integration_key <> 'cosec_biometric'
           AND ic.active_status = 1
           AND s.next_run_at IS NOT NULL
           AND s.next_run_at <= NOW()
@@ -182,9 +194,10 @@ export async function pollIntegrationSchedules(): Promise<number> {
 export async function initializeIntegrationSchedules(): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.integration_key, s.cron_expression
-       FROM integration_schedule s
-       JOIN integration_config ic ON ic.integration_key = s.integration_key
+      FROM integration_schedule s
+      JOIN integration_config ic ON ic.integration_key = s.integration_key
       WHERE s.enabled = 1
+        AND s.integration_key <> 'cosec_biometric'
         AND ic.active_status = 1
         AND s.next_run_at IS NULL`,
   );

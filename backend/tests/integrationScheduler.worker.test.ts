@@ -103,4 +103,19 @@ describe("Integration Hub scheduler worker", () => {
     expect(mockDbExecute.mock.calls[1][0]).toMatch(/SET next_run_at/i);
     expect(mockExecuteConnector).not.toHaveBeenCalled();
   });
+
+  it("does not claim cosec_biometric because it is owned by the dedicated sync worker", async () => {
+    const connection = {
+      execute: vi.fn()
+        .mockResolvedValueOnce([[{ acquired: 1 }], []])
+        .mockResolvedValueOnce([[], []])
+        .mockResolvedValueOnce([[{ released: 1 }], []]),
+      release: vi.fn(),
+    };
+    mockGetConnection.mockResolvedValue(connection);
+
+    await expect(runDueIntegrationSchedule("cosec_biometric")).resolves.toBe(false);
+    expect(mockExecuteConnector).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
 });

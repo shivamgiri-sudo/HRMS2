@@ -52,7 +52,7 @@ export const workforceRouteElements = (
       <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/attendance/regularizations" element={<Navigate to="/attendance-regularization" replace />} />
-      <Route path="/attendance/disputes"        element={<ProtectedRoute><NativeAttendanceDisputes /></ProtectedRoute>} />
+      <Route path="/attendance/disputes"        element={<ProtectedRoute><Gate pageCode="ATTENDANCE_DISPUTES"><NativeAttendanceDisputes /></Gate></ProtectedRoute>} />
       <Route path="/attendance/billing-config"  element={<ProtectedRoute><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
