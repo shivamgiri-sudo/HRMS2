@@ -419,8 +419,8 @@ export default function NativeReportsCenterV3() {
 
   return (
     <HrmsModernShell
-      eyebrow="Governed Reporting"
-      title="Deep Section Reports"
+      eyebrow="REPORTS"
+      title="Decision Center"
       description="A limited set of decision-ready section packs with executive controls, detailed registers, exceptions, reconciliation and compliance evidence."
       icon={<BarChart3 className="h-5 w-5" />}
       actions={

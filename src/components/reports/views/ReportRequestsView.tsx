@@ -63,7 +63,8 @@ export default function MyReportRequests() {
     <HrmsModernShell
       eyebrow="REPORTS"
       title="My Report Requests"
-      subtitle="Track the status of report requests you have submitted. Reports are delivered to your registered company email."
+      description="Track the status of report requests you have submitted. Reports are delivered to your registered company email."
+      icon={<Clock size={22} />}
     >
       <div className="space-y-4">
         {/* Header row */}

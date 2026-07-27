@@ -179,9 +179,10 @@ export default function ReportAuditPage() {
 
   return (
     <HrmsModernShell
-      eyebrow="SUPER ADMIN"
+      eyebrow="REPORTS"
       title="Report Audit Trail"
-      subtitle="Complete organisation-wide audit trail for all report requests, generation, and email delivery events."
+      description="Complete organisation-wide audit trail for all report requests, generation, and email delivery events."
+      icon={<FileText size={22} />}
     >
       <div className="space-y-6">
 

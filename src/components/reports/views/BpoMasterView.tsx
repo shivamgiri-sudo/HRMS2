@@ -299,9 +299,9 @@ export default function BpoMasterReports() {
 
   return (
     <HrmsModernShell
-      eyebrow="BPO REPORTING STANDARD"
-      title="COMPREHENSIVE BPO MASTER REPORTS"
-      description="Fourteen source-governed master reports covering Operations, employee performance, Client delivery, WFM, HR, Payroll, Finance, Quality, Recruitment, Administration, Executive Management, Audit/Compliance, Interview-to-Exit journey and report-data lineage."
+      eyebrow="REPORTS"
+      title="BPO Master Reports"
+      description="Source-governed BPO master reports covering operations, workforce, payroll, quality, finance and compliance with full field lineage and accuracy certification."
       icon={<FileSpreadsheet className="h-5 w-5" />}
       actions={
         <div className="flex flex-wrap items-center gap-2">

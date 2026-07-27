@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   XCircle,
 } from "lucide-react";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { HrmsModernShell } from "@/components/ui/hrms-modern";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -122,42 +122,28 @@ export default function BpoReportSourceValidation() {
   const summary = validationQuery.data?.summary;
 
   return (
-    <DashboardLayout>
-      <div className="min-h-full bg-slate-50/60">
-        <header className="border-b bg-background px-4 py-4 lg:px-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-start gap-3">
-              <Button variant="ghost" size="icon" asChild>
-                <Link to="/reports" aria-label="Back to master reports"><ArrowLeft className="h-4 w-4" /></Link>
-              </Button>
-              <div>
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="h-5 w-5 text-slate-700" />
-                  <h1 className="text-xl font-semibold">BPO Report Source Accuracy</h1>
-                </div>
-                <p className="mt-1 max-w-4xl text-sm text-muted-foreground">
-                  Runtime validation of all master reports against exact source tables, report grain and field availability.
-                  This page does not certify business-value accuracy until source totals are reconciled and data owners sign off.
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                type="month"
-                value={month}
-                onChange={(event) => setMonth(event.target.value)}
-                className="w-40"
-              />
-              <Button variant="outline" onClick={() => void validationQuery.refetch()} disabled={validationQuery.isFetching}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${validationQuery.isFetching ? "animate-spin" : ""}`} />
-                Validate Sources
-              </Button>
-              <Button variant="outline" asChild><Link to="/reports/control-room">Control Room</Link></Button>
-            </div>
-          </div>
-        </header>
-
-        <main className="space-y-4 p-4 lg:p-6">
+    <HrmsModernShell
+      eyebrow="REPORTS"
+      title="Source Validation"
+      description="Schema coverage, data accuracy and source availability checks for all BPO master reports."
+      icon={<ShieldCheck className="h-5 w-5" />}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            type="month"
+            value={month}
+            onChange={(event) => setMonth(event.target.value)}
+            className="w-40"
+          />
+          <Button variant="outline" onClick={() => void validationQuery.refetch()} disabled={validationQuery.isFetching}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${validationQuery.isFetching ? "animate-spin" : ""}`} />
+            Validate Sources
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <main className="space-y-4">
           {validationQuery.isLoading ? (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-xl" />)}
@@ -276,6 +262,6 @@ export default function BpoReportSourceValidation() {
           ) : null}
         </main>
       </div>
-    </DashboardLayout>
+    </HrmsModernShell>
   );
 }

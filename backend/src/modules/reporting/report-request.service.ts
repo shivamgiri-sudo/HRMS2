@@ -464,23 +464,43 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
   );
   const total = Number((countRows[0] as { total: number }).total);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
-            rr.requested_by_employee_code, rr.requested_by_employee_name,
-            rr.requester_role_snapshot, rr.official_email, rr.status,
-            rr.requested_at, rr.processing_started_at, rr.generation_completed_at,
-            rr.email_sent_at, rr.completed_at, rr.failed_at,
-            rr.failure_stage, rr.failure_code, rr.failure_message,
-            rr.retry_count, rr.requested_filters_json,
-            rgf.file_size_bytes, rgf.generated_row_count, rgf.sha256_checksum,
-            rgf.expires_at AS file_expires_at, rgf.deletion_status
-     FROM report_request rr
-     LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
-     ${where}
-     ORDER BY rr.requested_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset]
-  );
+  // Try full query with all columns; fall back to minimal set if prod schema is older
+  let rows: RowDataPacket[];
+  try {
+    const [r] = await db.execute<RowDataPacket[]>(
+      `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
+              rr.requested_by_employee_code, rr.requested_by_employee_name,
+              rr.requester_role_snapshot, rr.official_email, rr.status,
+              rr.requested_at, rr.processing_started_at, rr.generation_completed_at,
+              rr.email_sent_at, rr.completed_at, rr.failed_at,
+              rr.failure_stage, rr.failure_code, rr.failure_message,
+              rr.retry_count, rr.requested_filters_json,
+              rgf.file_size_bytes, rgf.generated_row_count, rgf.sha256_checksum,
+              rgf.expires_at AS file_expires_at, rgf.deletion_status
+       FROM report_request rr
+       LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
+       ${where}
+       ORDER BY rr.requested_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    rows = r;
+  } catch {
+    // Older prod schema missing some columns — fall back to safe minimal query
+    const [r] = await db.execute<RowDataPacket[]>(
+      `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
+              rr.requested_by_employee_code, rr.requested_by_employee_name,
+              rr.official_email, rr.status,
+              rr.requested_at, rr.generation_completed_at, rr.failed_at,
+              rr.failure_message, rr.requested_filters_json
+       FROM report_request rr
+       ${where}
+       ORDER BY rr.requested_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    rows = r;
+  }
 
   return { total, rows: rows as Record<string, unknown>[] };
 }
