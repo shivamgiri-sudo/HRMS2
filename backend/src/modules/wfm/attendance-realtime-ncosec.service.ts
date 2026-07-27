@@ -63,6 +63,43 @@ async function getEmployeeCosecMapping(employeeId: string): Promise<EmployeeCose
 }
 
 /**
+ * Calculate late mark from clock-in time vs employee's working_hours_start
+ * Returns { late_mark, late_by_minutes }
+ */
+function calculateLateMark(
+  clockInTime: string | null,
+  workingHoursStart: string | null,
+  graceMinutes = 15
+): { late_mark: 0 | 1; late_by_minutes: number } {
+  if (!clockInTime || !workingHoursStart) {
+    return { late_mark: 0, late_by_minutes: 0 };
+  }
+
+  try {
+    // Parse clock-in time (ISO format with timezone: "2026-07-27T09:30:00+05:30")
+    const clockIn = new Date(clockInTime);
+    if (isNaN(clockIn.getTime())) {
+      return { late_mark: 0, late_by_minutes: 0 };
+    }
+
+    // Parse working_hours_start (format: "HH:MM" or "HH:MM:SS")
+    const [h, m, s] = workingHoursStart.split(':').map(Number);
+    const shiftStart = new Date(clockIn);
+    shiftStart.setHours(h, m || 0, s || 0, 0);
+
+    const lateByMs = clockIn.getTime() - shiftStart.getTime();
+    const lateByMinutes = Math.floor(lateByMs / 60000);
+
+    if (lateByMinutes > graceMinutes) {
+      return { late_mark: 1, late_by_minutes: lateByMinutes };
+    }
+    return { late_mark: 0, late_by_minutes: Math.max(0, lateByMinutes) };
+  } catch {
+    return { late_mark: 0, late_by_minutes: 0 };
+  }
+}
+
+/**
  * Query NCOSEC directly for today's punch events
  * READ-ONLY: Does not modify NCOSEC or HRMS data
  */
@@ -216,7 +253,8 @@ export interface NcosecMonthlyRecord {
   attendance_status: string;
   status: string;
   lwp_value: number;
-  late_mark: 0;
+  late_mark: 0 | 1;
+  late_by_minutes: number;
   is_locked: number;
   attendance_source: 'biometric';
   source_system: string;
@@ -721,7 +759,7 @@ export async function getMonthlyAttendanceFromNcosec(
       attendance_status: finalStatus,
       status: finalStatus,
       lwp_value: finalLwp,
-      late_mark: 0,
+      ...calculateLateMark(clockIn, mapping.working_hours_start),
       is_locked: finalLocked,
       attendance_source: 'biometric',
       source_system: finalSource,
@@ -765,7 +803,8 @@ export async function getMonthlyAttendanceFromNcosec(
       attendance_status: override.override_status,
       status: override.override_status,
       lwp_value: override.lwp_value,
-      late_mark: 0,
+      late_mark: 0,  // No clock-in for override-only records (leave/holiday)
+      late_by_minutes: 0,
       is_locked: override.is_locked,
       attendance_source: 'biometric',
       source_system: override.is_locked ? 'regularization' : 'ncosec_with_override',
@@ -822,7 +861,7 @@ export async function getMonthlyAttendanceFromNcosec(
         attendance_status: override?.override_status ?? liveStatus,
         status: override?.override_status ?? liveStatus,
         lwp_value: override ? override.lwp_value : liveLwp,
-        late_mark: 0,
+        ...calculateLateMark(liveClockIn, mapping.working_hours_start),
         is_locked: override?.is_locked ?? 0,
         attendance_source: 'biometric',
         source_system: override?.is_locked ? 'regularization' : 'ncosec_realtime',
