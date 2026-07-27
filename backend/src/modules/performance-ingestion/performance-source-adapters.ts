@@ -55,6 +55,17 @@ export function assertAllowedGoogleSheetUrl(rawUrl: string): URL {
   return url;
 }
 
+export function assertConnectorType(
+  datasetType: PerformanceDataset["sourceType"],
+  connectorType: "mysql" | "mssql",
+): void {
+  if (datasetType !== connectorType) {
+    throw new Error(
+      `Dataset source type ${datasetType} does not match connector type ${connectorType}`,
+    );
+  }
+}
+
 function boundedMaxRows(dataset: PerformanceDataset): number {
   const configured = Number((dataset.config as { maxRows?: number }).maxRows ?? 10_000);
   if (!Number.isFinite(configured)) return 10_000;
@@ -80,6 +91,7 @@ async function readDatabaseRows(
   if (!dataset.connectorKey) throw new Error("Database dataset has no connector key");
   const credentials = await getCredentialsForKey(dataset.connectorKey);
   if (!credentials) throw new Error(`Connector ${dataset.connectorKey} is not configured`);
+  assertConnectorType(dataset.sourceType, credentials.db_type);
 
   const config = dataset.config as DatabaseDatasetConfig;
   const maxRows = boundedMaxRows(dataset);
