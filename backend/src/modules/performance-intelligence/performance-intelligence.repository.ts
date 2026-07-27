@@ -172,6 +172,34 @@ export const performanceIntelligenceRepository: PerformanceRepository = {
     return rows.length > 0;
   },
 
+  async listFilterOptions(scope) {
+    const scoped = buildScopeWhereEmployees(scope, "e");
+    const [[branchRows], [processRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT bm.id, bm.branch_name AS label
+           FROM employees e
+           JOIN branch_master bm ON bm.id = e.branch_id AND bm.active_status = 1
+          WHERE e.active_status = 1
+            AND ${scoped.sql}
+          ORDER BY bm.branch_name ASC`,
+        [...scoped.params],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT pm.id, pm.process_name AS label
+           FROM employees e
+           JOIN process_master pm ON pm.id = e.process_id AND pm.active_status = 1
+          WHERE e.active_status = 1
+            AND ${scoped.sql}
+          ORDER BY pm.process_name ASC`,
+        [...scoped.params],
+      ),
+    ]);
+    return {
+      branches: branchRows.map((row) => ({ id: String(row.id), label: String(row.label) })),
+      processes: processRows.map((row) => ({ id: String(row.id), label: String(row.label) })),
+    };
+  },
+
   async listMetricFacts(scope, query, subjectEmployeeId) {
     return listFacts(
       scope,
