@@ -10,6 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  apply-typing-service-consistency:
+    name: Apply typing service consistency
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout typing fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/typing-test-scoring-accuracy
+          fetch-depth: 0
+
+      - name: Apply guarded service patch
+        run: python .github/scripts/apply-typing-service-consistency.py
+
+      - name: Commit service consistency
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/ats-assessment/assessment.service.ts
+          git commit -m "fix(assessment): keep typing timing and best-attempt evidence consistent"
+          git push origin HEAD:fix/typing-test-scoring-accuracy
+
   validate:
     name: Build, typecheck and test
     runs-on: ubuntu-latest
