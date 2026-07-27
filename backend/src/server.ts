@@ -15,6 +15,7 @@ import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
+import { startPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
@@ -131,40 +132,41 @@ function startServer() {
         startLeaveMonthlyWorker();
         startAnnualLeaveWorker();
         startPayrollWindowClosureScheduler();
+        startPerformanceIngestionScheduler();
         initBusinessActionSyncJobs();
         startBreachSlaCron();
         startRetentionCron();
         startAtsRemindersScheduler();
         console.log(
-          "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, business-action-sync, breach-sla, privacy-retention, ats-reminders started"
+          "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders started",
         );
 
         // Start heavy workers (with distributed lock protection)
         startAprVicidialSyncWorker().catch((error) =>
-          console.error("[apr-sync] startup error:", error instanceof Error ? error.message : String(error))
+          console.error("[apr-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
         startPayrollNightlyRecalcWorker().catch((error) =>
-          console.error("[payroll-nightly-recalc] startup error:", error instanceof Error ? error.message : String(error))
+          console.error("[payroll-nightly-recalc] startup error:", error instanceof Error ? error.message : String(error)),
         );
         startKpiDailySyncWorker().catch((error) =>
-          console.error("[kpi-sync] startup error:", error instanceof Error ? error.message : String(error))
+          console.error("[kpi-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
         startSLABreachWorker().catch((error) =>
-          console.error("[sla-breach] startup error:", error instanceof Error ? error.message : String(error))
+          console.error("[sla-breach] startup error:", error instanceof Error ? error.message : String(error)),
         );
         startLmsSyncWorker().catch((error) =>
-          console.error("[lms-sync] startup error:", error instanceof Error ? error.message : String(error))
+          console.error("[lms-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
 
         console.log(
-          "[workers] apr-sync, payroll-nightly-recalc, kpi-sync, sla-breach, lms-sync started inline"
+          "[workers] apr-sync, payroll-nightly-recalc, kpi-sync, sla-breach, lms-sync started inline",
         );
         console.log(
-          "[workers] biometric attendance sync is handled by the integration scheduler / cosec-sync worker"
+          "[workers] biometric attendance sync is handled by the integration scheduler / cosec-sync worker",
         );
       } else {
         console.log(
-          "[workers] WORKERS_PROCESS=external - ALL schedulers/workers handled by external process"
+          "[workers] WORKERS_PROCESS=external - ALL schedulers/workers handled by external process",
         );
       }
     } else {
@@ -177,15 +179,15 @@ function startServer() {
 async function withTimeout<T>(
   promise: Promise<T>,
   milliseconds: number,
-  label: string
+  label: string,
 ): Promise<T | null> {
   return Promise.race([
     promise,
     new Promise<null>((_resolve, reject) =>
       setTimeout(
         () => reject(new Error(`${label} timed out after ${milliseconds}ms`)),
-        milliseconds
-      )
+        milliseconds,
+      ),
     ),
   ]).catch((error) => {
     console.warn(`[startup] ${label} skipped:`, error instanceof Error ? error.message : String(error));
@@ -197,15 +199,15 @@ async function initializeRuntime() {
   await withTimeout(
     migrateLegacyIntegrationSecrets(),
     8000,
-    "migrateLegacyIntegrationSecrets"
+    "migrateLegacyIntegrationSecrets",
   );
   const cosecActive = await withTimeout(
     bootstrapCosecIntegration(),
     8000,
-    "bootstrapCosecIntegration"
+    "bootstrapCosecIntegration",
   );
   console.log(
-    `[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`
+    `[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`,
   );
   startServer();
 }
@@ -244,18 +246,18 @@ handleMigrations()
   .catch(async (error) => {
     console.error(
       "[startup] migration/schema verification failed:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
 
     if (env.NODE_ENV === "production") {
       console.error(
-        "[startup] production server was not started because the database schema is incomplete."
+        "[startup] production server was not started because the database schema is incomplete.",
       );
       throw error;
     }
 
     console.warn(
-      "[startup] development mode: starting with degraded migration health."
+      "[startup] development mode: starting with degraded migration health.",
     );
     await initializeRuntime();
   });
