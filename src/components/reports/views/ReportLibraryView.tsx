@@ -1,10 +1,39 @@
 /**
- * ReportLibraryView — lifted from NativeReportsCenterV2.tsx
- * Accepts preselectedReport prop from ReportsHub URL param ?report=xxx
+ * NativeReportsCenterV2 — Production-Grade Report Framework
+ *
+ * Addresses ALL architectural issues from the audit:
+ *
+ * 1. RBAC Enforcement:
+ *    - Route-level Gate with pageCode
+ *    - Catalog filtered by user roles
+ *    - Export restricted by exportRoles
+ *    - Backend enforces same rules
+ *
+ * 2. Data Limits:
+ *    - Server-side pagination with totalCount
+ *    - Full export via export=true (unlimited)
+ *    - Screen shows page of data with total
+ *    - No misleading "export for full data" when export is also limited
+ *
+ * 3. Column Definitions:
+ *    - Explicit schema per report with labels, formats, order
+ *    - Business-friendly labels (not raw_minutes)
+ *    - Type-aware formatting (currency, duration, percentage)
+ *    - Controlled column visibility
+ *
+ * 4. State Management:
+ *    - Clear separation: idle / loading / success / empty / error
+ *    - No generic misleading error messages
+ *    - Specific error feedback
+ *
+ * 5. Data Validation:
+ *    - Duplicate key detection
+ *    - Row grain documented per report
+ *    - Total count reconciliation
  */
 
-import { useState, useMemo, useEffect, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Search, Star, Clock, Mail, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight,
   BarChart3, Users, CalendarDays, CreditCard, FileCheck, UserPlus, TrendingDown,
@@ -12,7 +41,7 @@ import {
   AlertTriangle, Info, AlertCircle, Table2, Hash,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { HrmsBentoTile } from "@/components/ui/hrms-modern";
+import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { REPORT_CATALOG as CENTRAL_CATALOG } from "@/lib/report-catalog";
 
@@ -138,6 +167,8 @@ const STATUS_FILTER: FilterDef = {
   ],
 };
 
+// ─── Filter Mapping for Central Catalog ───────────────────────────────────────
+
 function buildFiltersForReport(code: string): FilterDef[] {
   const dateFilters = [DATE_FROM, DATE_TO];
   const monthFilter = [MONTH_FILTER];
@@ -257,10 +288,420 @@ function buildFiltersForReport(code: string): FilterDef[] {
   return filterMap[code] ?? [...dateFilters, ...branchProcess];
 }
 
+// ─── Build CATALOG from central source + local filters ────────────────────────
+
 const CATALOG: ReportDef[] = CENTRAL_CATALOG.map(r => ({
   ...r,
   filters: buildFiltersForReport(r.code),
 }));
+
+// ─── Legacy inline kept for compatibility (will be removed once all reports added to central catalog) ──
+// These are deduplicated by code — CENTRAL_CATALOG takes precedence
+
+const _LEGACY_CATALOG_UNUSED: ReportDef[] = [
+  // Attendance - Daily
+  {
+    code: "attendance-daily",
+    name: "Daily Attendance Report",
+    category: "Attendance",
+    subcategory: "Daily",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Roster Shift", format: "text", width: 120 },
+      { key: "shift_start", label: "Shift Start", format: "time", width: 80 },
+      { key: "shift_end", label: "Shift End", format: "time", width: 80 },
+      { key: "punch_in", label: "Punch In", format: "time", width: 80 },
+      { key: "punch_out", label: "Punch Out", format: "time", width: 80 },
+      { key: "total_login_duration", label: "Total Login Hours", format: "duration", width: 100 },
+      { key: "productive_minutes", label: "Productive Minutes", format: "minutes", width: 100 },
+      { key: "attendance_status", label: "Status", format: "status", width: 100 },
+      { key: "late_by_minutes", label: "Late (mins)", format: "number", width: 80, align: "right" },
+    ],
+    rowGrain: "One row per employee per attendance date",
+    primaryKey: ["employee_code", "record_date"],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "wfm", "manager", "process_manager", "branch_head"],
+    exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
+  },
+  {
+    code: "daily-hc-shift",
+    name: "Daily Headcount by Shift",
+    category: "Attendance",
+    subcategory: "Daily",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Shift", format: "text", width: 120 },
+      { key: "scheduled_hc", label: "Scheduled HC", format: "number", width: 100, align: "right" },
+      { key: "present_hc", label: "Present HC", format: "number", width: 100, align: "right" },
+      { key: "absent_hc", label: "Absent HC", format: "number", width: 100, align: "right" },
+      { key: "attendance_pct", label: "Attendance %", format: "percentage", width: 100, align: "right" },
+    ],
+    rowGrain: "One row per date per branch per process per shift",
+    primaryKey: ["record_date", "branch_name", "process_name", "shift_name"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "shift-adherence-detail",
+    name: "Shift Adherence Detail",
+    category: "Attendance",
+    subcategory: "Daily",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Roster Shift", format: "text", width: 120 },
+      { key: "punch_in", label: "Punch In", format: "time", width: 80 },
+      { key: "punch_out", label: "Punch Out", format: "time", width: 80 },
+      { key: "scheduled_minutes", label: "Scheduled (mins)", format: "number", width: 100, align: "right" },
+      { key: "actual_minutes", label: "Actual (mins)", format: "number", width: 100, align: "right" },
+      { key: "adherence_pct", label: "Adherence %", format: "percentage", width: 100, align: "right" },
+    ],
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "record_date"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+
+  // Attendance - Monthly
+  {
+    code: "late-arrival-summary",
+    name: "Late Arrival Summary",
+    category: "Attendance",
+    subcategory: "Monthly",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Shift", format: "text", width: 120 },
+      { key: "shift_start", label: "Shift Start", format: "time", width: 80 },
+      { key: "punch_in", label: "Punch In", format: "time", width: 80 },
+      { key: "late_by_minutes", label: "Late By (mins)", format: "number", width: 100, align: "right" },
+      { key: "attendance_status", label: "Status", format: "status", width: 100 },
+    ],
+    rowGrain: "One row per employee per date with late arrival",
+    primaryKey: ["employee_code", "record_date"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "overtime-summary",
+    name: "Overtime Summary",
+    category: "Attendance",
+    subcategory: "Monthly",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "days_attended", label: "Days Attended", format: "number", width: 100, align: "right" },
+      { key: "total_worked_hours", label: "Total Worked (hrs)", format: "number", width: 120, align: "right" },
+      { key: "total_scheduled_hours", label: "Scheduled (hrs)", format: "number", width: 120, align: "right" },
+      { key: "overtime_hours", label: "Overtime (hrs)", format: "number", width: 100, align: "right" },
+      { key: "overtime_duration", label: "Overtime", format: "duration", width: 100 },
+      { key: "overtime_pay", label: "Overtime Pay", format: "currency", width: 120, align: "right" },
+    ],
+    rowGrain: "One row per employee with overtime in the month",
+    primaryKey: ["employee_code"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager", "payroll", "finance"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm", "payroll"],
+  },
+
+  // Attendance - Exceptions
+  {
+    code: "biometric-reconciliation",
+    name: "Biometric Reconciliation",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "attendance_status", label: "Attendance Status", format: "status", width: 120 },
+      { key: "processed_biometric_duration", label: "Processed Biometric", format: "duration", width: 120 },
+      { key: "biometric_punch_in", label: "Biometric Punch In", format: "time", width: 120 },
+      { key: "biometric_punch_out", label: "Biometric Punch Out", format: "time", width: 120 },
+      { key: "raw_biometric_duration", label: "Raw Biometric", format: "duration", width: 100 },
+      { key: "reconciliation_status", label: "Reconciliation", format: "status", width: 140 },
+      { key: "reconciliation_description", label: "Description", format: "text", width: 200 },
+    ],
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "record_date"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "regularization-summary",
+    name: "Regularization Summary",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER, STATUS_FILTER],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "attendance_date", label: "Attendance Date", format: "date", width: 100 },
+      { key: "requested_status", label: "Requested Status", format: "status", width: 120 },
+      { key: "reason", label: "Reason", format: "text", width: 200 },
+      { key: "reason_label", label: "Reason Type", format: "text", width: 160 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 120 },
+      { key: "submitted_at", label: "Submitted At", format: "datetime", width: 140 },
+      { key: "reviewer_name", label: "Reviewed By", format: "text", width: 140 },
+      { key: "approved_at", label: "Approved At", format: "datetime", width: 140 },
+    ],
+    rowGrain: "One row per regularization request",
+    primaryKey: ["employee_code", "attendance_date", "submitted_at"],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "hr_head", "wfm"],
+  },
+  {
+    code: "attendance-dispute-summary",
+    name: "Attendance Dispute Summary",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER, STATUS_FILTER],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "dispute_date", label: "Dispute Date", format: "date", width: 100 },
+      { key: "dispute_type", label: "Dispute Type", format: "status", width: 140 },
+      { key: "description", label: "Description", format: "text", width: 200 },
+      { key: "old_status", label: "Original Status", format: "status", width: 120 },
+      { key: "requested_status", label: "Requested Status", format: "status", width: 120 },
+      { key: "payroll_impact", label: "Payroll Impact", format: "boolean", width: 100 },
+      { key: "approval_status", label: "Approval Status", format: "status", width: 120 },
+      { key: "submitted_at", label: "Submitted At", format: "datetime", width: 140 },
+      { key: "reviewer_name", label: "Reviewed By", format: "text", width: 140 },
+      { key: "resolution", label: "Resolution", format: "text", width: 200 },
+    ],
+    rowGrain: "One row per dispute request",
+    primaryKey: ["employee_code", "dispute_date", "submitted_at"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "habitual-absentee-list",
+    name: "Habitual Absentee / Late List",
+    category: "Attendance",
+    subcategory: "Exceptions",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER, { key: "threshold", label: "Min Absent Days", type: "number", placeholder: "3" }],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "absent_days", label: "Absent Days", format: "number", width: 100, align: "right" },
+      { key: "late_days", label: "Late Days", format: "number", width: 100, align: "right" },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 100, align: "right" },
+      { key: "total_working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "absent_pct", label: "Absent %", format: "percentage", width: 100, align: "right" },
+      { key: "absent_dates", label: "Absent Dates (Day)", format: "text", width: 200 },
+    ],
+    rowGrain: "One row per employee meeting threshold",
+    primaryKey: ["employee_code"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+
+  // Attendance - BPO Metrics
+  {
+    code: "daily-shrinkage-report",
+    name: "Daily Shrinkage Report",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "record_date", label: "Date", format: "date", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "total_scheduled", label: "Scheduled HC", format: "number", width: 100, align: "right" },
+      { key: "present_hc", label: "Present HC", format: "number", width: 100, align: "right" },
+      { key: "absent_hc", label: "Absent HC", format: "number", width: 100, align: "right" },
+      { key: "leave_hc", label: "Leave HC", format: "number", width: 100, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 120, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 140, align: "right" },
+    ],
+    rowGrain: "One row per date per branch per process",
+    primaryKey: ["record_date", "branch_name", "process_name"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "monthly-shrinkage-trend",
+    name: "Monthly Shrinkage Trend",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "working_days", label: "Working Days", format: "number", width: 100, align: "right" },
+      { key: "total_employee_days", label: "Employee-Days", format: "number", width: 120, align: "right" },
+      { key: "present_days", label: "Present Days", format: "number", width: 100, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 120, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 140, align: "right" },
+    ],
+    rowGrain: "One row per month per branch per process",
+    primaryKey: ["month", "branch_name", "process_name"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+  {
+    code: "punch-raw-export",
+    name: "Punch Raw Data Export",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    filters: [DATE_FROM, DATE_TO, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "biometric_code", label: "Biometric Code", format: "text", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "activity_date", label: "Date", format: "date", width: 100 },
+      { key: "first_punch", label: "First Punch", format: "time", width: 100 },
+      { key: "last_punch", label: "Last Punch", format: "time", width: 100 },
+      { key: "biometric_minutes", label: "Duration (mins)", format: "number", width: 100, align: "right" },
+      { key: "total_duration", label: "Total Duration", format: "duration", width: 100 },
+      { key: "total_punches", label: "Punch Count", format: "number", width: 80, align: "right" },
+    ],
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "activity_date"],
+    viewRoles: ["super_admin", "admin", "hr", "wfm"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+  },
+
+  // Payroll
+  {
+    code: "payroll-register",
+    name: "Salary Register",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "payroll_month", label: "Payroll Month", format: "text", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "designation_name", label: "Designation", format: "text", width: 140 },
+      { key: "basic_pay", label: "Basic", format: "currency", width: 100, align: "right" },
+      { key: "hra", label: "HRA", format: "currency", width: 100, align: "right" },
+      { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right" },
+      { key: "pf_employee", label: "PF (Employee)", format: "currency", width: 100, align: "right" },
+      { key: "esic_employee", label: "ESIC (Employee)", format: "currency", width: 100, align: "right" },
+      { key: "professional_tax", label: "PT", format: "currency", width: 80, align: "right" },
+      { key: "tds", label: "TDS", format: "currency", width: 100, align: "right" },
+      { key: "lwp_deduction", label: "LWP Deduction", format: "currency", width: 120, align: "right" },
+      { key: "total_deductions", label: "Total Deductions", format: "currency", width: 120, align: "right" },
+      { key: "net_pay", label: "Net Pay", format: "currency", width: 120, align: "right" },
+      { key: "payable_days", label: "Payable Days", format: "number", width: 80, align: "right" },
+      { key: "lwp_days", label: "LWP Days", format: "number", width: 80, align: "right" },
+      { key: "bank_account", label: "Bank A/C", format: "masked", width: 140, sensitive: true },
+      { key: "pan_number", label: "PAN", format: "masked", width: 100, sensitive: true },
+    ],
+    rowGrain: "One row per employee per payroll month",
+    primaryKey: ["employee_code", "payroll_month"],
+    viewRoles: ["super_admin", "admin", "finance", "payroll", "hr_head"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    requiresRunSelector: true,
+  },
+  {
+    code: "payroll-variance",
+    name: "Payroll Variance Report",
+    category: "Payroll",
+    subcategory: "Monthly Processing",
+    filters: [MONTH_FILTER, BRANCH_FILTER, PROCESS_FILTER],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "current_month", label: "Current Month", format: "text", width: 100 },
+      { key: "current_gross", label: "Current Gross", format: "currency", width: 120, align: "right" },
+      { key: "current_net", label: "Current Net", format: "currency", width: 120, align: "right" },
+      { key: "prev_month", label: "Previous Month", format: "text", width: 100 },
+      { key: "prev_gross", label: "Previous Gross", format: "currency", width: 120, align: "right" },
+      { key: "prev_net", label: "Previous Net", format: "currency", width: 120, align: "right" },
+      { key: "gross_variance", label: "Gross Variance", format: "currency", width: 120, align: "right" },
+      { key: "gross_variance_pct", label: "Gross Var %", format: "percentage", width: 100, align: "right" },
+      { key: "net_variance", label: "Net Variance", format: "currency", width: 120, align: "right" },
+      { key: "net_variance_pct", label: "Net Var %", format: "percentage", width: 100, align: "right" },
+      { key: "variance_reason", label: "Variance Reason", format: "text", width: 200 },
+    ],
+    rowGrain: "One row per employee comparing current vs previous month",
+    primaryKey: ["employee_code"],
+    viewRoles: ["super_admin", "admin", "finance", "payroll", "hr_head"],
+    exportRoles: ["super_admin", "admin", "finance", "payroll"],
+    requiresRunSelector: true,
+  },
+
+  // HR
+  {
+    code: "employee-master",
+    name: "Employee Master Export",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    filters: [BRANCH_FILTER, PROCESS_FILTER, DEPT_FILTER, DATE_FROM, DATE_TO],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "official_email", label: "Official Email", format: "text", width: 200 },
+      { key: "mobile", label: "Mobile", format: "text", width: 120 },
+      { key: "employment_status", label: "Status", format: "status", width: 100 },
+      { key: "date_of_joining", label: "DOJ", format: "date", width: 100 },
+      { key: "date_of_exit", label: "DOL", format: "date", width: 100 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 140 },
+      { key: "reporting_manager", label: "Reporting Manager", format: "text", width: 180 },
+    ],
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head"],
+    exportRoles: ["super_admin", "admin", "hr", "hr_head"],
+  },
+  {
+    code: "headcount",
+    name: "Active Headcount Summary",
+    category: "HR & Workforce",
+    subcategory: "Headcount & Org",
+    filters: [BRANCH_FILTER, PROCESS_FILTER, DEPT_FILTER],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "department_name", label: "Department", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "active_headcount", label: "Active Headcount", format: "number", width: 120, align: "right" },
+    ],
+    rowGrain: "One row per branch/department/process combination",
+    primaryKey: ["branch_name", "department_name", "process_name"],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "hr_head"],
+  },
+];
 
 // ─── Category Config ───────────────────────────────────────────────────────────
 
@@ -288,6 +729,8 @@ const CATEGORY_ORDER = [
   "Documents", "Identity",
 ];
 
+// ─── Helpers ────────────────────────────────────────────────────────────────────
+
 const LS_RECENT = "rpt_recent_v3";
 const LS_FAVS = "rpt_favs_v3";
 
@@ -297,6 +740,8 @@ function loadList(key: string): string[] {
 function saveList(key: string, val: string[]) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* noop */ }
 }
+
+// ─── Filter Input ───────────────────────────────────────────────────────────────
 
 function FilterInput({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
   const base = "h-9 text-sm border border-gray-200 rounded-lg px-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full";
@@ -316,27 +761,30 @@ function FilterInput({ def, value, onChange }: { def: FilterDef; value: string; 
   return <input className={base} type="text" placeholder={def.placeholder ?? def.label} value={value} onChange={e => onChange(e.target.value)} />;
 }
 
+// ─── Duplicate Key Detection ───────────────────────────────────────────────────
+
 function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[]): { hasDuplicates: boolean; duplicateCount: number } {
   if (primaryKey.length === 0 || rows.length === 0) return { hasDuplicates: false, duplicateCount: 0 };
+
   const seen = new Set<string>();
   let duplicateCount = 0;
+
   for (const row of rows) {
     const keyValue = primaryKey.map(k => String(row[k] ?? "")).join("|");
-    if (seen.has(keyValue)) { duplicateCount++; } else { seen.add(keyValue); }
+    if (seen.has(keyValue)) {
+      duplicateCount++;
+    } else {
+      seen.add(keyValue);
+    }
   }
+
   return { hasDuplicates: duplicateCount > 0, duplicateCount };
-}
-
-// ─── Props ─────────────────────────────────────────────────────────────────────
-
-interface ReportLibraryViewProps {
-  preselectedReport?: string;
 }
 
 // ─── Main Component ─────────────────────────────────────────────────────────────
 
-export default function ReportLibraryView({ preselectedReport }: ReportLibraryViewProps) {
-  const { roleKeys } = useWorkforceAccess();
+export default function NativeReportsCenterV2() {
+  const { roleKeys, isLoading: rolesLoading } = useWorkforceAccess();
   const userRoles = roleKeys;
 
   const [selectedReport, setSelectedReport] = useState<ReportDef | null>(null);
@@ -356,6 +804,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
   const pageSize = 100;
   const runnerRef = useRef<HTMLDivElement>(null);
 
+  // Filter catalog by user roles — super_admin sees all reports
   const visibleCatalog = useMemo(() => {
     if (userRoles.includes("super_admin")) return CATALOG;
     return CATALOG.filter(r => {
@@ -364,6 +813,9 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
     });
   }, [userRoles]);
 
+
+
+  // Master data for filters
   const { data: branchData } = useQuery({
     queryKey: ["branches-all"],
     queryFn: () => hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches"),
@@ -378,15 +830,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
   const branches = branchData?.data ?? [];
   const processes = processData?.data ?? [];
 
-  // Auto-select preselected report from URL param
-  useEffect(() => {
-    if (preselectedReport && visibleCatalog.length > 0) {
-      const found = visibleCatalog.find(r => r.code === preselectedReport);
-      if (found) selectReport(found);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preselectedReport, visibleCatalog.length]);
-
+  // Group catalog
   const grouped = useMemo(() => {
     const map: Record<string, ReportDef[]> = {};
     visibleCatalog.forEach(r => {
@@ -454,6 +898,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
       setTotalCount(total);
       setCurrentPage(page);
 
+      // Check for duplicates
       const dupeCheck = detectDuplicates(data, selectedReport.primaryKey);
       setDuplicateInfo(dupeCheck);
 
@@ -489,35 +934,42 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
       return { ...def, type: "select", options: branches.map(b => ({ value: b.id, label: b.branch_name })) };
     }
     if (def.key === "processId" && processes.length > 0) {
-      return { ...def, type: "select", options: processes.map(p => ({ value: p.id, label: (p as { process_name: string }).process_name })) };
+      return { ...def, type: "select", options: processes.map(p => ({ value: p.id, label: (p as any).process_name })) };
     }
     return def;
   }
 
   const totalPages = Math.ceil(totalCount / pageSize);
 
-  return (
-    <div className="space-y-4">
-      {/* Search bar */}
-      <div className="relative w-full sm:w-[320px]">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input
-          type="text"
-          className="w-full h-10 pl-10 pr-10 text-sm rounded-lg bg-white border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Search reports..."
-          value={searchQ}
-          onChange={e => setSearchQ(e.target.value)}
-        />
-        {searchQ && (
-          <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
-            <X size={14} />
-          </button>
-        )}
-      </div>
+  // ─── Render ───────────────────────────────────────────────────────────────────
 
+  return (
+    <HrmsModernShell
+      eyebrow="Reports"
+      title="Reports Center"
+      description="Production-grade workforce, attendance, payroll, and compliance reports with full data export."
+      icon={<BarChart3 size={22} />}
+      actions={
+        <div className="relative w-full sm:w-[320px]">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            className="w-full h-10 pl-10 pr-10 text-sm rounded-lg bg-white border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search reports..."
+            value={searchQ}
+            onChange={e => setSearchQ(e.target.value)}
+          />
+          {searchQ && (
+            <button type="button" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600" onClick={() => setSearchQ("")}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      }
+    >
       <div className="flex min-h-0 bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shadow-sm">
         {/* Sidebar */}
-        <aside className="w-60 shrink-0 bg-white border-r border-slate-200 sticky top-0 h-[calc(100vh-200px)] overflow-y-auto">
+        <aside className="w-60 shrink-0 bg-white border-r border-slate-200 sticky top-0 h-[calc(100vh-120px)] overflow-y-auto">
           <div className="px-3 py-3 border-b border-slate-100">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Report Categories</p>
             <p className="text-[10px] text-slate-400 mt-1">{totalReports} reports for your role</p>
@@ -590,24 +1042,8 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
             </div>
           )}
 
-          {/* Search results */}
-          {searchResults !== null && (
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3">
-              <p className="text-xs font-semibold text-slate-500 mb-2">{searchResults.length} results for "{searchQ}"</p>
-              <div className="space-y-1">
-                {searchResults.map(r => (
-                  <button key={r.code} type="button" onClick={() => { selectReport(r); setSearchQ(""); }} className="w-full text-left text-xs px-3 py-2 rounded-lg text-slate-700 hover:bg-blue-50 flex items-center gap-2">
-                    <span className="font-medium">{r.name}</span>
-                    <span className="text-slate-400">— {r.category}</span>
-                  </button>
-                ))}
-                {searchResults.length === 0 && <p className="text-xs text-slate-400 px-3 py-2">No reports found.</p>}
-              </div>
-            </div>
-          )}
-
           {/* No selection */}
-          {!selectedReport && searchResults === null && (
+          {!selectedReport && (
             <div className="bg-white rounded-xl border border-dashed border-slate-300 py-16 text-center shadow-sm">
               <BarChart3 size={36} className="mx-auto text-slate-200 mb-3" />
               <p className="text-sm text-slate-400 font-medium">Select a category and report from the left panel</p>
@@ -617,6 +1053,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
           {/* Report Panel */}
           {selectedReport && (
             <div ref={runnerRef} className="space-y-4">
+              {/* Header */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-gray-100">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -654,6 +1091,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                       </button>
                     </div>
                   </div>
+                  {/* Row grain info */}
                   <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded-lg">
                     <Hash size={12} />
                     <span className="font-medium">Row grain:</span>
@@ -664,6 +1102,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                   </div>
                 </div>
 
+                {/* Filters */}
                 <div className="px-5 py-4">
                   <div className="flex flex-wrap items-end gap-3">
                     {selectedReport.filters.map(def => {
@@ -687,6 +1126,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                 </div>
               </div>
 
+              {/* Error */}
               {reportState === "error" && (
                 <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex items-start gap-3">
                   <AlertTriangle size={18} className="flex-shrink-0 mt-0.5" />
@@ -697,6 +1137,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                 </div>
               )}
 
+              {/* Empty */}
               {reportState === "empty" && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-700 flex items-center gap-3">
                   <Info size={18} className="flex-shrink-0" />
@@ -704,15 +1145,18 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                 </div>
               )}
 
+              {/* Duplicate warning */}
               {reportState === "success" && duplicateInfo.hasDuplicates && (
                 <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 text-sm text-orange-700 flex items-center gap-3">
                   <AlertCircle size={18} className="flex-shrink-0" />
                   <span>
                     <strong>Data quality warning:</strong> {duplicateInfo.duplicateCount} duplicate row(s) detected based on primary key ({selectedReport.primaryKey.join(", ")}).
+                    This may indicate a backend query issue.
                   </span>
                 </div>
               )}
 
+              {/* Results */}
               {reportState === "success" && rows.length > 0 && (
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                   <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
@@ -743,6 +1187,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                     </div>
                   </div>
 
+                  {/* Pagination */}
                   {totalPages > 1 && (
                     <div className="px-5 py-2 border-b border-gray-100 flex items-center justify-center gap-2">
                       <button
@@ -753,7 +1198,9 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                       >
                         <ChevronLeft size={14} />
                       </button>
-                      <span className="text-xs text-gray-600">Page {currentPage} of {totalPages}</span>
+                      <span className="text-xs text-gray-600">
+                        Page {currentPage} of {totalPages}
+                      </span>
                       <button
                         type="button"
                         disabled={currentPage === totalPages || reportState === "loading"}
@@ -765,6 +1212,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                     </div>
                   )}
 
+                  {/* Table */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
@@ -804,6 +1252,7 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
                 </div>
               )}
 
+              {/* Idle */}
               {reportState === "idle" && (
                 <div className="bg-white rounded-xl border border-slate-200 py-14 text-center shadow-sm">
                   <BarChart3 size={36} className="mx-auto text-gray-200 mb-3" />
@@ -814,6 +1263,6 @@ export default function ReportLibraryView({ preselectedReport }: ReportLibraryVi
           )}
         </div>
       </div>
-    </div>
+    </HrmsModernShell>
   );
 }

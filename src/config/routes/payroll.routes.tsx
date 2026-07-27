@@ -32,10 +32,10 @@ const NocManagement             = lazy(() => import("@/pages/payroll/NocManageme
 const BranchPayrollReadiness    = lazy(() => import("@/pages/payroll/BranchPayrollReadiness"));
 const ProcessPayrollReadiness   = lazy(() => import("@/pages/payroll/ProcessPayrollReadiness"));
 const PayrollCalendar           = lazy(() => import("@/pages/payroll/PayrollCalendar"));
-const PayrollCostSummary        = lazy(() => import("@/pages/payroll/PayrollCostSummary"));
+// PayrollCostSummary moved into ReportsHub — route redirects to hub
 const StatutoryFilingTracker    = lazy(() => import("@/pages/payroll/StatutoryFilingTracker"));
 const PayrollAuditTrail         = lazy(() => import("@/pages/payroll/PayrollAuditTrail"));
-const PayrollVarianceReport     = lazy(() => import("@/pages/payroll/PayrollVarianceReport"));
+// PayrollVarianceReport moved into ReportsHub — route redirects to hub
 const BulkOutputs               = lazy(() => import("@/pages/payroll/BulkOutputs"));
 const LoanManagement            = lazy(() => import("@/pages/payroll/LoanManagement"));
 const PayrollSignOff            = lazy(() => import("@/pages/payroll/PayrollSignOff"));
@@ -92,10 +92,10 @@ export const payrollRouteElements = (
       <Route path="/payroll/branch-readiness"    element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll']}><BranchPayrollReadiness /></ProtectedRoute>} />
       <Route path="/payroll/process-readiness"  element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll','process_manager','wfm']}><ProcessPayrollReadiness /></ProtectedRoute>} />
       <Route path="/payroll/calendar"            element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><PayrollCalendar /></ProtectedRoute>} />
-      <Route path="/payroll/cost-summary"        element={<ProtectedRoute roles={['super_admin','payroll_head','finance']}><PayrollCostSummary /></ProtectedRoute>} />
+      <Route path="/payroll/cost-summary"        element={<Navigate to="/reports?view=library&report=payroll-cost-summary" replace />} />
       <Route path="/payroll/statutory-filing"    element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><StatutoryFilingTracker /></ProtectedRoute>} />
       <Route path="/payroll/audit-trail"         element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><PayrollAuditTrail /></ProtectedRoute>} />
-      <Route path="/payroll/variance"            element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><PayrollVarianceReport /></ProtectedRoute>} />
+      <Route path="/payroll/variance"            element={<Navigate to="/reports?view=library&report=payroll-variance" replace />} />
       <Route path="/payroll/bulk-outputs"        element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><BulkOutputs /></ProtectedRoute>} />
       <Route path="/payroll/loans"               element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><LoanManagement /></ProtectedRoute>} />
       <Route path="/payroll/sign-off"            element={<ProtectedRoute roles={['super_admin','payroll_head','finance','ceo','admin']}><PayrollSignOff /></ProtectedRoute>} />
