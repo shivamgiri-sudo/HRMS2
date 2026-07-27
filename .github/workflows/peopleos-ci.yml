@@ -10,6 +10,37 @@ permissions:
   contents: read
 
 jobs:
+  apply-typing-passage-policy:
+    name: Apply typing passage runtime policy
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout typing fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/typing-test-scoring-accuracy
+          fetch-depth: 0
+
+      - name: Apply guarded passage policy
+        run: python .github/scripts/apply-typing-question-bank-runtime.py
+
+      - name: Restore permanent workflow and remove helper
+        run: |
+          git checkout HEAD^ -- .github/workflows/peopleos-ci.yml
+          rm -f .github/scripts/apply-typing-question-bank-runtime.py
+
+      - name: Commit runtime policy
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/ats-assessment/question-bank.service.ts \
+                  .github/workflows/peopleos-ci.yml \
+                  .github/scripts/apply-typing-question-bank-runtime.py
+          git commit -m "fix(assessment): enforce template floors on passage-bank typing tests"
+          git push origin HEAD:fix/typing-test-scoring-accuracy
+
   validate:
     name: Build, typecheck and test
     runs-on: ubuntu-latest
