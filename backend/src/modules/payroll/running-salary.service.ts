@@ -18,6 +18,7 @@ export async function computeRunningSalary(
   earned_payable_days: number;
   eligible_weekoff_till_date: number;
   eligible_holiday_till_date: number;
+  lwp_till_date: number;
   earned_salary_till_date: number;
   earned_net_till_date: number;
   projected_payable_days: number;
@@ -154,6 +155,7 @@ export async function computeRunningSalary(
   for (const r of attRows as any[]) {
     switch (r.attendance_status) {
       case "present":        presentTillDate += 1; break;
+      case "late":           presentTillDate += 1; break;
       case "half_day":       presentTillDate += 0.5; lwpTillDate += 0.5; break;
       case "leave_approved": paidLeaveTillDate += 1; break;
       case "week_off":       weekoffRosteredTillDate += 1; break;
@@ -289,6 +291,7 @@ export async function computeRunningSalary(
     earned_payable_days: cappedEarned,
     eligible_weekoff_till_date: eligibleWeekoffTillDate,
     eligible_holiday_till_date: eligibleHolidaysTillDate,
+    lwp_till_date: Math.round(lwpTillDate * 10) / 10,
     earned_salary_till_date: Math.round(earnedSalaryTillDate * 100) / 100,
     earned_net_till_date: Math.round(earnedCalc.net_salary * 100) / 100,
     projected_payable_days: projectedPayableDays,
@@ -332,6 +335,7 @@ function _zeroResult() {
     earned_payable_days: 0,
     eligible_weekoff_till_date: 0,
     eligible_holiday_till_date: 0,
+    lwp_till_date: 0,
     earned_salary_till_date: 0,
     earned_net_till_date: 0,
     projected_payable_days: 0,

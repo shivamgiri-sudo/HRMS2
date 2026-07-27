@@ -33,11 +33,12 @@ function RunningMonthCard({ employeeId }: { employeeId: string }) {
           {getTodayMonth()}
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-3 text-center border-t border-indigo-100 pt-4">
+      <div className="grid grid-cols-4 gap-3 text-center border-t border-indigo-100 pt-4">
         {[
           { label: "Payable Days", value: rs.earned_payable_days },
           { label: "Eligible Weekoffs", value: rs.eligible_weekoff_till_date },
           { label: "Eligible Holidays", value: rs.eligible_holiday_till_date },
+          { label: "LWP (MTD)", value: rs.lwp_till_date ?? 0 },
         ].map(item => (
           <div key={item.label}>
             <p className="text-base font-bold text-slate-800">{item.value}</p>
