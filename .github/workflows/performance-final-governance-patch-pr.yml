@@ -1,0 +1,42 @@
+name: Performance Final Governance Patch PR
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'agent/performance-ingestion-platform' || github.ref_name == 'agent/performance-ingestion-platform'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/performance-ingestion-platform
+          fetch-depth: 0
+
+      - name: Apply final governance patch
+        run: python backend/scripts/apply-performance-final-governance-patch.py
+
+      - name: Commit final governance patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "Final governance patch already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            backend/src/db/runPendingMigrations.ts \
+            backend/sql/000_run_all.sql \
+            backend/scripts/performance-ingestion-install.ts \
+            backend/src/modules/performance-ingestion/performance-ingestion.routes.ts \
+            backend/src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts \
+            src/components/performance-hub/PerformanceSourceEditor.tsx \
+            .github/workflows/performance-platform-validation.yml
+          git commit -m "feat(performance): finalize immutable audited governance"
+          git push origin HEAD:agent/performance-ingestion-platform
