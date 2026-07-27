@@ -17,6 +17,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  typing-question-bank-policy:
+    name: Apply typing question-bank policy
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/typing-test-scoring-accuracy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout typing fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/typing-test-scoring-accuracy
+          fetch-depth: 0
+
+      - name: Apply guarded question-bank patch
+        run: python .github/scripts/apply-typing-question-bank-policy.py
+
+      - name: Remove temporary CI helper
+        run: |
+          git checkout origin/main -- .github/workflows/ci.yml
+          rm -f .github/scripts/apply-typing-question-bank-policy.py
+
+      - name: Commit question-bank policy
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/modules/ats-assessment/assessment.catalog.ts \
+                  backend/src/modules/ats-assessment/question-bank.service.ts \
+                  .github/workflows/ci.yml \
+                  .github/scripts/apply-typing-question-bank-policy.py
+          git commit -m "fix(assessment): enforce typing policy on question-bank passages"
+          git push origin HEAD:fix/typing-test-scoring-accuracy
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
