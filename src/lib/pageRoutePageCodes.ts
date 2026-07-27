@@ -38,7 +38,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/control-tower": "CONTROL_TOWER",
   "/employee-lifecycle": "EMPLOYEE_LIFECYCLE",
   "/employee-lifecycle-v2": "EMPLOYEE_LIFECYCLE",
-  "/employee-stat-card": "EMPLOYEE_MANAGEMENT",
+  "/employee-stat-card": "EMPLOYEE_STAT_CARD",
   "/employee-journey": "EMPLOYEE_MANAGEMENT",
   "/employees": "EMPLOYEE_MANAGEMENT",
   "/erp": "ERP",
@@ -163,7 +163,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
 };
 
 export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
-  "/employee-stat-card/:id": "EMPLOYEE_MANAGEMENT",
+  "/employee-stat-card/:id": "EMPLOYEE_STAT_CARD",
   "/employees/:id": "EMPLOYEE_MANAGEMENT",
   "/employees/:id/360": "EMPLOYEE_MANAGEMENT",
   "/letters/:id/preview": "LETTERS",
