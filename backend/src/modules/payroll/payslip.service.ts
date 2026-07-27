@@ -227,11 +227,21 @@ export const payslipService = {
         ORDER BY component_type, component_code`,
       [rec.prep_line_id]
     );
-    rec.components = (components as any[]).map((component) => ({
-      ...component,
-      amount: Number(component.amount ?? 0),
-      taxable: Number(component.taxable ?? 0),
-    }));
+    // Deduplicate by component_code+type — DB may contain duplicate rows from
+    // recalculations run before the unique key was applied
+    const seenComponents = new Set<string>();
+    rec.components = (components as any[])
+      .filter(c => {
+        const k = `${c.component_code}:${(c.component_type ?? '').toLowerCase()}`;
+        if (seenComponents.has(k)) return false;
+        seenComponents.add(k);
+        return true;
+      })
+      .map((component) => ({
+        ...component,
+        amount: Number(component.amount ?? 0),
+        taxable: Number(component.taxable ?? 0),
+      }));
     rec.earnings = rec.components
       .filter((component) => (component.component_type || "").toLowerCase() === "earning")
     rec.deductions = rec.components

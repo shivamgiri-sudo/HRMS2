@@ -928,12 +928,20 @@ export async function calculatePayrollRunScoped(
 
   // Flush salary_prep_line rows
   if (batchPrepLines.length > 0) {
+    // Always delete existing component rows before re-inserting to prevent
+    // duplicate accumulation across recalculations.
+    // For targeted runs scope to affected employees; for full runs scope to entire run.
     if (isTargetedRun) {
       await conn.execute(
         `DELETE FROM salary_prep_line_component
           WHERE run_id = ?
             AND employee_id IN (${scopedEmployeeIds.map(() => "?").join(",")})`,
         [runId, ...scopedEmployeeIds],
+      );
+    } else {
+      await conn.execute(
+        `DELETE FROM salary_prep_line_component WHERE run_id = ?`,
+        [runId],
       );
     }
 

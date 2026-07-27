@@ -153,6 +153,7 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                     { label: "Paid Days", value: detail.paid_working_days },
                     { label: "Weekoffs", value: detail.eligible_weekoff_days },
                     { label: "Holidays", value: detail.eligible_holiday_days },
+                    { label: "LWP", value: detail.lwp_days },
                     { label: "Payable", value: detail.final_payable_days },
                     { label: "Calendar Days", value: detail.active_calendar_days },
                   ].map(item => (

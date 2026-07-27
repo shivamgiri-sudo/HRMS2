@@ -395,12 +395,21 @@ export const leaveService = {
 
   async getBalance(employeeId: string, year: number): Promise<any[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT lbl.*, lt.leave_name, lt.leave_code, lt.paid_leave, lt.carry_forward
-       FROM leave_balance_ledger lbl
-       JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-       WHERE lbl.employee_id = ? AND lbl.balance_year = ?
-       ORDER BY lt.leave_name ASC`,
-      [employeeId, year]
+      `SELECT lt.id AS leave_type_id, lt.leave_name, lt.leave_code, lt.paid_leave, lt.carry_forward,
+              COALESCE(lbl.id, NULL)                AS id,
+              COALESCE(lbl.balance_year, ?)         AS balance_year,
+              COALESCE(lbl.allocated_days, 0)       AS allocated_days,
+              COALESCE(lbl.used_days, 0)            AS used_days,
+              COALESCE(lbl.adjusted_days, 0)        AS adjusted_days,
+              lbl.employee_id
+         FROM leave_type_master lt
+         LEFT JOIN leave_balance_ledger lbl
+           ON lbl.leave_type_id = lt.id
+          AND lbl.employee_id   = ?
+          AND lbl.balance_year  = ?
+        WHERE lt.active_status = 1
+        ORDER BY lt.leave_name ASC`,
+      [year, employeeId, year]
     );
 
     const currentYear = new Date().getFullYear();
