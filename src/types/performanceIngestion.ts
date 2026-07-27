@@ -128,6 +128,17 @@ export type PaginatedMappingExceptions = {
   pageSize: number;
 };
 
+export type PerformanceSchedule = {
+  enabled: boolean;
+  cronExpression: string | null;
+  timezone: string;
+  scheduleLookbackDays: number;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  automaticSourceSupported: boolean;
+};
+
 export type PerformanceReferenceData = {
   employees: Array<{
     id: string;
