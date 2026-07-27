@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import type { ExecScope, DimensionScope } from './executors/types.js';
 
 const NO_BRANCH_SCOPE_SENTINEL = '__NO_BRANCH_SCOPE__';
 
@@ -51,4 +52,128 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
   if (branchIds.length === 0) branchIds.push(NO_BRANCH_SCOPE_SENTINEL);
 
   return { isSuperAdmin: false, branchIds };
+}
+
+// ---------------------------------------------------------------------------
+// resolveFullScope — extended multi-dimensional scope for the executor layer
+// ---------------------------------------------------------------------------
+
+const ROLE_ALIASES: Record<string, string[]> = {
+  finance_head:    ['finance'],
+  accounts_head:   ['finance'],
+  payroll_head:    ['payroll'],
+  payroll_branch:  ['payroll'],
+  payroll_hr:      ['payroll'],
+  recruitment_hr:  ['recruiter'],
+  quality_analyst: ['quality'],
+  qa:              ['quality'],
+  branch_hr:       ['hr'],
+  hr_branch:       ['hr'],
+  team_leader:     ['manager'],
+  tl:              ['manager'],
+};
+
+function normRoles(raw: string[]): string[] {
+  const flat = [...raw, ...raw.flatMap(r => ROLE_ALIASES[r] ?? [])];
+  return [...new Set(flat)];
+}
+
+function dimAll(): DimensionScope   { return { mode: 'all',        ids: [] }; }
+function dimRestricted(ids: string[]): DimensionScope { return { mode: 'restricted', ids }; }
+
+/**
+ * Resolve the complete multi-dimensional scope for a user.
+ * Returns an ExecScope that all category executors must use.
+ * Never returns ambiguous empty arrays — each dimension carries an explicit mode.
+ */
+export async function resolveFullScope(userId: string): Promise<ExecScope> {
+  // 1. Fetch roles
+  const [roleRows] = await db.execute<RowDataPacket[]>(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+    [userId]
+  );
+  const rawRoles = (roleRows as { role_key: string }[]).map(r => r.role_key);
+  const roles    = normRoles(rawRoles);
+  const isSuperAdmin = roles.some(r => SUPER_ADMIN_ROLES.includes(r));
+
+  // 2. Fetch employee record for self-service and fallback branch
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, branch_id, process_id, department_id, cost_centre_id,
+            reporting_manager_id, manager_id
+       FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [userId]
+  );
+  const emp = (empRows as any[])[0] ?? null;
+
+  // 3. Fetch assignment scopes
+  const [scopeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT scope_type, branch_id, process_id, department_id, cost_centre_id
+       FROM user_assignment_scope
+      WHERE user_id = ? AND active_status = 1`,
+    [userId]
+  );
+  const scopes = scopeRows as {
+    scope_type:     string;
+    branch_id:      string | null;
+    process_id:     string | null;
+    department_id:  string | null;
+    cost_centre_id: string | null;
+  }[];
+
+  const hasAllScope = isSuperAdmin || scopes.some(s => s.scope_type === 'all');
+
+  // 4. Build dimension scopes
+  function buildDim(
+    field: 'branch_id' | 'process_id' | 'department_id' | 'cost_centre_id',
+    fallback?: string | null
+  ): DimensionScope {
+    if (hasAllScope) return dimAll();
+
+    const ids = scopes
+      .map(s => s[field])
+      .filter((id): id is string => !!id);
+
+    if (ids.length > 0) return dimRestricted(ids);
+    if (fallback)        return dimRestricted([fallback]);
+
+    // No scope data and no fallback → fail closed
+    return dimRestricted([NO_BRANCH_SCOPE_SENTINEL]);
+  }
+
+  const branchScope     = buildDim('branch_id',      emp?.branch_id);
+  const processScope    = hasAllScope ? dimAll() : (
+    scopes.some(s => s.process_id) ? dimRestricted(
+      scopes.map(s => s.process_id).filter((id): id is string => !!id)
+    ) : emp?.process_id ? dimRestricted([String(emp.process_id)]) : dimAll()
+  );
+  const departmentScope = hasAllScope ? dimAll() : (
+    scopes.some(s => s.department_id) ? dimRestricted(
+      scopes.map(s => s.department_id).filter((id): id is string => !!id)
+    ) : dimAll()
+  );
+  const costCentreScope = hasAllScope ? dimAll() : (
+    scopes.some(s => s.cost_centre_id) ? dimRestricted(
+      scopes.map(s => s.cost_centre_id).filter((id): id is string => !!id)
+    ) : dimAll()
+  );
+
+  // 5. Determine capabilities
+  const SENSITIVE_ROLES = ['super_admin', 'admin', 'payroll', 'payroll_head', 'hr', 'ceo', 'coo'];
+  const EXPORT_SENSITIVE_ROLES = ['super_admin', 'payroll', 'payroll_head', 'ceo'];
+
+  return {
+    companyId:              '1', // single-tenant; extend when multi-tenant
+    isSuperAdmin,
+    branchScope,
+    processScope,
+    departmentScope,
+    costCentreScope,
+    managerEmployeeId:      emp ? String(emp.id) : undefined,
+    selfEmployeeId:         emp ? String(emp.id) : undefined,
+    subordinateEmployeeIds: [], // populated lazily by team-report executors that need it
+    canViewAllEmployees:    hasAllScope,
+    canViewSensitiveFields: roles.some(r => SENSITIVE_ROLES.includes(r)),
+    canExportSensitiveReports: roles.some(r => EXPORT_SENSITIVE_ROLES.includes(r)),
+    roles,
+  };
 }

@@ -1,119 +1,193 @@
-import * as XLSX from 'xlsx';
+import crypto from 'crypto';
 import type { RowDataPacket } from 'mysql2';
-import { randomUUID } from 'crypto';
 import { db } from '../db/mysql.js';
 import { withWorkerLock, registerTimer, unregisterTimer } from './worker-utils.js';
-import { executeReportForWorker } from '../modules/reporting/report-worker-executor.js';
 import { storeReportFile } from '../modules/reporting/report-file-storage.js';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from '../modules/reporting/report-audit.service.js';
-import type { ResolvedScope } from '../modules/reporting/report-worker-executor.js';
+import {
+  buildSecureXlsxBuffer,
+  buildSecureFilename,
+  stripCursorField,
+  XlsxRowLimitError,
+  XlsxFileSizeError,
+} from '../modules/reporting/xlsx-secure-builder.js';
+import {
+  executeReport,
+  ReportExecutorNotFoundError,
+  type ExecFilters,
+  type ExecScope,
+  type ExecOptions,
+  type ExecResult,
+} from '../modules/reporting/executors/index.js';
+import { isBpoMasterCode, isIdentityBuilderCode } from '../modules/reporting/all-reports.registry.js';
+import { REPORT_CATALOG } from '../modules/reporting/report-catalog.js';
 
-const WORKER_NAME = 'report-generation';
-const INTERVAL_MS = 30_000;
+// ── Configuration (all values from env) ───────────────────────────────────────
+const WORKER_NAME             = 'report-generation';
+const INTERVAL_MS             = 30_000;
 const STALE_PROCESSING_MINUTES = 10;
-const DEFAULT_RETENTION_DAYS = 7;
-const SENSITIVE_RETENTION_DAYS = 2;
-const SENSITIVE_CATEGORY_KEYWORDS = ['payroll', 'statutory', 'salary'];
+const CHUNK_SIZE              = Number(process.env.REPORT_WORKER_CHUNK_SIZE ?? 5_000);
+const MAX_ROWS                = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
+const ATTACHMENT_MAX_BYTES    = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520); // 20 MB
+const LARGE_FILE_THRESHOLD    = Number(process.env.REPORT_LARGE_FILE_THRESHOLD_BYTES ?? 15_728_640); // 15 MB
+const TOKEN_TTL_HOURS         = Number(process.env.REPORT_DOWNLOAD_TOKEN_TTL_HOURS ?? 48);
+const RETENTION_RESTRICTED    = Number(process.env.REPORT_RETENTION_RESTRICTED_DAYS ?? 2);
+const RETENTION_DEFAULT       = Number(process.env.REPORT_RETENTION_DEFAULT_DAYS ?? 7);
+const MAX_RETRIES             = 3;
+const BASE_URL                = process.env.BACKEND_URL ?? 'http://localhost:5055';
 
 let intervalTimer: NodeJS.Timeout | null = null;
 
-function getRetentionDays(reportCode: string): number {
-  const lower = reportCode.toLowerCase();
-  return SENSITIVE_CATEGORY_KEYWORDS.some(k => lower.includes(k))
-    ? SENSITIVE_RETENTION_DAYS
-    : DEFAULT_RETENTION_DAYS;
-}
+// ── Sensitivity helpers ────────────────────────────────────────────────────────
 
-function buildXlsx(
-  reportName: string,
-  requestReference: string,
-  rows: Record<string, unknown>[],
-  filters: Record<string, unknown>,
-  scope: ResolvedScope,
-  requesterCode: string
-): Buffer {
-  const wb = XLSX.utils.book_new();
+type SensitivityLevel = 'internal' | 'confidential' | 'restricted' | 'highly_restricted';
 
-  // ── Sheet 1: REPORT DATA ──────────────────────────────────────────────────
-  if (rows.length > 0) {
-    // Uppercase all header keys
-    const upperRows = rows.map(r => {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(r)) {
-        out[k.toUpperCase()] = v;
-      }
-      return out;
-    });
-    const ws = XLSX.utils.json_to_sheet(upperRows);
-
-    // Column widths: 18 chars default
-    const headers = Object.keys(upperRows[0] ?? {});
-    ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length, 18) }));
-
-    // Freeze first row
-    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft' };
-
-    XLSX.utils.book_append_sheet(wb, ws, 'REPORT DATA');
-  } else {
-    const ws = XLSX.utils.aoa_to_sheet([['NO DATA RETURNED FOR THE SELECTED FILTERS']]);
-    XLSX.utils.book_append_sheet(wb, ws, 'REPORT DATA');
+function getSensitivityLevel(reportCode: string): SensitivityLevel {
+  const entry = (REPORT_CATALOG as Array<{ code: string; sensitivityLevel?: string }>)
+    .find(e => e.code === reportCode);
+  const level = entry?.sensitivityLevel ?? 'confidential';
+  if (['internal','confidential','restricted','highly_restricted'].includes(level)) {
+    return level as SensitivityLevel;
   }
+  return 'confidential';
+}
 
-  // ── Sheet 2: REPORT METADATA ─────────────────────────────────────────────
-  const now = new Date().toISOString();
-  const metaRows = [
-    ['FIELD', 'VALUE'],
-    ['REPORT NAME', reportName],
-    ['REQUEST REFERENCE', requestReference],
-    ['REQUESTER EMPLOYEE CODE', requesterCode],
-    ['GENERATED AT (UTC)', now],
-    ['ROW COUNT', rows.length],
-    ['CONFIDENTIALITY', 'CONFIDENTIAL — DO NOT FORWARD OUTSIDE AUTHORISED RECIPIENTS'],
-  ];
-  const filterEntries = Object.entries(filters);
-  if (filterEntries.length > 0) {
-    metaRows.push(['', '']);
-    metaRows.push(['FILTERS APPLIED', '']);
-    for (const [k, v] of filterEntries) {
-      metaRows.push([k.toUpperCase(), String(v ?? '')]);
-    }
+function getRetentionDays(level: SensitivityLevel): number {
+  return (level === 'restricted' || level === 'highly_restricted')
+    ? RETENTION_RESTRICTED
+    : RETENTION_DEFAULT;
+}
+
+/** restricted/highly_restricted → link only; internal/confidential → attachment (or link if large) */
+function requiresSecureLink(level: SensitivityLevel): boolean {
+  return level === 'restricted' || level === 'highly_restricted';
+}
+
+// ── Multi-family dispatcher ────────────────────────────────────────────────────
+
+async function dispatchWorkerReport(
+  code: string,
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  // BPO master and identity builder families have dedicated adapters.
+  // For now both fall through to the suite executor — their codes are either
+  // in EXECUTOR_MAP or will throw ReportExecutorNotFoundError (correct behaviour).
+  if (isBpoMasterCode(code) || isIdentityBuilderCode(code)) {
+    return executeReport(code, filters, scope, options);
   }
-  metaRows.push(['', '']);
-  metaRows.push(['DATA SCOPE', scope.isSuperAdmin ? 'ALL BRANCHES' : `BRANCHES: ${scope.branchIds.join(', ') || 'ALL'}`]);
-
-  const metaWs = XLSX.utils.aoa_to_sheet(metaRows);
-  metaWs['!cols'] = [{ wch: 35 }, { wch: 60 }];
-  XLSX.utils.book_append_sheet(wb, metaWs, 'REPORT METADATA');
-
-  return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+  return executeReport(code, filters, scope, options);
 }
 
-function buildReportFilename(reportCode: string, requestReference: string): string {
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const code = reportCode.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-  return `${code}_${requestReference}_${dateStr}.xlsx`;
+// ── Secure download token ──────────────────────────────────────────────────────
+
+async function createDownloadToken(
+  fileId: string,
+  requestingUserId: string,
+  reportCode: string,
+  retentionDays: number
+): Promise<string> {
+  const rawToken   = crypto.randomBytes(32).toString('hex'); // 64 hex chars
+  const tokenHash  = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const ttlSeconds = Math.min(TOKEN_TTL_HOURS * 3600, retentionDays * 24 * 3600);
+
+  await db.execute(
+    `INSERT INTO report_download_token
+       (token_hash, file_id, requesting_user_id, report_code, expires_at)
+     VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+    [tokenHash, fileId, requestingUserId, reportCode, ttlSeconds]
+  );
+
+  return rawToken; // returned to caller; stored hash is never returned
 }
+
+// ── Partial file cleanup ───────────────────────────────────────────────────────
+
+async function deletePartialFile(requestId: string): Promise<void> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT storage_key FROM report_generated_file WHERE report_request_id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows.length) return;
+    const { storage_key } = rows[0] as { storage_key: string };
+
+    // Remove DB record
+    await db.execute(
+      `DELETE FROM report_generated_file WHERE report_request_id = ?`,
+      [requestId]
+    );
+
+    // Remove from filesystem (best-effort)
+    const { unlinkSync, existsSync } = await import('fs');
+    const { resolve } = await import('path');
+    const absPath = resolve(process.cwd(), 'uploads', storage_key);
+    if (existsSync(absPath)) unlinkSync(absPath);
+  } catch {
+    // Non-fatal: log but don't re-throw
+    console.warn(`[${WORKER_NAME}] Failed to clean partial file for request ${requestId}`);
+  }
+}
+
+// ── Mark request FAILED with full audit ───────────────────────────────────────
+
+async function markFailed(
+  requestId: string,
+  reportCode: string,
+  correlationId: string,
+  attemptNumber: number,
+  failureCode: string,
+  userMessage: string,
+  internalDetail: string
+): Promise<void> {
+  await db.execute(
+    `UPDATE report_request SET
+       status                  = 'FAILED',
+       failure_code            = ?,
+       failure_message         = ?,
+       failure_message_user    = ?,
+       failure_message_internal = ?,
+       failed_at               = NOW(),
+       updated_at              = NOW()
+     WHERE id = ?`,
+    [failureCode, userMessage, userMessage, internalDetail.slice(0, 2000), requestId]
+  );
+  await deletePartialFile(requestId);
+  await recordReportAuditEvent({
+    reportRequestId: requestId,
+    eventType: REPORT_AUDIT_EVENTS.GENERATION_FAILED,
+    actorType: 'worker',
+    reportCode,
+    correlationId,
+    message: `Generation permanently failed after attempt ${attemptNumber}`,
+    errorCode: failureCode,
+    errorDetail: internalDetail.slice(0, 1000),
+    metadataJson: { attemptNumber },
+  });
+}
+
+// ── Core generation for one request ───────────────────────────────────────────
 
 async function processOneRequest(): Promise<void> {
-  // Claim one QUEUED request atomically
+  // Atomically claim one QUEUED request
   const conn = await db.getConnection();
   let requestId: string | null = null;
   try {
     await conn.beginTransaction();
-    const [rows] = await conn.execute<RowDataPacket[]>(
+    const [claimRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id FROM report_request
        WHERE status = 'QUEUED'
        ORDER BY priority DESC, requested_at ASC
        LIMIT 1 FOR UPDATE SKIP LOCKED`
     );
-    if (!rows.length) {
-      await conn.rollback();
-      return;
-    }
+    if (!claimRows.length) { await conn.rollback(); conn.release(); return; }
 
-    requestId = (rows[0] as { id: string }).id;
+    requestId = (claimRows[0] as { id: string }).id;
     await conn.execute(
-      `UPDATE report_request SET status = 'PROCESSING', processing_started_at = NOW() WHERE id = ?`,
+      `UPDATE report_request
+       SET status = 'PROCESSING', processing_started_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
       [requestId]
     );
     await conn.commit();
@@ -129,11 +203,11 @@ async function processOneRequest(): Promise<void> {
     `SELECT report_code, report_name_snapshot, requested_by_employee_code,
             requested_by_employee_name, official_email, requested_filters_json,
             resolved_scope_json, request_reference, requested_by_user_id,
-            requested_by_employee_id, requester_role_snapshot, correlation_id
+            requested_by_employee_id, requester_role_snapshot, correlation_id,
+            retry_count
      FROM report_request WHERE id = ?`,
     [requestId]
   );
-
   if (!reqRows.length) return;
 
   const req = reqRows[0] as {
@@ -143,23 +217,44 @@ async function processOneRequest(): Promise<void> {
     requested_by_employee_name: string;
     official_email: string;
     requested_filters_json: string | Record<string, unknown>;
-    resolved_scope_json: string | ResolvedScope;
+    resolved_scope_json: string | ExecScope;
     request_reference: string;
     requested_by_user_id: string;
     requested_by_employee_id: string;
     requester_role_snapshot: string;
     correlation_id: string;
+    retry_count: number;
   };
 
-  const filters: Record<string, unknown> =
+  const filters: ExecFilters =
     typeof req.requested_filters_json === 'string'
-      ? (JSON.parse(req.requested_filters_json) as Record<string, unknown>)
-      : (req.requested_filters_json ?? {});
+      ? (JSON.parse(req.requested_filters_json) as ExecFilters)
+      : (req.requested_filters_json as ExecFilters ?? {});
 
-  const scope: ResolvedScope =
-    typeof req.resolved_scope_json === 'string'
-      ? (JSON.parse(req.resolved_scope_json) as ResolvedScope)
-      : (req.resolved_scope_json ?? { isSuperAdmin: false, branchIds: [] });
+  const rawScope = typeof req.resolved_scope_json === 'string'
+    ? (JSON.parse(req.resolved_scope_json) as ExecScope)
+    : (req.resolved_scope_json as ExecScope);
+
+  // Normalise legacy scope shape (older requests may lack new DimensionScope fields)
+  const scope: ExecScope = {
+    companyId:              (rawScope as any).companyId ?? '1',
+    isSuperAdmin:           (rawScope as any).isSuperAdmin ?? false,
+    branchScope:            (rawScope as any).branchScope ?? { mode: 'all', ids: [] },
+    processScope:           (rawScope as any).processScope ?? { mode: 'all', ids: [] },
+    departmentScope:        (rawScope as any).departmentScope ?? { mode: 'all', ids: [] },
+    costCentreScope:        (rawScope as any).costCentreScope ?? { mode: 'all', ids: [] },
+    canViewAllEmployees:    (rawScope as any).canViewAllEmployees ?? (rawScope as any).isSuperAdmin ?? false,
+    canViewSensitiveFields: (rawScope as any).canViewSensitiveFields ?? (rawScope as any).isSuperAdmin ?? false,
+    canExportSensitiveReports: (rawScope as any).canExportSensitiveReports ?? (rawScope as any).isSuperAdmin ?? false,
+    roles:                  (rawScope as any).roles ?? [],
+    managerEmployeeId:      (rawScope as any).managerEmployeeId,
+    selfEmployeeId:         (rawScope as any).selfEmployeeId,
+    subordinateEmployeeIds: (rawScope as any).subordinateEmployeeIds ?? [],
+  };
+
+  const sensitivityLevel = getSensitivityLevel(req.report_code);
+  const retentionDays    = getRetentionDays(sensitivityLevel);
+  const attemptNumber    = Number(req.retry_count ?? 0) + 1;
 
   await recordReportAuditEvent({
     reportRequestId: requestId,
@@ -168,12 +263,46 @@ async function processOneRequest(): Promise<void> {
     reportCode: req.report_code,
     reportName: req.report_name_snapshot,
     correlationId: req.correlation_id,
-    message: `Generation started for ${req.request_reference}`,
+    message: `Generation started (attempt ${attemptNumber}) for ${req.request_reference}`,
   });
 
   try {
-    // Execute report query
-    const { rows, rowCount } = await executeReportForWorker(req.report_code, filters, scope);
+    // ── Keyset pagination loop ─────────────────────────────────────────────────
+    const reportAsOf = new Date().toISOString(); // fixed snapshot for multi-chunk consistency
+    let lastCursor: string | number | null = null;
+    let totalWritten = 0;
+    const allRows: Record<string, unknown>[] = [];
+
+    while (true) {
+      const chunkOptions: ExecOptions = {
+        limit: CHUNK_SIZE,
+        offset: 0,
+        cursor: lastCursor,
+        includeTotal: false,
+        mode: 'worker',
+        asOf: reportAsOf,
+      };
+
+      const batch: ExecResult = await dispatchWorkerReport(
+        req.report_code, filters, scope, chunkOptions
+      );
+
+      const cleanRows = stripCursorField(batch.rows);
+      allRows.push(...cleanRows);
+      totalWritten += cleanRows.length;
+      lastCursor = batch.nextCursor ?? null;
+
+      if (cleanRows.length < CHUNK_SIZE) break;      // last page
+      if (lastCursor === null) break;                 // executor signals no more pages
+      if (totalWritten >= MAX_ROWS) {
+        // Mark the row-limit condition but still build file with rows fetched so far
+        await db.execute(
+          `UPDATE report_request SET notes = CONCAT(COALESCE(notes,''), ' [ROW_LIMIT_REACHED]') WHERE id = ?`,
+          [requestId]
+        );
+        break;
+      }
+    }
 
     await recordReportAuditEvent({
       reportRequestId: requestId,
@@ -181,30 +310,35 @@ async function processOneRequest(): Promise<void> {
       actorType: 'worker',
       reportCode: req.report_code,
       correlationId: req.correlation_id,
-      message: `Query returned ${rowCount} rows`,
-      metadataJson: { rowCount },
+      message: `Query complete: ${totalWritten} rows fetched`,
+      metadataJson: { rowCount: totalWritten },
     });
 
-    // Build XLSX
-    const buffer = buildXlsx(
-      req.report_name_snapshot,
-      req.request_reference,
-      rows,
-      filters,
-      scope,
-      req.requested_by_employee_code ?? 'UNKNOWN'
-    );
-    const filename = buildReportFilename(req.report_code, req.request_reference);
-    const retentionDays = getRetentionDays(req.report_code);
+    // ── Build XLSX ─────────────────────────────────────────────────────────────
+    const scopeSummary = scope.isSuperAdmin
+      ? 'ALL BRANCHES'
+      : `BRANCHES: ${scope.branchScope.mode === 'all' ? 'ALL' : scope.branchScope.ids.join(', ')}`;
 
-    // Store file
+    const buffer = await buildSecureXlsxBuffer({
+      reportName:            req.report_name_snapshot,
+      requestReference:      req.request_reference,
+      requesterEmployeeCode: req.requested_by_employee_code ?? 'UNKNOWN',
+      filters:               filters as Record<string, unknown>,
+      scopeSummary,
+      rows:                  allRows,
+      totalRows:             totalWritten,
+    });
+
+    const filename = buildSecureFilename(req.report_code, req.request_reference);
+
+    // ── Store file ─────────────────────────────────────────────────────────────
     const stored = await storeReportFile({
       requestId,
       buffer,
       filename,
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      rowCount,
-      colCount: rows.length > 0 ? Object.keys(rows[0]).length : 0,
+      rowCount:  totalWritten,
+      colCount:  allRows.length > 0 ? Object.keys(allRows[0]).length : 0,
       retentionDays,
     });
 
@@ -215,35 +349,55 @@ async function processOneRequest(): Promise<void> {
       reportCode: req.report_code,
       fileId: stored.fileId,
       correlationId: req.correlation_id,
-      message: `File stored: ${filename} (${buffer.length} bytes, sha256: ${stored.sha256.slice(0, 16)}...)`,
-      metadataJson: { fileId: stored.fileId, fileSizeBytes: buffer.length, rowCount },
+      message: `File stored: ${filename} (${buffer.length} bytes)`,
+      metadataJson: { fileId: stored.fileId, fileSizeBytes: buffer.length, rowCount: totalWritten },
     });
 
-    // Create email delivery row
-    const deliveryId = randomUUID();
+    // ── Decide delivery method ─────────────────────────────────────────────────
+    const useLink = requiresSecureLink(sensitivityLevel) || buffer.length > ATTACHMENT_MAX_BYTES;
+    const useAttachment = !useLink;
+
+    let downloadUrl: string | null = null;
+    if (useLink) {
+      const rawToken = await createDownloadToken(
+        stored.fileId,
+        req.requested_by_user_id,
+        req.report_code,
+        retentionDays
+      );
+      downloadUrl = `${BASE_URL}/api/reports/download/${rawToken}`;
+    }
+
+    // ── Queue email delivery ───────────────────────────────────────────────────
     const emailSubject = `HRMS Report Ready: ${req.report_name_snapshot} — ${req.request_reference}`;
+    const sizeWarning = buffer.length >= LARGE_FILE_THRESHOLD && useAttachment
+      ? ` (large file: ${(buffer.length / 1_048_576).toFixed(1)} MB)`
+      : '';
+
     await db.execute(
       `INSERT INTO report_email_delivery
          (id, report_request_id, delivery_attempt_number, recipient_email,
           recipient_employee_id, recipient_employee_code, email_subject,
-          attachment_filename, attachment_size_bytes, status, queued_at)
-       VALUES (?,?,1,?, ?,?,?, ?,?,'QUEUED',NOW())`,
+          attachment_filename, attachment_size_bytes, delivery_method,
+          secure_download_url, status, queued_at)
+       VALUES (UUID(),?,1,?, ?,?,?, ?,?, ?,?,'QUEUED',NOW())`,
       [
-        deliveryId,
         requestId,
         req.official_email,
         req.requested_by_employee_id ?? null,
         req.requested_by_employee_code ?? null,
-        emailSubject,
-        filename,
-        buffer.length,
+        emailSubject + sizeWarning,
+        useAttachment ? filename : null,
+        useAttachment ? buffer.length : null,
+        useAttachment ? 'ATTACHMENT' : 'LINK',
+        downloadUrl,
       ]
     );
 
-    // Update request status
+    // ── Finalise request ───────────────────────────────────────────────────────
     await db.execute(
       `UPDATE report_request
-       SET status = 'GENERATED', generation_completed_at = NOW(), email_queued_at = NOW()
+       SET status = 'GENERATED', generation_completed_at = NOW(), email_queued_at = NOW(), updated_at = NOW()
        WHERE id = ?`,
       [requestId]
     );
@@ -254,75 +408,90 @@ async function processOneRequest(): Promise<void> {
       actorType: 'worker',
       reportCode: req.report_code,
       fileId: stored.fileId,
-      deliveryId,
       correlationId: req.correlation_id,
-      message: `Generation complete. ${rowCount} rows. Email delivery queued.`,
-      metadataJson: { rowCount, fileSizeBytes: buffer.length, deliveryId },
+      message: `Generation complete. ${totalWritten} rows. Delivery: ${useAttachment ? 'attachment' : 'secure link'}. Email queued to ${req.official_email}.`,
+      metadataJson: { rowCount: totalWritten, fileSizeBytes: buffer.length, deliveryMethod: useAttachment ? 'ATTACHMENT' : 'LINK' },
     });
 
-    await recordReportAuditEvent({
-      reportRequestId: requestId,
-      eventType: REPORT_AUDIT_EVENTS.EMAIL_QUEUED,
-      actorType: 'worker',
-      reportCode: req.report_code,
-      deliveryId,
-      correlationId: req.correlation_id,
-      message: `Email delivery queued: ${req.official_email}`,
-    });
+    console.log(`[${WORKER_NAME}] ${req.request_reference} — ${totalWritten} rows, ${buffer.length} bytes, delivery=${useAttachment ? 'attachment' : 'link'}`);
 
-    console.log(`[${WORKER_NAME}] Generated ${req.request_reference} — ${rowCount} rows, ${buffer.length} bytes`);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[${WORKER_NAME}] Generation failed for ${requestId}:`, message);
+    const isNoExecutor = err instanceof ReportExecutorNotFoundError;
+    const isRowLimit   = err instanceof XlsxRowLimitError;
+    const isFileSize   = err instanceof XlsxFileSizeError;
+    const rawMsg       = err instanceof Error ? err.message : String(err);
 
-    // Check retry eligibility
-    const [retryRows] = await db.execute<RowDataPacket[]>(
-      `SELECT retry_count FROM report_request WHERE id = ?`,
-      [requestId]
-    );
-    const retryCount = Number((retryRows[0] as { retry_count: number } | undefined)?.retry_count ?? 0);
-    const maxRetries = 3;
+    let failureCode    = 'GENERATION_ERROR';
+    let userMessage    = 'Report generation failed. Please try again or contact support.';
 
-    if (retryCount < maxRetries) {
+    if (isNoExecutor) {
+      failureCode = 'NO_EXECUTOR';
+      userMessage = 'This report type is not yet available. Please contact support.';
+    } else if (isRowLimit) {
+      failureCode = 'ROW_LIMIT_EXCEEDED';
+      userMessage = 'The report exceeds the maximum row limit. Please apply filters to reduce the dataset.';
+    } else if (isFileSize) {
+      failureCode = 'FILE_SIZE_EXCEEDED';
+      userMessage = 'The generated report file is too large. Please apply filters to reduce the dataset.';
+    }
+
+    console.error(`[${WORKER_NAME}] Attempt ${attemptNumber} failed for ${requestId}: [${failureCode}] ${rawMsg}`);
+
+    // No executor → permanent failure (retrying will not help)
+    const permanentFail = isNoExecutor || isRowLimit || isFileSize;
+
+    if (!permanentFail && attemptNumber <= MAX_RETRIES) {
       await db.execute(
         `UPDATE report_request
          SET status = 'QUEUED', retry_count = retry_count + 1, last_retry_at = NOW(),
-             failure_stage = 'generation', failure_message = ?
+             failure_code = ?, failure_message = ?, updated_at = NOW()
          WHERE id = ?`,
-        [message.slice(0, 500), requestId]
+        [failureCode, rawMsg.slice(0, 500), requestId]
       );
       await recordReportAuditEvent({
         reportRequestId: requestId,
         eventType: REPORT_AUDIT_EVENTS.RETRY_SCHEDULED,
         actorType: 'worker',
-        message: `Generation failed (attempt ${retryCount + 1}/${maxRetries}). Requeued.`,
-        errorCode: 'GENERATION_ERROR',
-        errorDetail: message.slice(0, 1000),
+        reportCode: req.report_code,
+        correlationId: req.correlation_id,
+        message: `Generation failed (attempt ${attemptNumber}/${MAX_RETRIES}). Requeued.`,
+        errorCode: failureCode,
+        errorDetail: rawMsg.slice(0, 1000),
       });
     } else {
-      await db.execute(
-        `UPDATE report_request
-         SET status = 'GENERATION_FAILED', failed_at = NOW(),
-             failure_stage = 'generation', failure_code = 'MAX_RETRIES_EXCEEDED',
-             failure_message = ?
-         WHERE id = ?`,
-        [message.slice(0, 500), requestId]
+      await markFailed(
+        requestId,
+        req.report_code,
+        req.correlation_id,
+        attemptNumber,
+        failureCode,
+        userMessage,
+        rawMsg
       );
-      await recordReportAuditEvent({
-        reportRequestId: requestId,
-        eventType: REPORT_AUDIT_EVENTS.GENERATION_FAILED,
-        actorType: 'worker',
-        message: `Generation permanently failed after ${maxRetries} attempts`,
-        errorCode: 'MAX_RETRIES_EXCEEDED',
-        errorDetail: message.slice(0, 1000),
-      });
     }
   }
 }
 
+// ── Stale-lock recovery ────────────────────────────────────────────────────────
+
+async function recoverStaleLocks(): Promise<void> {
+  await db.execute(
+    `UPDATE report_request
+     SET status = 'QUEUED', failure_message = 'Recovered from stale PROCESSING lock', updated_at = NOW()
+     WHERE status = 'PROCESSING'
+       AND processing_started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+    [STALE_PROCESSING_MINUTES]
+  );
+}
+
+// ── Worker loop ────────────────────────────────────────────────────────────────
+
 async function runGenerationWorker(): Promise<void> {
   try {
-    await withWorkerLock(WORKER_NAME, processOneRequest);
+    await withWorkerLock(WORKER_NAME, async () => {
+      await recoverStaleLocks();
+      await processOneRequest();
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[${WORKER_NAME}] Error:`, message);
@@ -330,8 +499,7 @@ async function runGenerationWorker(): Promise<void> {
 }
 
 export async function startReportGenerationWorker(): Promise<void> {
-  console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 1000}s)`);
-  // Run immediately on start
+  console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 1000}s, chunk: ${CHUNK_SIZE})`);
   void runGenerationWorker();
   intervalTimer = setInterval(() => void runGenerationWorker(), INTERVAL_MS);
   registerTimer(`${WORKER_NAME}-interval`, intervalTimer);
