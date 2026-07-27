@@ -1,19 +1,25 @@
 import type { NextFunction, Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { normalizeRoleInputs } from "../../platform/policy/index.js";
 import { performanceGovernanceService } from "./performance-governance.service.js";
 
 const ADMIN_ROLES = new Set(["super_admin", "admin"]);
+const SOURCE_MANAGER_ROLES = new Set([
+  "super_admin",
+  "admin",
+  "process_manager",
+  "qa_manager",
+]);
 const EXCEPTIONAL_PUBLICATION_FLAGS = [
   "allowPartialPublication",
   "allowEmptyPublication",
 ] as const;
 
 function actorRoles(req: AuthenticatedRequest): Set<string> {
-  return new Set(
+  return new Set(normalizeRoleInputs(
     [req.authUser?.role, ...(req.authUser?.roles ?? [])]
-      .filter((role): role is string => Boolean(role))
-      .map((role) => role.trim().toLowerCase()),
-  );
+      .filter((role): role is string => Boolean(role)),
+  ));
 }
 
 function flagValue(config: unknown, flag: string): boolean {
@@ -29,12 +35,16 @@ export async function performanceDatasetMutationGuard(
   if (req.method !== "POST" || req.path !== "/datasets") return next();
 
   try {
+    const roles = actorRoles(req);
+    if (![...roles].some((role) => SOURCE_MANAGER_ROLES.has(role))) {
+      return next();
+    }
+
     const input = req.body as {
       id?: string;
       datasetKey?: string;
       config?: Record<string, unknown>;
     };
-    const roles = actorRoles(req);
     const isAdmin = [...roles].some((role) => ADMIN_ROLES.has(role));
     const existing = input.id
       ? await performanceGovernanceService.getDataset(req.authUser!.id, input.id)
