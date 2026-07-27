@@ -1,0 +1,88 @@
+name: Performance Platform Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/src/modules/performance-ingestion/**"
+      - "backend/src/modules/performance-intelligence/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "src/components/performance-hub/**"
+      - "src/pages/PerformanceHub.tsx"
+      - "src/types/performanceHub.ts"
+      - "src/types/performanceIngestion.ts"
+      - "docs/performance-ingestion-platform.md"
+      - ".github/workflows/performance-platform-validation.yml"
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+    paths:
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/src/modules/performance-ingestion/**"
+      - "backend/src/modules/performance-intelligence/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "src/components/performance-hub/**"
+      - "src/pages/PerformanceHub.tsx"
+      - "src/types/performanceHub.ts"
+      - "src/types/performanceIngestion.ts"
+      - "docs/performance-ingestion-platform.md"
+      - ".github/workflows/performance-platform-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Typecheck, tests and builds
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Performance platform tests
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
+          src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts
+          src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
+          src/modules/performance-intelligence/__tests__/performance-intelligence.service.test.ts
+
+      - name: Backend build
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Frontend typecheck
+        run: npm run typecheck
+
+      - name: Frontend production build
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}
