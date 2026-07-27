@@ -87,7 +87,6 @@ describe("performance ingestion governance route contract", () => {
   });
 });
 
-
 describe("performance final governance controls", () => {
   const routeCode = fs.readFileSync(
     path.resolve(__dirname, "../performance-ingestion.routes.ts"),
@@ -99,6 +98,14 @@ describe("performance final governance controls", () => {
   );
   const auditCode = fs.readFileSync(
     path.resolve(__dirname, "../performance-governance-audit.middleware.ts"),
+    "utf8",
+  );
+  const auditRouteCode = fs.readFileSync(
+    path.resolve(__dirname, "../performance-governance-audit.routes.ts"),
+    "utf8",
+  );
+  const auditServiceCode = fs.readFileSync(
+    path.resolve(__dirname, "../performance-governance-audit.service.ts"),
     "utf8",
   );
 
@@ -113,5 +120,14 @@ describe("performance final governance controls", () => {
     expect(routeCode).toContain("performanceGovernanceAuditMiddleware");
     expect(auditCode).toContain("performance_governance_audit");
     expect(auditCode).toContain("[REDACTED]");
+    expect(auditCode).toContain("resolveDatasetId");
+  });
+
+  it("exposes only scope-filtered governance audit history", () => {
+    expect(auditRouteCode).toContain('"/governance-audit"');
+    expect(auditRouteCode).toContain("requireRole(...readers)");
+    expect(auditServiceCode).toContain("resolveDashboardScope");
+    expect(auditServiceCode).toContain("buildDatasetScopeFilter");
+    expect(auditServiceCode).toContain("pga.dataset_id IS NOT NULL");
   });
 });
