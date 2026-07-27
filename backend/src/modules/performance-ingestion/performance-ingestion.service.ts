@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { readPerformanceSourceRows } from "./performance-source-adapters.js";
+import { publishPerformanceFacts } from "./performance-publication.service.js";
 import type {
   DatasetMapping,
   DatasetMetricBinding,
@@ -331,101 +332,6 @@ function finalFacts(accumulator: Map<string, Accumulator>, bindings: DatasetMetr
   });
 }
 
-async function publishFacts(input: {
-  dataset: PerformanceDataset;
-  runId: string;
-  mappingVersionId: string | null;
-  requestedBy: string | null;
-  facts: NormalisedMetricFact[];
-}): Promise<number> {
-  const publicationBatchId = randomUUID();
-  await db.execute(
-    `INSERT INTO performance_publication_batch (id, run_id, status, published_by)
-     VALUES (?, ?, 'publishing', ?)`,
-    [publicationBatchId, input.runId, input.requestedBy],
-  );
-
-  let published = 0;
-  for (const fact of input.facts) {
-    await db.execute(
-      `INSERT INTO kpi_daily_actual
-         (employee_id, metric_id, score_date, actual_value, source,
-          numerator_value, denominator_value, source_system, source_dataset_id,
-          source_record_key, mapping_version_id, publication_batch_id,
-          process_id_at_event, branch_id_at_event, source_record_count,
-          integration_run_id, computed_at, published_at)
-       VALUES (?, ?, ?, ?, 'calculated', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-       ON DUPLICATE KEY UPDATE
-         actual_value = VALUES(actual_value),
-         source = VALUES(source),
-         numerator_value = VALUES(numerator_value),
-         denominator_value = VALUES(denominator_value),
-         source_system = VALUES(source_system),
-         source_dataset_id = VALUES(source_dataset_id),
-         source_record_key = VALUES(source_record_key),
-         mapping_version_id = VALUES(mapping_version_id),
-         publication_batch_id = VALUES(publication_batch_id),
-         process_id_at_event = VALUES(process_id_at_event),
-         branch_id_at_event = VALUES(branch_id_at_event),
-         source_record_count = VALUES(source_record_count),
-         integration_run_id = VALUES(integration_run_id),
-         computed_at = VALUES(computed_at),
-         published_at = VALUES(published_at)`,
-      [
-        fact.employeeId,
-        fact.metricId,
-        fact.scoreDate,
-        fact.actualValue,
-        fact.numeratorValue,
-        fact.denominatorValue,
-        input.dataset.datasetKey,
-        input.dataset.id,
-        fact.sourceRecordKey,
-        input.mappingVersionId,
-        publicationBatchId,
-        fact.processIdAtEvent,
-        fact.branchIdAtEvent,
-        fact.sourceRecordCount,
-        input.runId,
-      ],
-    );
-
-    await db.execute(
-      `UPDATE performance_fact_lineage
-          SET lineage_status = 'superseded'
-        WHERE employee_id = ? AND metric_id = ? AND score_date = ? AND lineage_status = 'current'`,
-      [fact.employeeId, fact.metricId, fact.scoreDate],
-    );
-    await db.execute(
-      `INSERT INTO performance_fact_lineage
-         (publication_batch_id, run_id, raw_record_id, employee_id, metric_id,
-          score_date, source_record_key, actual_value, numerator_value, denominator_value)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        publicationBatchId,
-        input.runId,
-        fact.rawRecordId,
-        fact.employeeId,
-        fact.metricId,
-        fact.scoreDate,
-        fact.sourceRecordKey,
-        fact.actualValue,
-        fact.numeratorValue,
-        fact.denominatorValue,
-      ],
-    );
-    published += 1;
-  }
-
-  await db.execute(
-    `UPDATE performance_publication_batch
-        SET status = 'published', published_fact_count = ?, published_at = NOW()
-      WHERE id = ?`,
-    [published, publicationBatchId],
-  );
-  return published;
-}
-
 async function saveReconciliation(runId: string, code: string, expected: number, actual: number): Promise<void> {
   const variance = actual - expected;
   await db.execute(
@@ -689,7 +595,7 @@ export const performanceIngestionService = {
 
       const facts = finalFacts(accumulator, dataset.mapping.metrics);
       if (input.mode === "publish") {
-        publishedFacts = await publishFacts({
+        publishedFacts = await publishPerformanceFacts({
           dataset,
           runId,
           mappingVersionId,
