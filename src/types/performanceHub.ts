@@ -7,6 +7,11 @@ export type PerformanceScopeLevel =
   | "SELF_ONLY"
   | "CUSTOM_SCOPE";
 
+export interface PerformanceFilterOption {
+  id: string;
+  label: string;
+}
+
 export interface PerformanceContext {
   effectiveRole: string;
   scopeLevel: PerformanceScopeLevel;
@@ -16,6 +21,8 @@ export interface PerformanceContext {
   canSelectProcess: boolean;
   effectiveBranchIds: string[];
   effectiveProcessIds: string[];
+  branchOptions: PerformanceFilterOption[];
+  processOptions: PerformanceFilterOption[];
   subjectEmployeeId: string | null;
 }
 
