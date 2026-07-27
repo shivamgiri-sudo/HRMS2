@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { mergeTypingDefinition } from "./assessment.catalog.js";
 import type {
   AssessmentProcess,
   AssessmentQuestionDefinition,
@@ -231,6 +232,8 @@ export async function selectRandomPassage(
        AND set_number = ?
        AND (process_key = ? OR process_key = 'any')
        AND (role_key = ? OR role_key = 'any')
+       AND word_count >= 30
+       AND character_count BETWEEN 150 AND 2500
      ORDER BY RAND()
      LIMIT 1`,
     [selectedSet, process, role],
@@ -271,7 +274,7 @@ export async function buildRandomizedTemplate(
     config: {
       ...baseTemplate,
       questions: questionResult?.questions ?? baseTemplate.questions,
-      typing: passageResult?.typing ?? baseTemplate.typing,
+      typing: passageResult ? mergeTypingDefinition(baseTemplate.typing, passageResult.typing) : baseTemplate.typing,
     },
     fromBank,
   };
