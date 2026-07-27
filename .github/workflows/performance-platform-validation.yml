@@ -6,6 +6,7 @@ on:
     paths:
       - "backend/sql/520_performance_ingestion_platform.sql"
       - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
@@ -17,6 +18,7 @@ on:
       - "src/types/performanceIngestion.ts"
       - "docs/performance-ingestion-platform.md"
       - "docs/performance-scheduled-sync.md"
+      - "docs/performance-governance-audit.md"
       - ".github/workflows/performance-platform-validation.yml"
   push:
     branches:
@@ -24,6 +26,7 @@ on:
     paths:
       - "backend/sql/520_performance_ingestion_platform.sql"
       - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
@@ -35,6 +38,7 @@ on:
       - "src/types/performanceIngestion.ts"
       - "docs/performance-ingestion-platform.md"
       - "docs/performance-scheduled-sync.md"
+      - "docs/performance-governance-audit.md"
       - ".github/workflows/performance-platform-validation.yml"
 
 permissions:
