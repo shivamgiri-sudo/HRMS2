@@ -110,7 +110,10 @@ export function createPerformanceIntelligenceService(
   return {
     async context(auth: AuthContext): Promise<PerformanceContext> {
       const scope = await effectiveScope(auth);
-      const subjectEmployeeId = await repository.findSubjectEmployeeId(auth.userId);
+      const [subjectEmployeeId, options] = await Promise.all([
+        repository.findSubjectEmployeeId(auth.userId),
+        repository.listFilterOptions(scope),
+      ]);
       return {
         effectiveRole: scope.role,
         scopeLevel: scope.level,
@@ -120,6 +123,8 @@ export function createPerformanceIntelligenceService(
         canSelectProcess: ["ORG_ALL", "BRANCH_ALL", "PROCESS_ALL"].includes(scope.level),
         effectiveBranchIds: [...scope.branchIds],
         effectiveProcessIds: [...scope.processIds],
+        branchOptions: options.branches,
+        processOptions: options.processes,
         subjectEmployeeId,
       };
     },
