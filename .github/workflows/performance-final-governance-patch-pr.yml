@@ -36,7 +36,6 @@ jobs:
             backend/scripts/performance-ingestion-install.ts \
             backend/src/modules/performance-ingestion/performance-ingestion.routes.ts \
             backend/src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts \
-            src/components/performance-hub/PerformanceSourceEditor.tsx \
-            .github/workflows/performance-platform-validation.yml
+            src/components/performance-hub/PerformanceSourceEditor.tsx
           git commit -m "feat(performance): finalize immutable audited governance"
           git push origin HEAD:agent/performance-ingestion-platform
