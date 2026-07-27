@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS ijp_posting (
 
   -- Eligibility criteria
   min_tenure_months INT UNSIGNED NOT NULL DEFAULT 12 COMMENT 'Minimum months since date_of_joining',
-  eligible_employment_status JSON DEFAULT '["Active"]' COMMENT 'Array of allowed employment statuses',
+  eligible_employment_status JSON COMMENT 'Array of allowed employment statuses',
   eligible_department_ids JSON DEFAULT NULL COMMENT 'NULL = all departments eligible',
   eligible_process_ids JSON DEFAULT NULL COMMENT 'NULL = all processes eligible',
   excluded_process_ids JSON DEFAULT NULL COMMENT 'Specific processes blocked from applying',
