@@ -67,23 +67,78 @@ function entityFor(path: string): { entityType: string; entityId: string | null;
   return { entityType: "performance_governance", entityId: null, datasetId: null };
 }
 
+async function datasetByIdOrKey(idOrKey: string): Promise<RowDataPacket | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, dataset_key, dataset_name, source_type, connector_key, source_entity,
+            process_id, branch_id, timezone_name, config_json, mapping_json,
+            schedule_cron, approval_status, active_status, approved_by, approved_at,
+            created_by, created_at, updated_at
+       FROM performance_source_dataset
+      WHERE id = ? OR dataset_key = ?
+      LIMIT 1`,
+    [idOrKey, idOrKey],
+  );
+  return rows[0] ?? null;
+}
+
+async function captureBefore(req: AuthenticatedRequest): Promise<unknown> {
+  const datasetPathId = req.path.match(/^\/datasets\/([^/]+)/)?.[1];
+  const datasetBodyId = req.path === "/datasets"
+    ? String((req.body as Record<string, unknown> | undefined)?.id ?? "").trim()
+    : "";
+  const datasetId = datasetPathId || datasetBodyId;
+  if (datasetId) return datasetByIdOrKey(datasetId);
+
+  const exceptionId = req.path.match(/^\/mapping-exceptions\/([^/]+)/)?.[1];
+  if (exceptionId) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM integration_mapping_exception WHERE id = ? LIMIT 1`,
+      [exceptionId],
+    );
+    return rows[0] ?? null;
+  }
+
+  const body = req.body as Record<string, unknown> | undefined;
+  const sourceKey = String(body?.sourceKey ?? "").trim();
+  if (req.path === "/identity-maps" && sourceKey) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM performance_identity_map
+        WHERE source_key = ? AND external_identifier = ?
+        ORDER BY effective_from DESC LIMIT 1`,
+      [sourceKey, String(body?.externalIdentifier ?? "")],
+    );
+    return rows[0] ?? null;
+  }
+  if (req.path === "/process-maps" && sourceKey) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM performance_process_map
+        WHERE source_key = ? AND external_process = ?
+        ORDER BY effective_from DESC LIMIT 1`,
+      [sourceKey, String(body?.externalProcess ?? "")],
+    );
+    return rows[0] ?? null;
+  }
+
+  return null;
+}
+
 async function resolveDatasetId(
   req: AuthenticatedRequest,
   entityDatasetId: string | null,
   createdDatasetId: string | null,
 ): Promise<string | null> {
   if (createdDatasetId) return createdDatasetId;
-  if (entityDatasetId) return entityDatasetId;
+  if (entityDatasetId) {
+    const dataset = await datasetByIdOrKey(entityDatasetId);
+    return dataset?.id ? String(dataset.id) : null;
+  }
 
   const sourceKey = String(
     (req.body as Record<string, unknown> | undefined)?.sourceKey ?? "",
   ).trim();
   if (sourceKey) {
-    const [datasets] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM performance_source_dataset WHERE dataset_key = ? LIMIT 1`,
-      [sourceKey],
-    );
-    if (datasets[0]?.id) return String(datasets[0].id);
+    const dataset = await datasetByIdOrKey(sourceKey);
+    if (dataset?.id) return String(dataset.id);
   }
 
   const exceptionId = req.path.match(/^\/mapping-exceptions\/([^/]+)/)?.[1];
@@ -106,8 +161,9 @@ async function recordAudit(input: {
   req: AuthenticatedRequest;
   statusCode: number;
   responseBody: unknown;
+  before: unknown;
 }): Promise<void> {
-  const { req, statusCode, responseBody } = input;
+  const { req, statusCode, responseBody, before } = input;
   const path = req.path;
   const entity = entityFor(path);
   const responseData = responseBody && typeof responseBody === "object"
@@ -121,14 +177,15 @@ async function recordAudit(input: {
   await db.execute(
     `INSERT INTO performance_governance_audit
        (actor_user_id, action_code, entity_type, entity_id, dataset_id,
-        after_json, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        before_json, after_json, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       req.authUser?.id ?? null,
       actionFor(req.method, path),
       entity.entityType,
       entity.entityId ?? createdDatasetId,
       datasetId,
+      jsonValue(before),
       jsonValue(responseBody),
       jsonValue({
         method: req.method,
@@ -150,21 +207,31 @@ export function performanceGovernanceAuditMiddleware(
 ) {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
 
-  const originalJson = res.json.bind(res);
-  res.json = ((body: unknown) => {
-    const successful = res.statusCode < 400 && !(
-      body && typeof body === "object" && (body as Record<string, unknown>).success === false
-    );
-    if (successful) {
-      void recordAudit({ req, statusCode: res.statusCode, responseBody: body }).catch((error) =>
-        console.error(
-          "[performance-governance-audit] write failed:",
-          error instanceof Error ? error.message : String(error),
-        ),
+  void captureBefore(req)
+    .catch((error) => {
+      console.error(
+        "[performance-governance-audit] before snapshot failed:",
+        error instanceof Error ? error.message : String(error),
       );
-    }
-    return originalJson(body);
-  }) as Response["json"];
-
-  return next();
+      return null;
+    })
+    .then((before) => {
+      const originalJson = res.json.bind(res);
+      res.json = ((body: unknown) => {
+        const successful = res.statusCode < 400 && !(
+          body && typeof body === "object" && (body as Record<string, unknown>).success === false
+        );
+        if (successful) {
+          void recordAudit({ req, statusCode: res.statusCode, responseBody: body, before }).catch((error) =>
+            console.error(
+              "[performance-governance-audit] write failed:",
+              error instanceof Error ? error.message : String(error),
+            ),
+          );
+        }
+        return originalJson(body);
+      }) as Response["json"];
+      next();
+    })
+    .catch(next);
 }
