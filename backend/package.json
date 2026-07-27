@@ -30,7 +30,8 @@
     "performance:preview": "tsx scripts/performance-source-preview.ts",
     "performance:activation-check": "tsx scripts/performance-activation-check.ts",
     "performance:configure-connectors": "tsx scripts/performance-configure-connectors.ts",
-    "performance:safe-sync": "tsx scripts/performance-safe-sync.ts"
+    "performance:safe-sync": "tsx scripts/performance-safe-sync.ts",
+    "performance:install-ingestion-schema": "tsx scripts/performance-ingestion-install.ts --apply"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -86,7 +87,6 @@
     "@types/node": "^22.10.7",
     "@types/nodemailer": "^8.0.1",
     "@types/pdf-parse": "^1.1.5",
-    "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^7.2.0",
     "@types/twilio": "^3.19.2",
     "@types/web-push": "^3.6.4",
