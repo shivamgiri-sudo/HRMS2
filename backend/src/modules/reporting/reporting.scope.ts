@@ -105,13 +105,26 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
   );
   const emp = (empRows as any[])[0] ?? null;
 
-  // 3. Fetch assignment scopes
-  const [scopeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT scope_type, branch_id, process_id, department_id, cost_centre_id
-       FROM user_assignment_scope
-      WHERE user_id = ? AND active_status = 1`,
-    [userId]
-  );
+  // 3. Fetch assignment scopes — cost_centre_id may not exist on older prod schema
+  let scopeRows: RowDataPacket[];
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT scope_type, branch_id, process_id, department_id, cost_centre_id
+         FROM user_assignment_scope
+        WHERE user_id = ? AND active_status = 1`,
+      [userId]
+    );
+    scopeRows = rows;
+  } catch {
+    // Fallback: query without cost_centre_id
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT scope_type, branch_id, process_id, department_id
+         FROM user_assignment_scope
+        WHERE user_id = ? AND active_status = 1`,
+      [userId]
+    );
+    scopeRows = rows;
+  }
   const scopes = scopeRows as {
     scope_type:     string;
     branch_id:      string | null;

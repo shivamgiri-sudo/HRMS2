@@ -302,7 +302,10 @@ export async function getMyReportRequests(
   pageSize = 20
 ): Promise<{ rows: MyRequestRow[]; total: number }> {
   await ensureReportingSchemaAvailable();
-  const offset = (page - 1) * pageSize;
+  // Ensure page/pageSize are valid integers — NaN from query params causes ER_WRONG_ARGUMENTS
+  const safePage = Math.max(1, Math.floor(Number.isFinite(page) ? page : 1));
+  const safePageSize = Math.max(1, Math.min(Math.floor(Number.isFinite(pageSize) ? pageSize : 20), 200));
+  const offset = (safePage - 1) * safePageSize;
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM report_request WHERE requested_by_user_id = ?`,
     [userId]
@@ -317,7 +320,7 @@ export async function getMyReportRequests(
      WHERE requested_by_user_id = ?
      ORDER BY requested_at DESC
      LIMIT ? OFFSET ?`,
-    [userId, pageSize, offset]
+    [userId, safePageSize, offset]
   );
 
   return {
