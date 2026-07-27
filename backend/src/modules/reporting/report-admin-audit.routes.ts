@@ -10,6 +10,7 @@ import {
   adminRetryEmailDelivery,
 } from './report-request.service.js';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from './report-audit.service.js';
+import { ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 export const reportAdminAuditRouter = Router();
 
@@ -21,6 +22,7 @@ reportAdminAuditRouter.use(requireAuth, requireRole('super_admin'));
 
 // GET /api/admin/report-requests — list with full filters
 reportAdminAuditRouter.get('/', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const q = req.query as Record<string, string>;
   const result = await adminListReportRequests({
     requestReference: q.requestReference,
@@ -40,6 +42,7 @@ reportAdminAuditRouter.get('/', h(async (req, res) => {
 
 // GET /api/admin/report-requests/overview-stats — KPI tiles for admin dashboard
 reportAdminAuditRouter.get('/overview-stats', h(async (_req, res) => {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total_all_time,
@@ -71,6 +74,7 @@ reportAdminAuditRouter.get('/overview-stats', h(async (_req, res) => {
 
 // GET /api/admin/report-requests/:requestId — full detail with audit timeline
 reportAdminAuditRouter.get('/:requestId', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const requestId = String(req.params.requestId);
   const detail = await adminGetReportRequestDetail(requestId);
 
@@ -89,6 +93,7 @@ reportAdminAuditRouter.get('/:requestId', h(async (req, res) => {
 
 // POST /api/admin/report-requests/:requestId/retry — retry email delivery
 reportAdminAuditRouter.post('/:requestId/retry', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const requestId = String(req.params.requestId);
   const reason = String(req.body?.reason ?? '').trim();
 
@@ -102,6 +107,7 @@ reportAdminAuditRouter.post('/:requestId/retry', h(async (req, res) => {
 
 // POST /api/admin/report-requests/:requestId/cancel — admin cancel
 reportAdminAuditRouter.post('/:requestId/cancel', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const requestId = String(req.params.requestId);
   const reason = String(req.body?.reason ?? 'Cancelled by administrator').trim();
 

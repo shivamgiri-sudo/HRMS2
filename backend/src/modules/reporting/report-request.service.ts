@@ -13,6 +13,7 @@ import {
   recordReportAuditEvent,
   REPORT_AUDIT_EVENTS,
 } from './report-audit.service.js';
+import { ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 const MAX_REQUESTS_PER_HOUR = 5;
 const DUPLICATE_WINDOW_MINUTES = 30;
@@ -70,6 +71,7 @@ export async function previewReportRequest(
   reportCode: string,
   filters: Record<string, unknown>
 ): Promise<PreviewRequestResult> {
+  await ensureReportingSchemaAvailable();
   const def = REPORT_CATALOG.find(r => r.code === reportCode);
   if (!def) throw Object.assign(new Error(`Report '${reportCode}' not found`), { statusCode: 404 });
 
@@ -100,6 +102,7 @@ export async function createReportRequest(
   filters: Record<string, unknown>,
   meta: { ip: string; userAgent: string; correlationId?: string }
 ): Promise<CreateReportRequestResult> {
+  await ensureReportingSchemaAvailable();
   // 1. Validate report exists in catalog
   const def = REPORT_CATALOG.find(r => r.code === reportCode);
   if (!def) {
@@ -298,6 +301,7 @@ export async function getMyReportRequests(
   page = 1,
   pageSize = 20
 ): Promise<{ rows: MyRequestRow[]; total: number }> {
+  await ensureReportingSchemaAvailable();
   const offset = (page - 1) * pageSize;
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM report_request WHERE requested_by_user_id = ?`,
@@ -342,6 +346,7 @@ export async function getMyReportRequestDetail(
   userId: string,
   requestId: string
 ): Promise<Record<string, unknown>> {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rr.*, rgf.file_size_bytes, rgf.generated_row_count, rgf.expires_at AS file_expires_at,
             rgf.deletion_status
@@ -386,6 +391,7 @@ export async function getMyReportRequestDetail(
 }
 
 export async function cancelReportRequest(userId: string, requestId: string): Promise<void> {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM report_request WHERE id = ? AND requested_by_user_id = ?`,
     [requestId, userId]
@@ -432,6 +438,7 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
   rows: Record<string, unknown>[];
   total: number;
 }> {
+  await ensureReportingSchemaAvailable();
   const page = f.page ?? 1;
   const pageSize = f.pageSize ?? 50;
   const offset = (page - 1) * pageSize;
@@ -479,6 +486,7 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
 }
 
 export async function adminGetReportRequestDetail(requestId: string): Promise<Record<string, unknown>> {
+  await ensureReportingSchemaAvailable();
   const [reqRows] = await db.execute<RowDataPacket[]>(
     `SELECT rr.*, rgf.storage_key, rgf.file_size_bytes, rgf.generated_row_count,
             rgf.sha256_checksum, rgf.expires_at AS file_expires_at,
@@ -527,6 +535,7 @@ export async function adminRetryEmailDelivery(
   actorUserId: string,
   reason: string
 ): Promise<void> {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM report_request WHERE id = ?`,
     [requestId]

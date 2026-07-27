@@ -10,6 +10,7 @@ import {
 } from './report-request.service.js';
 import { REPORT_CATALOG } from './report-catalog.js';
 import { resolveRegisteredOfficialEmail, maskEmail } from './report-email-resolver.js';
+import { getReportingSchemaStatus, ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 export const reportRequestRouter = Router();
 
@@ -20,6 +21,7 @@ const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<void>) =>
 reportRequestRouter.get('/available', requireAuth, h(async (req, res) => {
   const userRoles: string[] = req.authUser!.roles ?? [req.authUser!.role ?? 'employee'];
   const normalised = userRoles.map(r => r.toLowerCase());
+  const schema = await getReportingSchemaStatus();
 
   const available = REPORT_CATALOG
     .filter(r => {
@@ -36,14 +38,23 @@ reportRequestRouter.get('/available', requireAuth, h(async (req, res) => {
       description: r.description,
       rowGrain: r.rowGrain,
       filters: r.filters,
-      canRequest: true,
+      canRequest: schema.available,
     }));
 
-  return res.json({ success: true, data: available, total: available.length });
+  return res.json({
+    success: true,
+    data: available,
+    total: available.length,
+    reportDeliveryAvailable: schema.available,
+    unavailableReason: schema.available
+      ? null
+      : `Reporting request schema is not migrated on this server (${schema.missingTables.join(', ')}).`,
+  });
 }));
 
 // POST /api/reports/:reportCode/preview-request — scope preview without executing
 reportRequestRouter.post('/:reportCode/preview-request', requireAuth, h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const reportCode = String(req.params.reportCode);
   const filters = req.body.filters as Record<string, unknown> ?? {};
   const userId = req.authUser!.id;
@@ -54,6 +65,7 @@ reportRequestRouter.post('/:reportCode/preview-request', requireAuth, h(async (r
 
 // POST /api/reports/:reportCode/request — submit a report request
 reportRequestRouter.post('/:reportCode/request', requireAuth, h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const reportCode = String(req.params.reportCode);
   const filters = req.body.filters as Record<string, unknown> ?? {};
   const userId = req.authUser!.id;
@@ -77,6 +89,7 @@ reportRequestRouter.post('/:reportCode/request', requireAuth, h(async (req, res)
 
 // GET /api/reports/my-requests — list the authenticated user's requests
 reportRequestRouter.get('/my-requests', requireAuth, h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const userId = req.authUser!.id;
   const page = Number(req.query.page ?? 1);
   const pageSize = Math.min(Number(req.query.pageSize ?? 20), 100);
@@ -87,6 +100,7 @@ reportRequestRouter.get('/my-requests', requireAuth, h(async (req, res) => {
 
 // GET /api/reports/my-requests/:requestId — single request detail
 reportRequestRouter.get('/my-requests/:requestId', requireAuth, h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const userId = req.authUser!.id;
   const requestId = String(req.params.requestId);
 
@@ -96,6 +110,7 @@ reportRequestRouter.get('/my-requests/:requestId', requireAuth, h(async (req, re
 
 // POST /api/reports/my-requests/:requestId/cancel — cancel if QUEUED
 reportRequestRouter.post('/my-requests/:requestId/cancel', requireAuth, h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const userId = req.authUser!.id;
   const requestId = String(req.params.requestId);
 
