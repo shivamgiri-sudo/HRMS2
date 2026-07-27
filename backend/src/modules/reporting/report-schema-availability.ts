@@ -27,8 +27,12 @@ async function readReportingSchemaStatus(): Promise<ReportingSchemaStatus> {
     [...CORE_REPORTING_TABLES],
   );
 
-  const present = new Set(rows.map((row) => String((row as { table_name?: string }).table_name ?? '')));
-  const missingTables = CORE_REPORTING_TABLES.filter((tableName) => !present.has(tableName));
+  // MySQL information_schema returns TABLE_NAME (uppercase) on some servers — handle both
+  const present = new Set(rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return String(r['table_name'] ?? r['TABLE_NAME'] ?? '').toLowerCase();
+  }));
+  const missingTables = CORE_REPORTING_TABLES.filter((tableName) => !present.has(tableName.toLowerCase()));
 
   return {
     available: missingTables.length === 0,
