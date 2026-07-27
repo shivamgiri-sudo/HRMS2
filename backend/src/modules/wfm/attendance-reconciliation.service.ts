@@ -261,7 +261,7 @@ export const attendanceReconciliationService = {
       if (!ibd) {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id,
+          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "missing_ibd",
@@ -276,7 +276,7 @@ export const attendanceReconciliationService = {
       if ((ibdMinutes === 0 || adrMinutes === 0) && source.workingMinutes > 2) {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id,
+          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "zero_minute_attendance",
@@ -291,7 +291,7 @@ export const attendanceReconciliationService = {
       if (adr?.attendance_status === "missing_punch") {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id,
+          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "missing_punch_with_usable_source",
@@ -315,7 +315,7 @@ export const attendanceReconciliationService = {
       ) {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: employee.employee_id,
+          employeeId: employee.employee_id != null ? String(employee.employee_id) : null,
           employeeCode: employee.employee_code,
           cosecUserId: source.cosecUserId,
           issueType: "dialler_source_without_evidence",
