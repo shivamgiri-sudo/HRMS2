@@ -310,7 +310,7 @@ export async function getMyReportRequests(
     `SELECT COUNT(*) AS total FROM report_request WHERE requested_by_user_id = ?`,
     [userId]
   );
-  const total = Number((countRows[0] as { total: number }).total);
+  const total = parseInt(String((countRows[0] as { total: unknown }).total ?? 0), 10);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, request_reference, report_code, report_name_snapshot,
@@ -320,7 +320,7 @@ export async function getMyReportRequests(
      WHERE requested_by_user_id = ?
      ORDER BY requested_at DESC
      LIMIT ? OFFSET ?`,
-    [userId, safePageSize, offset]
+    [userId, parseInt(String(safePageSize), 10), parseInt(String(offset), 10)]
   );
 
   return {
