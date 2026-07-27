@@ -9,6 +9,7 @@ on:
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/server.ts"
       - "src/components/performance-hub/**"
       - "src/pages/PerformanceHub.tsx"
       - "src/types/performanceHub.ts"
@@ -24,6 +25,7 @@ on:
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/server.ts"
       - "src/components/performance-hub/**"
       - "src/pages/PerformanceHub.tsx"
       - "src/types/performanceHub.ts"
@@ -69,6 +71,7 @@ jobs:
           npm --prefix backend exec -- vitest run
           src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
           src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-scheduler.service.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.service.test.ts
 
