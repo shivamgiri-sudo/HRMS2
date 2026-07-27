@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Search, Star, Clock, Download, Play, Loader2, ChevronDown,
+  Search, Star, Clock, Mail, Play, Loader2, ChevronDown,
   BarChart3, Users, CalendarDays, CreditCard, FileCheck, UserPlus, TrendingDown,
   Award, Layers, Package, Link2, HelpCircle, Globe, X, Filter, CheckCircle2,
 } from "lucide-react";
@@ -289,17 +289,6 @@ function useCountUp(target: number, duration = 1200) {
   return value;
 }
 
-// ─── XLSX Export ─────────────────────────────────────────────────────────────────
-
-async function downloadXlsx(rows: Record<string, unknown>[], filename: string) {
-  if (!rows.length) return;
-  const XLSX = await import("xlsx");
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Report");
-  XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
-}
-
 // ─── Filter Input ───────────────────────────────────────────────────────────────
 
 function FilterInput({ def, value, onChange }: {
@@ -332,6 +321,7 @@ export default function NativeReportsCenter() {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
   const [recentCodes, setRecentCodes] = useState<string[]>(() => loadList(LS_RECENT));
@@ -427,23 +417,6 @@ export default function NativeReportsCenter() {
     setRunError("");
     setRows([]);
     try {
-      // Direct file download reports (e.g. salary sheet XLSX)
-      if (selectedReport.directDownload && selectedReport.code === "salary-sheet-export") {
-        const month = filterValues["month"]?.trim();
-        const branchId = filterValues["branchId"]?.trim();
-        if (!month) { setRunError("Please select a Month to download the salary sheet."); setRunning(false); return; }
-        const params = new URLSearchParams({ month });
-        if (branchId) params.set("branchId", branchId);
-        const a = document.createElement("a");
-        a.href = `/api/payroll/salary-sheet-export?${params.toString()}`;
-        a.download = `Salary Sheet ${month}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setRunning(false);
-        return;
-      }
-
       const active: Record<string, string> = {};
       Object.entries(filterValues).forEach(([k, v]) => { if (v) active[k] = v; });
       const params = new URLSearchParams();
@@ -458,6 +431,24 @@ export default function NativeReportsCenter() {
       setRunError(msg);
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function handleRequestReport() {
+    if (!selectedReport) return;
+    setRequestMessage("Submitting report request…");
+    try {
+      const filters: Record<string, string> = {};
+      Object.entries(filterValues).forEach(([k, v]) => { if (v) filters[k] = v; });
+      const res = await hrmsApi.post<{ requestReference: string; recipientEmailMasked: string; message: string }>(
+        `/api/reports/${selectedReport.code}/request`,
+        { filters }
+      );
+      setRequestMessage(`Request ${res.requestReference} queued. Report will be emailed to ${res.recipientEmailMasked}.`);
+    } catch (error) {
+      setRequestMessage(error instanceof Error ? error.message : "Request failed. Please try again.");
+    } finally {
+      window.setTimeout(() => setRequestMessage(""), 8000);
     }
   }
 
@@ -907,13 +898,18 @@ export default function NativeReportsCenter() {
                         <span className="text-xs text-amber-600 font-medium">(limit reached -- export for full data)</span>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => downloadXlsx(rows, `${selectedReport.code}_${new Date().toISOString().slice(0, 10)}.xlsx`)}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
-                    >
-                      <Download size={14} /> Export XLSX
-                    </button>
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={handleRequestReport}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                      >
+                        <Mail size={14} /> Request by Email
+                      </button>
+                      {requestMessage && (
+                        <p className="text-xs text-blue-700 max-w-xs text-right">{requestMessage}</p>
+                      )}
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">

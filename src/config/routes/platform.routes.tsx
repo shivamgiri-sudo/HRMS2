@@ -61,6 +61,8 @@ const BpoMasterReports              = lazy(() => import("@/pages/BpoMasterReport
 const BpoReportSourceValidation     = lazy(() => import("@/pages/BpoReportSourceValidation"));
 const NativeReportsControlRoom      = lazy(() => import("@/pages/NativeReportsCenterV3"));
 const NativeReportsLibrary          = lazy(() => import("@/pages/NativeReportsCenterV2"));
+const MyReportRequests              = lazy(() => import("@/pages/MyReportRequests"));
+const ReportAuditPage               = lazy(() => import("@/pages/ReportAuditPage"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
@@ -187,6 +189,8 @@ export const platformRouteElements = (
       <Route path="/reports/source-validation" element={<ProtectedRoute roles={REPORT_VALIDATION_ROLES}><Gate pageCode="REPORTS_CENTER"><BpoReportSourceValidation /></Gate></ProtectedRoute>} />
       <Route path="/reports/control-room" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsControlRoom /></Gate></ProtectedRoute>} />
       <Route path="/reports/library" element={<ProtectedRoute roles={REPORT_ROLES}><Gate pageCode="REPORTS_CENTER"><NativeReportsLibrary /></Gate></ProtectedRoute>} />
+      <Route path="/my-report-requests" element={<ProtectedRoute><MyReportRequests /></ProtectedRoute>} />
+      <Route path="/admin/report-audit" element={<ProtectedRoute roles={['super_admin']}><ReportAuditPage /></ProtectedRoute>} />
 
       {/* Communication */}
       <Route path="/communication/templates"     element={<ProtectedRoute roles={['admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />

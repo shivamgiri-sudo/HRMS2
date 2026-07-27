@@ -2,11 +2,18 @@ import nodemailer from "nodemailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import { env } from "../../config/env.js";
 
+export type EmailAttachment = {
+  filename: string;
+  path: string;
+  contentType?: string;
+};
+
 export type EmailSendInput = {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  attachments?: EmailAttachment[];
 };
 
 function smtpSecure(): boolean {
@@ -83,6 +90,7 @@ export const emailService = {
       subject: input.subject,
       html: input.html,
       text: input.text,
+      attachments: input.attachments,
     });
 
     return { messageId: result.messageId };

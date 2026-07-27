@@ -9,7 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
-  Download,
+  Mail,
   FileSearch,
   FileSpreadsheet,
   Filter,
@@ -279,32 +279,21 @@ export default function BpoMasterReports() {
     }
   }
 
-  async function exportReport() {
-    if (!selectedReport?.canExport) return;
-    setExportMessage("PREPARING COMPLETE EXCEL EXPORT…");
+  async function handleRequestReport() {
+    if (!selectedReport) return;
+    setExportMessage("SUBMITTING REPORT REQUEST…");
     try {
-      const response = await hrmsApi.get<RunResponse>(
-        `/api/reports/bpo-master/${selectedReport.code}?${buildParams(1, true).toString()}`,
-        300_000
+      const requestFilters: Record<string, string> = {};
+      Object.entries(filters).forEach(([k, v]) => { if (v) requestFilters[k] = v; });
+      const res = await hrmsApi.post<{ requestReference: string; recipientEmailMasked: string; message: string }>(
+        `/api/reports/${selectedReport.code}/request`,
+        { filters: requestFilters }
       );
-      const XLSX = await import("xlsx");
-      const exportRows = response.data.rows.map((row) => {
-        const output: Record<string, unknown> = {};
-        selectedReport.columns.forEach((column) => {
-          output[column.label] = row[column.key] ?? "";
-        });
-        return output;
-      });
-      const sheet = XLSX.utils.json_to_sheet(exportRows, { header: selectedReport.columns.map((column) => column.label) });
-      sheet["!autofilter"] = { ref: sheet["!ref"] ?? "A1:A1" };
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, sheet, "BPO MASTER REPORT".slice(0, 31));
-      XLSX.writeFile(workbook, reportFileName(selectedReport.code));
-      setExportMessage(`EXPORTED ${response.data.rows.length.toLocaleString("en-IN")} ROWS`);
+      setExportMessage(`REQUEST ${res.requestReference} QUEUED — REPORT WILL BE EMAILED TO ${res.recipientEmailMasked}`);
     } catch (error) {
-      setExportMessage(error instanceof Error ? error.message.toUpperCase() : "EXPORT FAILED");
+      setExportMessage(error instanceof Error ? error.message.toUpperCase() : "REQUEST FAILED");
     } finally {
-      window.setTimeout(() => setExportMessage(""), 5000);
+      window.setTimeout(() => setExportMessage(""), 8000);
     }
   }
 
@@ -447,8 +436,8 @@ export default function BpoMasterReports() {
                         <button type="button" onClick={() => runReport(1)} disabled={running} className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-black uppercase text-white disabled:opacity-50">
                           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} RUN REPORT
                         </button>
-                        <button type="button" onClick={exportReport} disabled={!selectedReport.canExport || running} title={selectedReport.canExport ? "EXPORT COMPLETE FILTERED REPORT" : "EXPORT PERMISSION REQUIRED"} className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-4 text-xs font-black uppercase text-slate-700 disabled:cursor-not-allowed disabled:opacity-40">
-                          <Download className="h-4 w-4" /> EXPORT EXCEL
+                        <button type="button" onClick={handleRequestReport} disabled={running} className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-black uppercase text-white hover:bg-blue-700 disabled:opacity-50">
+                          <Mail className="h-4 w-4" /> REQUEST BY EMAIL
                         </button>
                       </div>
                     </div>
