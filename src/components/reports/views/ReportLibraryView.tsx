@@ -934,7 +934,7 @@ export default function NativeReportsCenterV2() {
       return { ...def, type: "select", options: branches.map(b => ({ value: b.id, label: b.branch_name })) };
     }
     if (def.key === "processId" && processes.length > 0) {
-      return { ...def, type: "select", options: processes.map(p => ({ value: p.id, label: (p as any).process_name })) };
+      return { ...def, type: "select", options: processes.map(p => ({ value: p.id, label: (p as { id: string; process_name?: string }).process_name ?? p.id })) };
     }
     return def;
   }

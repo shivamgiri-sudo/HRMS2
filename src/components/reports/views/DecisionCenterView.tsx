@@ -311,7 +311,7 @@ export default function NativeReportsCenterV3() {
     staleTime: 10 * 60_000,
   });
 
-  const packs = catalogQuery.data?.data ?? [];
+  const packs = useMemo(() => catalogQuery.data?.data ?? [], [catalogQuery.data]);
   const selectedPack = useMemo(
     () => packs.find((pack) => pack.code === selectedPackCode) ?? packs[0] ?? null,
     [packs, selectedPackCode]

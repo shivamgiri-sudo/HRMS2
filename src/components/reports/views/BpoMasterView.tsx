@@ -229,8 +229,8 @@ export default function BpoMasterReports() {
     retry: false,
   });
 
-  const reports = catalogQuery.data?.data ?? [];
-  const selectedReport = reports.find((report) => report.code === selectedCode) ?? reports[0] ?? null;
+  const reports = useMemo(() => catalogQuery.data?.data ?? [], [catalogQuery.data]);
+  const selectedReport = useMemo(() => reports.find((report) => report.code === selectedCode) ?? reports[0] ?? null, [reports, selectedCode]);
   const activeCode = selectedReport?.code ?? "";
   const filteredReports = useMemo(() => {
     const term = search.trim().toLowerCase();
