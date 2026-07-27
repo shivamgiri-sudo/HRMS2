@@ -18,7 +18,7 @@ function hasAnyRole(req: any, roles: string[]): boolean {
   return roles.includes(userRole);
 }
 import { payrollController as c } from "./payroll.controller.js";
-import { calculatePayrollRun } from "./payrollCalculate.service.js";
+import { calculatePayrollRun, calculatePayrollRunScoped } from "./payrollCalculate.service.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { assertRunEditable } from "./payrollWindowGuard.js";
 import { payslipService } from "./payslip.service.js";
@@ -307,32 +307,38 @@ router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance
   const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
 
   const [branches] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT b.id, b.branch_name FROM branches b
-     JOIN employees e ON e.branch_id = b.id
-     JOIN salary_prep_line spl ON spl.employee_id = e.id
-     ORDER BY b.branch_name`
+    `SELECT DISTINCT bm.id, bm.branch_name
+       FROM branch_master bm
+       JOIN employees e ON e.branch_id = bm.id
+       JOIN salary_prep_line spl ON spl.employee_id = e.id
+      WHERE bm.active_status = 1
+      ORDER BY bm.branch_name`
   );
 
-  let processQuery = `SELECT DISTINCT p.id, p.process_name FROM processes p
-     JOIN employees e ON e.process_id = p.id
-     JOIN salary_prep_line spl ON spl.employee_id = e.id`;
+  let processQuery = `SELECT DISTINCT pm.id, pm.process_name
+       FROM process_master pm
+       JOIN employees e ON e.process_id = pm.id
+       JOIN salary_prep_line spl ON spl.employee_id = e.id
+      WHERE pm.active_status = 1`;
   const processParams: string[] = [];
   if (branchId) {
-    processQuery += ` WHERE e.branch_id = ?`;
+    processQuery += ` AND e.branch_id = ?`;
     processParams.push(branchId);
   }
-  processQuery += ` ORDER BY p.process_name`;
+  processQuery += ` ORDER BY pm.process_name`;
   const [processes] = await db.execute<RowDataPacket[]>(processQuery, processParams);
 
-  let deptQuery = `SELECT DISTINCT d.id, d.dept_name FROM departments d
-     JOIN employees e ON e.department_id = d.id
-     JOIN salary_prep_line spl ON spl.employee_id = e.id`;
+  let deptQuery = `SELECT DISTINCT dm.id, dm.dept_name
+       FROM department_master dm
+       JOIN employees e ON e.department_id = dm.id
+       JOIN salary_prep_line spl ON spl.employee_id = e.id
+      WHERE dm.active_status = 1`;
   const deptParams: string[] = [];
   if (branchId) {
-    deptQuery += ` WHERE e.branch_id = ?`;
+    deptQuery += ` AND e.branch_id = ?`;
     deptParams.push(branchId);
   }
-  deptQuery += ` ORDER BY d.dept_name`;
+  deptQuery += ` ORDER BY dm.dept_name`;
   const [departments] = await db.execute<RowDataPacket[]>(deptQuery, deptParams);
 
   res.json({ success: true, data: { branches, processes, departments } });
@@ -514,6 +520,46 @@ router.post("/runs/:id/calculate", payrollRunLimiter, requireRole("admin", "supe
       req,
     });
     return res.json({ success: true, data: result, message: "Payroll calculated" });
+  } catch (err) { next(err); }
+});
+
+// ─── Bulk Week-Off Correction ────────────────────────────────────────────────
+// POST /api/payroll/runs/:id/correct-weekoffs
+// Re-runs full payroll calculation (scoped to all employees) for the given run
+// using the fixed calendar-Sunday-based weekoff eligibility logic.
+// Only allowed on non-locked, non-disbursed runs.
+router.post("/runs/:id/correct-weekoffs", payrollRunLimiter, requireRole("admin", "super_admin", "finance", "payroll"), async (req: any, res: any, next: any) => {
+  try {
+    await assertRunEditable(req.params.id);
+    const actorId = req.authUser?.id ?? "system";
+
+    // Fetch all employee_ids in this run so we can scope the recalc and report count
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT employee_id FROM salary_prep_line WHERE run_id = ?`,
+      [req.params.id]
+    );
+    const employeeIds = (lineRows as Array<{ employee_id: string }>).map((r) => r.employee_id);
+    if (employeeIds.length === 0) {
+      return res.status(404).json({ success: false, message: "No employees found in this payroll run." });
+    }
+
+    const result = await calculatePayrollRunScoped(req.params.id, actorId, { employeeIds });
+
+    void logSensitiveAction({
+      actor_user_id: actorId,
+      action_type: "PAYROLL_WEEKOFF_BULK_CORRECTION",
+      module_key: "payroll",
+      entity_type: "salary_prep_run",
+      entity_id: req.params.id,
+      change_summary: { run_id: req.params.id, employees_corrected: employeeIds.length },
+      req,
+    });
+
+    return res.json({
+      success: true,
+      message: `Week-off correction applied to ${employeeIds.length} employee(s). Recalculation complete.`,
+      data: result,
+    });
   } catch (err) { next(err); }
 });
 
