@@ -17,6 +17,11 @@ export interface PerformanceQuery {
   pageSize: number;
 }
 
+export interface PerformanceFilterOption {
+  id: string;
+  label: string;
+}
+
 export interface PerformanceContext {
   effectiveRole: string;
   scopeLevel: DashboardScope["level"];
@@ -26,6 +31,8 @@ export interface PerformanceContext {
   canSelectProcess: boolean;
   effectiveBranchIds: string[];
   effectiveProcessIds: string[];
+  branchOptions: PerformanceFilterOption[];
+  processOptions: PerformanceFilterOption[];
   subjectEmployeeId: string | null;
 }
 
@@ -92,6 +99,10 @@ export interface PaginatedPeople {
 export interface PerformanceRepository {
   findSubjectEmployeeId(userId: string): Promise<string | null>;
   canAccessEmployee(scope: DashboardScope, employeeId: string): Promise<boolean>;
+  listFilterOptions(scope: DashboardScope): Promise<{
+    branches: PerformanceFilterOption[];
+    processes: PerformanceFilterOption[];
+  }>;
   listMetricFacts(
     scope: DashboardScope,
     query: PerformanceQuery,
