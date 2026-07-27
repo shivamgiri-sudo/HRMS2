@@ -38,8 +38,12 @@ function boundedMaxRows(dataset: PerformanceDataset): number {
 function queryArguments(
   config: DatabaseDatasetConfig,
   input: { from: string; to: string; checkpoint?: string | null },
-): unknown[] {
-  const values = { from: input.from, to: input.to, checkpoint: input.checkpoint ?? "" };
+): string[] {
+  const values: Record<"from" | "to" | "checkpoint", string> = {
+    from: input.from,
+    to: input.to,
+    checkpoint: input.checkpoint ?? "",
+  };
   return (config.queryParams ?? ["from", "to"]).map((name) => values[name]);
 }
 
