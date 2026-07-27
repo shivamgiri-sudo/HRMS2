@@ -4,6 +4,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { performanceIngestionRouter } from "../performance-ingestion/performance-ingestion.routes.js";
+import { performanceSchedulerRouter } from "../performance-ingestion/performance-scheduler.routes.js";
 import { performanceIntelligenceRepository } from "./performance-intelligence.repository.js";
 import {
   createPerformanceIntelligenceService,
@@ -62,8 +63,9 @@ export function createPerformanceIntelligenceRouter(
   router.use(dependencies.authMiddleware ?? requireAuth);
 
   // Canonical administration surface for database, Sheet, Excel and CSV ingestion.
-  // The child router applies its own role guards to every write operation.
+  // Child routers apply role, backend scope and write-access guards.
   router.use("/ingestion", performanceIngestionRouter);
+  router.use("/ingestion", performanceSchedulerRouter);
 
   router.get("/context", asyncHandler(async (req, res) => {
     return sendData(res, await service.context(auth(req)));
