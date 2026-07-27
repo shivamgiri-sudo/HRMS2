@@ -225,7 +225,7 @@ export const attendanceReconciliationService = {
       if (sourceUser.kind === "inactive") {
         issues.push({
           issueDate: source.punchDate,
-          employeeId: sourceUser.employee.employee_id ?? null,
+          employeeId: sourceUser.employee.employee_id != null ? String(sourceUser.employee.employee_id) : null,
           employeeCode: sourceUser.employee.employee_code ?? null,
           cosecUserId: source.cosecUserId,
           issueType: "inactive_cosec_user_activity",

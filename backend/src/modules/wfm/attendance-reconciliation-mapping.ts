@@ -18,7 +18,7 @@ export type ClassifiedUser =
   | { kind: "excluded" }
   | { kind: "inactive"; employee: EmployeeRow }
   | { kind: "active"; employee: EmployeeRow }
-  | { kind: "unknown" };
+  | { kind: "unmapped" };
 
 export function buildSourceUserMaps(employeeRows: EmployeeRow[], excludedCosecIds: string[]): SourceMaps {
   const byCosecId = new Map<string, EmployeeRow>();
@@ -56,7 +56,7 @@ export function classifySourceUser(cosecUserId: string, maps: SourceMaps): Class
   const key = String(cosecUserId);
   if (maps.excludedSet.has(key)) return { kind: "excluded" };
   const employee = maps.byCosecId.get(key);
-  if (!employee) return { kind: "unknown" };
+  if (!employee) return { kind: "unmapped" };
   if (maps.inactiveSet.has(key)) return { kind: "inactive", employee };
   return { kind: "active", employee };
 }
