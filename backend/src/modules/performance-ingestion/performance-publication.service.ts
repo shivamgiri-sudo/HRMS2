@@ -120,6 +120,25 @@ async function currentLineage(
   return rows;
 }
 
+async function mappingVersionForDate(
+  connection: PoolConnection,
+  datasetId: string,
+  scoreDate: string,
+): Promise<string | null> {
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    `SELECT id
+       FROM performance_mapping_version
+      WHERE dataset_id = ?
+        AND status = 'active'
+        AND effective_from <= ?
+        AND (effective_to IS NULL OR effective_to >= ?)
+      ORDER BY version_no DESC
+      LIMIT 1`,
+    [datasetId, scoreDate, scoreDate],
+  );
+  return rows[0]?.id ? String(rows[0].id) : null;
+}
+
 async function removeCanonicalFact(
   connection: PoolConnection,
   fact: FactKey,
@@ -210,6 +229,7 @@ async function writeCanonicalFact(input: {
 export async function publishPerformanceFacts(input: {
   dataset: PerformanceDataset;
   runId: string;
+  mappingVersionId?: string | null;
   requestedBy: string | null;
   windowFrom: string;
   windowTo: string;
@@ -261,7 +281,20 @@ export async function publishPerformanceFacts(input: {
       [input.dataset.id, input.windowFrom, input.windowTo],
     );
 
+    const mappingVersionCache = new Map<string, string | null>();
     for (const fact of input.facts) {
+      let mappingVersionId = fact.mappingVersionId ?? mappingVersionCache.get(fact.scoreDate);
+      if (mappingVersionId === undefined) {
+        mappingVersionId = await mappingVersionForDate(connection, input.dataset.id, fact.scoreDate);
+        mappingVersionCache.set(fact.scoreDate, mappingVersionId);
+      }
+      if (!mappingVersionId) {
+        throw Object.assign(
+          new Error(`No approved dataset mapping is effective for ${fact.scoreDate}`),
+          { statusCode: 409 },
+        );
+      }
+
       await connection.execute(
         `INSERT INTO performance_fact_lineage
            (publication_batch_id, run_id, source_dataset_id, mapping_version_id, raw_record_id,
@@ -273,7 +306,7 @@ export async function publishPerformanceFacts(input: {
           publicationBatchId,
           input.runId,
           input.dataset.id,
-          fact.mappingVersionId,
+          mappingVersionId,
           fact.rawRecordId,
           fact.employeeId,
           fact.metricId,
