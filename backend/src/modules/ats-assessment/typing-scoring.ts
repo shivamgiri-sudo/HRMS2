@@ -62,6 +62,7 @@ const round = (value: number, digits = 2) => {
 };
 
 const safeSeconds = (value: number) => Math.max(1, Number.isFinite(value) ? value : 1);
+export const MAX_TYPING_SCORE_CHARACTERS = 2_500;
 
 /**
  * Preserve exact typing semantics while removing browser/platform-only
@@ -77,7 +78,7 @@ export function normalizeTypingText(value: unknown): string {
 function buildEditMatrix<T>(expected: T[], actual: T[], equal: (a: T, b: T) => boolean) {
   const rows = expected.length + 1;
   const columns = actual.length + 1;
-  const matrix = Array.from({ length: rows }, () => new Array<number>(columns).fill(0));
+  const matrix = Array.from({ length: rows }, () => new Uint32Array(columns));
 
   for (let row = 0; row < rows; row += 1) matrix[row][0] = row;
   for (let column = 0; column < columns; column += 1) matrix[0][column] = column;
@@ -99,7 +100,7 @@ function buildEditMatrix<T>(expected: T[], actual: T[], equal: (a: T, b: T) => b
 function backtrackOperations<T>(
   expected: T[],
   actual: T[],
-  matrix: number[][],
+  matrix: ReadonlyArray<ArrayLike<number>>,
   equal: (a: T, b: T) => boolean,
 ): Array<{ operation: EditOperation; expected: T | null; actual: T | null }> {
   const operations: Array<{ operation: EditOperation; expected: T | null; actual: T | null }> = [];
@@ -235,32 +236,38 @@ export function resolveAttemptedReference(referenceText: string, typedText: stri
       typed,
       attemptedReference: "",
       referenceCharactersEvaluated: 0,
-      matrix: [[0]],
     };
   }
 
-  const matrix = buildEditMatrix(expected, actual, (left, right) => left === right);
-  const finalColumn = actual.length;
+  let previous = new Uint32Array(actual.length + 1);
+  for (let column = 0; column <= actual.length; column += 1) previous[column] = column;
   let bestPrefixLength = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestDistance = previous[actual.length];
 
-  for (let prefixLength = 0; prefixLength <= expected.length; prefixLength += 1) {
-    const distance = matrix[prefixLength][finalColumn];
-    if (distance < bestDistance || (distance === bestDistance && prefixLength > bestPrefixLength)) {
-      bestDistance = distance;
-      bestPrefixLength = prefixLength;
+  for (let row = 1; row <= expected.length; row += 1) {
+    const current = new Uint32Array(actual.length + 1);
+    current[0] = row;
+    for (let column = 1; column <= actual.length; column += 1) {
+      const substitutionCost = expected[row - 1] === actual[column - 1] ? 0 : 1;
+      current[column] = Math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + substitutionCost,
+      );
     }
+    const distance = current[actual.length];
+    if (distance < bestDistance || (distance === bestDistance && row > bestPrefixLength)) {
+      bestDistance = distance;
+      bestPrefixLength = row;
+    }
+    previous = current;
   }
 
-  const attemptedExpected = expected.slice(0, bestPrefixLength);
   return {
     reference,
     typed,
-    attemptedReference: attemptedExpected.join(""),
+    attemptedReference: expected.slice(0, bestPrefixLength).join(""),
     referenceCharactersEvaluated: bestPrefixLength,
-    matrix: matrix
-      .slice(0, bestPrefixLength + 1)
-      .map((row) => row.slice(0, actual.length + 1)),
   };
 }
 
@@ -268,6 +275,9 @@ function analyzeAttempt(referenceText: string, typedText: string) {
   const resolved = resolveAttemptedReference(referenceText, typedText);
   const referenceCharacters = Array.from(resolved.reference).length;
   const typedCharacters = Array.from(resolved.typed).length;
+  if (referenceCharacters > MAX_TYPING_SCORE_CHARACTERS || typedCharacters > MAX_TYPING_SCORE_CHARACTERS) {
+    throw new RangeError(`Typing text exceeds the ${MAX_TYPING_SCORE_CHARACTERS}-character scoring limit`);
+  }
   const characterAnalysis = typedCharacters
     ? analyzeCharacters(resolved.attemptedReference, resolved.typed)
     : {
