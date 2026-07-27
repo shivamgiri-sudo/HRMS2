@@ -30,7 +30,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
     params
   );
-  return Number((rows as any)[0]?.total ?? 0);
+  return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
 /** Returns a SQL expression for a sensitive field — masked or real. */

@@ -31,7 +31,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows;
   } catch (err: unknown) {
-    if (ATS_SCHEMA_ERRORS.has((err as any)?.code)) return [];
+    if (ATS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return [];
     throw err;
   }
 }
@@ -42,9 +42,9 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
       `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
       params
     );
-    return Number((rows as any)[0]?.total ?? 0);
+    return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
   } catch (err: unknown) {
-    if (ATS_SCHEMA_ERRORS.has((err as any)?.code)) return 0;
+    if (ATS_SCHEMA_ERRORS.has(String((err as Record<string, unknown>)?.["code"] ?? ""))) return 0;
     throw err;
   }
 }

@@ -29,7 +29,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
     params
   );
-  return Number((rows as any)[0]?.total ?? 0);
+  return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +212,7 @@ export async function shiftSwapRegister(
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
   } catch (err: unknown) {
-    if ((err as any)?.code === 'ER_NO_SUCH_TABLE') {
+    if ((err as Record<string, unknown>)?.["code"] === 'ER_NO_SUCH_TABLE') {
       return { rows: [], rowCount: 0, isTruncated: false };
     }
     throw err;

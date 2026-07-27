@@ -35,7 +35,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
     params
   );
-  return Number((rows as any)[0]?.total ?? 0);
+  return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
 /**
@@ -406,7 +406,7 @@ export async function form16Status(
     };
   } catch (err: unknown) {
     // Only swallow missing-table errors; re-throw everything else
-    const mysqlCode = (err as any)?.code;
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
     if (mysqlCode !== "ER_NO_SUCH_TABLE" && mysqlCode !== "ER_BAD_TABLE_ERROR") throw err;
   }
 
@@ -507,7 +507,7 @@ export async function investmentDeclarationStatus(
       nextCursor,
     };
   } catch (err: unknown) {
-    const mysqlCode = (err as any)?.code;
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
     if (mysqlCode !== "ER_NO_SUCH_TABLE" && mysqlCode !== "ER_BAD_TABLE_ERROR") throw err;
     return { rows: [], rowCount: 0, isTruncated: false, nextCursor: null };
   }
