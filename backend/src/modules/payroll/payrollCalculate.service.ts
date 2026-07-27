@@ -203,6 +203,7 @@ interface EmployeeRow {
   hra_pct: number;
   state_code: string | null;
   salary_start_date: string | null;
+  date_of_leaving: string | null;
   process_id: string | null;
   branch_id: string | null;
 }
@@ -291,7 +292,8 @@ export async function calculatePayrollRunScoped(
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             e.process_id, e.branch_id,
-            COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date
+            COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
+            e.date_of_leaving
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id
        JOIN salary_structure_master ss      ON ss.id = esa.structure_id
@@ -478,6 +480,7 @@ export async function calculatePayrollRunScoped(
          COALESCE(SUM(
            CASE
              WHEN adr.attendance_status = 'present'         THEN 1.0
+             WHEN adr.attendance_status = 'late'            THEN 1.0
              WHEN adr.attendance_status = 'half_day'        THEN 0.5
              WHEN adr.attendance_status = 'leave_approved'  THEN 1.0
              ELSE 0
@@ -554,20 +557,17 @@ export async function calculatePayrollRunScoped(
     // Step 6: Payable days with cap
     const calculatedPayable = effectivePaidBase + finalWeekoffs + finalHolidays;
     const finalPayableDays = Math.min(calculatedPayable, daysInMonth);
-    // active_calendar_days: for mid-month joiners, cap to remaining days in month
-    const activeCals = emp.salary_start_date
-      ? (() => {
-          const ssd = new Date(emp.salary_start_date);
-          const mStart = new Date(monthStart);
-          if (ssd > mStart) {
-            const d = new Date(ssd);
-            let cnt = 0;
-            while (d <= new Date(monthEnd)) { cnt++; d.setDate(d.getDate() + 1); }
-            return cnt;
-          }
-          return daysInMonth;
-        })()
-      : daysInMonth;
+    // active_calendar_days: cap to actual employment window (mid-month joiners and leavers)
+    const activeCals = (() => {
+      const effectiveStart = emp.salary_start_date && emp.salary_start_date > monthStart
+        ? emp.salary_start_date : monthStart;
+      const effectiveEnd = emp.date_of_leaving && emp.date_of_leaving < monthEnd
+        ? emp.date_of_leaving : monthEnd;
+      const days = Math.round(
+        (new Date(effectiveEnd).getTime() - new Date(effectiveStart).getTime()) / 86400000
+      ) + 1;
+      return Math.max(1, Math.min(days, daysInMonth));
+    })();
 
     // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
     // fall back to salary_structure_component via structure_id.
@@ -928,12 +928,20 @@ export async function calculatePayrollRunScoped(
 
   // Flush salary_prep_line rows
   if (batchPrepLines.length > 0) {
+    // Always delete existing component rows before re-inserting to prevent
+    // duplicate accumulation across recalculations.
+    // For targeted runs scope to affected employees; for full runs scope to entire run.
     if (isTargetedRun) {
       await conn.execute(
         `DELETE FROM salary_prep_line_component
           WHERE run_id = ?
             AND employee_id IN (${scopedEmployeeIds.map(() => "?").join(",")})`,
         [runId, ...scopedEmployeeIds],
+      );
+    } else {
+      await conn.execute(
+        `DELETE FROM salary_prep_line_component WHERE run_id = ?`,
+        [runId],
       );
     }
 

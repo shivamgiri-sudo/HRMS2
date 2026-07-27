@@ -8,8 +8,11 @@ import { deepReportRouter } from './deep-report.routes.js';
 import { journeyAuditReportRouter } from './journey-audit-report.routes.js';
 import { reportSuiteHighRiskRouter } from "./report-suite-highrisk.routes.js";
 import { reportSuiteRouter } from "./report-suite.routes.js";
+import { reportRequestRouter } from "./report-request.routes.js";
 
 const router = Router();
+// Secure request → generate → email platform routes (must be mounted before :code wildcard routes)
+router.use("/", reportRequestRouter);
 router.use("/bpo-master", bpoMasterReportRouter);
 router.use("/deep-sections", deepReportRouter);
 router.use("/journey-audit", journeyAuditReportRouter);

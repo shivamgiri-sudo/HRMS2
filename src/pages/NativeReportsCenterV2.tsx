@@ -35,10 +35,10 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Search, Star, Clock, Download, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight,
+  Search, Star, Clock, Mail, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight,
   BarChart3, Users, CalendarDays, CreditCard, FileCheck, UserPlus, TrendingDown,
   Award, Layers, Package, Link2, HelpCircle, Globe, X, Filter, CheckCircle2,
-  AlertTriangle, Info, FileSpreadsheet, AlertCircle, Table2, Hash,
+  AlertTriangle, Info, AlertCircle, Table2, Hash,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
@@ -741,49 +741,6 @@ function saveList(key: string, val: string[]) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* noop */ }
 }
 
-// ─── XLSX Export ───────────────────────────────────────────────────────────────
-
-async function downloadFullExport(
-  code: string,
-  filters: Record<string, string>,
-  columns: ColumnDef[],
-  filename: string,
-  onProgress?: (msg: string) => void
-): Promise<number> {
-  onProgress?.("Fetching complete dataset from server...");
-
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
-  params.set("export", "true");
-
-  const url = `/api/reports/suite/${code}?${params.toString()}`;
-  const res = await hrmsApi.get<ApiResponse>(url, 120_000);
-  const rows = res.data ?? [];
-
-  onProgress?.(`Generating XLSX with ${rows.length.toLocaleString()} rows...`);
-
-  const XLSX = await import("xlsx");
-
-  const headers = columns.map(c => c.label);
-  const orderedKeys = columns.map(c => c.key);
-
-  const formattedRows = rows.map(row => {
-    const formatted: Record<string, unknown> = {};
-    orderedKeys.forEach((key, i) => {
-      const col = columns.find(c => c.key === key);
-      formatted[headers[i]] = col ? formatValue(row[key], col.format) : row[key];
-    });
-    return formatted;
-  });
-
-  const ws = XLSX.utils.json_to_sheet(formattedRows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Report");
-  XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
-
-  return rows.length;
-}
-
 // ─── Filter Input ───────────────────────────────────────────────────────────────
 
 function FilterInput({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
@@ -841,7 +798,7 @@ export default function NativeReportsCenterV2() {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
   const [recentCodes, setRecentCodes] = useState<string[]>(() => loadList(LS_RECENT));
   const [favCodes, setFavCodes] = useState<Set<string>>(() => new Set(loadList(LS_FAVS)));
-  const [exportProgress, setExportProgress] = useState<string | null>(null);
+  const [requestMessage, setRequestMessage] = useState("");
   const [duplicateInfo, setDuplicateInfo] = useState<{ hasDuplicates: boolean; duplicateCount: number }>({ hasDuplicates: false, duplicateCount: 0 });
 
   const pageSize = 100;
@@ -856,14 +813,7 @@ export default function NativeReportsCenterV2() {
     });
   }, [userRoles]);
 
-  // Check export permission — super_admin can always export
-  const canExport = useMemo(() => {
-    if (!selectedReport) return false;
-    if (userRoles.includes("super_admin")) return true;
-    const exportRoles = selectedReport.exportRoles ?? selectedReport.viewRoles ?? [];
-    if (exportRoles.length === 0) return true;
-    return exportRoles.some(role => userRoles.includes(role));
-  }, [selectedReport, userRoles]);
+
 
   // Master data for filters
   const { data: branchData } = useQuery({
@@ -961,24 +911,21 @@ export default function NativeReportsCenterV2() {
     }
   }
 
-  async function handleFullExport() {
-    if (!selectedReport || !canExport) return;
-
+  async function handleRequestReport() {
+    if (!selectedReport) return;
+    setRequestMessage("Submitting report request…");
     try {
-      setExportProgress("Preparing export...");
-      const filename = `${selectedReport.code}_${new Date().toISOString().slice(0, 10)}`;
-      const count = await downloadFullExport(
-        selectedReport.code,
-        filterValues,
-        selectedReport.columns,
-        filename,
-        setExportProgress
+      const filters: Record<string, string> = {};
+      Object.entries(filterValues).forEach(([k, v]) => { if (v) filters[k] = v; });
+      const res = await hrmsApi.post<{ requestReference: string; recipientEmailMasked: string; message: string }>(
+        `/api/reports/${selectedReport.code}/request`,
+        { filters }
       );
-      setExportProgress(`Export complete: ${count.toLocaleString()} rows`);
-      setTimeout(() => setExportProgress(null), 3000);
-    } catch (e) {
-      setExportProgress("Export failed");
-      setTimeout(() => setExportProgress(null), 3000);
+      setRequestMessage(`Request ${res.requestReference} queued. Report will be emailed to ${res.recipientEmailMasked}.`);
+    } catch (error) {
+      setRequestMessage(error instanceof Error ? error.message : "Request failed. Please try again.");
+    } finally {
+      window.setTimeout(() => setRequestMessage(""), 8000);
     }
   }
 
@@ -1226,22 +1173,16 @@ export default function NativeReportsCenterV2() {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      {canExport ? (
-                        <button
-                          type="button"
-                          onClick={handleFullExport}
-                          disabled={!!exportProgress}
-                          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60"
-                        >
-                          {exportProgress ? (
-                            <><Loader2 size={14} className="animate-spin" /> {exportProgress}</>
-                          ) : (
-                            <><FileSpreadsheet size={14} /> Export All {totalCount.toLocaleString()} Rows</>
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-400 italic">Export not available for your role</span>
+                    <div className="flex flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={handleRequestReport}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                      >
+                        <Mail size={14} /> Request by Email
+                      </button>
+                      {requestMessage && (
+                        <p className="text-xs text-blue-700 max-w-xs text-right">{requestMessage}</p>
                       )}
                     </div>
                   </div>

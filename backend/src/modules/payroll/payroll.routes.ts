@@ -951,11 +951,21 @@ router.get("/payslip/history/:employeeId", requireAuth, requireRole("super_admin
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ?
-      ORDER BY spr.run_month DESC
-      LIMIT ${limit}`,
+        AND spr.status NOT IN ('draft', 'cancelled')
+      ORDER BY spr.run_month DESC,
+               FIELD(spr.status,'disbursed','approved','locked','under_review','calculated','processing') ASC
+      LIMIT ${limit * 3}`,
     [employeeId]
   );
-  return res.json({ success: true, data: rows });
+  // Deduplicate: keep the most-advanced-status row per run_month
+  const seenMonths = new Set<string>();
+  const deduped = (rows as RowDataPacket[]).filter(r => {
+    const key = String(r.run_month).substring(0, 7);
+    if (seenMonths.has(key)) return false;
+    seenMonths.add(key);
+    return true;
+  }).slice(0, limit);
+  return res.json({ success: true, data: deduped });
 }));
 
 // GET /api/payroll/payslip/legacy/:employeeId — list legacy payslips (HR/admin/payroll)

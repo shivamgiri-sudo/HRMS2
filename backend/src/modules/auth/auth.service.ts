@@ -73,7 +73,7 @@ async function geoLookupIp(ip: string): Promise<string | null> {
 
 const JWT_SECRET = env.JWT_SECRET;
 const OTP_HMAC_SECRET = env.OTP_HMAC_SECRET;
-const JWT_EXPIRES_IN = '15m';
+const JWT_EXPIRES_IN = '4h'; // extended from 15m to reduce refresh frequency
 const PRE_AUTH_EXPIRES_IN = '10m'; // short-lived — only for 2FA challenge exchange
 const REFRESH_EXPIRES_DAYS = 7;
 const RESET_EXPIRES_HOURS = 24;
