@@ -2011,7 +2011,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sensitivityLevel: "confidential",
     containsPII: true,
     containsFinancialData: false,
-    availabilityStatus: "blocked",
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -2040,6 +2040,10 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sourceTables: ["agent_kpi_daily", "employees"],
     branchScoped: true,
     processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -2349,7 +2353,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sensitivityLevel: "confidential",
     containsPII: true,
     containsFinancialData: false,
-    availabilityStatus: "blocked",
+    availabilityStatus: "under_validation",
   },
 
   {
@@ -2440,7 +2444,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     sensitivityLevel: "confidential",
     containsPII: true,
     containsFinancialData: false,
-    availabilityStatus: "blocked",
+    availabilityStatus: "under_validation",
   },
 
   {

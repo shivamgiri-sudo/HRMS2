@@ -125,7 +125,13 @@ import {
   assetInventory,
   assetAllocationRegister,
   assetMovementLog,
+  documentExpiryTracker,
 } from "./assets.executor.js";
+
+// ─── LMS / Training ──────────────────────────────────────────────────────────
+import {
+  trainingCompletionStatus,
+} from "./lms.executor.js";
 
 // ─── Identity ────────────────────────────────────────────────────────────────
 import {
@@ -239,10 +245,14 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "shift-swap-register":       shiftSwapRegister,
   "week-off-calendar":         weekOffCalendar,
 
-  // Assets
+  // Assets & Documents
   "asset-inventory":           assetInventory,
   "asset-allocation-register": assetAllocationRegister,
   "asset-movement-log":        assetMovementLog,
+  "document-expiry-tracker":   documentExpiryTracker,
+
+  // LMS / Training
+  "training-completion-status": trainingCompletionStatus,
 
   // Identity
   "uan-status-report":         uanStatusReport,

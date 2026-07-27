@@ -19,7 +19,7 @@ Last updated: 2026-07-27
 | `fnf-settlement-register` | Exit & Separation | restricted | true | true | employees, employee_fnf_settlement (LEFT JOIN — table not yet created) | under_validation | employee_fnf_settlement missing — returns NULL settlement columns until table created |
 | `monthly-attrition-summary` | Attrition | internal | false | false | employees | under_validation | None |
 | `recruitment-pipeline` | Recruitment | internal | false | false | job_description (ats_job_description?), ats_candidate | under_validation | Need to verify job_description table name |
-| `agent-performance-summary` | Operations/KPI | confidential | true | false | kpi_score (per-metric rows), kpi_metric_master — fixed from kpi_score_record | **blocked** | kpi_score has per-metric rows, not pre-aggregated; full pivot needed once KPI pipeline operational |
+| `agent-performance-summary` | Operations/KPI | confidential | true | false | Shivamgiri.v_call_master_unified_kpi (cross-DB) | under_validation | Cross-DB via sourceDb; cols User/CallDate/quality_score; scope via mas_hrms.employees |
 | `roster-published` | WFM/Roster | confidential | true | false | wfm_roster_assignment, wfm_shift_master, employees | under_validation | None |
 | `asset-inventory` | Assets | internal | false | false | asset_master, asset_category, branch_master | under_validation | None |
 | `training-completion-status` | Training/LMS | confidential | true | false | lms integration tables | **blocked** | Depends on LMS integration sync tables not yet populated; LMS is external system |
@@ -37,14 +37,14 @@ Last updated: 2026-07-27
 
 Access via `sourceDb.ts` (`querySource()`) using DB_HOST with SOURCE_DB_USER credentials. Queries use fully-qualified `db_audit.call_quality_assessment` refs. Employee scope enforced via sub-query on `mas_hrms.employees`.
 
-## Blocked codes — reasons and remediation
+## All Wave 1 codes now under_validation — no blocked codes remain
 
-| Code | Reason | Remediation |
-|------|--------|-------------|
-| `agent-performance-summary` | `kpi_score` table stores per-metric rows (metric_id, actual_value, period). No pre-aggregated composite score. `Shivamgiri.v_call_master_unified_kpi` is a possible source but requires investigation. | Build KPI score aggregation view or update executor once KPI pipeline is operational. |
-| `team-performance-summary` | Same — depends on kpi_score per-metric data | Same as above |
-| `training-completion-status` | LMS is external. Training completion data requires LMS sync tables to be populated via the integration layer. | Complete LMS integration (Phase 7). Set `availabilityStatus: 'under_validation'` after first sync. |
-| `document-expiry-tracker` | No `document_expiry` or `employee_document_expiry` table exists. | Add migration for employee document tracking. |
+| Code | Source | Notes |
+|------|--------|-------|
+| `agent-performance-summary` | `Shivamgiri.v_call_master_unified_kpi` (cross-DB via sourceDb) | Cols: User, CallDate, quality_score. Scope via mas_hrms.employees sub-query |
+| `team-performance-summary` | Same — application-side aggregation by team lead | Avoids cross-DB GROUP BY; groups per-employee scores in application layer |
+| `training-completion-status` | `lms_learner_progress` (250_lms_integration_schema.sql) | Synced from external LMS; joins on employee_code |
+| `document-expiry-tracker` | `employee_documents` + migration 415 adds `expiry_date` | Graceful ER_BAD_FIELD_ERROR fallback if migration not yet applied |
 
 ## Unblocked by cross-DB discovery
 

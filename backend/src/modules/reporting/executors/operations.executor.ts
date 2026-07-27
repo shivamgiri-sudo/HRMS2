@@ -49,57 +49,81 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 
 // ---------------------------------------------------------------------------
 // agent-performance-summary
+// Source: Shivamgiri.v_call_master_unified_kpi (cross-DB via sourceDb)
+// Columns: User (emp code), CallDate, quality_score, total_calls + db_audit for audited count
+// Scope: resolve employee codes from mas_hrms first, then filter Shivamgiri view
 // ---------------------------------------------------------------------------
 export async function agentPerformanceSummary(
   filters: ExecFilters,
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  // availabilityStatus: 'blocked' — kpi_score table has per-metric rows (metric_id, actual_value, period)
-  // not a pre-aggregated score_record; this report needs a pivot/aggregation adapter once the
-  // KPI scoring pipeline is operational. Returns empty result until then.
   const scoreMonth = monthParam(filters.month);
+  const from = `${scoreMonth}-01`;
+  const to   = new Date(new Date(from).getFullYear(),
+    new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
-  appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
-  clauses.push("ks.period = ?");
-  params.push(scoreMonth);
+  // Resolve scoped employee codes from mas_hrms
+  const eClauses: string[] = ["e.company_id = ?"];
+  const eParams: unknown[]  = [scope.companyId];
+  appendScopeConditions(scope, eClauses, eParams);
+  appendFilterConditions(filters, eClauses, eParams);
 
+  const empSql = `SELECT e.employee_code,
+    COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+    b.branch_name, p.process_name
+    FROM mas_hrms.employees e
+    LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
+    LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+   WHERE ${eClauses.join(" AND ")}`;
+  const empRows = await querySource<{ employee_code: string; employee_name: string; branch_name: string; process_name: string }>(
+    empSql, eParams as (string|number|null)[]
+  );
+  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
+
+  const empMap = new Map(empRows.map(r => [r.employee_code, r]));
+  const codes = empRows.map(r => r.employee_code);
+  const placeholders = codes.map(() => "?").join(",");
+  const qParams: (string|number|null)[] = [...codes, from, to];
+
+  let cursorClause = "";
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("ks.id > ?");
-    params.push(options.cursor);
+    cursorClause = ` HAVING MIN(kpi.CallDate) > ?`;
+    qParams.push(options.cursor as string);
   }
 
-  const base = `
-    SELECT ks.id AS _cursor,
-           e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           ks.period AS score_month,
-           km.metric_code,
-           km.metric_name,
-           ks.actual_value,
-           b.branch_name, p.process_name
-      FROM kpi_score ks
-      JOIN kpi_metric_master km ON km.id = ks.metric_id
-      JOIN employees e          ON e.id  = ks.employee_id
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY ks.id ASC`;
+  const sql = `
+    SELECT kpi.User AS employee_code,
+           LEFT(kpi.CallDate, 7) AS score_month,
+           COUNT(*) AS total_calls,
+           ROUND(AVG(kpi.quality_score) * 100, 2) AS avg_quality_score,
+           MAX(kpi.quality_score) * 100 AS max_quality_score,
+           MIN(kpi.quality_score) * 100 AS min_quality_score,
+           CASE WHEN AVG(kpi.quality_score) >= 0.90 THEN 'Excellent'
+                WHEN AVG(kpi.quality_score) >= 0.80 THEN 'Good'
+                WHEN AVG(kpi.quality_score) >= 0.70 THEN 'Average'
+                ELSE 'Poor' END AS quality_band
+      FROM Shivamgiri.v_call_master_unified_kpi kpi
+     WHERE kpi.User IN (${placeholders})
+       AND kpi.CallDate BETWEEN ? AND ?
+     GROUP BY kpi.User${cursorClause}
+     ORDER BY kpi.User ASC
+     LIMIT ${options.limit} OFFSET ${options.mode === "worker" ? 0 : options.offset}`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
+  const rows = await querySource<Record<string,unknown>>(sql, qParams);
+  // Enrich with employee name / branch / process from mas_hrms lookup
+  const enriched = rows.map(r => {
+    const info = empMap.get(r.employee_code as string);
+    return { ...r, employee_name: info?.employee_name, branch_name: info?.branch_name, process_name: info?.process_name };
+  });
   const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+    ? String(rows[rows.length - 1].employee_code ?? "") : null;
+  return { rows: enriched, rowCount: enriched.length, isTruncated: enriched.length === options.limit, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
-// team-performance-summary  (aggregate — no cursor)
+// team-performance-summary (aggregate — no cursor)
+// Source: Shivamgiri.v_call_master_unified_kpi, grouped by team lead
 // ---------------------------------------------------------------------------
 export async function teamPerformanceSummary(
   filters: ExecFilters,
@@ -107,39 +131,67 @@ export async function teamPerformanceSummary(
   options: ExecOptions
 ): Promise<ExecResult> {
   const scoreMonth = monthParam(filters.month);
+  const from = `${scoreMonth}-01`;
+  const to   = new Date(new Date(from).getFullYear(),
+    new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
-  appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
-  clauses.push("ks.period = ?");
-  params.push(scoreMonth);
+  // Resolve scoped employees with manager info
+  const eClauses: string[] = ["e.company_id = ?"];
+  const eParams: unknown[]  = [scope.companyId];
+  appendScopeConditions(scope, eClauses, eParams);
+  appendFilterConditions(filters, eClauses, eParams);
 
-  const base = `
-    SELECT COALESCE(
-             NULLIF(tm.full_name, ''),
-             CONCAT(tm.first_name, ' ', COALESCE(tm.last_name, ''))
-           ) AS team_lead_name,
-           p.process_name,
-           b.branch_name,
-           ks.period AS score_month,
-           COUNT(DISTINCT ks.employee_id) AS team_size,
-           ROUND(AVG(ks.actual_value), 2) AS avg_score,
-           MAX(ks.actual_value) AS max_score,
-           MIN(ks.actual_value) AS min_score
-      FROM kpi_score ks
-      JOIN employees e          ON e.id  = ks.employee_id
-      LEFT JOIN employees tm    ON tm.id = COALESCE(e.reporting_manager_id, e.manager_id)
-      LEFT JOIN branch_master b  ON b.id = e.branch_id
-      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${clauses.join(" AND ")}
-     GROUP BY team_lead_name, p.process_name, b.branch_name, ks.period
-     ORDER BY b.branch_name, p.process_name, ks.period`;
+  const empSql = `SELECT e.employee_code,
+    COALESCE(NULLIF(tm.full_name,''), CONCAT(tm.first_name,' ',COALESCE(tm.last_name,''))) AS team_lead_name,
+    b.branch_name, p.process_name
+    FROM mas_hrms.employees e
+    LEFT JOIN mas_hrms.employees tm ON tm.id = COALESCE(e.reporting_manager_id, e.manager_id)
+    LEFT JOIN mas_hrms.branch_master b ON b.id = e.branch_id
+    LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id
+   WHERE ${eClauses.join(" AND ")}`;
+  const empRows = await querySource<{ employee_code: string; team_lead_name: string; branch_name: string; process_name: string }>(
+    empSql, eParams as (string|number|null)[]
+  );
+  if (empRows.length === 0) return { rows: [], rowCount: 0, isTruncated: false };
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const codes = empRows.map(r => r.employee_code);
+  // Group by team lead using application-side grouping (avoids cross-DB GROUP BY complexity)
+  const teamMap = new Map<string, { team_lead_name: string; branch_name: string; process_name: string; codes: string[] }>();
+  for (const r of empRows) {
+    const key = `${r.team_lead_name}||${r.branch_name}||${r.process_name}`;
+    if (!teamMap.has(key)) teamMap.set(key, { team_lead_name: r.team_lead_name, branch_name: r.branch_name, process_name: r.process_name, codes: [] });
+    teamMap.get(key)!.codes.push(r.employee_code);
+  }
+
+  const placeholders = codes.map(() => "?").join(",");
+  const kpiSql = `
+    SELECT kpi.User AS employee_code,
+           ROUND(AVG(kpi.quality_score) * 100, 2) AS avg_score
+      FROM Shivamgiri.v_call_master_unified_kpi kpi
+     WHERE kpi.User IN (${placeholders})
+       AND kpi.CallDate BETWEEN ? AND ?
+     GROUP BY kpi.User`;
+  const kpiRows = await querySource<{ employee_code: string; avg_score: number }>(
+    kpiSql, [...codes, from, to] as (string|number|null)[]
+  );
+  const kpiMap = new Map(kpiRows.map(r => [r.employee_code, r.avg_score]));
+
+  const aggregated = Array.from(teamMap.values()).map(team => {
+    const scores = team.codes.map(c => kpiMap.get(c) ?? null).filter((s): s is number => s !== null);
+    return {
+      score_month: scoreMonth,
+      team_lead_name: team.team_lead_name,
+      branch_name: team.branch_name,
+      process_name: team.process_name,
+      team_size: team.codes.length,
+      avg_score: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 100) / 100 : null,
+      max_score: scores.length ? Math.max(...scores) : null,
+      min_score: scores.length ? Math.min(...scores) : null,
+    };
+  });
+
+  const paged = aggregated.slice(options.offset, options.offset + options.limit);
+  return { rows: paged, rowCount: aggregated.length, isTruncated: aggregated.length > paged.length };
 }
 
 // ---------------------------------------------------------------------------

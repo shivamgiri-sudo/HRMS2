@@ -1,7 +1,7 @@
 /**
  * Assets executor
  *
- * Codes: asset-inventory, asset-allocation-register, asset-movement-log
+ * Codes: asset-inventory, asset-allocation-register, asset-movement-log, document-expiry-tracker
  *
  * Tenant isolation: asset_master carries its own company_id column (a.company_id).
  * For allocation/movement tables that may lack company_id, the join to asset_master
@@ -234,4 +234,79 @@ export async function assetMovementLog(
     ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
+// document-expiry-tracker
+// Requires migration 415 (adds expiry_date to employee_documents).
+// Returns gracefully if column not yet added.
+// ---------------------------------------------------------------------------
+export async function documentExpiryTracker(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const daysAhead = Number(filters["daysAhead"] ?? 90);
+  const lookaheadDate = new Date(new Date().getTime() + daysAhead * 86400000).toISOString().slice(0, 10);
+
+  const clauses: string[] = ["e.company_id = ?"];
+  const params: unknown[]  = [scope.companyId];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push("ed.expiry_date IS NOT NULL");
+  clauses.push("ed.expiry_date BETWEEN ? AND ?");
+  params.push(today, lookaheadDate);
+
+  if (filters.status) {
+    if (filters.status === "expired") {
+      clauses.pop(); clauses.pop(); params.pop(); params.pop();
+      clauses.push("ed.expiry_date < ?");
+      params.push(today);
+    } else if (filters.status === "expiring_soon") {
+      // already set above
+    }
+  }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("ed.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT ed.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           ed.doc_type,
+           ed.doc_name,
+           ed.document_number,
+           ed.issuing_authority,
+           ed.expiry_date,
+           DATEDIFF(ed.expiry_date, CURDATE()) AS days_until_expiry,
+           CASE WHEN ed.expiry_date < CURDATE() THEN 'expired'
+                WHEN ed.expiry_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'critical'
+                ELSE 'expiring_soon' END AS expiry_status,
+           b.branch_name, p.process_name
+      FROM employee_documents ed
+      JOIN employees e           ON e.id = ed.employee_id
+      LEFT JOIN branch_master b  ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY ed.expiry_date ASC, ed.id ASC`;
+
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  } catch (err: unknown) {
+    // Graceful fallback if migration 415 not yet applied (expiry_date column missing)
+    if ((err as Record<string,unknown>)?.["code"] === "ER_BAD_FIELD_ERROR") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
