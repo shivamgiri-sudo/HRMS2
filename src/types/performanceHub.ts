@@ -1,19 +1,4 @@
-export const PERFORMANCE_METRIC_CODES = [
-  "CALLS",
-  "AHT",
-  "ADHERENCE",
-  "UTILIZATION",
-  "QUALITY_SCORE",
-  "FATAL_RATE",
-  "CONVERSION_RATE",
-  "SALES_COUNT",
-  "REVENUE",
-  "AOV",
-  "COD_SHARE",
-  "RTO_RATE",
-] as const;
-
-export type PerformanceMetricCode = (typeof PERFORMANCE_METRIC_CODES)[number];
+export type PerformanceMetricCode = string;
 export type PerformanceScopeLevel =
   | "ORG_ALL"
   | "BRANCH_ALL"
@@ -47,9 +32,11 @@ export interface PerformanceFilters {
 export interface PerformanceMetric {
   metricCode: PerformanceMetricCode;
   label: string;
-  unit: "count" | "seconds" | "percent" | "currency";
+  unit: "count" | "seconds" | "percent" | "currency" | string;
   value: number | null;
   target: number | null;
+  weightage: number;
+  displayOrder: number;
   achievementPct: number | null;
   status: "on_track" | "watch" | "off_track" | "no_target" | "missing";
   calculationStatus: "verified" | "legacy_unverified" | "missing";
