@@ -19,6 +19,18 @@ SET @ddl = IF(
     SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'performance_fact_lineage'
+      AND COLUMN_NAME = 'mapping_version_id'
+  ),
+  'SELECT 1',
+  'ALTER TABLE performance_fact_lineage ADD COLUMN mapping_version_id CHAR(36) NULL AFTER source_dataset_id'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'performance_fact_lineage'
       AND COLUMN_NAME = 'source_record_count'
   ),
   'SELECT 1',
@@ -64,4 +76,5 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- VERIFY AFTER STAGING EXECUTION:
 -- SHOW COLUMNS FROM performance_fact_lineage LIKE 'source_dataset_id';
+-- SHOW COLUMNS FROM performance_fact_lineage LIKE 'mapping_version_id';
 -- SHOW INDEX FROM performance_fact_lineage WHERE Key_name = 'idx_performance_lineage_source_fact';
