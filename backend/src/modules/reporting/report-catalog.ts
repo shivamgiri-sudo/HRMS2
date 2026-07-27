@@ -37,6 +37,21 @@ export interface FilterDef {
   required?: boolean;
 }
 
+export type SensitivityLevel =
+  | 'internal'          // aggregate/summary, no PII, no financial values
+  | 'confidential'      // employee-level non-financial (names, attendance, leave)
+  | 'restricted'        // financial data or identity docs
+  | 'highly_restricted';// salary, bank, PAN, UAN, TDS — payroll/statutory
+
+export type ReportAvailabilityStatus =
+  | 'draft'               // not yet implemented
+  | 'under_validation'    // implemented but not validated against real data
+  | 'validated'           // all validation checks passed
+  | 'validated_with_limitations' // minor known issues documented
+  | 'blocked'             // depends on table/data not yet available
+  | 'deprecated'          // superseded, removing soon
+  | 'disabled';           // feature-flagged off
+
 export interface ReportDefinition {
   code: string;
   name: string;
@@ -55,6 +70,11 @@ export interface ReportDefinition {
   processScoped?: boolean;
   requiresRunSelector?: boolean;
   directDownload?: boolean;
+  // Security classification (required on every entry before status can pass under_validation)
+  sensitivityLevel?: SensitivityLevel;
+  containsPII?: boolean;          // true if rows contain identifiable employee-level data
+  containsFinancialData?: boolean;// true if rows contain salary, bank, statutory, or payroll values
+  availabilityStatus?: ReportAvailabilityStatus; // default: 'under_validation'
 }
 
 // ─── Common Filters ────────────────────────────────────────────────────────────

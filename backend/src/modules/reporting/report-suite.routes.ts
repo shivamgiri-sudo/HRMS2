@@ -10,6 +10,18 @@ import {
   reportCatalogAccessMiddleware,
   reportScopeMiddleware,
 } from "./reporting-access.js";
+import { REPORT_CATALOG } from "./report-catalog.js";
+import type { SensitivityLevel } from "./report-catalog.js";
+import { resolveFullScope } from "./reporting.scope.js";
+import { executeReport, ReportExecutorNotFoundError } from "./executors/index.js";
+import type { ExecFilters, ExecOptions } from "./executors/types.js";
+import {
+  buildSecureXlsxBuffer,
+  buildSecureFilename,
+  stripCursorField,
+  XlsxFileSizeError,
+} from "./xlsx-secure-builder.js";
+import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -107,6 +119,133 @@ function fallbackReport(code: string) {
 }
 
 reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: CATALOG })));
+
+// ── GET /api/reports/suite/:code/export ──────────────────────────────────────
+// Immediate XLSX download — only for internal/confidential, non-sensitive reports with ≤500 rows.
+// Returns 403 if immediateExportAllowed:false, 422 if row count > 500 or file > 20 MB.
+const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 500);
+const EXPORT_BYTE_CAP = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520);
+const IMMEDIATE_LEVELS = new Set<SensitivityLevel>(['internal', 'confidential']);
+
+reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
+  const code  = String(req.params.code);
+  const userId = (req as any).authUser?.id as string;
+
+  // Look up catalog entry
+  const catalogEntry = REPORT_CATALOG.find(r => r.code === code);
+  if (!catalogEntry) { res.status(404).json({ error: 'REPORT_NOT_FOUND' }); return; }
+
+  const level = (catalogEntry.sensitivityLevel ?? 'confidential') as SensitivityLevel;
+  const scope = await resolveFullScope(userId);
+  const userRoles = new Set(scope.roles);
+
+  // Verify export permission
+  const exportAllowed = catalogEntry.exportRoles.length === 0 ||
+    catalogEntry.exportRoles.some(r => userRoles.has(r));
+  const immediateAllowed = IMMEDIATE_LEVELS.has(level) && exportAllowed;
+
+  if (!immediateAllowed) {
+    res.status(403).json({
+      error: 'FORBIDDEN',
+      reason: 'This report requires email delivery. Use the Request by Email flow.',
+    });
+    return;
+  }
+
+  // Build ExecFilters from query string
+  const filters: ExecFilters = {
+    branchId:       req.query.branchId    as string | undefined,
+    processId:      req.query.processId   as string | undefined,
+    departmentId:   req.query.departmentId as string | undefined,
+    from:           req.query.from        as string | undefined,
+    to:             req.query.to          as string | undefined,
+    month:          req.query.month       as string | undefined,
+    year:           req.query.year        as string | undefined,
+    status:         req.query.status      as string | undefined,
+  };
+
+  // Fetch at most EXPORT_ROW_CAP + 1 rows to detect overflow
+  const options: ExecOptions = {
+    limit: EXPORT_ROW_CAP + 1,
+    offset: 0,
+    cursor: null,
+    includeTotal: false,
+    mode: 'export',
+  };
+
+  let result;
+  try {
+    result = await executeReport(code, filters, scope, options);
+  } catch (err) {
+    if (err instanceof ReportExecutorNotFoundError) {
+      res.status(404).json({ error: 'EXECUTOR_NOT_FOUND', message: 'This report is not yet available.' });
+      return;
+    }
+    throw err;
+  }
+
+  if (result.rows.length > EXPORT_ROW_CAP) {
+    res.status(422).json({
+      error: 'TOO_LARGE',
+      message: 'Result exceeds download limit. Request the full report by email.',
+      rowCount: result.rowCount,
+      limit: EXPORT_ROW_CAP,
+    });
+    return;
+  }
+
+  const rows = stripCursorField(result.rows);
+  const scopeSummary = scope.isSuperAdmin
+    ? 'ALL BRANCHES'
+    : `BRANCHES: ${scope.branchScope.mode === 'all' ? 'ALL' : scope.branchScope.ids.join(', ')}`;
+
+  let buffer: Buffer;
+  try {
+    buffer = await buildSecureXlsxBuffer({
+      reportName:            catalogEntry.name,
+      requestReference:      `IMM-${Date.now()}`,
+      requesterEmployeeCode: (req as any).authUser?.employeeCode ?? 'UNKNOWN',
+      filters:               filters as Record<string, unknown>,
+      scopeSummary,
+      rows,
+      totalRows:             rows.length,
+    });
+  } catch (err) {
+    if (err instanceof XlsxFileSizeError) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Request the full report by email.',
+      });
+      return;
+    }
+    throw err;
+  }
+
+  if (buffer.length > EXPORT_BYTE_CAP) {
+    res.status(422).json({
+      error: 'FILE_TOO_LARGE',
+      message: 'Generated file exceeds size limit. Request the full report by email.',
+    });
+    return;
+  }
+
+  // Audit the export
+  await recordReportAuditEvent({
+    reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+    eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+    actorType: 'user',
+    reportCode: code,
+    message: `Immediate XLSX export: ${rows.length} rows, ${buffer.length} bytes`,
+    metadataJson: { userId, rowCount: rows.length, fileSizeBytes: buffer.length, code },
+  }).catch(() => {});
+
+  const filename = buildSecureFilename(code, `export`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store, no-cache');
+  res.setHeader('Content-Length', buffer.length);
+  res.send(buffer);
+}));
 
 // ─── Report Metadata Endpoint ─────────────────────────────────────────────────
 // Returns column definitions, row grain, RBAC info for UI rendering
