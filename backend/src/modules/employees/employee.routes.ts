@@ -1108,9 +1108,9 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
     // Checklist counts (employee_joining_document_checklist)
     const [clRows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
-         SUM(CASE WHEN status IN ('uploaded','submitted','pending_verification','signed') THEN 1 ELSE 0 END) AS checklist_awaiting,
-         SUM(CASE WHEN status IN ('verified','signed_verified','completed') THEN 1 ELSE 0 END) AS checklist_verified
+         SUM(CASE WHEN status IN ('pending_hr_upload','pending_candidate_esign','pending_generation','rejected','template_pending','needs_correction') AND mandatory = 1 THEN 1 ELSE 0 END) AS checklist_missing,
+         SUM(CASE WHEN status IN ('uploaded_pending_review','uploaded_pending_esign','esign_initiated','employee_confirmed','wet_signed_uploaded') THEN 1 ELSE 0 END) AS checklist_awaiting,
+         SUM(CASE WHEN status IN ('verified','signed_verified','completed','esign_completed') THEN 1 ELSE 0 END) AS checklist_verified
          FROM employee_joining_document_checklist WHERE employee_id = ?`,
       [targetId]
     ).catch(() => [[{ checklist_missing: null, checklist_awaiting: null, checklist_verified: null }]] as any);
@@ -1155,6 +1155,16 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
     gamificationTier = tierRows[0] ?? null;
   } catch (_e) { /* table may not exist yet */ }
 
+  // EPF compliance status
+  let epfComplianceStatus: string | null = null;
+  try {
+    const [epfRows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
+      [targetId]
+    );
+    epfComplianceStatus = (epfRows[0]?.status as string) ?? null;
+  } catch (_e) { /* table may not exist yet */ }
+
   // Journey events (last 20)
   let journey: RowDataPacket[] = [];
   try {
@@ -1186,6 +1196,7 @@ router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
       awaiting_verification: awaitingVerification,
       verified_docs: verifiedDocs,
       pending_docs: missingDocs,
+      epf_compliance_status: epfComplianceStatus,
       gamification_tier: gamificationTier,
       journey,
     }

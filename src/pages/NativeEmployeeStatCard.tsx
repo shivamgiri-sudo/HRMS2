@@ -120,6 +120,7 @@ interface StatCardData {
   missing_docs: number;
   awaiting_verification: number;
   verified_docs: number;
+  epf_compliance_status?: string | null;
   gamification_tier: GamificationTier | null;
   journey: JourneyEvent[];
 }
@@ -935,10 +936,25 @@ export default function NativeEmployeeStatCard() {
                       className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
                       <FileText className="h-4 w-4" /> Joining Documents
                     </Link>
-                    <Link to={`/employees/${resolvedId}/epf-compliance`}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
-                      <Briefcase className="h-4 w-4" /> EPF Compliance
-                    </Link>
+                    {(() => {
+                      const epfStatus = card?.epf_compliance_status;
+                      const isCompliant = epfStatus === 'payroll_approved';
+                      const isPending = ['employee_review_pending', 'payroll_review_pending'].includes(epfStatus ?? '');
+                      return (
+                        <Link to={`/employees/${resolvedId}/epf-compliance`}
+                          className={cn(
+                            "inline-flex items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-bold shadow-sm transition-colors",
+                            isCompliant
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : isPending
+                              ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                          )}>
+                          <Briefcase className="h-4 w-4" />
+                          {isCompliant ? "EPF Compliant ✓" : isPending ? "EPF Pending Review" : "EPF Compliance"}
+                        </Link>
+                      );
+                    })()}
                   </>
                 )}
               </div>

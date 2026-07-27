@@ -84,6 +84,7 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
             adr.clock_in_time AS clock_in,
             adr.clock_out_time AS clock_out,
             ROUND(COALESCE(adr.raw_minutes, adr.biometric_minutes, adr.dialler_minutes, 0) / 60, 2) AS total_hours,
+            adr.attendance_status,
             adr.attendance_status AS status,
             adr.clock_in_location AS clock_in_location_name,
             adr.clock_out_location AS clock_out_location_name,
