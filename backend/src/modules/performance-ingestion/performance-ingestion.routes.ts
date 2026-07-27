@@ -28,6 +28,13 @@ const metricBindingSchema = z.object({
   if (!value.valueField && !value.numeratorField) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["valueField"], message: "valueField or numeratorField is required" });
   }
+  if (value.aggregation === "ratio" && (!value.numeratorField || !value.denominatorField)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["denominatorField"],
+      message: "Ratio metrics require numeratorField and denominatorField",
+    });
+  }
 });
 
 const datasetSchema = z.object({
@@ -51,6 +58,35 @@ const datasetSchema = z.object({
     metrics: z.array(metricBindingSchema).min(1).max(100),
   }),
   activeStatus: z.boolean().optional(),
+}).superRefine((value, context) => {
+  if ((value.sourceType === "mysql" || value.sourceType === "mssql") && !value.connectorKey) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["connectorKey"],
+      message: "Database sources require an encrypted connector key",
+    });
+  }
+  if (value.sourceType === "mysql" && !String(value.config.queryMysql ?? "").trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["config", "queryMysql"],
+      message: "MySQL sources require queryMysql",
+    });
+  }
+  if (value.sourceType === "mssql" && !String(value.config.queryMssql ?? "").trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["config", "queryMssql"],
+      message: "SQL Server sources require queryMssql",
+    });
+  }
+  if (value.sourceType === "google_sheet" && !String(value.config.csvUrl ?? "").trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["config", "csvUrl"],
+      message: "Google Sheet sources require a CSV export URL",
+    });
+  }
 });
 
 const runSchema = z.object({
@@ -58,6 +94,10 @@ const runSchema = z.object({
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 }).superRefine((value, context) => {
   if (value.from > value.to) context.addIssue({ code: z.ZodIssueCode.custom, path: ["from"], message: "from must be on or before to" });
+});
+
+const approveSchema = z.object({
+  effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 const identityMapSchema = z.object({
@@ -68,6 +108,10 @@ const identityMapSchema = z.object({
   processId: z.string().trim().max(100).nullable().optional(),
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+  }
 });
 
 const processMapSchema = z.object({
@@ -77,6 +121,10 @@ const processMapSchema = z.object({
   branchId: z.string().trim().max(100).nullable().optional(),
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   effectiveTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+  }
 });
 
 router.use(requireAuth);
@@ -110,7 +158,9 @@ router.post(
   requireWriteAccess,
   requireRole("super_admin", "admin"),
   asyncHandler(async (req, res) => {
-    await performanceIngestionService.approveDataset(req.params.id, req.authUser!.id);
+    const parsed = approveSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ success: false, error: "Validation failed", details: parsed.error.flatten() });
+    await performanceIngestionService.approveDataset(req.params.id, req.authUser!.id, parsed.data.effectiveFrom);
     return res.json({ success: true });
   }),
 );
