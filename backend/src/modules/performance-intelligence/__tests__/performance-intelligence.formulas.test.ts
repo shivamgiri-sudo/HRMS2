@@ -9,19 +9,43 @@ import {
   calculateAchievement,
 } from "../performance-intelligence.formulas.js";
 
+function metricMeta(metricCode: string) {
+  if (["CALLS", "REVENUE", "SALES_COUNT"].includes(metricCode)) {
+    return {
+      aggregationMethod: "sum",
+      unit: metricCode === "REVENUE" ? "currency" : "count",
+    };
+  }
+  if (["AHT", "AOV", "QUALITY_SCORE", "FATAL_RATE"].includes(metricCode)) {
+    return {
+      aggregationMethod: metricCode === "QUALITY_SCORE" ? "ratio" : "ratio",
+      unit: metricCode === "AHT" ? "seconds" : metricCode === "AOV" ? "currency" : "percent",
+    };
+  }
+  return { aggregationMethod: "average", unit: "percent" };
+}
+
 function fact(
   metricCode: PerformanceMetricCode,
   actualValue: number | null,
   overrides: Partial<MetricFact> = {},
 ): MetricFact {
+  const meta = metricMeta(metricCode);
   return {
     employeeId: "employee-1",
     metricCode,
+    metricName: metricCode,
+    unit: meta.unit,
+    aggregationMethod: meta.aggregationMethod,
+    decimalPlaces: 2,
+    displayOrder: 100,
     scoreDate: "2026-07-01",
     actualValue,
     numeratorValue: null,
     denominatorValue: null,
     targetValue: metricCode === "AHT" ? 100 : 90,
+    weightage: 100,
+    maxAchievementPct: 120,
     direction: metricCode === "AHT" || metricCode === "FATAL_RATE"
       ? "lower_is_better"
       : "higher_is_better",
@@ -115,7 +139,7 @@ describe("aggregateMetricFacts", () => {
     expect(byCode(result, "AOV")).toMatchObject({ value: 666.67, unit: "currency" });
   });
 
-  it("does not label a plain average as verified", () => {
+  it("does not label a component-free fallback as verified", () => {
     const result = aggregateMetricFacts([
       fact("QUALITY_SCORE", 80),
       fact("QUALITY_SCORE", 90),
@@ -123,6 +147,26 @@ describe("aggregateMetricFacts", () => {
 
     expect(byCode(result, "QUALITY_SCORE").value).toBe(85);
     expect(byCode(result, "QUALITY_SCORE").calculationStatus).toBe("legacy_unverified");
+  });
+
+  it("supports a process-specific custom metric without a code deployment", () => {
+    const result = aggregateMetricFacts([
+      fact("EXTRACTION_ACCURACY", 98.4, {
+        metricName: "Extraction Accuracy",
+        aggregationMethod: "average",
+        unit: "percent",
+        displayOrder: 5,
+        weightage: 30,
+        targetValue: 98,
+      }),
+    ]);
+
+    expect(byCode(result, "EXTRACTION_ACCURACY")).toMatchObject({
+      label: "Extraction Accuracy",
+      value: 98.4,
+      weightage: 30,
+      displayOrder: 5,
+    });
   });
 
   it("returns a missing result when facts contain no usable value", () => {
@@ -137,8 +181,8 @@ describe("aggregateMetricFacts", () => {
 });
 
 describe("calculateAchievement", () => {
-  it("reverses achievement for lower-is-better metrics", () => {
-    expect(calculateAchievement(80, 100, "lower_is_better")).toBe(125);
+  it("reverses and caps achievement for lower-is-better metrics", () => {
+    expect(calculateAchievement(80, 100, "lower_is_better")).toBe(120);
   });
 
   it("uses direct target achievement for higher-is-better metrics", () => {
