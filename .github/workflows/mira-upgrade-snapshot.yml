@@ -27,8 +27,11 @@ jobs:
             backend/src/modules/employees \
             backend/src/modules/admin \
             backend/src/config \
+            backend/src/db \
+            backend/src/scripts/migrate.ts \
             backend/src/shared/accessGuard.ts \
             backend/src/app.ts \
+            backend/src/server.ts \
             backend/sql \
             src/components/ai \
             src/hooks/useMiraVoice.ts \
