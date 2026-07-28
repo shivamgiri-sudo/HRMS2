@@ -24,16 +24,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
-      # HARDENED: Lint failures now break CI (removed || true and continue-on-error)
       - name: Run ESLint
-        run: bun run lint
+        run: npm run lint
 
   typecheck:
     name: Type Check
@@ -42,15 +44,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Run TypeScript compiler
-        run: bunx tsc --noEmit
+        run: npm run typecheck
 
   build:
     name: Build
@@ -60,15 +65,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Build application
-        run: bun run build
+        run: npm run build
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
@@ -98,14 +106,20 @@ jobs:
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
-      - name: Run security tests
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/modules/auth/__tests__/auth-security.test.ts
-          src/modules/files/__tests__/document-vault-security.test.ts
-          src/db/__tests__/migration-governance.test.ts
-          src/db/__tests__/connection-reliability.test.ts
-          src/workers/__tests__/worker-safety.test.ts
+      - name: Authentication security contract
+        run: npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts
+
+      - name: Document vault security contract
+        run: npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts
+
+      - name: Migration governance contract
+        run: npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts
+
+      - name: Database connection reliability contract
+        run: npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts
+
+      - name: Worker safety contract
+        run: npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts
 
   finance-validation:
     name: Finance API and schema contract
