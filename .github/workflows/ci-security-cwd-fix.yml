@@ -1,0 +1,53 @@
+name: CI Security Working Directory Fix
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+    paths:
+      - .github/workflows/ci-security-cwd-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/performance-ingestion-platform
+          fetch-depth: 0
+
+      - name: Make security contract working directory explicit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/ci.yml')
+          text = path.read_text()
+          tests = [
+              'src/modules/auth/__tests__/auth-security.test.ts',
+              'src/modules/files/__tests__/document-vault-security.test.ts',
+              'src/db/__tests__/migration-governance.test.ts',
+              'src/db/__tests__/connection-reliability.test.ts',
+              'src/workers/__tests__/worker-safety.test.ts',
+          ]
+          for test in tests:
+              old = f'npm --prefix backend exec -- vitest run {test} && exit 0'
+              new = f'(cd backend && npm exec -- vitest run {test}) && exit 0'
+              if old not in text:
+                  raise SystemExit(f'Expected CI command not found: {old}')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+
+          git add .github/workflows/ci.yml
+          git rm .github/workflows/ci-security-cwd-fix.yml
+          git commit -m "fix(ci): run security contracts from backend directory"
+          git push origin HEAD:agent/performance-ingestion-platform
