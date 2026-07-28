@@ -1,0 +1,61 @@
+name: Performance Exact Blob Cleanup
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+    paths:
+      - .github/workflows/performance-exact-blob-cleanup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout performance branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/performance-ingestion-platform
+          fetch-depth: 0
+
+      - name: Restore exact main blobs and self-delete
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+
+          paths=(
+            scripts/allocate-2026-leave-balances.sql
+            scripts/check-branch-aliases.sql
+            scripts/cleanup-duplicate-salary-records.sql
+            scripts/create-missing-kpi-metrics.sql
+            scripts/fix-branch-aliases.sql
+            scripts/fix-mas47814-final.sql
+            scripts/fix-mas47814-salary-gap-v2.sql
+            scripts/fix-mas47814-salary-gap.sql
+            scripts/objection-analysis.sql
+            scripts/setup-friendly-branch-names.sql
+            scripts/verify-kpi-metrics.sql
+            scripts/wfm_auto_roster_preflight.sql
+          )
+
+          for path in "${paths[@]}"; do
+            entry="$(git ls-tree origin/main -- "$path")"
+            mode="$(printf '%s' "$entry" | awk '{print $1}')"
+            blob="$(printf '%s' "$entry" | awk '{print $3}')"
+            if [ -z "$mode" ] || [ -z "$blob" ]; then
+              echo "Unable to resolve main blob for $path" >&2
+              exit 1
+            fi
+            git update-index --add --cacheinfo "$mode,$blob,$path"
+          done
+
+          git rm .github/workflows/performance-exact-blob-cleanup.yml
+
+          git commit -m "chore(performance): restore unrelated scripts to exact main blobs"
+          git push origin HEAD:agent/performance-ingestion-platform
