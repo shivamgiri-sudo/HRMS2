@@ -34,8 +34,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run ESLint
-        run: npm run lint
+      - name: Run ESLint and retain JSON report
+        id: eslint
+        continue-on-error: true
+        run: npm run lint -- --format json --output-file eslint-report.json
+
+      - name: Upload ESLint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-eslint-report
+          path: eslint-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce ESLint result
+        if: always()
+        env:
+          ESLINT_OUTCOME: ${{ steps.eslint.outcome }}
+        run: test "$ESLINT_OUTCOME" = "success"
 
   typecheck:
     name: Type Check
@@ -107,19 +124,75 @@ jobs:
         run: npm --prefix backend ci
 
       - name: Authentication security contract
-        run: npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts
+        id: auth_security
+        continue-on-error: true
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/auth/__tests__/auth-security.test.ts
+          --reporter=json --outputFile=auth-security.json
 
       - name: Document vault security contract
-        run: npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts
+        id: vault_security
+        continue-on-error: true
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/files/__tests__/document-vault-security.test.ts
+          --reporter=json --outputFile=document-vault-security.json
 
       - name: Migration governance contract
-        run: npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts
+        id: migration_security
+        continue-on-error: true
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/db/__tests__/migration-governance.test.ts
+          --reporter=json --outputFile=migration-governance.json
 
       - name: Database connection reliability contract
-        run: npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts
+        id: connection_security
+        continue-on-error: true
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/db/__tests__/connection-reliability.test.ts
+          --reporter=json --outputFile=connection-reliability.json
 
       - name: Worker safety contract
-        run: npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts
+        id: worker_security
+        continue-on-error: true
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/workers/__tests__/worker-safety.test.ts
+          --reporter=json --outputFile=worker-safety.json
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-security-reports
+          path: |
+            backend/auth-security.json
+            backend/document-vault-security.json
+            backend/migration-governance.json
+            backend/connection-reliability.json
+            backend/worker-safety.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce security contract results
+        if: always()
+        env:
+          AUTH_OUTCOME: ${{ steps.auth_security.outcome }}
+          VAULT_OUTCOME: ${{ steps.vault_security.outcome }}
+          MIGRATION_OUTCOME: ${{ steps.migration_security.outcome }}
+          CONNECTION_OUTCOME: ${{ steps.connection_security.outcome }}
+          WORKER_OUTCOME: ${{ steps.worker_security.outcome }}
+        run: |
+          printf 'auth=%s vault=%s migration=%s connection=%s worker=%s\n' \
+            "$AUTH_OUTCOME" "$VAULT_OUTCOME" "$MIGRATION_OUTCOME" "$CONNECTION_OUTCOME" "$WORKER_OUTCOME"
+          test "$AUTH_OUTCOME" = "success"
+          test "$VAULT_OUTCOME" = "success"
+          test "$MIGRATION_OUTCOME" = "success"
+          test "$CONNECTION_OUTCOME" = "success"
+          test "$WORKER_OUTCOME" = "success"
 
   finance-validation:
     name: Finance API and schema contract
