@@ -8,14 +8,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { BpoPnlRow } from "@/hooks/useBpoProcessPnl";
-
-type ProcessPnlAlert = {
-  type: "critical" | "warning" | "info";
-  title: string;
-  detail: string;
-  processId?: string;
-};
+import type { BpoPnlRow, BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -30,10 +23,6 @@ function formatPercent(value: number | null) {
   return value == null ? "-" : `${value.toFixed(1)}%`;
 }
 
-function isProcessPnlAlert(alert: unknown): alert is ProcessPnlAlert {
-  return typeof alert === "object" && alert !== null && "title" in alert && "detail" in alert;
-}
-
 export function ProcessPnlRowDrawer({
   period,
   row,
@@ -42,10 +31,10 @@ export function ProcessPnlRowDrawer({
 }: {
   period: string;
   row: BpoPnlRow;
-  alerts: unknown[];
+  alerts: BpoPnlSummary["alerts"];
   onOpenChange: (open: boolean) => void;
 }) {
-  const processAlerts = alerts.filter(isProcessPnlAlert).filter((alert) => alert.processId === row.processId);
+  const processAlerts = alerts.filter((alert) => alert.processId === row.processId);
 
   return (
     <Sheet open onOpenChange={onOpenChange}>

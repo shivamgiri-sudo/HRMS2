@@ -11,3 +11,12 @@ Task 7: complete (journey ledger already has 74 columns including all 47 require
 Task 8: complete (commits 1e281616..f22d586a, validation service expanded with 5 reconciliation fields, reconciliation template doc created, typecheck 0 errors)
 Task 9: complete (frontend typecheck 0 errors, backend typecheck 0 errors, 60 tests in 8 files passing, frontend build success, backend build success, no conflict markers)
 Task 10: complete (commits dfef02f1..fc25fbfc, architecture doc expanded +150 lines, UAT doc expanded +400 lines with 10 departmental checklists)
+
+# Process P&L Matrix Redesign - SDD Progress Ledger
+# Started: 2026-07-28
+# Plan: docs/superpowers/plans/2026-07-28-process-pnl-matrix-implementation.md
+Task 1: complete (commits 261e917f..8990a89a, review clean after totals/test fix pass)
+Task 2: complete (commit 41e33469, review clean; minor note: validate restored local-storage values against supported unions)
+Task 3: complete (commits 41e33469..6d5820bb, review clean after full-matrix composite/formatting fix pass)
+Task 4: complete (commit 526da0c6, review clean; minor note: tighten alert prop typing in follow-up)
+Task 5: complete (commit 150d82a3, review clean)

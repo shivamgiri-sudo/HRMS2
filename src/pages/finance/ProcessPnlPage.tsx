@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type React from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CeoCommandCenter } from "@/components/finance/pnl/CeoCommandCenter";
 import { Download } from "lucide-react";
@@ -17,19 +16,6 @@ import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatr
 import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
 
 const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
-
-type MatrixTableControlProps = {
-  rows: React.ComponentProps<typeof BpoPnlMatrixTable>["rows"];
-  period: string;
-  preset: ProcessPnlMatrixPreset;
-  status: ProcessPnlStatusFilter;
-  issue: ProcessPnlIssueFilter;
-  density: ProcessPnlDensity;
-  search?: string;
-  alerts?: unknown[];
-};
-
-const MatrixTableWithControls = BpoPnlMatrixTable as unknown as (props: MatrixTableControlProps) => React.JSX.Element;
 
 const matrixPresets: ProcessPnlMatrixPreset[] = ["summary", "revenue", "cost", "profitability", "budget-risk", "full"];
 const matrixStatusFilters: ProcessPnlStatusFilter[] = ["all", "profitable", "at-risk", "loss-making"];
@@ -281,7 +267,7 @@ export default function ProcessPnlPage() {
             {bpoQuery.isLoading ? (
               <Skeleton className="h-96 rounded-3xl" />
             ) : (
-              <MatrixTableWithControls
+              <BpoPnlMatrixTable
                 rows={rows}
                 period={period}
                 preset={matrixPreset}

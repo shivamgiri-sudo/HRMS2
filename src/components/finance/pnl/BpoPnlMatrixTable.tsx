@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, CircleDollarSign, PanelRightOpen } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { BpoPnlRow } from "@/hooks/useBpoProcessPnl";
+import type { BpoPnlRow, BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
 import { ProcessPnlMatrixTotals } from "@/components/finance/pnl/ProcessPnlMatrixTotals";
 import { ProcessPnlRowDrawer } from "@/components/finance/pnl/ProcessPnlRowDrawer";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ export interface BpoPnlMatrixTableProps {
   issue: ProcessPnlIssueFilter;
   density: ProcessPnlDensity;
   search?: string;
-  alerts?: unknown[];
+  alerts?: BpoPnlSummary["alerts"];
 }
 
 const stickyOffsets = ["0px", "220px", "370px"];
