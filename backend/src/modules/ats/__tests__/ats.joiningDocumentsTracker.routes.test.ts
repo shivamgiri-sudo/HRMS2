@@ -19,6 +19,7 @@ vi.mock('../../../middleware/authMiddleware.js', () => ({
     (req as express.Request & { authUser: { id: string } }).authUser = { id: 'test-user-id' };
     next();
   },
+  requireWriteAccess: (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
 vi.mock('../../../middleware/requireRole.js', () => ({

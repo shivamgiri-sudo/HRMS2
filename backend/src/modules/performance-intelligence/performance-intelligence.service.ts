@@ -110,7 +110,10 @@ export function createPerformanceIntelligenceService(
   return {
     async context(auth: AuthContext): Promise<PerformanceContext> {
       const scope = await effectiveScope(auth);
-      const subjectEmployeeId = await repository.findSubjectEmployeeId(auth.userId);
+      const [subjectEmployeeId, options] = await Promise.all([
+        repository.findSubjectEmployeeId(auth.userId),
+        repository.listFilterOptions(scope),
+      ]);
       return {
         effectiveRole: scope.role,
         scopeLevel: scope.level,
@@ -120,6 +123,8 @@ export function createPerformanceIntelligenceService(
         canSelectProcess: ["ORG_ALL", "BRANCH_ALL", "PROCESS_ALL"].includes(scope.level),
         effectiveBranchIds: [...scope.branchIds],
         effectiveProcessIds: [...scope.processIds],
+        branchOptions: options.branches,
+        processOptions: options.processes,
         subjectEmployeeId,
       };
     },
@@ -182,17 +187,19 @@ export function createPerformanceIntelligenceService(
 
       const rows: PerformancePersonRow[] = people.rows.map((person) => {
         const metrics = aggregateMetricFacts(factsByEmployee.get(person.employeeId) ?? []);
-        const achievements = metrics
-          .map((metric) => metric.achievementPct)
-          .filter((value): value is number => value !== null);
+        const weighted = metrics.filter((metric) =>
+          metric.achievementPct !== null && Number(metric.weightage) > 0);
+        const totalWeight = weighted.reduce((sum, metric) => sum + Number(metric.weightage), 0);
+        const overallAchievementPct = totalWeight > 0
+          ? Math.round((weighted.reduce(
+              (sum, metric) => sum + Number(metric.achievementPct) * Number(metric.weightage),
+              0,
+            ) / totalWeight) * 100) / 100
+          : null;
         return {
           ...person,
           metrics,
-          overallAchievementPct: achievements.length
-            ? Math.round(
-                (achievements.reduce((sum, value) => sum + value, 0) / achievements.length) * 100,
-              ) / 100
-            : null,
+          overallAchievementPct,
         };
       });
 

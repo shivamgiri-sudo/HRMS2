@@ -1,0 +1,116 @@
+name: Performance Platform Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/src/modules/performance-ingestion/**"
+      - "backend/src/modules/performance-intelligence/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/server.ts"
+      - "backend/src/workers/all-workers.ts"
+      - "src/components/performance-hub/**"
+      - "src/pages/PerformanceHub.tsx"
+      - "src/types/performanceHub.ts"
+      - "src/types/performanceIngestion.ts"
+      - "src/types/performanceAudit.ts"
+      - "docs/performance-ingestion-platform.md"
+      - "docs/performance-scheduled-sync.md"
+      - "docs/performance-governance-audit.md"
+      - ".github/workflows/performance-platform-validation.yml"
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+    paths:
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/src/modules/performance-ingestion/**"
+      - "backend/src/modules/performance-intelligence/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/server.ts"
+      - "backend/src/workers/all-workers.ts"
+      - "src/components/performance-hub/**"
+      - "src/pages/PerformanceHub.tsx"
+      - "src/types/performanceHub.ts"
+      - "src/types/performanceIngestion.ts"
+      - "src/types/performanceAudit.ts"
+      - "docs/performance-ingestion-platform.md"
+      - "docs/performance-scheduled-sync.md"
+      - "docs/performance-governance-audit.md"
+      - ".github/workflows/performance-platform-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Typecheck, tests and builds
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Performance platform tests
+        run: >-
+          npm --prefix backend exec -- vitest run
+          src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
+          src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-scheduler.service.test.ts
+          src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
+          src/modules/performance-intelligence/__tests__/performance-intelligence.service.test.ts
+
+      - name: Authentication security contract
+        run: npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts
+
+      - name: Document vault security contract
+        run: npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts
+
+      - name: Migration governance contract
+        run: npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts
+
+      - name: Database connection reliability contract
+        run: npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts
+
+      - name: Worker safety contract
+        run: npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts
+
+      - name: Backend build
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Frontend typecheck
+        run: npm run typecheck
+
+      - name: Frontend production build
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://example.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-build' }}

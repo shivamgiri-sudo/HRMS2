@@ -1,24 +1,11 @@
 import type { DashboardScope } from "../../shared/dashboardScope.js";
 
-export const PERFORMANCE_METRIC_CODES = [
-  "CALLS",
-  "AHT",
-  "ADHERENCE",
-  "UTILIZATION",
-  "QUALITY_SCORE",
-  "FATAL_RATE",
-  "CONVERSION_RATE",
-  "SALES_COUNT",
-  "REVENUE",
-  "AOV",
-  "COD_SHARE",
-  "RTO_RATE",
-] as const;
-
-export type PerformanceMetricCode = (typeof PERFORMANCE_METRIC_CODES)[number];
+export type PerformanceMetricCode = string;
 export type PerformanceDirection = "higher_is_better" | "lower_is_better";
 export type CalculationStatus = "verified" | "legacy_unverified" | "missing";
 export type MetricStatus = "on_track" | "watch" | "off_track" | "no_target" | "missing";
+export type MetricUnit = "count" | "seconds" | "percent" | "currency" | string;
+export type AggregationMethod = "sum" | "average" | "ratio" | "latest" | string;
 
 export interface PerformanceQuery {
   from: string;
@@ -30,6 +17,11 @@ export interface PerformanceQuery {
   pageSize: number;
 }
 
+export interface PerformanceFilterOption {
+  id: string;
+  label: string;
+}
+
 export interface PerformanceContext {
   effectiveRole: string;
   scopeLevel: DashboardScope["level"];
@@ -39,17 +31,26 @@ export interface PerformanceContext {
   canSelectProcess: boolean;
   effectiveBranchIds: string[];
   effectiveProcessIds: string[];
+  branchOptions: PerformanceFilterOption[];
+  processOptions: PerformanceFilterOption[];
   subjectEmployeeId: string | null;
 }
 
 export interface MetricFact {
   employeeId: string;
   metricCode: PerformanceMetricCode;
+  metricName: string;
+  unit: MetricUnit;
+  aggregationMethod: AggregationMethod;
+  decimalPlaces: number;
+  displayOrder: number;
   scoreDate: string;
   actualValue: number | null;
   numeratorValue: number | null;
   denominatorValue: number | null;
   targetValue: number | null;
+  weightage: number;
+  maxAchievementPct: number;
   direction: PerformanceDirection;
   sourceSystem: string | null;
   sourceRecordCount: number | null;
@@ -60,9 +61,11 @@ export interface MetricFact {
 export interface PerformanceMetricResult {
   metricCode: PerformanceMetricCode;
   label: string;
-  unit: "count" | "seconds" | "percent" | "currency";
+  unit: MetricUnit;
   value: number | null;
   target: number | null;
+  weightage: number;
+  displayOrder: number;
   achievementPct: number | null;
   status: MetricStatus;
   calculationStatus: CalculationStatus;
@@ -96,6 +99,10 @@ export interface PaginatedPeople {
 export interface PerformanceRepository {
   findSubjectEmployeeId(userId: string): Promise<string | null>;
   canAccessEmployee(scope: DashboardScope, employeeId: string): Promise<boolean>;
+  listFilterOptions(scope: DashboardScope): Promise<{
+    branches: PerformanceFilterOption[];
+    processes: PerformanceFilterOption[];
+  }>;
   listMetricFacts(
     scope: DashboardScope,
     query: PerformanceQuery,

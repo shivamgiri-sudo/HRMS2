@@ -4,9 +4,12 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { EnterprisePageShell } from "@/components/enterprise/EnterprisePageShell";
 import { ErrorState } from "@/components/enterprise/ErrorState";
 import { Button } from "@/components/ui/button";
+import { PerformanceDataSourceAdmin } from "@/components/performance-hub/PerformanceDataSourceAdmin";
+import { PerformanceGovernanceAuditAdmin } from "@/components/performance-hub/PerformanceGovernanceAuditAdmin";
 import { PerformanceMetricGrid } from "@/components/performance-hub/PerformanceMetricGrid";
 import { PerformanceRoleLens } from "@/components/performance-hub/PerformanceRoleLens";
 import { PerformancePeopleTable } from "@/components/performance-hub/PerformancePeopleTable";
+import { PerformanceScheduleAdmin } from "@/components/performance-hub/PerformanceScheduleAdmin";
 import { PerformanceScopeBar } from "@/components/performance-hub/PerformanceScopeBar";
 import { PerformanceTrendPanel } from "@/components/performance-hub/PerformanceTrendPanel";
 import {
@@ -70,7 +73,7 @@ export default function PerformanceHub() {
       <EnterprisePageShell
         eyebrow="Performance Intelligence"
         title="Performance Hub"
-        description="One trusted scorecard for your role, calculated from approved operational, quality, WFM, and sales facts."
+        description="One trusted scorecard for your role, calculated from approved operational, quality, WFM, sales, database, Sheet, and uploaded performance facts."
         actions={(
           <Button variant="outline" className="h-11 rounded-[var(--r-md)]" onClick={retryAll}>
             <RefreshCcw className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -87,14 +90,33 @@ export default function PerformanceHub() {
         ) : contextQuery.data ? (
           <>
             <PerformanceRoleLens context={contextQuery.data} />
+            <PerformanceDataSourceAdmin context={contextQuery.data} />
+            <PerformanceScheduleAdmin context={contextQuery.data} />
+            <PerformanceGovernanceAuditAdmin context={contextQuery.data} />
 
             <PerformanceScopeBar
               context={contextQuery.data}
               from={filters.from}
               to={filters.to}
+              branchId={filters.branchId}
+              processId={filters.processId}
               latestComputedAt={latestComputedAt}
               onPeriodChange={(field, value) => {
                 setFilters((current) => ({ ...current, [field]: value, page: 1 }));
+              }}
+              onScopeChange={(field, value) => {
+                setFilters((current) => field === "branchId"
+                  ? {
+                      ...current,
+                      branchId: value || undefined,
+                      processId: undefined,
+                      page: 1,
+                    }
+                  : {
+                      ...current,
+                      processId: value || undefined,
+                      page: 1,
+                    });
               }}
             />
 
@@ -124,7 +146,7 @@ export default function PerformanceHub() {
                 </div>
                 <h2 className="mt-4 text-base font-semibold text-[var(--text-primary)]">How to read this scorecard</h2>
                 <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                  Verified metrics use stored numerator and denominator values from an approved formula version. Legacy values remain visible but are clearly marked until their source lineage is reconciled.
+                  Verified metrics use stored numerator and denominator values from an approved formula version. Overall achievement uses the process-specific metric weightage. Legacy values remain visible but are clearly marked until their source lineage is reconciled.
                 </p>
               </section>
             </div>

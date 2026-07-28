@@ -5,9 +5,8 @@ import {
   type DashboardScope,
 } from "../../shared/dashboardScope.js";
 import {
-  PERFORMANCE_METRIC_CODES,
   type MetricFact,
-  type PerformanceMetricCode,
+  type PerformanceDirection,
   type PerformancePersonRow,
   type PerformanceQuery,
   type PerformanceRepository,
@@ -15,13 +14,20 @@ import {
 
 type MetricFactRow = RowDataPacket & {
   employee_id: string;
-  metric_code: PerformanceMetricCode;
+  metric_code: string;
+  metric_name: string;
+  unit: string;
+  aggregation_method: string;
+  decimal_places: number | string | null;
+  display_order: number | string | null;
   score_date: string;
   actual_value: number | string | null;
   numerator_value: number | string | null;
   denominator_value: number | string | null;
   target_value: number | string | null;
-  direction: "higher_is_better" | "lower_is_better";
+  weightage: number | string | null;
+  max_achievement_pct: number | string | null;
+  direction: PerformanceDirection;
   source_system: string | null;
   source_record_count: number | string | null;
   formula_version: string | null;
@@ -34,6 +40,10 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+function numberOr(value: unknown, fallback: number): number {
+  return numberOrNull(value) ?? fallback;
+}
+
 function toIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
@@ -42,12 +52,19 @@ function toIso(value: Date | string): string {
 function mapFact(row: MetricFactRow): MetricFact {
   return {
     employeeId: String(row.employee_id),
-    metricCode: row.metric_code,
+    metricCode: String(row.metric_code),
+    metricName: String(row.metric_name ?? row.metric_code),
+    unit: String(row.unit ?? "count"),
+    aggregationMethod: String(row.aggregation_method ?? "average"),
+    decimalPlaces: Math.max(0, Math.min(6, Math.trunc(numberOr(row.decimal_places, 2)))),
+    displayOrder: Math.trunc(numberOr(row.display_order, 100)),
     scoreDate: String(row.score_date),
     actualValue: numberOrNull(row.actual_value),
     numeratorValue: numberOrNull(row.numerator_value),
     denominatorValue: numberOrNull(row.denominator_value),
     targetValue: numberOrNull(row.target_value),
+    weightage: Math.max(0, numberOr(row.weightage, 100)),
+    maxAchievementPct: Math.max(0, numberOr(row.max_achievement_pct, 120)),
     direction: row.direction,
     sourceSystem: row.source_system ? String(row.source_system) : null,
     sourceRecordCount: numberOrNull(row.source_record_count),
@@ -55,11 +72,6 @@ function mapFact(row: MetricFactRow): MetricFact {
     computedAt: toIso(row.computed_at),
   };
 }
-
-const DATABASE_METRIC_CODES = PERFORMANCE_METRIC_CODES.map((code) =>
-  code === "CALLS" ? "DIALS" : code
-);
-const metricPlaceholders = DATABASE_METRIC_CODES.map(() => "?").join(", ");
 
 async function listFacts(
   scope: DashboardScope,
@@ -73,13 +85,11 @@ async function listFacts(
     "e.active_status = 1",
     scoped.sql,
     "kda.score_date BETWEEN ? AND ?",
-    `kmm.metric_code IN (${metricPlaceholders})`,
   ];
   const params: unknown[] = [
     ...scoped.params,
     query.from,
     query.to,
-    ...DATABASE_METRIC_CODES,
   ];
 
   if (employeeIds) {
@@ -91,11 +101,18 @@ async function listFacts(
     `SELECT
        e.id AS employee_id,
        CASE WHEN kmm.metric_code = 'DIALS' THEN 'CALLS' ELSE kmm.metric_code END AS metric_code,
+       kmm.metric_name,
+       kmm.unit,
+       COALESCE(kmm.aggregation_method, 'average') AS aggregation_method,
+       COALESCE(kmm.decimal_places, 2) AS decimal_places,
+       COALESCE(kmm.display_order, 100) AS display_order,
        DATE_FORMAT(kda.score_date, '%Y-%m-%d') AS score_date,
        kda.actual_value,
        kda.numerator_value,
        kda.denominator_value,
-       ker.target_value,
+       COALESCE(ker.target_value, kpc.target_value) AS target_value,
+       COALESCE(kpc.weightage, 100) AS weightage,
+       COALESCE(kmm.max_achievement_pct, 120) AS max_achievement_pct,
        kmm.direction,
        COALESCE(kda.source_system, CAST(kda.source AS CHAR)) AS source_system,
        kda.source_record_count,
@@ -113,12 +130,14 @@ async function listFacts(
      LEFT JOIN kpi_employee_resolved ker
        ON ker.employee_id = e.id
       AND ker.metric_id = kda.metric_id
+     LEFT JOIN kpi_process_config kpc
+       ON kpc.process_id = COALESCE(kda.process_id_at_event, e.process_id)
+      AND kpc.metric_id = kda.metric_id
      LEFT JOIN kpi_formula_version kfv
        ON kfv.id = kda.formula_version_id
       AND kfv.status = 'active'
-
      WHERE ${conditions.join(" AND ")}
-     ORDER BY kda.score_date ASC, e.id ASC, kmm.metric_code ASC`,
+     ORDER BY kmm.display_order ASC, kda.score_date ASC, e.id ASC, kmm.metric_code ASC`,
     params,
   );
 
@@ -153,6 +172,34 @@ export const performanceIntelligenceRepository: PerformanceRepository = {
     return rows.length > 0;
   },
 
+  async listFilterOptions(scope) {
+    const scoped = buildScopeWhereEmployees(scope, "e");
+    const [[branchRows], [processRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT bm.id, bm.branch_name AS label
+           FROM employees e
+           JOIN branch_master bm ON bm.id = e.branch_id AND bm.active_status = 1
+          WHERE e.active_status = 1
+            AND ${scoped.sql}
+          ORDER BY bm.branch_name ASC`,
+        [...scoped.params],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT pm.id, pm.process_name AS label
+           FROM employees e
+           JOIN process_master pm ON pm.id = e.process_id AND pm.active_status = 1
+          WHERE e.active_status = 1
+            AND ${scoped.sql}
+          ORDER BY pm.process_name ASC`,
+        [...scoped.params],
+      ),
+    ]);
+    return {
+      branches: branchRows.map((row) => ({ id: String(row.id), label: String(row.label) })),
+      processes: processRows.map((row) => ({ id: String(row.id), label: String(row.label) })),
+    };
+  },
+
   async listMetricFacts(scope, query, subjectEmployeeId) {
     return listFacts(
       scope,
@@ -171,10 +218,6 @@ export const performanceIntelligenceRepository: PerformanceRepository = {
 
   async listPeople(scope, query) {
     const scoped = buildScopeWhereEmployees(scope, "e");
-    // MariaDB variants used in production can reject LIMIT/OFFSET as prepared
-    // statement parameters. These values are already validated/coerced by
-    // parsePerformanceQuery, so inline bounded integers while keeping all
-    // data-bearing filters parameterized.
     const pageSize = Math.max(1, Math.min(100, Math.trunc(query.pageSize)));
     const offset = Math.max(0, (Math.max(1, Math.trunc(query.page)) - 1) * pageSize);
     const conditions = ["e.active_status = 1", scoped.sql];

@@ -19,6 +19,7 @@ import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from ".
 import { startITProvisioningLockScheduler, stopITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
 import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./employee-lifecycle.worker.js";
 import { startPayrollWindowClosureScheduler, stopPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
+import { startPerformanceIngestionScheduler } from "../modules/performance-ingestion/performance-scheduler.service.js";
 import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
 import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
@@ -26,6 +27,7 @@ import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
+import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
@@ -71,6 +73,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "payroll-window-closure",
     start: () => { startPayrollWindowClosureScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: "performance-ingestion",
+    start: () => { startPerformanceIngestionScheduler(); return Promise.resolve(); },
   },
   {
     name: "payroll-nightly-recalc",
@@ -181,6 +187,7 @@ function shutdown(): void {
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
+  clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);
 }

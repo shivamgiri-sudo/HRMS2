@@ -9,15 +9,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { PerformanceMetricCode, PerformancePeople } from "@/types/performanceHub";
+import type { PerformanceMetric, PerformancePeople } from "@/types/performanceHub";
 
-function metricValue(
-  metrics: PerformancePeople["rows"][number]["metrics"],
-  code: PerformanceMetricCode,
-): string {
+function metricValue(metrics: PerformanceMetric[], code: string): string {
   const metric = metrics.find((item) => item.metricCode === code);
   if (!metric || metric.value === null) return "—";
-  return `${metric.value.toLocaleString("en-IN")}${metric.unit === "percent" ? "%" : ""}`;
+  if (metric.unit === "percent") return `${metric.value.toLocaleString("en-IN")}%`;
+  if (metric.unit === "seconds") return `${metric.value.toLocaleString("en-IN")} sec`;
+  if (metric.unit === "currency") return `₹${metric.value.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  return metric.value.toLocaleString("en-IN");
+}
+
+function visibleMetrics(people: PerformancePeople): PerformanceMetric[] {
+  const catalog = new Map<string, PerformanceMetric>();
+  for (const person of people.rows) {
+    for (const metric of person.metrics) {
+      if (!catalog.has(metric.metricCode)) catalog.set(metric.metricCode, metric);
+    }
+  }
+  return [...catalog.values()]
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.label.localeCompare(right.label))
+    .slice(0, 5);
 }
 
 export function PerformancePeopleTable({
@@ -47,6 +59,8 @@ export function PerformancePeopleTable({
     );
   }
 
+  const metrics = visibleMetrics(people);
+
   return (
     <section className="overflow-hidden rounded-[var(--r-lg)] border border-[var(--border-hairline)] bg-[var(--surface-0)] shadow-[var(--shadow-xs)]">
       <div className="border-b border-[var(--border-hairline)] px-4 py-4">
@@ -55,16 +69,13 @@ export function PerformancePeopleTable({
           {people.total.toLocaleString("en-IN")} active employees in your authorised scope
         </p>
       </div>
-      <div className="hidden md:block">
+      <div className="hidden overflow-x-auto md:block">
         <Table aria-label="Team performance">
           <TableHeader>
             <TableRow>
               <TableHead>Employee</TableHead>
               <TableHead>Process</TableHead>
-              <TableHead>Calls</TableHead>
-              <TableHead>AHT</TableHead>
-              <TableHead>Quality</TableHead>
-              <TableHead>Conversion</TableHead>
+              {metrics.map((metric) => <TableHead key={metric.metricCode}>{metric.label}</TableHead>)}
               <TableHead>Achievement</TableHead>
             </TableRow>
           </TableHeader>
@@ -79,10 +90,11 @@ export function PerformancePeopleTable({
                   <p>{person.processName ?? "—"}</p>
                   <p className="text-xs text-[var(--text-muted)]">{person.branchName ?? "—"}</p>
                 </TableCell>
-                <TableCell>{metricValue(person.metrics, "CALLS")}</TableCell>
-                <TableCell>{metricValue(person.metrics, "AHT")}</TableCell>
-                <TableCell>{metricValue(person.metrics, "QUALITY_SCORE")}</TableCell>
-                <TableCell>{metricValue(person.metrics, "CONVERSION_RATE")}</TableCell>
+                {metrics.map((metric) => (
+                  <TableCell key={metric.metricCode} className="tabular-nums">
+                    {metricValue(person.metrics, metric.metricCode)}
+                  </TableCell>
+                ))}
                 <TableCell className="font-semibold tabular-nums">
                   {person.overallAchievementPct === null
                     ? "—"
@@ -108,8 +120,12 @@ export function PerformancePeopleTable({
               </span>
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <div><dt className="text-[var(--text-muted)]">Calls</dt><dd>{metricValue(person.metrics, "CALLS")}</dd></div>
-              <div><dt className="text-[var(--text-muted)]">Quality</dt><dd>{metricValue(person.metrics, "QUALITY_SCORE")}</dd></div>
+              {metrics.slice(0, 4).map((metric) => (
+                <div key={metric.metricCode}>
+                  <dt className="text-[var(--text-muted)]">{metric.label}</dt>
+                  <dd>{metricValue(person.metrics, metric.metricCode)}</dd>
+                </div>
+              ))}
             </dl>
           </article>
         ))}
