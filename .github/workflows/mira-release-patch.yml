@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: mira-release-corrections
+  cancel-in-progress: true
+
 jobs:
   patch:
     name: Apply verified release corrections
@@ -31,15 +35,17 @@ jobs:
 
           pending_old = r"/\bwhat do i need to do\b/i] },"
           pending_new = r"/\bwhat do i need to do\b/i, /\bactions? (?:are )?pending (?:from|for) my side\b/i] },"
-          if pending_old not in service:
-              raise SystemExit('pending action intent anchor not found')
-          service = service.replace(pending_old, pending_new, 1)
+          if pending_new not in service:
+              if pending_old not in service:
+                  raise SystemExit('pending action intent anchor not found')
+              service = service.replace(pending_old, pending_new, 1)
 
           scope_old = r"  /\bwhich employees?\b/i,"
-          scope_new = scope_old + "\n" + r"  /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement)\b/i,"
-          if scope_old not in service:
-              raise SystemExit('scope pattern anchor not found')
-          service = service.replace(scope_old, scope_new, 1)
+          scope_line = r"  /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement)\b/i,"
+          if scope_line not in service:
+              if scope_old not in service:
+                  raise SystemExit('scope pattern anchor not found')
+              service = service.replace(scope_old, scope_old + "\n" + scope_line, 1)
           service_path.write_text(service)
 
           migration_path = Path('backend/sql/424_employee_reimbursement_claim.sql')
@@ -102,7 +108,7 @@ SELECT 'Migration 424 applied: employee reimbursement claim schema ready' AS sta
       - name: Verify patch anchors
         run: |
           grep -F "actions? (?:are )?pending" backend/src/modules/ai/ai-account.service.ts
-          grep -F "whose\\s+" backend/src/modules/ai/ai-account.service.ts
+          grep -F "whose\s+" backend/src/modules/ai/ai-account.service.ts
           grep -F '"424_employee_reimbursement_claim.sql"' backend/src/db/runPendingMigrations.ts
           grep -F 'SOURCE sql/424_employee_reimbursement_claim.sql;' backend/sql/000_run_all.sql
           grep -F 'CREATE TABLE IF NOT EXISTS employee_reimbursement_claim' backend/sql/424_employee_reimbursement_claim.sql
@@ -116,5 +122,9 @@ SELECT 'Migration 424 applied: employee reimbursement claim schema ready' AS sta
                   backend/sql/000_run_all.sql \
                   backend/src/db/runPendingMigrations.ts
           git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "Release corrections already applied"
+            exit 0
+          fi
           git commit -m "fix(ai): close Mira release verification gaps"
           git push origin HEAD:agent/mira-secure-voice-assistant
