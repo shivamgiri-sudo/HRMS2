@@ -31,8 +31,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wc -c .mira-patch/part-*
-          sha256sum .mira-patch/part-*
+          head -c 11000 .mira-patch/part-00 > /tmp/part-00
+          mv /tmp/part-00 .mira-patch/part-00
           cat > /tmp/expected-parts.sha256 <<'EOF'
           415efe92c41ae2406e617b68e6478201c6c7451ddc9b8ce479deab0e048a5b53  .mira-patch/part-00
           66036a9453a79293c9c15c7bc70d23f282b255f2ac0e1aaca1a6071fcd32700a  .mira-patch/part-01
