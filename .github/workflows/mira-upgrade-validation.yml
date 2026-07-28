@@ -1,5 +1,6 @@
 name: Mira Live Grounding Validation
 
+# Permanent read-only release gate for Mira grounding, OpenRouter and Indian voice support.
 on:
   pull_request:
     branches: [main]
