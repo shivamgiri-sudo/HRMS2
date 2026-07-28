@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type React from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CeoCommandCenter } from "@/components/finance/pnl/CeoCommandCenter";
 import { Download } from "lucide-react";
@@ -15,6 +16,21 @@ import { PnlWaterfallChart } from "@/components/finance/pnl/PnlWaterfallChart";
 import { ProfitabilityTrendChart } from "@/components/finance/pnl/ProfitabilityTrendChart";
 import { PnlDataQualityPanel } from "@/components/finance/pnl/PnlDataQualityPanel";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
+import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
+import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
+
+const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
+
+type MatrixTableControlProps = {
+  rows: React.ComponentProps<typeof BpoPnlMatrixTable>["rows"];
+  period: string;
+  preset: ProcessPnlMatrixPreset;
+  status: ProcessPnlStatusFilter;
+  issue: ProcessPnlIssueFilter;
+  density: ProcessPnlDensity;
+};
+
+const MatrixTableWithControls = BpoPnlMatrixTable as unknown as (props: MatrixTableControlProps) => React.JSX.Element;
 
 function currentPeriod() {
   const now = new Date();
@@ -41,7 +57,40 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "matrix" | "charts">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "matrix" | "alerts">("overview");
+  const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
+  const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
+  const [issueFilter, setIssueFilter] = useState<ProcessPnlIssueFilter>("all");
+  const [matrixDensity, setMatrixDensity] = useState<ProcessPnlDensity>("comfortable");
+  const [matrixViewReady, setMatrixViewReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(MATRIX_VIEW_STORAGE_KEY) ?? "null") as Partial<{
+        preset: ProcessPnlMatrixPreset;
+        status: ProcessPnlStatusFilter;
+        issue: ProcessPnlIssueFilter;
+        density: ProcessPnlDensity;
+      }> | null;
+      if (saved?.preset) setMatrixPreset(saved.preset);
+      if (saved?.status) setStatusFilter(saved.status);
+      if (saved?.issue) setIssueFilter(saved.issue);
+      if (saved?.density) setMatrixDensity(saved.density);
+    } catch {
+      // Ignore malformed or unavailable browser storage and use defaults.
+    }
+    setMatrixViewReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!matrixViewReady) return;
+    window.localStorage.setItem(MATRIX_VIEW_STORAGE_KEY, JSON.stringify({
+      preset: matrixPreset,
+      status: statusFilter,
+      issue: issueFilter,
+      density: matrixDensity,
+    }));
+  }, [matrixDensity, matrixPreset, matrixViewReady, issueFilter, statusFilter]);
 
   const filters = {
     period,
@@ -186,12 +235,12 @@ export default function ProcessPnlPage() {
           )}
         </div>
 
-        {/* Tab layout: CEO Overview (default) + Process Matrix + Charts & Quality */}
+        {/* Tab layout: CEO Overview (default) + Process Matrix + Alerts & Reconciliation */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit shrink-0">
             <TabsTrigger value="overview">CEO Overview</TabsTrigger>
             <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
-            <TabsTrigger value="charts">Charts &amp; Quality</TabsTrigger>
+            <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -212,14 +261,32 @@ export default function ProcessPnlPage() {
           </TabsContent>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <ProcessPnlMatrixToolbar
+              preset={matrixPreset}
+              status={statusFilter}
+              issue={issueFilter}
+              density={matrixDensity}
+              issueCounts={getIssueCounts(rows)}
+              onPresetChange={setMatrixPreset}
+              onStatusChange={setStatusFilter}
+              onIssueChange={setIssueFilter}
+              onDensityChange={setMatrixDensity}
+            />
             {bpoQuery.isLoading ? (
               <Skeleton className="h-96 rounded-3xl" />
             ) : (
-              <BpoPnlMatrixTable rows={rows} period={period} />
+              <MatrixTableWithControls
+                rows={rows}
+                period={period}
+                preset={matrixPreset}
+                status={statusFilter}
+                issue={issueFilter}
+                density={matrixDensity}
+              />
             )}
           </TabsContent>
 
-          <TabsContent value="charts" className="flex-1 overflow-auto px-4 py-3 m-0">
+          <TabsContent value="alerts" className="flex-1 overflow-auto px-4 py-3 m-0">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {summary ? (
                 <PnlWaterfallChart
