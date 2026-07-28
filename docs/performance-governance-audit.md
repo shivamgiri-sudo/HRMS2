@@ -2,6 +2,10 @@
 
 The Performance Hub source-administration workflow uses fail-closed governance controls in addition to ingestion-run lineage.
 
+## Review baseline
+
+Before staging review, the feature branch must include the current `main` history, contain no unrelated file changes, and pass the permanent Performance Platform validation workflow on its final head. This protects recent HRMS reporting, ATS, notification, worker, and deployment fixes from being overwritten during integration.
+
 ## Immutable dataset keys
 
 A dataset key becomes immutable after creation. The key is referenced by employee identity mappings, process mappings, mapping exceptions, source lineage, reconciliation evidence, and audit records. Renaming it would orphan historical links, so the backend rejects the change and the editor disables the field for existing datasets.
