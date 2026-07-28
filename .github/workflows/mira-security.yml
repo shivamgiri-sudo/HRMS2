@@ -50,7 +50,8 @@ jobs:
         run: npm --prefix backend ci
 
       - name: Run Mira privacy contract tests
-        run: npm --prefix backend exec -- vitest run src/modules/ai/ai-mira-security.test.ts
+        working-directory: backend
+        run: npx vitest run src/modules/ai/ai-mira-security.test.ts
 
       - name: Frontend typecheck
         run: npm run typecheck
