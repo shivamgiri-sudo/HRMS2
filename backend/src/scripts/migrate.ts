@@ -16,7 +16,10 @@
  */
 
 import { runPendingMigrations, getMigrationHealth, verifySchemaVersion } from "../db/runPendingMigrations.js";
-import { runFinanceSupplementalMigrations } from "../db/runFinanceSupplementalMigrations.js";
+import {
+  runFinanceSupplementalMigrations,
+  verifyFinanceSupplementalMigrations,
+} from "../db/runFinanceSupplementalMigrations.js";
 import { runFinanceSchemaHardeningMigrations } from "../db/runFinanceSchemaHardeningMigrations.js";
 
 const args = process.argv.slice(2);
@@ -30,18 +33,26 @@ async function main() {
 
   if (showStatus) {
     console.log("\nChecking migration status...\n");
-    const status = await verifySchemaVersion();
-    console.log(`Applied migrations: ${status.appliedCount}`);
-    console.log(`Pending migrations: ${status.pendingCount}`);
-    if (status.pendingFiles.length > 0) {
+    const [status, supplemental] = await Promise.all([
+      verifySchemaVersion(),
+      verifyFinanceSupplementalMigrations(),
+    ]);
+    const pendingFiles = Array.from(new Set([
+      ...status.pendingFiles,
+      ...supplemental.pendingFiles,
+    ]));
+    const valid = status.valid && supplemental.valid;
+
+    console.log(`Main migrations applied: ${status.appliedCount}`);
+    console.log(`Main migrations pending: ${status.pendingCount}`);
+    console.log(`Supplemental migrations applied: ${supplemental.appliedCount}`);
+    console.log(`Supplemental migrations pending: ${supplemental.pendingCount}`);
+    if (pendingFiles.length > 0) {
       console.log("\nPending files:");
-      status.pendingFiles.forEach((f, i) => console.log(`  ${i + 1}. ${f}`));
-      if (status.pendingCount > status.pendingFiles.length) {
-        console.log(`  ... and ${status.pendingCount - status.pendingFiles.length} more`);
-      }
+      pendingFiles.forEach((file, index) => console.log(`  ${index + 1}. ${file}`));
     }
-    console.log(`\nSchema valid: ${status.valid ? "YES" : "NO"}`);
-    process.exit(status.valid ? 0 : 1);
+    console.log(`\nSchema valid: ${valid ? "YES" : "NO"}`);
+    process.exit(valid ? 0 : 1);
   }
 
   if (forceRun) {
@@ -51,10 +62,7 @@ async function main() {
   console.log("\nRunning migrations...\n");
 
   try {
-    // Run main migrations
-    const health = await runPendingMigrations();
-
-    // Run supplemental migrations
+    await runPendingMigrations();
     await runFinanceSupplementalMigrations();
     await runFinanceSchemaHardeningMigrations();
 
@@ -72,13 +80,18 @@ async function main() {
 
     if (finalHealth.applied.length > 0) {
       console.log("\nNewly applied migrations:");
-      finalHealth.applied.forEach((f) => console.log(`  + ${f}`));
+      finalHealth.applied.forEach((file) => console.log(`  + ${file}`));
     }
 
     if (finalHealth.failed.length > 0) {
       console.log("\nFailed migrations:");
-      finalHealth.failed.forEach((f) => console.log(`  X ${f.filename}: ${f.error}`));
+      finalHealth.failed.forEach((failure) => console.log(`  X ${failure.filename}: ${failure.error}`));
       process.exit(1);
+    }
+
+    const supplemental = await verifyFinanceSupplementalMigrations();
+    if (!supplemental.valid) {
+      throw new Error(`Supplemental migrations remain pending: ${supplemental.pendingFiles.join(", ")}`);
     }
 
     console.log("\nMigrations completed successfully.");

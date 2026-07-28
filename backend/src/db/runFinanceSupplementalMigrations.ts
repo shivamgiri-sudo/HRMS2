@@ -15,7 +15,7 @@ const SQL_DIR =
   SQL_DIR_CANDIDATES.find((candidate) => fs.existsSync(candidate))
   ?? SQL_DIR_CANDIDATES[0];
 
-const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
+export const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "412_finance_expense_head_master.sql",
   "413_vendor_payment_transaction_ledger.sql",
   "414_finance_grn_sequence.sql",
@@ -24,12 +24,18 @@ const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "417_budget_subhead_coverage_control.sql",
   "418_grn_allocation_pnl_attribution.sql",
   "419_grn_validation_override_control.sql",
+  "424_employee_reimbursement_claim.sql",
 ] as const;
 
-export async function runFinanceSupplementalMigrations() {
-  if (process.env.SKIP_MIGRATIONS === "true") return;
+export type SupplementalMigrationStatus = {
+  valid: boolean;
+  appliedCount: number;
+  pendingCount: number;
+  pendingFiles: string[];
+};
 
-  const connectionConfig = {
+function connectionConfig() {
+  return {
     host: env.DB_HOST,
     port: env.DB_PORT,
     user: env.DB_USER,
@@ -37,8 +43,49 @@ export async function runFinanceSupplementalMigrations() {
     database: env.DB_NAME,
     multipleStatements: false,
   };
+}
 
-  const trackingConnection = await mysql.createConnection(connectionConfig);
+export async function verifyFinanceSupplementalMigrations(): Promise<SupplementalMigrationStatus> {
+  const connection = await mysql.createConnection(connectionConfig());
+  try {
+    const [tables] = await connection.query<RowDataPacket[]>(
+      `SELECT TABLE_NAME
+         FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
+      [env.DB_NAME],
+    );
+
+    if (!tables.length) {
+      return {
+        valid: false,
+        appliedCount: 0,
+        pendingCount: FINANCE_SUPPLEMENTAL_MIGRATIONS.length,
+        pendingFiles: [...FINANCE_SUPPLEMENTAL_MIGRATIONS],
+      };
+    }
+
+    const [rows] = await connection.query<RowDataPacket[]>(
+      "SELECT filename FROM schema_migrations",
+    );
+    const applied = new Set(rows.map((row) => String(row.filename ?? "")));
+    const pendingFiles = FINANCE_SUPPLEMENTAL_MIGRATIONS.filter((filename) => !applied.has(filename));
+
+    return {
+      valid: pendingFiles.length === 0,
+      appliedCount: FINANCE_SUPPLEMENTAL_MIGRATIONS.length - pendingFiles.length,
+      pendingCount: pendingFiles.length,
+      pendingFiles: [...pendingFiles],
+    };
+  } finally {
+    await connection.end();
+  }
+}
+
+export async function runFinanceSupplementalMigrations() {
+  if (process.env.SKIP_MIGRATIONS === "true") return;
+
+  const config = connectionConfig();
+  const trackingConnection = await mysql.createConnection(config);
   try {
     await trackingConnection.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -56,7 +103,7 @@ export async function runFinanceSupplementalMigrations() {
       throw new Error(`Required finance migration is missing: ${filename}`);
     }
 
-    const statusConnection = await mysql.createConnection(connectionConfig);
+    const statusConnection = await mysql.createConnection(config);
     let alreadyApplied = false;
     try {
       const [rows] = await statusConnection.query<RowDataPacket[]>(
@@ -72,7 +119,7 @@ export async function runFinanceSupplementalMigrations() {
       continue;
     }
 
-    const migrationConnection = await mysql.createConnection(connectionConfig);
+    const migrationConnection = await mysql.createConnection(config);
     try {
       const rawSql = fs.readFileSync(filePath, "utf8");
       const statements = splitSql(rawSql).filter((statement) => {

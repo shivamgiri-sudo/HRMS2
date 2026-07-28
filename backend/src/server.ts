@@ -3,7 +3,10 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { db } from "./db/mysql.js";
 import { runFinanceSchemaHardeningMigrations } from "./db/runFinanceSchemaHardeningMigrations.js";
-import { runFinanceSupplementalMigrations } from "./db/runFinanceSupplementalMigrations.js";
+import {
+  runFinanceSupplementalMigrations,
+  verifyFinanceSupplementalMigrations,
+} from "./db/runFinanceSupplementalMigrations.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
 
 // MIGRATION GOVERNANCE: When enabled, API startup only verifies schema version
@@ -81,7 +84,6 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
     // Stop legacy sync worker
     legacySyncWorker.stop();
-
     console.log("[shutdown] Schedulers and workers stopped");
   } catch (error) {
     console.error("[shutdown] Error stopping workers:", error);
@@ -212,15 +214,23 @@ async function initializeRuntime() {
 
 async function handleMigrations(): Promise<void> {
   if (MIGRATIONS_VERIFY_ONLY) {
-    // GOVERNANCE: Verify schema version without running migrations
+    // GOVERNANCE: Verify every startup-managed migration set without modifying schema.
     console.log("[startup] MIGRATIONS_VERIFY_ONLY=true - verifying schema version...");
-    const schemaStatus = await verifySchemaVersion();
+    const [schemaStatus, supplementalStatus] = await Promise.all([
+      verifySchemaVersion(),
+      verifyFinanceSupplementalMigrations(),
+    ]);
+    const pendingFiles = Array.from(new Set([
+      ...schemaStatus.pendingFiles,
+      ...supplementalStatus.pendingFiles,
+    ]));
+    const valid = schemaStatus.valid && supplementalStatus.valid;
 
-    if (!schemaStatus.valid) {
+    if (!valid) {
       const message =
-        `Schema validation failed: ${schemaStatus.pendingCount} pending migrations. ` +
+        `Schema validation failed: ${pendingFiles.length} pending migrations. ` +
         `Run 'npm run migrate' before starting the API. ` +
-        `Pending: ${schemaStatus.pendingFiles.join(", ")}${schemaStatus.pendingCount > 10 ? "..." : ""}`;
+        `Pending: ${pendingFiles.join(", ")}${pendingFiles.length > 10 ? "..." : ""}`;
 
       if (env.NODE_ENV === "production") {
         throw new Error(message);
@@ -228,7 +238,10 @@ async function handleMigrations(): Promise<void> {
       console.warn(`[startup] ${message}`);
       console.warn("[startup] development mode: continuing with incomplete schema.");
     } else {
-      console.log(`[startup] schema verified: ${schemaStatus.appliedCount} migrations applied`);
+      console.log(
+        `[startup] schema verified: ${schemaStatus.appliedCount} main and ` +
+        `${supplementalStatus.appliedCount} supplemental migrations applied`
+      );
     }
     return;
   }

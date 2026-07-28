@@ -9,6 +9,7 @@ import type { Response } from 'express';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { apiError, apiSuccess } from '../../shared/apiResponse.js';
+import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import { aiProviderRegistry } from './ai-provider.registry.js';
 import { aiProviderConfigService } from './ai-provider-config.service.js';
 import { aiSafetyService } from './ai-safety.service.js';
@@ -16,14 +17,34 @@ import { aiAuditService } from './ai-audit.service.js';
 import { checkAndIncrement } from './ai-rate-limiter.js';
 import { validateQuestion, validateContextType, validateEntityId } from './ai-input-guard.js';
 import type { AiGenerateRequest } from './ai-provider.types.js';
-import { detectAndEnrich } from './ai-intent.service.js';
-import type { Pool } from 'mysql2/promise';
-import { db } from '../../db/mysql.js';
+import {
+  answerSelfAccountQuestion,
+  getMiraSuggestedPrompts,
+  MIRA_NAME,
+  MIRA_TAGLINE,
+} from './ai-account.service.js';
+import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
 export const aiInsightsRouter = Router();
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) => fn(req, res).catch(next);
+
+function getRoleKeys(req: AuthenticatedRequest): string[] {
+  const raw = [
+    ...(req.userRoles ?? []),
+    ...(req.authUser?.roles ?? []),
+    req.authUser?.role ?? '',
+  ];
+  const normalized = raw
+    .map((role) => String(role).trim().toLowerCase())
+    .filter(Boolean);
+  return normalized.length ? Array.from(new Set(normalized)) : ['employee'];
+}
+
+function canAccessAnyBusinessAction(roleKeys: string[]): boolean {
+  return roleKeys.some((role) => ['super_admin', 'admin'].includes(role));
+}
 
 // All routes require authentication
 aiInsightsRouter.use(requireAuth);
@@ -31,11 +52,10 @@ aiInsightsRouter.use(requireAuth);
 /**
  * GET /api/ai/providers - List all providers (safe config, no API keys)
  */
-aiInsightsRouter.get('/providers', requireRole('super_admin', 'admin'), h(async (req, res) => {
+aiInsightsRouter.get('/providers', requireRole('super_admin', 'admin'), h(async (_req, res) => {
   const providers = await aiProviderConfigService.list();
   const registry = aiProviderRegistry.listAll();
 
-  // Merge DB config with registry info
   const merged = providers.map((config) => {
     const registryEntry = registry.find((r) => r.key === config.providerKey);
     return {
@@ -55,9 +75,32 @@ aiInsightsRouter.get('/providers', requireRole('super_admin', 'admin'), h(async 
 /**
  * GET /api/ai/providers/active - Get active default provider
  */
-aiInsightsRouter.get('/providers/active', h(async (req, res) => {
+aiInsightsRouter.get('/providers/active', h(async (_req, res) => {
   const config = await aiProviderConfigService.getDefaultProvider(false);
   return res.json(apiSuccess(config || { providerKey: 'rule-based', providerName: 'Rule-Based Provider' }));
+}));
+
+/**
+ * GET /api/ai/session - Server-authoritative assistant identity and prompts.
+ */
+aiInsightsRouter.get('/session', h(async (req, res) => {
+  const roleKeys = getRoleKeys(req);
+  return res.json(apiSuccess({
+    assistant: {
+      name: MIRA_NAME,
+      tagline: MIRA_TAGLINE,
+      description: 'Fast answers from your own HRMS account with strict privacy controls.',
+    },
+    roleKeys,
+    prompts: getMiraSuggestedPrompts(),
+    capabilities: {
+      selfAccount: true,
+      voiceInput: true,
+      spokenReplies: true,
+      crossEmployeePersonalData: false,
+      executesActions: false,
+    },
+  }));
 }));
 
 /**
@@ -97,7 +140,7 @@ aiInsightsRouter.put('/providers/:id', requireRole('super_admin', 'admin'), h(as
     providerName,
     activeStatus,
     isDefault,
-    apiKey, // Will preserve existing if blank
+    apiKey,
     modelName,
     baseUrl,
     timeoutMs: timeout,
@@ -132,7 +175,6 @@ aiInsightsRouter.post('/providers/:id/test', requireRole('super_admin', 'admin')
   }
 
   const testResult = await withConfig.provider.testConnection(withConfig.config!);
-
   return res.json(apiSuccess(testResult));
 }));
 
@@ -150,7 +192,6 @@ aiInsightsRouter.post('/providers/:id/set-default', requireRole('super_admin', '
   }
 
   await aiProviderConfigService.setDefault(rows[0].provider_key);
-
   return res.json(apiSuccess({ message: 'Provider set as default' }));
 }));
 
@@ -183,29 +224,25 @@ aiInsightsRouter.get('/providers/usage', requireRole('super_admin', 'admin'), h(
   if (offset) filters.offset = parseInt(String(offset), 10);
 
   const result = await aiAuditService.getUsageLogs(filters);
-
   return res.json(apiSuccess(result));
 }));
 
 /**
  * POST /api/ai/insights - Compatibility endpoint for dashboard insight panels.
- * Interactive Copilot requests continue to use /ask; panels degrade to an
- * empty insight list when no server-generated recommendations are available.
  */
 aiInsightsRouter.post('/insights', h(async (_req, res) => {
   return res.json(apiSuccess({ insights: [] }));
 }));
 
 /**
- * POST /api/ai/ask - Ask AI assistant
+ * POST /api/ai/ask - Ask Mira.
+ * Self-account intents are answered locally and never sent to an external AI.
  */
 aiInsightsRouter.post('/ask', h(async (req, res) => {
   const { question, context_type, entity_id } = req.body;
-
   const userId = req.authUser!.id;
-  const roleKeys: string[] = (req as any).userRoles || ['employee'];
+  const roleKeys = getRoleKeys(req);
 
-  // Input guard — validate before rate-limit so blocked input isn't counted
   const questionCheck = validateQuestion(question ?? '');
   if (!questionCheck.valid) {
     return res.status(400).json(apiError('VALIDATION_ERROR', questionCheck.reason!, 400));
@@ -218,8 +255,14 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
   if (!entityCheck.valid) {
     return res.status(400).json(apiError('VALIDATION_ERROR', entityCheck.reason!, 400));
   }
+  if (entity_id) {
+    return res.status(403).json(apiError(
+      'FORBIDDEN',
+      'Direct entity IDs are not accepted in chat. Mira answers your own account questions without exposing another employee record.',
+      403,
+    ));
+  }
 
-  // Per-user daily rate limit
   const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
   const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
   if (!rateResult.allowed) {
@@ -230,36 +273,39 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
   res.setHeader('X-RateLimit-Remaining', String(rateResult.remaining));
 
   const safeContextType = contextCheck.sanitizedContextType ?? 'generic';
-  const safeEntityId = entity_id ? String(entity_id).slice(0, 128) : null;
   const safeQuestion = questionCheck.sanitizedQuestion!;
 
-  // Get active provider
+  const local = await answerSelfAccountQuestion(safeQuestion, userId, roleKeys);
+  if (local.handled && local.response) {
+    const request: AiGenerateRequest = {
+      userId,
+      roleKeys,
+      providerKey: local.response.provider,
+      userQuestion: safeQuestion,
+      sanitizedContext: {
+        intent: local.intent,
+        data_scope: 'authenticated_user_self_only',
+        safe_mode: true,
+      },
+      requestSource: 'mira_self_account',
+      entityType: 'self_account',
+    };
+    await aiAuditService.logUsage(request, local.response);
+    await aiAuditService.logPromptAudit(request, false, [], local.response.answer.slice(0, 200));
+    return res.json(apiSuccess(local.response));
+  }
+
   const provider = await aiProviderRegistry.getDefault();
   const config = await aiProviderConfigService.getByKey(provider.key, true);
 
   const rawContext: Record<string, unknown> = {
-    user_id: userId,
-    user_role: roleKeys[0],
+    actor_role: roleKeys[0],
     context_type: safeContextType,
-    entity_id: safeEntityId,
     timestamp: new Date().toISOString(),
+    privacy_scope: 'no_other_employee_personal_data',
   };
 
-  // Intent enrichment — fetch real HRMS data for employee self-service questions
-  try {
-    const { intent, data } = await detectAndEnrich(safeQuestion, userId, db as unknown as Pool);
-    if (intent !== 'unknown') {
-      rawContext.intent = intent;
-      Object.assign(rawContext, data);
-    }
-  } catch {
-    // non-blocking — continue without enrichment
-  }
-
-  // Sanitize context
   const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
-
-  // Check if context is safe for external provider
   const useExternalProvider = provider.key !== 'rule-based';
   const safetyCheck = await aiSafetyService.checkContextSafety(
     sanitizationResult.sanitizedContext,
@@ -267,35 +313,28 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
   );
 
   if (!safetyCheck.allowed && useExternalProvider) {
-    // Force fallback to rule-based provider
-    console.warn('[AI] Context not safe for external provider, using rule-based fallback');
-    const fallbackProvider = ruleBasedProvider;
     const request: AiGenerateRequest = {
       userId,
       roleKeys,
-      providerKey: fallbackProvider.key,
+      providerKey: ruleBasedProvider.key,
       userQuestion: safeQuestion,
       sanitizedContext: sanitizationResult.sanitizedContext,
       requestSource: 'copilot',
       entityType: safeContextType,
-      entityId: safeEntityId ?? undefined,
       systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, safeContextType),
     };
 
-    const response = await fallbackProvider.generateText(request);
-
-    // Log usage
+    const response = await ruleBasedProvider.generateText(request);
     await aiAuditService.logUsage(request, response);
     await aiAuditService.logPromptAudit(
       request,
       sanitizationResult.piiRedactionApplied,
-      sanitizationResult.sensitiveFieldsRemoved
+      sanitizationResult.sensitiveFieldsRemoved,
+      response.answer.slice(0, 200),
     );
-
     return res.json(apiSuccess(response));
   }
 
-  // Build AI request
   const request: AiGenerateRequest = {
     userId,
     roleKeys,
@@ -309,13 +348,9 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     maxOutputTokens: 1024,
     requestSource: 'copilot',
     entityType: safeContextType,
-    entityId: safeEntityId ?? undefined,
   };
 
-  // Generate response
   const response = await provider.generateText(request);
-
-  // Validate response safety
   const responseValidation = aiSafetyService.validateResponse(response.answer);
   if (!responseValidation.safe) {
     console.warn('[AI] Response validation failed:', responseValidation.reason);
@@ -324,84 +359,51 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     );
   }
 
-  // Log usage and audit
   await aiAuditService.logUsage(request, response);
   await aiAuditService.logPromptAudit(
     request,
     sanitizationResult.piiRedactionApplied,
     sanitizationResult.sensitiveFieldsRemoved,
-    response.answer.slice(0, 200) // Summary only
+    response.answer.slice(0, 200)
   );
 
   return res.json(apiSuccess(response));
 }));
 
 /**
- * POST /api/ai/explain - Explain specific entity
+ * POST /api/ai/explain - Secure self-record explanation only.
  */
 aiInsightsRouter.post('/explain', h(async (req, res) => {
   const { entity_type, entity_id } = req.body;
-
   if (!entity_type || !entity_id) {
     return res.status(400).json(apiError('VALIDATION_ERROR', 'entity_type and entity_id are required', 400));
   }
-
-  const userId = req.authUser!.id;
-  const roleKeys = (req as any).userRoles || ['employee'];
-
-  // DPDP entity ownership check — employee role may only explain their own records
-  const isPrivilegedRole = roleKeys.some((r: string) =>
-    ['admin', 'super_admin', 'hr', 'hr_admin', 'manager', 'branch_head',
-     'process_manager', 'payroll', 'payroll_hr', 'dpo', 'ceo'].includes(r)
-  );
-  if (!isPrivilegedRole && entity_type === 'employee') {
-    const { db: dbConn } = await import('../../db/mysql.js');
-    const [empRows] = await dbConn.execute<import('mysql2').RowDataPacket[]>(
-      'SELECT id FROM employees WHERE user_id = ? LIMIT 1',
-      [userId]
-    );
-    const ownEmployeeId: string | null = empRows[0]?.id ?? null;
-    if (ownEmployeeId !== entity_id) {
-      return res.status(403).json(apiError('FORBIDDEN', 'You may only request AI explanations for your own record.', 403));
-    }
+  if (entity_type !== 'employee') {
+    return res.status(403).json(apiError('FORBIDDEN', 'Secure chat explanations currently support only your own employee record.', 403));
   }
 
-  const provider = await aiProviderRegistry.getDefault();
-  const config = await aiProviderConfigService.getByKey(provider.key, true);
-  const rawContext = { user_id: userId, user_role: roleKeys[0], context_type: entity_type, entity_id };
-  const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
+  const userId = req.authUser!.id;
+  const roleKeys = getRoleKeys(req);
+  const ownEmployee = await getEmployeeForUser(userId);
+  if (!ownEmployee?.id || ownEmployee.id !== entity_id) {
+    return res.status(403).json(apiError('FORBIDDEN', 'Mira may explain only your own employee record.', 403));
+  }
 
-  const request: AiGenerateRequest = {
-    userId,
-    roleKeys,
-    providerKey: provider.key,
-    model: config?.modelName,
-    apiKey: config?.apiKey,
-    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, entity_type),
-    userQuestion: `Explain this ${entity_type} record (ID: ${entity_id}) in plain language. What does it represent and what actions might be needed?`,
-    sanitizedContext: sanitizationResult.sanitizedContext,
-    temperature: 0.2,
-    maxOutputTokens: 512,
-    requestSource: 'explain',
-    entityType: entity_type,
-    entityId: entity_id,
-  };
-
-  const response = await provider.generateText(request);
-  await aiAuditService.logUsage(request, response);
-
-  return res.json(apiSuccess({ ...response, entity_type, entity_id }));
+  const local = await answerSelfAccountQuestion('Show my profile details', userId, roleKeys);
+  if (!local.response) {
+    return res.status(503).json(apiError('REQUEST_FAILED', 'Your profile could not be explained right now.', 503));
+  }
+  return res.json(apiSuccess({ ...local.response, entity_type, entity_id }));
 }));
 
 /**
- * GET /api/ai/role-insights - Get role-wise insights
+ * GET /api/ai/role-insights - Fast assigned-action summary for the caller.
  */
 aiInsightsRouter.get('/role-insights', h(async (req, res) => {
   const userId = req.authUser!.id;
-  const roleKeys: string[] = (req as any).userRoles || ['employee'];
+  const roleKeys = getRoleKeys(req);
   const role = roleKeys[0] ?? 'employee';
 
-  // Shared daily rate limit with /ask
   const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
   const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
   if (!rateResult.allowed) {
@@ -410,64 +412,37 @@ aiInsightsRouter.get('/role-insights', h(async (req, res) => {
     return res.status(429).json(apiError('RATE_LIMIT_EXCEEDED', 'Daily AI request limit reached.', 429));
   }
 
-  const provider = await aiProviderRegistry.getDefault();
-
-  // Build role-specific question for the AI provider
-  const rolePromptMap: Record<string, string> = {
-    payroll_hr: 'What are the top payroll readiness issues I should act on today? Focus on salary lock status, validation blockers, and overdue tasks.',
-    hr: 'What are the top onboarding and joining actions I should prioritize today? Highlight any blocked candidates or overdue provisioning.',
-    branch_head: 'What approval actions are pending for my branch today? Summarize any offers needing approval and new joiners.',
-    wfm: 'What roster and shift alignment tasks need my attention today? Highlight unassigned employees or missing WFM data.',
-    it: 'What IT provisioning tasks are overdue or unassigned today? Highlight employees who cannot login yet.',
-    admin: 'What admin provisioning tasks (biometric, ID card) are pending today?',
-    super_admin: 'Give me a summary of data anomalies, security flags, and system health issues that need attention.',
-    manager: 'What team attendance, leave, and performance items need my action today?',
-    employee: 'What tasks or actions do I need to complete today? Check joining documents, onboarding steps, or leave requests.',
-  };
-
-  const question = rolePromptMap[role] ?? `What actions should I take today as a ${role}?`;
-
-  const rawContext = { user_id: userId, user_role: role, context_type: 'role_insights', timestamp: new Date().toISOString() };
-  const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
-
-  const config = await aiProviderConfigService.getByKey(provider.key, true);
-  const request: AiGenerateRequest = {
-    userId,
-    roleKeys,
-    providerKey: provider.key,
-    model: config?.modelName,
-    apiKey: config?.apiKey,
-    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, 'role_insights'),
-    userQuestion: question,
-    sanitizedContext: sanitizationResult.sanitizedContext,
-    temperature: 0.3,
-    maxOutputTokens: 512,
-    requestSource: 'role_insights',
-  };
-
-  const response = await provider.generateText(request);
-  await aiAuditService.logUsage(request, response);
-
-  return res.json(apiSuccess({ role, ...response }));
+  const local = await answerSelfAccountQuestion('What actions are pending from my side?', userId, roleKeys);
+  if (local.response) {
+    return res.json(apiSuccess({ role, ...local.response }));
+  }
+  return res.json(apiSuccess({
+    role,
+    answer: 'No role insight is available right now.',
+    provider: 'mira-secure-local',
+    model: 'hrms-self-account-v1',
+    latencyMs: 1,
+    safetyBlocked: false,
+    fallbackUsed: false,
+    generatedAt: new Date().toISOString(),
+    sourceContexts: ['assigned_actions'],
+  }));
 }));
 
 /**
  * GET /api/ai/supported-contexts - Available context types for current user
  */
 aiInsightsRouter.get('/supported-contexts', h(async (req, res) => {
-  const roleKeys = (req as any).userRoles || ['employee'];
-
-  const contexts: string[] = ['generic'];
+  const roleKeys = getRoleKeys(req);
+  const contexts: string[] = ['generic', 'self_account'];
 
   if (roleKeys.includes('payroll') || roleKeys.includes('payroll_hr')) {
     contexts.push('payroll_blockers', 'payroll_readiness');
   }
-
   if (roleKeys.includes('wfm')) {
     contexts.push('attendance_risk', 'roster_risk');
   }
-
-  if (roleKeys.includes('ceo') || roleKeys.includes('admin')) {
+  if (roleKeys.includes('ceo') || roleKeys.includes('admin') || roleKeys.includes('super_admin')) {
     contexts.push('ceo_summary', 'people_risk', 'support_risk');
   }
 
@@ -485,12 +460,11 @@ aiInsightsRouter.post('/feedback', h(async (req, res) => {
   }
 
   const provider = await aiProviderRegistry.getDefault();
-
   await aiAuditService.logFeedback(
     req.authUser!.id,
     request_id ? parseInt(request_id, 10) : null,
     provider.key,
-    'unknown', // Model name not available here
+    'unknown',
     rating,
     feedback_text
   );
@@ -499,34 +473,36 @@ aiInsightsRouter.post('/feedback', h(async (req, res) => {
 }));
 
 /**
- * POST /api/ai/explain-action - Explain business action with AI
- * Phase 2: Smart Work Inbox Enhancement
+ * POST /api/ai/explain-action - Explain an action only when assigned to the caller,
+ * assigned to one of the caller's roles, or the caller is a global administrator.
  */
 aiInsightsRouter.post('/explain-action', h(async (req, res) => {
   const { action_id } = req.body;
-
   if (!action_id) {
     return res.status(400).json(apiError('VALIDATION_ERROR', 'action_id is required', 400));
   }
 
   const userId = req.authUser!.id;
-  const roleKeys = (req as any).userRoles || ['employee'];
-
-  // Fetch business action
+  const roleKeys = getRoleKeys(req);
   const { db } = await import('../../db/mysql.js');
-  const [actions] = await db.execute<any[]>(
-    'SELECT * FROM business_action_queue WHERE id = ? LIMIT 1',
-    [action_id]
-  );
+  const rolePlaceholders = roleKeys.map(() => '?').join(',');
+  const accessSql = canAccessAnyBusinessAction(roleKeys)
+    ? 'SELECT * FROM business_action_queue WHERE id = ? LIMIT 1'
+    : `SELECT * FROM business_action_queue
+        WHERE id = ?
+          AND (owner_user_id = ? OR owner_role IN (${rolePlaceholders}))
+        LIMIT 1`;
+  const accessParams = canAccessAnyBusinessAction(roleKeys)
+    ? [action_id]
+    : [action_id, userId, ...roleKeys];
+  const [actions] = await db.execute<any[]>(accessSql, accessParams);
 
   if (actions.length === 0) {
-    return res.status(404).json(apiError('NOT_FOUND', 'Action not found', 404));
+    return res.status(404).json(apiError('NOT_FOUND', 'Action not found or outside your assigned scope', 404));
   }
 
   const action = actions[0];
-
-  // Build sanitized context based on source module (no PII)
-  let sanitizedContext: any = {
+  const rawActionContext: Record<string, unknown> = {
     risk_type: action.risk_type,
     severity: action.severity,
     source_module: action.source_module,
@@ -535,40 +511,30 @@ aiInsightsRouter.post('/explain-action', h(async (req, res) => {
     escalation_level: action.escalation_level || 0,
   };
 
-  // Module-specific context (safe data only - counts, not names)
   if (action.source_module === 'payroll') {
     const match = action.title?.match(/\((\d+) employees\)/);
-    sanitizedContext.blocked_count = match ? parseInt(match[1]) : 0;
-    sanitizedContext.blocker_type = action.title?.split(' (')[0] || 'Unknown';
+    rawActionContext.blocked_count = match ? parseInt(match[1]) : 0;
+    rawActionContext.blocker_type = action.title?.split(' (')[0] || 'Unknown';
   } else if (action.source_module === 'attendance') {
     const match = action.title?.match(/\((\d+) days\)/);
-    sanitizedContext.unreconciled_days = match ? parseInt(match[1]) : 0;
+    rawActionContext.unreconciled_days = match ? parseInt(match[1]) : 0;
   } else if (action.source_module === 'onboarding') {
     const match = action.description?.match(/Age: (\d+) days/);
-    sanitizedContext.stuck_days = match ? parseInt(match[1]) : 0;
-    sanitizedContext.stage = action.title?.split(' at ')[1]?.split(' (')[0] || 'unknown';
+    rawActionContext.stuck_days = match ? parseInt(match[1]) : 0;
+    rawActionContext.stage = action.title?.split(' at ')[1]?.split(' (')[0] || 'unknown';
   } else if (action.source_module === 'roster') {
     const match = action.title?.match(/\((\d+) HC\)/);
-    sanitizedContext.shortage = match ? parseInt(match[1]) : 0;
+    rawActionContext.shortage = match ? parseInt(match[1]) : 0;
   }
 
-  // Get active provider
+  const sanitized = await aiSafetyService.sanitizeContext(rawActionContext, roleKeys);
   const provider = await aiProviderRegistry.getDefault();
   const config = await aiProviderConfigService.getByKey(provider.key, true);
+  const systemInstruction = `You are ${MIRA_NAME}, explaining an authorised business action.
+Explain concisely why it exists, the business risk, and the recommended next step.
+Never mention employee names, employee codes, personal identifiers, or unscoped records.
+Label the answer as an AI-generated recommendation.`;
 
-  // Build system instruction for action explanation
-  const systemInstruction = `You are a PeopleOS Assistant explaining business action items.
-
-Explain concisely (2-3 sentences):
-1. Why this action exists (what triggered it)
-2. What the business risk is if not resolved
-3. What the recommended next steps are (be specific)
-
-Use clear, business-friendly language.
-Do not mention employee names or codes. Use aggregates only.
-Always label this as an AI recommendation.`;
-
-  // Build AI request
   const request: AiGenerateRequest = {
     userId,
     roleKeys,
@@ -576,8 +542,8 @@ Always label this as an AI recommendation.`;
     model: config?.modelName,
     apiKey: config?.apiKey,
     systemInstruction,
-    userQuestion: 'Explain this action and recommend next steps',
-    sanitizedContext,
+    userQuestion: 'Explain this assigned action and recommend next steps',
+    sanitizedContext: sanitized.sanitizedContext,
     temperature: 0.3,
     maxOutputTokens: 512,
     requestSource: 'explain_action',
@@ -585,26 +551,27 @@ Always label this as an AI recommendation.`;
     entityId: action_id,
   };
 
-  // Generate response
   let response;
   let fallbackUsed = false;
-
   try {
     response = await provider.generateText(request);
   } catch (error) {
     console.warn('[AI Explain Action] Provider failed, using rule-based fallback:', error);
-    const fallbackProvider = ruleBasedProvider;
-    request.providerKey = fallbackProvider.key;
-    response = await fallbackProvider.generateText(request);
+    request.providerKey = ruleBasedProvider.key;
+    response = await ruleBasedProvider.generateText(request);
     fallbackUsed = true;
   }
 
-  // Log usage and audit
+  const responseValidation = aiSafetyService.validateResponse(response.answer);
+  if (!responseValidation.safe) {
+    return res.status(400).json(apiError('AI_RESPONSE_UNSAFE', responseValidation.reason || 'Unsafe AI response', 400));
+  }
+
   await aiAuditService.logUsage(request, response);
   await aiAuditService.logPromptAudit(
     request,
-    false, // No PII in context
-    [],
+    sanitized.piiRedactionApplied,
+    sanitized.sensitiveFieldsRemoved,
     response.answer.slice(0, 200)
   );
 
@@ -614,12 +581,9 @@ Always label this as an AI recommendation.`;
     actions: response.actions || [],
     provider: response.provider,
     model: response.model,
-    safe_mode: true, // Always true for explain-action (no PII sent)
+    safe_mode: true,
     fallback_used: fallbackUsed,
     data_confidence: response.dataConfidence || {},
     generated_at: response.generatedAt,
   }));
 }));
-
-// Import rule-based provider for fallback
-import { ruleBasedProvider } from './providers/ruleBased.provider.js';

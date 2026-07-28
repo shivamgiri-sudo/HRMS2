@@ -1,0 +1,83 @@
+name: Mira Security Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/src/modules/ai/**"
+      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/scripts/migrate.ts"
+      - "backend/src/server.ts"
+      - "backend/sql/424_employee_reimbursement_claim.sql"
+      - "src/components/ai/**"
+      - "src/hooks/useMiraVoice.ts"
+      - "src/pages/PeopleOSCopilot.tsx"
+      - ".github/workflows/mira-security.yml"
+  push:
+    branches:
+      - "agent/mira-secure-voice-assistant"
+    paths:
+      - "backend/src/modules/ai/**"
+      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/scripts/migrate.ts"
+      - "backend/src/server.ts"
+      - "backend/sql/424_employee_reimbursement_claim.sql"
+      - "src/components/ai/**"
+      - "src/hooks/useMiraVoice.ts"
+      - "src/pages/PeopleOSCopilot.tsx"
+      - ".github/workflows/mira-security.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mira-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Mira privacy, migration, type and build checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Run Mira release contract tests
+        working-directory: backend
+        run: >-
+          npx vitest run
+          src/modules/ai/__tests__/ai-mira-security.test.ts
+          src/modules/ai/__tests__/ai-mira-migration.test.ts
+
+      - name: Frontend typecheck
+        run: npm run typecheck
+
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+
+      - name: Build frontend
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-key-for-build
+
+      - name: Build backend
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
