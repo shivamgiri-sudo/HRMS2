@@ -705,6 +705,19 @@ atsRouter.get("/recruiter-roster/active", requireRole("admin", "hr", "super_admi
   return res.json({ success: true, data: rows });
 }));
 
+// PATCH /api/ats/recruiter-roster/:id/deactivate — remove a recruiter from the active roster
+atsRouter.patch("/recruiter-roster/:id/deactivate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
+  const [result] = await db.execute<import("mysql2").ResultSetHeader>(
+    `UPDATE ats_recruiter_roster SET active_status = 0 WHERE id = ?`,
+    [req.params.id]
+  );
+  if (result.affectedRows === 0) {
+    return res.status(404).json({ success: false, message: "Recruiter roster entry not found" });
+  }
+  return res.json({ success: true, message: "Recruiter deactivated from roster" });
+}));
+
 // PATCH /api/ats/candidates/:id/reassign — HR/Admin formal reassignment with audit
 atsRouter.patch("/candidates/:id/reassign", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { newRecruiterId, reason } = req.body;
