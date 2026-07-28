@@ -296,6 +296,7 @@ export default function NativeJobRequisition() {
       if (statusFilter) params.append('approval_status', statusFilter);
       if (priorityFilter) params.append('priority', priorityFilter);
       if (branchFilter) params.append('branch_name', branchFilter);
+      params.append('include_closed', 'true');
       params.append('limit', '200');
 
       const res = await hrmsApi.get<{ success: boolean; data: JobRequisition[] }>(
