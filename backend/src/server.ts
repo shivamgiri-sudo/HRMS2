@@ -31,7 +31,7 @@ import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.j
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
-import { startLmsSyncWorker } from "./workers/lms-sync-worker.js";
+import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
@@ -224,12 +224,11 @@ async function handleMigrations(): Promise<void> {
       ...schemaStatus.pendingFiles,
       ...supplementalStatus.pendingFiles,
     ]));
-    const pendingCount = schemaStatus.pendingCount + supplementalStatus.pendingCount;
     const valid = schemaStatus.valid && supplementalStatus.valid;
 
     if (!valid) {
       const message =
-        `Schema validation failed: ${pendingCount} pending migrations. ` +
+        `Schema validation failed: ${pendingFiles.length} pending migrations. ` +
         `Run 'npm run migrate' before starting the API. ` +
         `Pending: ${pendingFiles.join(", ")}${pendingFiles.length > 10 ? "..." : ""}`;
 
