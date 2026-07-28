@@ -1,16 +1,15 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useEffect, useState } from 'react';
+import { Check, Eye, EyeOff, Loader2, RefreshCw, Shield, X } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Check, X, Shield, Activity, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { hrmsApi } from '@/lib/hrmsApi';
 
 interface ProviderConfig {
@@ -24,22 +23,13 @@ interface ProviderConfig {
   timeout?: number;
   dailyRequestLimit?: number;
   monthlyRequestLimit?: number;
-  dailyTokenLimit?: number;
-  monthlyTokenLimit?: number;
-  capabilities?: {
-    supportsChat: boolean;
-    supportsJson: boolean;
-    supportsStreaming: boolean;
-    supportsEmbeddings: boolean;
-  };
+  capabilities?: { supportsChat: boolean; supportsJson: boolean; supportsStreaming: boolean; supportsEmbeddings: boolean };
 }
 
 interface UsageLog {
   id: number;
   provider_key: string;
   model_name?: string;
-  user_id: string;
-  request_source?: string;
   latency_ms?: number;
   input_token_count?: number;
   output_token_count?: number;
@@ -49,448 +39,261 @@ interface UsageLog {
   created_at: string;
 }
 
+interface ProviderForm {
+  activeStatus: 'active' | 'inactive';
+  isDefault: boolean;
+  modelName: string;
+  apiKey: string;
+  baseUrl: string;
+  timeout: number;
+  dailyRequestLimit: number;
+  monthlyRequestLimit: number;
+}
+
+const OPENROUTER_DEFAULTS: ProviderForm = {
+  activeStatus: 'inactive', isDefault: false, modelName: 'openrouter/auto', apiKey: '',
+  baseUrl: 'https://openrouter.ai/api/v1', timeout: 30000, dailyRequestLimit: 1000, monthlyRequestLimit: 30000,
+};
+const GEMINI_DEFAULTS: ProviderForm = {
+  activeStatus: 'inactive', isDefault: false, modelName: 'gemini-1.5-flash', apiKey: '',
+  baseUrl: 'https://generativelanguage.googleapis.com', timeout: 30000, dailyRequestLimit: 1000, monthlyRequestLimit: 30000,
+};
+
 export default function AIProviderSettings() {
   const { toast } = useToast();
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [testing, setTesting] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  // Gemini config form state
-  const [geminiConfig, setGeminiConfig] = useState({
-    isDefault: false,
-    activeStatus: 'inactive' as 'active' | 'inactive',
-    modelName: 'gemini-flash',
-    apiKey: '',
-    baseUrl: 'https://generativelanguage.googleapis.com',
-    temperature: 0.3,
-    maxOutputTokens: 1024,
-    timeout: 30000,
-    dailyRequestLimit: 1000,
-    monthlyRequestLimit: 30000,
-    dailyTokenLimit: 100000,
-    monthlyTokenLimit: 3000000,
-  });
-
-  const [showApiKey, setShowApiKey] = useState(false);
   const [usageLogs, setUsageLogs] = useState<UsageLog[]>([]);
-  const [usageTotal, setUsageTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
+  const [openRouter, setOpenRouter] = useState<ProviderForm>(OPENROUTER_DEFAULTS);
+  const [gemini, setGemini] = useState<ProviderForm>(GEMINI_DEFAULTS);
+  const [knowledge, setKnowledge] = useState<{ source: string; facts: number; lastRefreshedAt: string | null } | null>(null);
+  const [refreshingKnowledge, setRefreshingKnowledge] = useState(false);
 
-  useEffect(() => {
-    loadProviders();
-    loadUsageLogs();
-  }, []);
+  const hydrate = (provider: ProviderConfig | undefined, defaults: ProviderForm): ProviderForm => provider ? {
+    ...defaults,
+    activeStatus: provider.activeStatus,
+    isDefault: provider.isDefault,
+    modelName: provider.modelName || defaults.modelName,
+    baseUrl: provider.baseUrl || defaults.baseUrl,
+    timeout: provider.timeout || defaults.timeout,
+    dailyRequestLimit: provider.dailyRequestLimit || defaults.dailyRequestLimit,
+    monthlyRequestLimit: provider.monthlyRequestLimit || defaults.monthlyRequestLimit,
+  } : defaults;
 
-  const loadProviders = async () => {
+  const load = async () => {
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: ProviderConfig[] }>('/api/ai/providers');
-      if (res.success) {
-        setProviders(res.data);
-        const gemini = res.data.find((p: ProviderConfig) => p.providerKey === 'gemini');
-        if (gemini) {
-          setGeminiConfig((prev) => ({
-            ...prev,
-            isDefault: gemini.isDefault,
-            activeStatus: gemini.activeStatus,
-            modelName: gemini.modelName || 'gemini-flash',
-            baseUrl: gemini.baseUrl || 'https://generativelanguage.googleapis.com',
-            timeout: gemini.timeout || 30000,
-            dailyRequestLimit: gemini.dailyRequestLimit || 1000,
-            monthlyRequestLimit: gemini.monthlyRequestLimit || 30000,
-            dailyTokenLimit: gemini.dailyTokenLimit || 100000,
-            monthlyTokenLimit: gemini.monthlyTokenLimit || 3000000,
-          }));
-        }
-      }
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message || 'Failed to load providers', variant: 'destructive' });
+      const [providerRes, usageRes, knowledgeRes] = await Promise.all([
+        hrmsApi.get<{ success: boolean; data: ProviderConfig[] }>('/api/ai/providers'),
+        hrmsApi.get<{ success: boolean; data: { logs: UsageLog[] } }>('/api/ai/providers/usage?limit=50'),
+        hrmsApi.get<{ success: boolean; data: { source: string; facts: number; lastRefreshedAt: string | null } }>('/api/ai/company-knowledge/status'),
+      ]);
+      const list = providerRes.data || [];
+      setProviders(list);
+      setOpenRouter((current) => ({ ...hydrate(list.find((item) => item.providerKey === 'openrouter'), OPENROUTER_DEFAULTS), apiKey: current.apiKey }));
+      setGemini((current) => ({ ...hydrate(list.find((item) => item.providerKey === 'gemini'), GEMINI_DEFAULTS), apiKey: current.apiKey }));
+      setUsageLogs(usageRes.data?.logs || []);
+      setKnowledge(knowledgeRes.data || null);
+    } catch (error) {
+      toast({ title: 'Unable to load Mira settings', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
   };
 
-  const loadUsageLogs = async () => {
+  useEffect(() => { void load(); }, []);
+
+  const saveProvider = async (providerKey: 'openrouter' | 'gemini', form: ProviderForm) => {
+    setSaving(providerKey);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: { logs: UsageLog[]; total: number } }>('/api/ai/providers/usage?limit=50');
-      if (res.success) {
-        setUsageLogs(res.data.logs || []);
-        setUsageTotal(res.data.total || 0);
-      }
+      const existing = providers.find((item) => item.providerKey === providerKey);
+      const payload = {
+        providerName: providerKey === 'openrouter' ? 'OpenRouter' : 'Google Gemini AI',
+        activeStatus: form.activeStatus,
+        isDefault: form.isDefault,
+        modelName: form.modelName.trim(),
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey.trim() || undefined,
+        timeout: form.timeout,
+        dailyRequestLimit: form.dailyRequestLimit,
+        monthlyRequestLimit: form.monthlyRequestLimit,
+      };
+      if (existing) await hrmsApi.put(`/api/ai/providers/${existing.id}`, payload);
+      else await hrmsApi.post('/api/ai/providers', { providerKey, ...payload });
+      toast({ title: 'Configuration saved', description: `${payload.providerName} is ready for testing.` });
+      if (providerKey === 'openrouter') setOpenRouter((current) => ({ ...current, apiKey: '' }));
+      else setGemini((current) => ({ ...current, apiKey: '' }));
+      await load();
     } catch (error) {
-      console.error('Failed to load usage logs:', error);
+      toast({ title: 'Save failed', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
+    } finally {
+      setSaving(null);
     }
   };
 
-  const testProvider = async (providerId: string) => {
-    setTesting(providerId);
+  const testProvider = async (provider: ProviderConfig) => {
+    setTesting(provider.id);
     try {
-      const res = await hrmsApi.post<{ success: boolean; data: { success: boolean; latencyMs: number; error?: string } }>(`/api/ai/providers/${providerId}/test`, {});
-      if (res.success && res.data.success) {
-        toast({ title: 'Success', description: `Provider test successful (${res.data.latencyMs}ms)` });
-      } else {
-        toast({ title: 'Test Failed', description: res.data.error || 'Provider test failed', variant: 'destructive' });
-      }
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message || 'Failed to test provider', variant: 'destructive' });
+      const response = await hrmsApi.post<{ success: boolean; data: { success: boolean; latencyMs: number; error?: string } }>(`/api/ai/providers/${provider.id}/test`, {});
+      if (!response.data.success) throw new Error(response.data.error || 'Provider test failed');
+      toast({ title: 'Connection successful', description: `${provider.providerName} responded in ${response.data.latencyMs} ms.` });
+    } catch (error) {
+      toast({ title: 'Connection failed', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
     } finally {
       setTesting(null);
     }
   };
 
-  const saveGeminiConfig = async () => {
-    setSaving(true);
+  const setDefault = async (provider: ProviderConfig) => {
+    await hrmsApi.post(`/api/ai/providers/${provider.id}/set-default`, {});
+    toast({ title: 'Default provider updated', description: `${provider.providerName} will answer grounded public company questions.` });
+    await load();
+  };
+
+  const refreshKnowledge = async () => {
+    setRefreshingKnowledge(true);
     try {
-      const gemini = providers.find((p) => p.providerKey === 'gemini');
-      const payload = {
-        providerName: 'Google Gemini AI',
-        activeStatus: geminiConfig.activeStatus,
-        isDefault: geminiConfig.isDefault,
-        modelName: geminiConfig.modelName,
-        baseUrl: geminiConfig.baseUrl,
-        apiKey: geminiConfig.apiKey || undefined,
-        timeout: geminiConfig.timeout,
-        dailyRequestLimit: geminiConfig.dailyRequestLimit,
-        monthlyRequestLimit: geminiConfig.monthlyRequestLimit,
-        dailyTokenLimit: geminiConfig.dailyTokenLimit,
-        monthlyTokenLimit: geminiConfig.monthlyTokenLimit,
-      };
-      if (gemini) {
-        await hrmsApi.put(`/api/ai/providers/${gemini.id}`, payload);
-      } else {
-        await hrmsApi.post('/api/ai/providers', { providerKey: 'gemini', ...payload });
-      }
-      toast({ title: 'Success', description: 'Gemini configuration saved' });
-      await loadProviders();
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message || 'Failed to save configuration', variant: 'destructive' });
+      const response = await hrmsApi.post<{ success: boolean; data: { refreshed: number } }>('/api/ai/company-knowledge/refresh', {});
+      toast({ title: 'Company knowledge refreshed', description: `${response.data.refreshed} official MAS Callnet pages were updated.` });
+      await load();
+    } catch (error) {
+      toast({ title: 'Refresh failed', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
     } finally {
-      setSaving(false);
+      setRefreshingKnowledge(false);
     }
   };
 
-  const setAsDefault = async (providerId: string) => {
-    try {
-      await hrmsApi.post(`/api/ai/providers/${providerId}/set-default`, {});
-      toast({ title: 'Success', description: 'Provider set as default' });
-      await loadProviders();
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message || 'Failed to set default provider', variant: 'destructive' });
-    }
-  };
-
-  const disableProvider = async (providerId: string) => {
-    try {
-      await hrmsApi.post(`/api/ai/providers/${providerId}/disable`, {});
-      toast({ title: 'Success', description: 'Provider disabled' });
-      await loadProviders();
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message || 'Failed to disable provider', variant: 'destructive' });
-    }
-  };
-
-  if (loading) {
+  const providerForm = (key: 'openrouter' | 'gemini', form: ProviderForm, setForm: (next: ProviderForm) => void) => {
+    const isOpenRouter = key === 'openrouter';
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>{isOpenRouter ? 'OpenRouter Configuration' : 'Google Gemini Configuration'}</CardTitle>
+          <CardDescription>
+            {isOpenRouter
+              ? 'Use one encrypted OpenRouter key and switch models by changing the model slug. Personal employee data remains on the local secure path.'
+              : 'Optional direct Gemini provider for grounded public-company responses.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div><Label>Enable provider</Label><p className="text-sm text-muted-foreground">Allow Mira to use this provider for approved external requests.</p></div>
+            <Switch checked={form.activeStatus === 'active'} onCheckedChange={(checked) => setForm({ ...form, activeStatus: checked ? 'active' : 'inactive' })} />
+          </div>
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div><Label>Set as default</Label><p className="text-sm text-muted-foreground">Self-account answers still remain local and database-backed.</p></div>
+            <Switch checked={form.isDefault} onCheckedChange={(checked) => setForm({ ...form, isDefault: checked })} />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Model ID</Label>
+              <Input value={form.modelName} onChange={(event) => setForm({ ...form, modelName: event.target.value })} placeholder={isOpenRouter ? 'openrouter/auto or provider/model' : 'gemini-1.5-flash'} />
+              <p className="text-xs text-muted-foreground">{isOpenRouter ? 'Examples: openrouter/auto, openai/gpt-chat-latest, google/gemini-2.5-flash.' : 'Use a model enabled for your Gemini API key.'}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>API base URL</Label>
+              <Input value={form.baseUrl} readOnly={isOpenRouter} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>API key</Label>
+            <div className="flex gap-2">
+              <Input type={showKey[key] ? 'text' : 'password'} value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder="Leave blank to keep the existing encrypted key" autoComplete="new-password" />
+              <Button type="button" variant="outline" size="icon" onClick={() => setShowKey((current) => ({ ...current, [key]: !current[key] }))}>
+                {showKey[key] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">The key is encrypted by the backend and is never returned to the browser.</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2"><Label>Timeout (ms)</Label><Input type="number" value={form.timeout} onChange={(event) => setForm({ ...form, timeout: Number(event.target.value) })} /></div>
+            <div className="space-y-2"><Label>Daily requests</Label><Input type="number" value={form.dailyRequestLimit} onChange={(event) => setForm({ ...form, dailyRequestLimit: Number(event.target.value) })} /></div>
+            <div className="space-y-2"><Label>Monthly requests</Label><Input type="number" value={form.monthlyRequestLimit} onChange={(event) => setForm({ ...form, monthlyRequestLimit: Number(event.target.value) })} /></div>
+          </div>
+          <Button className="w-full" disabled={saving === key || !form.modelName.trim()} onClick={() => void saveProvider(key, form)}>
+            {saving === key && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save {isOpenRouter ? 'OpenRouter' : 'Gemini'} Configuration
+          </Button>
+        </CardContent>
+      </Card>
     );
-  }
+  };
+
+  if (loading) return <div className="flex min-h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin" /></div>;
 
   return (
-    <div className="container mx-auto p-6 max-w-7xl">
+    <div className="container mx-auto max-w-7xl p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold">AI Provider Settings</h1>
-        <p className="text-muted-foreground">Configure AI providers for PeopleOS Copilot</p>
+        <h1 className="text-3xl font-bold">Mira AI Configuration</h1>
+        <p className="text-muted-foreground">Manage grounded company knowledge, encrypted provider keys, model routing and privacy controls.</p>
       </div>
-
       <Tabs defaultValue="providers" className="space-y-6">
-        <TabsList>
+        <TabsList className="flex h-auto flex-wrap">
           <TabsTrigger value="providers">Providers</TabsTrigger>
-          <TabsTrigger value="gemini">Gemini Configuration</TabsTrigger>
-          <TabsTrigger value="safety">Safety Controls</TabsTrigger>
-          <TabsTrigger value="usage">Usage Logs</TabsTrigger>
+          <TabsTrigger value="openrouter">OpenRouter</TabsTrigger>
+          <TabsTrigger value="gemini">Gemini</TabsTrigger>
+          <TabsTrigger value="knowledge">Company Knowledge</TabsTrigger>
+          <TabsTrigger value="safety">Safety</TabsTrigger>
+          <TabsTrigger value="usage">Usage</TabsTrigger>
         </TabsList>
 
-        {/* Providers List */}
         <TabsContent value="providers" className="space-y-4">
-          <div className="grid gap-4">
-            {providers.map((provider) => (
-              <Card key={provider.id}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        {provider.providerName}
-                        {provider.isDefault && <Badge>Default</Badge>}
-                        {provider.activeStatus === 'active' ? (
-                          <Badge variant="default" className="bg-green-500">Active</Badge>
-                        ) : (
-                          <Badge variant="secondary">Inactive</Badge>
-                        )}
-                      </CardTitle>
-                      <CardDescription>{provider.providerKey}</CardDescription>
-                    </div>
-                    <div className="flex gap-2">
-                      {provider.providerKey !== 'rule-based' && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => testProvider(provider.id)}
-                            disabled={testing === provider.id}
-                          >
-                            {testing === provider.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              'Test'
-                            )}
-                          </Button>
-                          {!provider.isDefault && provider.activeStatus === 'active' && (
-                            <Button size="sm" onClick={() => setAsDefault(provider.id)}>
-                              Set as Default
-                            </Button>
-                          )}
-                          {provider.activeStatus === 'active' && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => disableProvider(provider.id)}
-                            >
-                              Disable
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <div className="text-muted-foreground">Model</div>
-                      <div className="font-medium">{provider.modelName || 'N/A'}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Timeout</div>
-                      <div className="font-medium">{provider.timeout ? `${provider.timeout}ms` : 'N/A'}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Daily Limit</div>
-                      <div className="font-medium">{provider.dailyRequestLimit || 'Unlimited'}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Monthly Limit</div>
-                      <div className="font-medium">{provider.monthlyRequestLimit || 'Unlimited'}</div>
-                    </div>
-                  </div>
-                  {provider.capabilities && (
-                    <div className="mt-4 flex gap-2">
-                      {provider.capabilities.supportsChat && <Badge variant="outline">Chat</Badge>}
-                      {provider.capabilities.supportsJson && <Badge variant="outline">JSON</Badge>}
-                      {provider.capabilities.supportsStreaming && <Badge variant="outline">Streaming</Badge>}
-                      {provider.capabilities.supportsEmbeddings && <Badge variant="outline">Embeddings</Badge>}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        {/* Gemini Configuration */}
-        <TabsContent value="gemini" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Google Gemini Configuration</CardTitle>
-              <CardDescription>Configure Google Gemini AI provider</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
+          <Alert><Shield className="h-4 w-4" /><AlertDescription>Salary, attendance, leave, roster, documents and other self-account answers are read directly from HRMS and are not sent to OpenRouter or Gemini.</AlertDescription></Alert>
+          {providers.map((provider) => (
+            <Card key={provider.id}>
+              <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <Label htmlFor="gemini-active">Enable Gemini</Label>
-                  <p className="text-sm text-muted-foreground">Activate Gemini AI provider</p>
+                  <div className="flex flex-wrap items-center gap-2 font-semibold">
+                    {provider.providerName}
+                    {provider.isDefault && <Badge>Default</Badge>}
+                    <Badge variant={provider.activeStatus === 'active' ? 'default' : 'secondary'}>{provider.activeStatus}</Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">{provider.providerKey} · {provider.modelName || 'No model configured'}</p>
                 </div>
-                <Switch
-                  id="gemini-active"
-                  checked={geminiConfig.activeStatus === 'active'}
-                  onCheckedChange={(checked) =>
-                    setGeminiConfig({ ...geminiConfig, activeStatus: checked ? 'active' : 'inactive' })
-                  }
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="gemini-default">Set as Default</Label>
-                  <p className="text-sm text-muted-foreground">Use Gemini as the default AI provider</p>
-                </div>
-                <Switch
-                  id="gemini-default"
-                  checked={geminiConfig.isDefault}
-                  onCheckedChange={(checked) => setGeminiConfig({ ...geminiConfig, isDefault: checked })}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="model">Model Name</Label>
-                <Select
-                  value={geminiConfig.modelName}
-                  onValueChange={(value) => setGeminiConfig({ ...geminiConfig, modelName: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gemini-flash">gemini-flash (Fast, efficient)</SelectItem>
-                    <SelectItem value="gemini-pro">gemini-pro (Balanced)</SelectItem>
-                    <SelectItem value="gemini-ultra">gemini-ultra (Most capable)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="api-key">API Key</Label>
                 <div className="flex gap-2">
-                  <Input
-                    id="api-key"
-                    type={showApiKey ? 'text' : 'password'}
-                    placeholder="Enter Gemini API key (leave blank to keep existing)"
-                    value={geminiConfig.apiKey}
-                    onChange={(e) => setGeminiConfig({ ...geminiConfig, apiKey: e.target.value })}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                  >
-                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
+                  {provider.providerKey !== 'rule-based' && <Button variant="outline" onClick={() => void testProvider(provider)} disabled={testing === provider.id}>{testing === provider.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Test'}</Button>}
+                  {provider.activeStatus === 'active' && !provider.isDefault && <Button onClick={() => void setDefault(provider)}>Set Default</Button>}
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Your API key is encrypted and never exposed to frontend
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="daily-limit">Daily Request Limit</Label>
-                  <Input
-                    id="daily-limit"
-                    type="number"
-                    value={geminiConfig.dailyRequestLimit}
-                    onChange={(e) =>
-                      setGeminiConfig({ ...geminiConfig, dailyRequestLimit: parseInt(e.target.value) })
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="monthly-limit">Monthly Request Limit</Label>
-                  <Input
-                    id="monthly-limit"
-                    type="number"
-                    value={geminiConfig.monthlyRequestLimit}
-                    onChange={(e) =>
-                      setGeminiConfig({ ...geminiConfig, monthlyRequestLimit: parseInt(e.target.value) })
-                    }
-                  />
-                </div>
-              </div>
-
-              <Button onClick={saveGeminiConfig} disabled={saving} className="w-full">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                Save Configuration
-              </Button>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </TabsContent>
 
-        {/* Safety Controls */}
-        <TabsContent value="safety" className="space-y-4">
+        <TabsContent value="openrouter">{providerForm('openrouter', openRouter, setOpenRouter)}</TabsContent>
+        <TabsContent value="gemini">{providerForm('gemini', gemini, setGemini)}</TabsContent>
+
+        <TabsContent value="knowledge">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Safety Controls
-              </CardTitle>
-              <CardDescription>AI safety and privacy protections (always enabled)</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle>Approved MAS Callnet Knowledge</CardTitle><CardDescription>Mira uses curated facts and allowlisted pages from the official company website. Branch-head assignments are read live from HRMS.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
-              {[
-                { label: 'PII Protection', desc: 'Never send raw Aadhaar, PAN, bank, salary data to AI', icon: Shield },
-                { label: 'Identity Masking', desc: 'Mask employee and candidate identifiers', icon: Eye },
-                { label: 'Role-Based Visibility', desc: 'Enforce business scope and role permissions', icon: Activity },
-                { label: 'Audit Logging', desc: 'Log all AI calls with user, role, timestamp', icon: Activity },
-                { label: 'Data Confidence Display', desc: 'Show confidence scores with every response', icon: Check },
-                { label: 'Fallback Provider', desc: 'Automatic fallback to rule-based on failure', icon: Check },
-              ].map((control, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <control.icon className="h-5 w-5 text-green-600" />
-                    <div>
-                      <div className="font-medium">{control.label}</div>
-                      <div className="text-sm text-muted-foreground">{control.desc}</div>
-                    </div>
-                  </div>
-                  <Badge className="bg-green-500">Always On</Badge>
-                </div>
-              ))}
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-lg border p-4"><p className="text-sm text-muted-foreground">Source</p><p className="font-medium">{knowledge?.source || 'https://mascallnet.ai'}</p></div>
+                <div className="rounded-lg border p-4"><p className="text-sm text-muted-foreground">Active knowledge records</p><p className="text-2xl font-semibold">{knowledge?.facts ?? 0}</p></div>
+                <div className="rounded-lg border p-4"><p className="text-sm text-muted-foreground">Last website refresh</p><p className="font-medium">{knowledge?.lastRefreshedAt ? new Date(knowledge.lastRefreshedAt).toLocaleString() : 'Seeded facts in use'}</p></div>
+              </div>
+              <Button onClick={() => void refreshKnowledge()} disabled={refreshingKnowledge}>{refreshingKnowledge ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Refresh Official Website Knowledge</Button>
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Usage Logs */}
-        <TabsContent value="usage" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Usage Logs</CardTitle>
-              <CardDescription>Last 50 AI provider requests</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Timestamp</TableHead>
-                    <TableHead>Provider</TableHead>
-                    <TableHead>Model</TableHead>
-                    <TableHead>Latency</TableHead>
-                    <TableHead>Tokens (In/Out)</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {usageLogs.map((log) => (
-                    <TableRow key={log.id}>
-                      <TableCell className="text-sm">
-                        {new Date(log.created_at).toLocaleString()}
-                      </TableCell>
-                      <TableCell>{log.provider_key}</TableCell>
-                      <TableCell className="text-sm">{log.model_name || 'N/A'}</TableCell>
-                      <TableCell>{log.latency_ms ? `${log.latency_ms}ms` : 'N/A'}</TableCell>
-                      <TableCell>
-                        {log.input_token_count || 0} / {log.output_token_count || 0}
-                      </TableCell>
-                      <TableCell>
-                        {log.success ? (
-                          <Badge variant="default" className="bg-green-500">
-                            <Check className="h-3 w-3 mr-1" />
-                            Success
-                          </Badge>
-                        ) : (
-                          <Badge variant="destructive">
-                            <X className="h-3 w-3 mr-1" />
-                            Failed
-                          </Badge>
-                        )}
-                        {log.fallback_used && <Badge variant="secondary" className="ml-1">Fallback</Badge>}
-                        {log.safety_blocked && <Badge variant="destructive" className="ml-1">Blocked</Badge>}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+        <TabsContent value="safety">
+          <Card><CardHeader><CardTitle>Always-on Privacy Controls</CardTitle></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">
+            {[
+              ['Self-only HR data', 'Employee identity is resolved from the authenticated login.'],
+              ['No personal data to external AI', 'Self salary, attendance, leave, documents and roster remain local.'],
+              ['Official-source grounding', 'Company answers use approved MAS Callnet sources and live role assignments.'],
+              ['No model disclaimers', 'Mira does not mention training cutoffs, memory dates or generic AI limitations.'],
+              ['Encrypted API keys', 'Provider secrets are encrypted in the database.'],
+              ['Audit logging', 'Provider, model, latency and safety metadata are recorded.'],
+            ].map(([title, description]) => <div key={title} className="flex gap-3 rounded-lg border p-4"><Shield className="mt-0.5 h-5 w-5 text-emerald-600" /><div><p className="font-medium">{title}</p><p className="text-sm text-muted-foreground">{description}</p></div></div>)}
+          </CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="usage">
+          <Card><CardHeader><CardTitle>Recent Provider Usage</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Provider</TableHead><TableHead>Model</TableHead><TableHead>Latency</TableHead><TableHead>Tokens</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>
+            {usageLogs.map((log) => <TableRow key={log.id}><TableCell>{new Date(log.created_at).toLocaleString()}</TableCell><TableCell>{log.provider_key}</TableCell><TableCell>{log.model_name || '—'}</TableCell><TableCell>{log.latency_ms ? `${log.latency_ms} ms` : '—'}</TableCell><TableCell>{log.input_token_count || 0} / {log.output_token_count || 0}</TableCell><TableCell><Badge variant={log.success ? 'default' : 'destructive'}>{log.success ? <Check className="mr-1 h-3 w-3" /> : <X className="mr-1 h-3 w-3" />}{log.success ? 'Success' : 'Failed'}</Badge>{log.fallback_used && <Badge variant="secondary" className="ml-1">Fallback</Badge>}</TableCell></TableRow>)}
+          </TableBody></Table></CardContent></Card>
         </TabsContent>
       </Tabs>
     </div>

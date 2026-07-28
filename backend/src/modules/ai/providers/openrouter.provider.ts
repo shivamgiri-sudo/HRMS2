@@ -5,7 +5,6 @@ import type {
   AiProviderTestResult,
   SafeAiProviderConfig,
 } from '../ai-provider.types.js';
-import { ruleBasedProvider } from './ruleBased.provider.js';
 
 const OFFICIAL_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_MODEL = 'openrouter/auto';
@@ -70,8 +69,7 @@ export class OpenRouterProvider implements AiProvider {
     const apiKey = request.apiKey || process.env.OPENROUTER_API_KEY;
     const model = request.model || process.env.OPENROUTER_DEFAULT_MODEL || DEFAULT_MODEL;
     if (!apiKey) {
-      const fallback = await ruleBasedProvider.generateText(request);
-      return { ...fallback, fallbackUsed: true };
+      return this.groundedFailure(startedAt, model, 'OpenRouter is not configured. Your live HRMS and approved company answers are still available.');
     }
 
     try {
@@ -105,9 +103,26 @@ export class OpenRouterProvider implements AiProvider {
       };
     } catch (error) {
       console.error('[OpenRouter] Generation failed:', error instanceof Error ? error.message : error);
-      const fallback = await ruleBasedProvider.generateText(request);
-      return { ...fallback, fallbackUsed: true };
+      return this.groundedFailure(
+        startedAt,
+        model,
+        `I couldn't complete the approved-source request right now. Please ask a specific HRMS or MAS Callnet question and try again.`,
+      );
     }
+  }
+
+  private groundedFailure(startedAt: number, model: string, answer: string): AiGenerateResponse {
+    return {
+      answer,
+      provider: this.key,
+      model,
+      latencyMs: Math.max(1, Date.now() - startedAt),
+      safetyBlocked: false,
+      fallbackUsed: true,
+      generatedAt: new Date().toISOString(),
+      sourceContexts: ['approved_sources:provider_unavailable'],
+      dataConfidence: { overall: 0 },
+    };
   }
 
   private async call(input: {

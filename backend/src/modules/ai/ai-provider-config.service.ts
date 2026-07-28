@@ -163,6 +163,12 @@ class AiProviderConfigService {
     );
 
     const id = (result as any).insertId;
+    if (data.isDefault) {
+      await db.execute(
+        'UPDATE ai_provider_config SET is_default = FALSE WHERE id != ?',
+        [id],
+      );
+    }
     const created = await this.getByKey(data.providerKey, false);
     if (!created) throw new Error('Failed to retrieve created provider config');
     return created;

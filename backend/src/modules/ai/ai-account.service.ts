@@ -41,10 +41,10 @@ export class MiraDataUnavailableError extends Error {
 }
 
 const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
-  { intent: 'salary', patterns: [/\bsalary\b/i, /\bpayslip\b/i, /\bpay slip\b/i, /\bnet pay\b/i, /\bgross pay\b/i, /\btake[ -]?home\b/i, /\bctc\b/i, /\bearnings?\b/i, /\bdeductions?\b/i] },
-  { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i] },
-  { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i] },
-  { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i] },
+  { intent: 'salary', patterns: [/\bsalary\b/i, /\bpayslip\b/i, /\bpay slip\b/i, /\bnet pay\b/i, /\bgross pay\b/i, /\btake[ -]?home\b/i, /\bctc\b/i, /\bearnings?\b/i, /\bdeductions?\b/i, /meri salary/i, /mera payslip/i, /kitna pay/i] },
+  { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i, /meri leave/i, /kitni chhutti/i, /chhutti (?:baki|remaining)/i] },
+  { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i, /how many days (?:was i|did i) (?:present|attend)/i, /meri attendance/i, /mera punch/i, /kitne din (?:present|attend)/i, /aaj (?:ka )?punch/i, /aaj present/i, /kal (?:ka )?attendance/i] },
+  { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i, /meri shift/i, /mera roster/i, /kal ki shift/i, /week off kab/i] },
   { intent: 'documents', patterns: [/\bdocuments?\b/i, /\bdoc status\b/i, /\bkyc\b/i, /\bmissing docs?\b/i, /\bverified docs?\b/i] },
   { intent: 'pending_actions', patterns: [/\bpending actions?\b/i, /\bpending tasks?\b/i, /\bmy inbox\b/i, /\bwork inbox\b/i, /\bapprovals? pending\b/i, /\bwhat do i need to do\b/i, /\bactions? (?:are )?pending (?:from|for) my side\b/i] },
   { intent: 'support', patterns: [/\bhelpdesk\b/i, /\bsupport tickets?\b/i, /\bmy tickets?\b/i, /\bgrievances?\b/i, /\bcomplaints?\b/i] },
@@ -87,7 +87,7 @@ export function clearMiraCacheForUser(userId?: string): void {
   for (const key of cache.keys()) if (key.startsWith(`${userId}:`)) cache.delete(key);
 }
 
-async function cached<T>(userId: string, intent: AccountIntent, loader: () => Promise<T>): Promise<T> {
+async function cached<T>(userId: string, intent: string, loader: () => Promise<T>): Promise<T> {
   const key = `${userId}:${intent}`;
   const now = Date.now();
   const hit = cache.get(key);
@@ -189,10 +189,11 @@ const handled = (
 
 async function profile(employeeId: string): Promise<RowDataPacket> {
   return one('profile', `SELECT e.full_name, e.employee_code, e.date_of_joining, e.employment_status, e.employment_type,
-      b.branch_name, p.process_name, m.full_name AS reporting_manager_name
+      b.branch_name, p.process_name, d.designation_name, m.full_name AS reporting_manager_name
     FROM employees e
     LEFT JOIN branch_master b ON b.id = e.branch_id
     LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN designation_master d ON d.id = e.designation_id
     LEFT JOIN employees m ON m.id = e.reporting_manager_id
     WHERE e.id = ? LIMIT 1`, [employeeId]);
 }
@@ -220,20 +221,44 @@ async function leave(employeeId: string): Promise<{ year: number; rows: RowDataP
   };
 }
 
-async function attendance(employeeId: string): Promise<{ month: string; row: RowDataPacket }> {
+type AttendanceScope = 'today' | 'yesterday' | 'previous_month' | 'month_to_date';
+
+function attendanceScope(question: string): AttendanceScope {
+  if (/\b(today|aaj)\b/i.test(question)) return 'today';
+  if (/\b(yesterday|kal ka|kal ki)\b/i.test(question)) return 'yesterday';
+  if (/\b(last|previous|pichhle|pichla) month\b/i.test(question)) return 'previous_month';
+  return 'month_to_date';
+}
+
+async function attendance(employeeId: string, question = ''): Promise<{ label: string; scope: AttendanceScope; row: RowDataPacket }> {
+  const scope = attendanceScope(question);
+  const predicates: Record<AttendanceScope, string> = {
+    today: 'record_date = CURDATE()',
+    yesterday: 'record_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY)',
+    previous_month: `record_date >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+      AND record_date <= LAST_DAY(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))`,
+    month_to_date: `record_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND record_date <= CURDATE()`,
+  };
+  const labels: Record<AttendanceScope, string> = {
+    today: 'today', yesterday: 'yesterday', previous_month: 'the previous month', month_to_date: indiaMonth(),
+  };
   return {
-    month: indiaMonth(),
+    label: labels[scope],
+    scope,
     row: await one('attendance', `SELECT SUM(attendance_status = 'present') AS present_days,
         SUM(attendance_status = 'half_day') AS half_days,
         SUM(attendance_status = 'absent') AS absent_days,
+        SUM(attendance_status = 'leave_approved') AS leave_days,
         SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late_marks,
         SUM(COALESCE(lwp_value, 0)) AS lwp_days,
         ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS total_hours,
-        COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days
+        COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days,
+        DATE_FORMAT(MIN(clock_in_time), '%h:%i %p') AS first_clock_in,
+        DATE_FORMAT(MAX(clock_out_time), '%h:%i %p') AS last_clock_out,
+        MAX(attendance_status) AS latest_status,
+        MAX(attendance_source) AS attendance_source
       FROM attendance_daily_record
-      WHERE employee_id = ?
-        AND record_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-        AND record_date <= CURDATE()`, [employeeId]),
+      WHERE employee_id = ? AND ${predicates[scope]}`, [employeeId]),
   };
 }
 
@@ -308,7 +333,8 @@ function helpText(): string {
     `• document verification status\n` +
     `• pending work items and approvals\n` +
     `• helpdesk tickets and grievances\n` +
-    `• payroll readiness, loans and reimbursement claims\n\n` +
+    `• payroll readiness, loans and reimbursement claims\n` +
+    `• approved public MAS Callnet information such as leadership, offices and careers\n\n` +
     `For privacy, ${MIRA_NAME} will not disclose another employee's personal account information in chat.`;
 }
 
@@ -318,10 +344,13 @@ export function getMiraSuggestedPrompts(): string[] {
     'Show my latest salary breakup',
     'How many leaves do I have left?',
     'Summarize my attendance this month',
+    'Was my punch recorded today?',
     'What is my shift for the next 7 days?',
     'Which documents are pending verification?',
     'What actions are pending from my side?',
     'Show my loan or reimbursement status',
+    'Who is the CEO of MAS Callnet?',
+    'Who are the current branch heads?',
   ];
 }
 
@@ -385,13 +414,15 @@ export async function answerSelfAccountQuestion(
   }
 
   if (intent === 'attendance') {
-    const data = await cached(userId, intent, () => attendance(employeeId));
+    const scope = attendanceScope(question);
+    const data = await cached(userId, `${intent}:${scope}`, () => attendance(employeeId, question));
     const working = n(data.row.working_days);
     const equivalent = n(data.row.present_days) + n(data.row.half_days) * 0.5;
     const percentage = working ? Math.round((equivalent / working) * 1000) / 10 : 0;
-    return handled(intent, `Your attendance summary for ${data.month} is:\n\n` +
+    return handled(intent, `Your attendance summary for ${data.label} is:\n\n` +
       `• Present days: ${n(data.row.present_days)}\n• Half days: ${n(data.row.half_days)}\n• Absent days: ${n(data.row.absent_days)}\n` +
-      `• Late marks: ${n(data.row.late_marks)}\n• LWP days: ${n(data.row.lwp_days)}\n• Hours logged: ${n(data.row.total_hours)}\n` +
+      `• Approved leave days: ${n(data.row.leave_days)}\n• Late marks: ${n(data.row.late_marks)}\n• LWP days: ${n(data.row.lwp_days)}\n• Hours logged: ${n(data.row.total_hours)}\n` +
+      `${data.scope === 'today' || data.scope === 'yesterday' ? `• Status: ${t(data.row.latest_status)}\n• First punch: ${t(data.row.first_clock_in)}\n• Last punch: ${t(data.row.last_clock_out)}\n• Source: ${t(data.row.attendance_source)}\n` : ''}` +
       `• Attendance percentage: ${percentage}%`, startedAt,
       [{ key: 'attendance-percent', label: `${percentage}% attendance`, value: percentage, severity: percentage < 85 ? 'high' : percentage < 95 ? 'medium' : 'low' }],
       [action('Open attendance', '/attendance')]);
@@ -469,24 +500,36 @@ export async function answerSelfAccountQuestion(
   }
 
   if (intent === 'account_overview') {
-    const [p, a, l, r, pending] = await Promise.all([
-      cached(userId, 'profile', () => profile(employeeId)),
-      cached(userId, 'attendance', () => attendance(employeeId)),
+    const p = await cached(userId, 'profile', () => profile(employeeId));
+    const [attendanceResult, leaveResult, rosterResult, pendingResult] = await Promise.allSettled([
+      cached(userId, 'attendance:month_to_date', () => attendance(employeeId, 'this month')),
       cached(userId, 'leave', () => leave(employeeId)),
       cached(userId, 'roster', () => roster(employeeId)),
       cached(userId, 'pending_actions', () => pendingActions(userId, roleKeys)),
     ]);
-    const totalLeave = l.rows.reduce((sum, row) => sum + Math.max(0, n(row.allocated_days) + n(row.adjusted_days) - n(row.used_days)), 0);
+    const a = attendanceResult.status === 'fulfilled' ? attendanceResult.value : null;
+    const l = leaveResult.status === 'fulfilled' ? leaveResult.value : null;
+    const r = rosterResult.status === 'fulfilled' ? rosterResult.value : [];
+    const pending = pendingResult.status === 'fulfilled' ? pendingResult.value : [];
+    const totalLeave = l?.rows.reduce((sum, row) => sum + Math.max(0, n(row.allocated_days) + n(row.adjusted_days) - n(row.used_days)), 0) ?? 0;
     const next = r[0];
+    const unavailable = [
+      attendanceResult.status === 'rejected' ? 'attendance' : '',
+      leaveResult.status === 'rejected' ? 'leave' : '',
+      rosterResult.status === 'rejected' ? 'roster' : '',
+      pendingResult.status === 'rejected' ? 'work items' : '',
+    ].filter(Boolean);
     return handled(intent, `Here is your current HRMS account summary:\n\n` +
-      `• Employee: ${t(p.full_name)} (${t(p.employee_code)})\n• Branch / process: ${t(p.branch_name)} / ${t(p.process_name)}\n` +
-      `• This month's attendance: ${n(a.row.present_days)} present, ${n(a.row.absent_days)} absent, ${n(a.row.late_marks)} late marks\n` +
-      `• Leave available: ${totalLeave} days across ${l.rows.length} leave types\n• Pending assigned actions: ${pending.length}\n` +
-      `• Next roster entry: ${next ? `${date(next.roster_date)} — ${n(next.is_week_off) ? 'Week off' : n(next.is_holiday) ? 'Holiday' : t(next.shift_name, 'Shift')}` : 'Not published'}`,
+      `• Employee: ${t(p.full_name)} (${t(p.employee_code)})\n• Designation: ${t(p.designation_name)}\n• Branch / process: ${t(p.branch_name)} / ${t(p.process_name)}\n` +
+      `• This month's attendance: ${a ? `${n(a.row.present_days)} present, ${n(a.row.absent_days)} absent, ${n(a.row.late_marks)} late marks` : 'Temporarily unavailable'}\n` +
+      `• Leave available: ${l ? `${totalLeave} days across ${l.rows.length} leave types` : 'Temporarily unavailable'}\n` +
+      `• Pending assigned actions: ${pendingResult.status === 'fulfilled' ? pending.length : 'Temporarily unavailable'}\n` +
+      `• Next roster entry: ${rosterResult.status === 'rejected' ? 'Temporarily unavailable' : next ? `${date(next.roster_date)} — ${n(next.is_week_off) ? 'Week off' : n(next.is_holiday) ? 'Holiday' : t(next.shift_name, 'Shift')}` : 'Not published'}` +
+      `${unavailable.length ? `\n\nSome sections could not be refreshed: ${unavailable.join(', ')}. The available information above is still live from HRMS.` : ''}`,
       startedAt, [
         { key: 'pending-actions', label: `${pending.length} pending actions`, count: pending.length, severity: pending.length ? 'medium' : 'low' },
         { key: 'leave-available', label: `${totalLeave} leave days available`, value: totalLeave, severity: 'low' },
-      ], [action()]);
+      ], [action()], unavailable.length ? 0.8 : 1);
   }
 
   return { handled: false, intent: 'unknown' };

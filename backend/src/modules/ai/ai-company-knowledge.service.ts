@@ -175,7 +175,7 @@ export async function getPublicCompanyContext(question: string): Promise<Record<
   return {
     company_name: 'MAS Callnet',
     knowledge_scope: 'approved_public_company_information_only',
-    facts: contextFacts.map((fact) => ({ title: fact.title, content: fact.content, source_url: fact.sourceUrl })),
+    facts: contextFacts.map((fact) => ({ title: fact.title, content: fact.content.slice(0, 3_000), source_url: fact.sourceUrl })),
     source_contexts: contextFacts.map((fact) => `official:${fact.sourceUrl}`),
     data_confidence: { company_public_knowledge: 1 },
     safe_mode: true,

@@ -16,25 +16,36 @@ class AiProviderRegistry {
   private providers: Map<string, AiProvider> = new Map();
 
   constructor() {
+    // Register built-in providers
     this.register(ruleBasedProvider);
     this.register(geminiProvider);
     this.register(ollamaProvider);
     this.register(openRouterProvider);
   }
 
+  /**
+   * Register a provider
+   */
   register(provider: AiProvider): void {
     this.providers.set(provider.key, provider);
     console.log(`[AI Registry] Registered provider: ${provider.displayName} (${provider.key})`);
   }
 
+  /**
+   * Get provider by key
+   */
   get(providerKey: string): AiProvider | null {
     return this.providers.get(providerKey) || null;
   }
 
+  /**
+   * Get active default provider (from DB config, or Gemini if GEMINI_API_KEY is set)
+   */
   async getDefault(): Promise<AiProvider> {
     const config = await aiProviderConfigService.getDefaultProvider(false);
 
     if (!config || (config.providerKey === 'rule-based' && (process.env.OPENROUTER_API_KEY || env.GEMINI_API_KEY))) {
+      // Prefer OpenRouter env configuration, then Gemini, before the deterministic fallback.
       if (process.env.OPENROUTER_API_KEY) {
         console.info('[AI Registry] Using OpenRouter from OPENROUTER_API_KEY env var');
         return this.get('openrouter') ?? ruleBasedProvider;
@@ -48,24 +59,34 @@ class AiProviderRegistry {
     }
 
     const provider = this.get(config.providerKey);
+
     if (!provider) {
       console.warn(`[AI Registry] Provider ${config.providerKey} not found in registry, using rule-based fallback`);
       return ruleBasedProvider;
     }
+
     return provider;
   }
 
+  /**
+   * Get provider with config (includes decrypted API key for execution)
+   */
   async getWithConfig(providerKey: string): Promise<{
     provider: AiProvider;
     config: Awaited<ReturnType<typeof aiProviderConfigService.getByKey>>;
   } | null> {
     const provider = this.get(providerKey);
     if (!provider) return null;
+
     const config = await aiProviderConfigService.getByKey(providerKey, true);
     if (!config) return null;
+
     return { provider, config };
   }
 
+  /**
+   * List all registered providers
+   */
   listAll(): Array<{ key: string; displayName: string; capabilities: {
     supportsChat: boolean;
     supportsJson: boolean;
