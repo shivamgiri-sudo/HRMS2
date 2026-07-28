@@ -1,0 +1,40 @@
+name: Mira Upgrade Snapshot
+
+on:
+  push:
+    branches:
+      - agent/mira-openrouter-company-voice
+    paths:
+      - .github/workflows/mira-upgrade-snapshot.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package relevant sources
+        run: |
+          tar -czf mira-upgrade-sources.tar.gz \
+            backend/src/modules/ai \
+            backend/src/modules/org \
+            backend/src/modules/employees \
+            backend/src/modules/admin \
+            backend/src/config \
+            backend/src/shared/accessGuard.ts \
+            backend/src/app.ts \
+            backend/sql \
+            src/components/ai \
+            src/hooks/useMiraVoice.ts \
+            src/pages \
+            src/components \
+            src/App.tsx \
+            package.json \
+            backend/package.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mira-upgrade-sources
+          path: mira-upgrade-sources.tar.gz
+          retention-days: 1
