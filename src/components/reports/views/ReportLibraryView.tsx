@@ -38,7 +38,7 @@ import {
   Search, Star, Clock, Mail, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight,
   BarChart3, Users, CalendarDays, CreditCard, FileCheck, UserPlus, TrendingDown,
   Award, Layers, Package, Link2, HelpCircle, Globe, X, Filter, CheckCircle2,
-  AlertTriangle, Info, AlertCircle, Table2, Hash,
+  AlertTriangle, Info, AlertCircle, Table2, Hash, Download,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
@@ -799,7 +799,10 @@ export default function NativeReportsCenterV2() {
   const [recentCodes, setRecentCodes] = useState<string[]>(() => loadList(LS_RECENT));
   const [favCodes, setFavCodes] = useState<Set<string>>(() => new Set(loadList(LS_FAVS)));
   const [requestMessage, setRequestMessage] = useState("");
+  const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
   const [duplicateInfo, setDuplicateInfo] = useState<{ hasDuplicates: boolean; duplicateCount: number }>({ hasDuplicates: false, duplicateCount: 0 });
+
+  const isSuperAdmin = userRoles.includes("super_admin");
 
   const pageSize = 100;
   const runnerRef = useRef<HTMLDivElement>(null);
@@ -926,6 +929,35 @@ export default function NativeReportsCenterV2() {
       setRequestMessage(error instanceof Error ? error.message : "Request failed. Please try again.");
     } finally {
       window.setTimeout(() => setRequestMessage(""), 8000);
+    }
+  }
+
+  async function handleDownloadXlsx() {
+    if (!selectedReport) return;
+    setDownloadState("loading");
+    try {
+      const params = new URLSearchParams();
+      Object.entries(filterValues).forEach(([k, v]) => { if (v) params.set(k, v); });
+      const url = `/api/reports/suite/${selectedReport.code}/export?${params.toString()}`;
+      const token = localStorage.getItem("token") ?? sessionStorage.getItem("token") ?? "";
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({})) as { error?: string; reason?: string };
+        throw new Error(body.reason ?? body.error ?? `Server error ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      const cd = resp.headers.get("content-disposition") ?? "";
+      const match = cd.match(/filename[^;=\n]*=\s*(?:['"]?)([^'"\n;]+)/i);
+      a.download = match?.[1] ?? `${selectedReport.code}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setDownloadState("idle");
+    } catch (err) {
+      setDownloadState("error");
+      window.setTimeout(() => setDownloadState("idle"), 5000);
+      console.error("XLSX download failed:", err);
     }
   }
 
@@ -1157,13 +1189,32 @@ export default function NativeReportsCenterV2() {
                       )}
                     </div>
                     <div className="flex flex-col items-end gap-1">
-                      <button
-                        type="button"
-                        onClick={handleRequestReport}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
-                      >
-                        <Mail size={14} /> Request by Email
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            onClick={handleDownloadXlsx}
+                            disabled={downloadState === "loading"}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                            title="Download XLSX directly (super admin)"
+                          >
+                            {downloadState === "loading"
+                              ? <Loader2 size={14} className="animate-spin" />
+                              : <Download size={14} />}
+                            Download XLSX
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleRequestReport}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                        >
+                          <Mail size={14} /> Request by Email
+                        </button>
+                      </div>
+                      {downloadState === "error" && (
+                        <p className="text-xs text-red-600 max-w-xs text-right">Download failed. Try Request by Email.</p>
+                      )}
                       {requestMessage && (
                         <p className="text-xs text-blue-700 max-w-xs text-right">{requestMessage}</p>
                       )}
