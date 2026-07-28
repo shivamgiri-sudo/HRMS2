@@ -22,7 +22,7 @@ interface CreateInboxItem {
 
 export const inboxService = {
   async listItems(filters: InboxFilters) {
-    const conds: string[] = ["user_id = ?"];
+    const conds: string[] = ["user_id = ?", "is_actioned = 0"];
     const params: unknown[] = [filters.user_id];
 
     if (filters.type)     { conds.push("type = ?");       params.push(filters.type); }
@@ -44,7 +44,7 @@ export const inboxService = {
 
   async getUnreadCount(userId: string): Promise<number> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS cnt FROM work_inbox_item WHERE user_id = ? AND is_read = 0",
+      "SELECT COUNT(*) AS cnt FROM work_inbox_item WHERE user_id = ? AND is_read = 0 AND is_actioned = 0",
       [userId]
     );
     return Number((rows as RowDataPacket[])[0]?.cnt ?? 0);

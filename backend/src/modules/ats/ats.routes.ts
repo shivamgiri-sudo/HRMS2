@@ -690,13 +690,16 @@ atsRouter.get("/recruiter/other-pending", requireRole("admin", "hr", "super_admi
 }));
 
 // GET /api/ats/recruiter-roster/active — list of active recruiters for reassignment dropdown
+// Only returns recruiters whose linked employee is still active
 atsRouter.get("/recruiter-roster/active", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { db } = await import("../../db/mysql.js");
   const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
-    `SELECT id, name, recruiter_code, branch, email
-     FROM ats_recruiter_roster
-     WHERE active_status = 1
-     ORDER BY name ASC`,
+    `SELECT r.id, r.name, r.recruiter_code, r.branch, r.email, r.employee_id
+     FROM ats_recruiter_roster r
+     LEFT JOIN employees e ON e.id = r.employee_id
+     WHERE r.active_status = 1
+       AND (r.employee_id IS NULL OR (e.active_status = 1 AND LOWER(e.employment_status) = 'active'))
+     ORDER BY r.name ASC`,
     []
   );
   return res.json({ success: true, data: rows });
