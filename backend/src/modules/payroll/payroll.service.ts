@@ -836,16 +836,20 @@ export const payrollService = {
                        THEN ROUND(SUM(spl.net_salary) / COUNT(DISTINCT spl.employee_id), 2)
                        ELSE 0 END            AS avg_net
            FROM salary_prep_line spl
-           WHERE spl.run_id = ?`,
+           WHERE spl.run_id = ?
+             AND spl.status NOT IN ('excluded', 'blocked')`,
           [effectiveRunId]
         )
       : [[null]];
+
+    const isDraft = run?.status === 'draft' || run?.status === 'processing';
 
     return {
       run,
       stats: Array.isArray(stats) && stats.length ? stats[0] : null,
       runMonth: effectiveRunMonth,
       isFallback,
+      isDraft,
     };
   },
 

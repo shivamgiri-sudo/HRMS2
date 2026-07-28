@@ -72,6 +72,7 @@ interface PayslipRecord {
   run_month: string;
   run_status?: string;
   status?: string;
+  is_draft?: boolean;
   source?: 'hrms' | 'legacy';
   legacy_id?: number;
   sal_date?: string;
@@ -437,15 +438,21 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const deductionBreakdown = getDeductionBreakdown();
   const latestRecord = payrollRecords?.[0];
 
-  // Use running salary for current month if available, otherwise show latest finalized payslip
-  const displayGross = (runningSalary && !hasCurrentMonthPayslip)
+  // Source-of-truth rule:
+  //   locked/approved/disbursed record → use stored figures directly
+  //   draft/processing record → use stored figures (same engine, labelled Draft)
+  //   no record yet → use running estimate (live attendance-based)
+  const latestIsDraft = latestRecord?.is_draft === true;
+  const useRunningEstimate = runningSalary && !hasCurrentMonthPayslip;
+
+  const displayGross = useRunningEstimate
     ? Number(runningSalary.earned_salary_till_date ?? 0)
     : Number(latestRecord?.gross_salary ?? 0);
-  const displayDeductions = (runningSalary && !hasCurrentMonthPayslip)
+  const displayDeductions = useRunningEstimate
     ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0)
       + Number(runningSalary.professional_tax ?? 0) + Number(runningSalary.tds ?? 0)
     : Number(latestRecord?.total_deductions ?? 0);
-  const displayNet = (runningSalary && !hasCurrentMonthPayslip)
+  const displayNet = useRunningEstimate
     ? Number(runningSalary.earned_net_till_date ?? 0)
     : Number(latestRecord?.net_salary ?? 0);
 
@@ -588,7 +595,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         <section className="grid gap-4 sm:grid-cols-3">
           {[
             {
-              label: (runningSalary && !hasCurrentMonthPayslip) ? "Earned gross (till date)" : "Latest gross salary",
+              label: useRunningEstimate ? "Earned gross (till date)" : latestIsDraft ? "Gross salary (Draft)" : "Latest gross salary",
               value: (latestRecord || runningSalary) ? formatCurrency(displayGross) : "Not available",
               icon: Plus,
               tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
@@ -600,7 +607,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
               tone: "border-rose-200 bg-rose-50 text-rose-800",
             },
             {
-              label: (runningSalary && !hasCurrentMonthPayslip) ? "Earned net (till date)" : "Net salary",
+              label: useRunningEstimate ? "Earned net (till date)" : latestIsDraft ? "Net salary (Draft)" : "Net salary",
               value: (latestRecord || runningSalary) ? formatCurrency(displayNet) : "Not available",
               icon: Wallet,
               tone: "border-blue-200 bg-blue-50 text-[#073f78]",
@@ -616,8 +623,20 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
           ))}
         </section>
 
-        {/* Live running salary indicator */}
-        {runningSalary && !hasCurrentMonthPayslip && parseInt(selectedYear) === currentDate.getFullYear() && (
+        {/* Draft payroll indicator */}
+        {latestIsDraft && parseInt(selectedYear) === currentDate.getFullYear() && (
+          <Alert className="rounded-2xl border-amber-300 bg-amber-50/50">
+            <TrendingUp className="h-4 w-4 text-amber-600" />
+            <AlertTitle className="text-amber-900">Payroll in Draft</AlertTitle>
+            <AlertDescription className="text-amber-700">
+              The amounts shown are from the current payroll draft and match the Command Centre exactly.
+              They will be finalised by your payroll team — no changes will be made without approval.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Live running salary indicator — only shown when no payroll line exists yet */}
+        {useRunningEstimate && parseInt(selectedYear) === currentDate.getFullYear() && (
           <Alert className="rounded-2xl border-blue-300 bg-blue-50/50">
             <TrendingUp className="h-4 w-4 text-blue-600" />
             <AlertTitle className="text-blue-900">Live Salary Tracking Active</AlertTitle>

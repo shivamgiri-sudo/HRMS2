@@ -638,7 +638,9 @@ const Payroll = () => {
     const [yr, mo] = rm.split("-");
     const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
       .format(new Date(Number(yr), Number(mo) - 1, 1));
-    return stats?.isFallback ? `Last run: ${label}` : label;
+    if (stats?.isFallback) return `Last run: ${label}`;
+    if (stats?.isDraft) return `${label} · Draft`;
+    return label;
   })();
 
   const payrollStats = [

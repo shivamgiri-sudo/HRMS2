@@ -427,7 +427,7 @@ export async function calculatePayrollRunScoped(
               AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
               AND attendance_status NOT IN ('week_off','holiday')) AS working_days,
            COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
-           COUNT(CASE WHEN adr.attendance_status IN ('leave_approved','half_day') THEN 1 END) AS leave_days,
+           COUNT(CASE WHEN adr.attendance_status = 'leave_approved' THEN 1 END) AS leave_days,
            COALESCE(SUM(adr.lwp_value), 0)                                       AS lwp_days,
            COALESCE(SUM(adr.late_mark), 0)                                       AS late_marks,
            COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'

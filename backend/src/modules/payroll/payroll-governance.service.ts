@@ -116,6 +116,23 @@ export const payrollGovernanceService = {
     const effectiveEnd = readinessEndDate(range.end);
     const issues: PayrollReadinessIssue[] = [];
 
+    // M+2 gate: final calculation is only allowed on or after the 2nd of the following month.
+    // This ensures night-shift attendance from the last working day of the month has crossed
+    // over and been captured before payroll is sealed.
+    const today = todayIstDate();
+    const [runYear, runMonthNum] = run.run_month.split("-").map(Number);
+    const nextMonthYear  = runMonthNum === 12 ? runYear + 1 : runYear;
+    const nextMonthNum   = runMonthNum === 12 ? 1 : runMonthNum + 1;
+    const earliestCalcDate = `${nextMonthYear}-${String(nextMonthNum).padStart(2, "0")}-02`;
+    if (today < earliestCalcDate) {
+      issues.push({
+        code: "MONTH_NOT_CLOSED",
+        severity: "blocker",
+        count: 1,
+        message: `Payroll for ${run.run_month} cannot be calculated before ${earliestCalcDate}. Final calculation is allowed from M+2 to ensure night-shift attendance is fully captured.`,
+      });
+    }
+
     const eligibleSql = `
       SELECT e.id, e.employee_code,
              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name

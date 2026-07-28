@@ -36,6 +36,7 @@ export async function computeRunningSalary(
   const monthStart = runMonth;
   const [y, m] = runMonth.split("-").map(Number);
   const monthEnd = new Date(y, m, 0).toISOString().slice(0, 10); // last day of month
+  const daysInMonth = new Date(y, m, 0).getDate();
 
   // Get employee salary info
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -188,7 +189,7 @@ export async function computeRunningSalary(
     eligibleHolidaysTillDate;
   const cappedEarned = Math.min(Math.max(0, earnedPayableDays), activeCalDays);
 
-  const earnedSalaryTillDate = (monthlyGross / activeCalDays) * cappedEarned;
+  const earnedSalaryTillDate = (monthlyGross / daysInMonth) * cappedEarned;
 
   // Prorated deductions on earned gross
   const ptEarned = emp.state_code
@@ -217,19 +218,17 @@ export async function computeRunningSalary(
   });
 
   // ── Projection ────────────────────────────────────────────────────────────
-  // Future days from roster
-  const [futureRoster] = await db.execute<RowDataPacket[]>(
-    `SELECT roster_status, roster_date
-       FROM wfm_roster_assignment
-      WHERE employee_id = ? AND roster_date > ? AND roster_date <= ?`,
-    [employeeId, today, monthEnd],
-  );
-
+  // Count remaining calendar days from tomorrow to month-end.
+  // No roster dependency — week-off eligibility is purely slab-based on paidBase count.
   let futurePresent = 0;
-  let futureWeekoffRostered = 0;
-  for (const r of futureRoster as any[]) {
-    if (r.roster_status === "Rostered") futurePresent += 1;
-    else if (r.roster_status === "Week Off") futureWeekoffRostered += 1;
+  {
+    const cursor = new Date(today);
+    cursor.setDate(cursor.getDate() + 1);
+    const end = new Date(monthEnd);
+    while (cursor <= end) {
+      futurePresent += 1;
+      cursor.setDate(cursor.getDate() + 1);
+    }
   }
 
   // Future holidays
@@ -256,7 +255,7 @@ export async function computeRunningSalary(
     projectedEligibleWeekoffs + eligibleHolidaysTillDate + futureHolidays +
     futurePresent;
   const projectedPayableDays = Math.min(Math.max(0, projectedPayableDaysRaw), activeCalDays);
-  let projectedSalary = (monthlyGross / activeCalDays) * projectedPayableDays;
+  let projectedSalary = (monthlyGross / daysInMonth) * projectedPayableDays;
 
   // E1.9: Add approved incentives to projected salary
   const [incentiveRows] = await db.execute<RowDataPacket[]>(

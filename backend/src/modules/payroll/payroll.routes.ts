@@ -766,9 +766,19 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
         AND srd.employee_id = spl.employee_id
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
-        AND spl.status NOT IN ('draft')
-        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed')
-      ORDER BY spr.run_month DESC`,
+        AND spl.status NOT IN ('excluded', 'blocked')
+        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed', 'draft', 'processing')
+      ORDER BY
+        spr.run_month DESC,
+        CASE spr.status
+          WHEN 'disbursed'  THEN 1
+          WHEN 'locked'     THEN 2
+          WHEN 'approved'   THEN 3
+          WHEN 'completed'  THEN 4
+          WHEN 'processing' THEN 5
+          WHEN 'draft'      THEN 6
+          ELSE 7
+        END`,
     [callerEmp.id, `${year}-%`]
   );
 
@@ -846,8 +856,11 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
   // Only include legacy rows for months not in current HRMS run data
   const legacyFiltered = (legacyRows as any[]).filter(r => !coveredMonths.has(r.run_month));
 
-  // Tag HRMS rows with source
-  for (const r of rows as any[]) { r.source = 'hrms'; }
+  // Tag HRMS rows with source and draft flag
+  for (const r of rows as any[]) {
+    r.source = 'hrms';
+    r.is_draft = r.run_status === 'draft' || r.run_status === 'processing';
+  }
 
   const combined = [...(rows as any[]), ...legacyFiltered].sort((a, b) =>
     String(b.run_month).localeCompare(String(a.run_month))
