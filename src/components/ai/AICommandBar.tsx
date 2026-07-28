@@ -1,48 +1,47 @@
-import { useState, useEffect } from "react";
-import { useLocation } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
-import { AmbientStrip } from "./AmbientStrip";
-import { CommandPalette } from "./CommandPalette";
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
+import { AmbientStrip } from './AmbientStrip';
+import { CommandPalette } from './CommandPalette';
 
-// Routes where neither strip nor palette should appear
 const HIDDEN_ROUTES = [
-  "/auth",
-  "/login",
-  "/register",
-  "/peopleos/copilot",
-  "/candidate-form",
-  "/interview-registration",
-  "/onboard",
-  "/display/",
-  "/break-desk",
-  "/candidate-portal",
-  "/portal/",
+  '/auth',
+  '/login',
+  '/register',
+  '/peopleos/copilot',
+  '/candidate-form',
+  '/interview-registration',
+  '/onboard',
+  '/display/',
+  '/break-desk',
+  '/candidate-portal',
+  '/portal/',
 ];
 
 const ROUTE_CONTEXT: Record<string, string> = {
-  "/dashboard":             "generic",
-  "/my-dashboard":          "employee_self",
-  "/ceo/dashboard":         "executive_dashboard",
-  "/operations/dashboard":  "operations",
-  "/operations-dashboard":  "operations",
-  "/quality/dashboard":     "quality_operations",
-  "/quality-dashboard":     "quality_operations",
-  "/wfm/dashboard":         "wfm_roster",
-  "/wfm-attendance":        "wfm_roster",
-  "/hr/dashboard":          "hr_operations",
-  "/manager/dashboard":     "manager_team",
-  "/recruiter-dashboard":   "ats_recruiter",
-  "/payroll-hr/dashboard":  "payroll_readiness",
-  "/call-master":           "operations",
-  "/attendance":            "wfm_roster",
+  '/dashboard': 'generic',
+  '/my-dashboard': 'generic',
+  '/ceo/dashboard': 'ceo_summary',
+  '/operations/dashboard': 'generic',
+  '/operations-dashboard': 'generic',
+  '/quality/dashboard': 'generic',
+  '/quality-dashboard': 'generic',
+  '/wfm/dashboard': 'roster_risk',
+  '/wfm-attendance': 'attendance_risk',
+  '/hr/dashboard': 'people_risk',
+  '/manager/dashboard': 'role_insights',
+  '/recruiter-dashboard': 'onboarding_status',
+  '/payroll-hr/dashboard': 'payroll_readiness',
+  '/call-master': 'generic',
+  '/attendance': 'attendance_risk',
 };
 
 function getContextType(pathname: string): string {
   if (ROUTE_CONTEXT[pathname]) return ROUTE_CONTEXT[pathname];
-  for (const [route, ctx] of Object.entries(ROUTE_CONTEXT)) {
-    if (pathname.startsWith(route + "/")) return ctx;
+  for (const [route, context] of Object.entries(ROUTE_CONTEXT)) {
+    if (pathname.startsWith(`${route}/`)) return context;
   }
-  return "generic";
+  return 'generic';
 }
 
 export function AICommandBar() {
@@ -51,22 +50,25 @@ export function AICommandBar() {
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const pathname = location.pathname;
-  const isHidden = !user || HIDDEN_ROUTES.some((r) => pathname.startsWith(r));
+  const isHidden = !user || HIDDEN_ROUTES.some((route) => pathname.startsWith(route));
   const contextType = getContextType(pathname);
 
-  // Global ⌘K / Ctrl+K handler — capture phase overrides old handler in CompactDashboardLayout
   useEffect(() => {
     if (isHidden) return;
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        e.stopPropagation();
-        setPaletteOpen((prev) => !prev);
+    const handler = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        event.stopPropagation();
+        setPaletteOpen((previous) => !previous);
       }
     };
-    document.addEventListener("keydown", handler, true);
-    return () => document.removeEventListener("keydown", handler, true);
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
   }, [isHidden]);
+
+  useEffect(() => {
+    setPaletteOpen(false);
+  }, [pathname]);
 
   if (isHidden) return null;
 
@@ -75,10 +77,12 @@ export function AICommandBar() {
       <AmbientStrip
         contextType={contextType}
         onOpen={() => setPaletteOpen(true)}
+        open={paletteOpen}
       />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
+        contextType={contextType}
       />
     </>
   );
