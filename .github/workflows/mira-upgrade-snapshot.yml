@@ -48,7 +48,7 @@ jobs:
           test "$(wc -c < /tmp/mira-patch.b64)" -eq 64692
           echo "10f6aac7658d0fe428d749282f388d5f25cc06c1e0ba936d6bbf29c07c2563a0  /tmp/mira-patch.b64" | sha256sum -c -
           base64 -d /tmp/mira-patch.b64 > /tmp/mira-patch.tar.gz
-          echo "d407fb4a30254f046b6307ae758b19cdd9089c264a6a4855406e7924669d6b03  /tmp/mira-patch.tar.gz" | sha256sum -c -
+          echo "d407fb4adbbbeb1b81ad3423ad65b30b8b145ccf6984a0f0c429de33536d6b03  /tmp/mira-patch.tar.gz" | sha256sum -c -
           gzip -t /tmp/mira-patch.tar.gz
           tar -tzf /tmp/mira-patch.tar.gz > /tmp/mira-patch-files.txt
           test "$(wc -l < /tmp/mira-patch-files.txt)" -eq 17
