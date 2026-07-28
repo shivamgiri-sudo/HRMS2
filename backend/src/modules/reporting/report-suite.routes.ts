@@ -3850,10 +3850,62 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     }
 
     default: {
-      const fallback = fallbackReport(code);
-      sql = fallback.sql;
-      params.push(...fallback.params);
-      break;
+      // Attempt executor layer for codes not yet in the switch above.
+      const userId = (req as any).authUser?.id as string;
+      const execScope = await resolveFullScope(userId);
+      const execFilters: ExecFilters = {
+        branchId:     req.query.branchId     as string | undefined,
+        processId:    req.query.processId    as string | undefined,
+        departmentId: req.query.departmentId as string | undefined,
+        costCentreId: req.query.costCentreId as string | undefined,
+        managerId:    req.query.managerId    as string | undefined,
+        employeeCode: req.query.employeeCode as string | undefined,
+        from:         req.query.from         as string | undefined,
+        to:           req.query.to           as string | undefined,
+        month:        req.query.month        as string | undefined,
+        year:         req.query.year         as string | undefined,
+        status:       req.query.status       as string | undefined,
+        includeInactive: req.query.includeInactive === 'true',
+        financialYear: req.query.financialYear as string | undefined,
+      };
+      const execOffset = Number(req.query.offset ?? 0);
+      const execLimit  = limit > 0 ? limit : 100;
+      const execOptions: ExecOptions = {
+        limit: execLimit,
+        offset: execOffset,
+        cursor: null,
+        includeTotal: true,
+        mode: 'preview',
+      };
+      try {
+        const result = await executeReport(code, execFilters, execScope, execOptions);
+        const execData = stripCursorField(result.rows);
+        return res.json({
+          success: true,
+          code,
+          data: execData,
+          totalCount: result.rowCount,
+          meta: {
+            count: execData.length,
+            totalCount: result.rowCount,
+            limit: execLimit,
+            offset: execOffset,
+            page: Math.floor(execOffset / execLimit) + 1,
+            totalPages: Math.ceil(result.rowCount / execLimit),
+            isFullExport: isExport,
+            fallback: false,
+          },
+        });
+      } catch (err) {
+        if (err instanceof ReportExecutorNotFoundError) {
+          // Genuine gap — return the placeholder so the frontend shows a "not yet available" state
+          const fallback = fallbackReport(code);
+          sql = fallback.sql;
+          params.push(...fallback.params);
+          break;
+        }
+        throw err;
+      }
     }
   }
 

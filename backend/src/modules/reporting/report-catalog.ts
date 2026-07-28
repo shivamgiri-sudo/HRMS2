@@ -891,6 +891,36 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     processScoped: true,
   },
 
+  {
+    code: "break-daily-summary",
+    name: "Break Activity Daily Summary",
+    category: "Attendance",
+    subcategory: "BPO Metrics",
+    description: "Daily individual break activity: break count, total break minutes, shift, and team per employee",
+    rowGrain: "One row per employee per date",
+    primaryKey: ["employee_code", "break_date"],
+    columns: [
+      { key: "break_date", label: "Date", format: "date", width: 100 },
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "shift_name", label: "Shift", format: "text", width: 100 },
+      { key: "break_count", label: "Break Count", format: "number", width: 80, align: "right" },
+      { key: "total_break_minutes", label: "Total Break (mins)", format: "number", width: 100, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_PROCESS],
+    viewRoles: ["super_admin", "admin", "hr", "wfm", "manager", "process_manager"],
+    exportRoles: ["super_admin", "admin", "hr", "wfm"],
+    sourceTables: ["break_sessions", "wfm_attendance_session", "employees"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: "under_validation",
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════════
   // CATEGORY 3: LEAVE
   // ═══════════════════════════════════════════════════════════════════════════════
