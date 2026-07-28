@@ -85,6 +85,21 @@ jobs:
           src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.service.test.ts
 
+      - name: Authentication security contract
+        run: npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts
+
+      - name: Document vault security contract
+        run: npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts
+
+      - name: Migration governance contract
+        run: npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts
+
+      - name: Database connection reliability contract
+        run: npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts
+
+      - name: Worker safety contract
+        run: npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts
+
       - name: Backend build
         run: npm --prefix backend run build
         env:
