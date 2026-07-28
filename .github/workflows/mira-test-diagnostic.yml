@@ -22,9 +22,10 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci
       - name: Capture full backend test report
+        working-directory: backend
         run: |
           set +e
-          npm --prefix backend exec -- vitest run --reporter=json > /tmp/backend-test-results.json 2>&1
+          npx vitest run --reporter=json > /tmp/backend-test-results.json 2>&1
           exit 0
       - name: Upload diagnostic report
         uses: actions/upload-artifact@v4
