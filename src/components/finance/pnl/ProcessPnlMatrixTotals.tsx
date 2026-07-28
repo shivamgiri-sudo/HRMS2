@@ -7,7 +7,7 @@ interface ProcessPnlMatrixTotalsProps {
   density: "comfortable" | "compact";
 }
 
-const stickyOffsets = ["0px", "220px", "370px"];
+const stickyOffsets = ["0px", "220px", "370px", "500px"];
 
 export function ProcessPnlMatrixTotals({ columns, rows, density }: ProcessPnlMatrixTotalsProps) {
   const padding = density === "compact" ? "px-3 py-2" : "px-3 py-3";

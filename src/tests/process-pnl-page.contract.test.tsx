@@ -15,6 +15,10 @@ const alertsWorkspaceSource = readFileSync(
   resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlAlertsWorkspace.tsx"),
   "utf8",
 );
+const totalsSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlMatrixTotals.tsx"),
+  "utf8",
+);
 
 describe("Process P&L page matrix contracts", () => {
   it("exposes the alerts and reconciliation tab", () => {
@@ -64,5 +68,14 @@ describe("Process P&L page matrix contracts", () => {
     expect(alertsWorkspaceSource).toContain("Data coverage gaps");
     expect(alertsWorkspaceSource).toContain("severityFilter");
     expect(alertsWorkspaceSource).toContain("groupBy");
+    expect(alertsWorkspaceSource).toContain('REVENUE_RULE_MISSING');
+    expect(alertsWorkspaceSource).toContain('DELIVERY_ACTUAL_MISSING');
+    expect(alertsWorkspaceSource).toContain('groupBy === "severity"');
+    expect(alertsWorkspaceSource).toContain('groupBy !== "severity"');
+    expect(alertsWorkspaceSource).toContain('Object.entries(groupedAlerts).map');
+  });
+
+  it("keeps totals sticky offsets aligned with four sticky identity columns", () => {
+    expect(totalsSource).toContain('const stickyOffsets = ["0px", "220px", "370px", "500px"]');
   });
 });

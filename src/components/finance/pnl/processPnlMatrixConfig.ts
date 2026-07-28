@@ -438,7 +438,7 @@ const presetColumns: Record<ProcessPnlMatrixPreset, ProcessPnlColumnDefinition[]
     ...commercialColumns,
     ...revenueColumns.filter((column) => column.key !== "revenueDataStatus"),
     ...costColumns,
-    ...profitabilityColumns,
+    ...profitabilityColumns.filter((column) => column.key !== "recognizedRevenue"),
     ...budgetColumns,
   ],
 };

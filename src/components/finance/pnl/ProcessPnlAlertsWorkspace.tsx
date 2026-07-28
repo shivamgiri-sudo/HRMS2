@@ -32,9 +32,11 @@ function AlertIcon({ severity }: { severity: AlertSeverity }) {
   return <CircleAlert className="h-4 w-4 text-sky-700" />;
 }
 
+const blockerCodes = new Set(["REVENUE_RULE_MISSING", "DELIVERY_ACTUAL_MISSING"]);
+
 function isReconciliationBlocker(alert: ProcessPnlAlert) {
   const text = `${alert.code} ${alert.title} ${alert.detail}`.toLocaleLowerCase();
-  return alert.type === "critical" && /block|reconcil|missing|fallback|delivery|coverage|unbilled/.test(text);
+  return blockerCodes.has(alert.code) || /block|reconcil|missing|fallback|delivery|coverage|unbilled/.test(text);
 }
 
 function groupLabel(alert: ProcessPnlAlert, rowsByProcessId: Map<string, BpoPnlRow>, groupBy: GroupBy) {
@@ -43,6 +45,29 @@ function groupLabel(alert: ProcessPnlAlert, rowsByProcessId: Map<string, BpoPnlR
   if (groupBy === "process") return alert.processName ?? row?.processName ?? "Portfolio";
   if (groupBy === "client") return row?.clientName ?? "Unmapped client";
   return row?.branchName ?? "Unassigned branch";
+}
+
+function AlertCard({ alert, period, sectionKey }: { alert: ProcessPnlAlert; period: string; sectionKey: string }) {
+  return (
+    <div className={`px-4 py-3 ${getAlertTone(alert.type)}`}>
+      <div className="flex items-start gap-2">
+        <AlertIcon severity={alert.type} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">{alert.title}</p>
+          <p className="mt-1 text-sm leading-5 opacity-90">{alert.detail}</p>
+          {alert.processId && (
+            <Link
+              to={`/finance/process-pnl/${alert.processId}?period=${period}`}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold underline underline-offset-2"
+            >
+              {alert.processName ?? "Open process"} <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
+          <span className="sr-only">{sectionKey}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ProcessPnlAlertsWorkspace({
@@ -140,9 +165,21 @@ export function ProcessPnlAlertsWorkspace({
               </div>
             ) : (
               Object.entries(groupedAlerts).map(([label, groupAlerts]) => (
-                <div key={label} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <span className="text-sm font-semibold text-slate-800">{label}</span>
-                  <span className="text-xs font-semibold text-slate-500">{groupAlerts.length}</span>
+                <div key={label}>
+                  <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-3">
+                    <span className="text-sm font-semibold text-slate-800">{label}</span>
+                    <span className="text-xs font-semibold text-slate-500">{groupAlerts.length}</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {groupAlerts.map((alert, index) => (
+                      <AlertCard
+                        key={`${label}-${alert.code}-${alert.processId ?? index}`}
+                        alert={alert}
+                        period={period}
+                        sectionKey="grouped"
+                      />
+                    ))}
+                  </div>
                 </div>
               ))
             )}
@@ -159,7 +196,6 @@ export function ProcessPnlAlertsWorkspace({
                 ? alert.type === "critical" && !isReconciliationBlocker(alert)
                 : alert.type === group.severity,
           );
-          const iconSeverity = group.severity ?? "critical";
 
           return (
             <section key={group.key} className="border border-slate-200 bg-white" aria-labelledby={`${group.key}-alerts-title`}>
@@ -175,23 +211,12 @@ export function ProcessPnlAlertsWorkspace({
                   </div>
                 ) : (
                   groupAlerts.map((alert, index) => (
-                    <div key={`${group.key}-${alert.code}-${alert.processId ?? index}`} className={`px-4 py-3 ${getAlertTone(group.severity ?? alert.type)}`}>
-                      <div className="flex items-start gap-2">
-                        <AlertIcon severity={iconSeverity} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold">{alert.title}</p>
-                          <p className="mt-1 text-sm leading-5 opacity-90">{alert.detail}</p>
-                          {alert.processId && (
-                            <Link
-                              to={`/finance/process-pnl/${alert.processId}?period=${period}`}
-                              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold underline underline-offset-2"
-                            >
-                              {alert.processName ?? "Open process"} <ArrowUpRight className="h-3.5 w-3.5" />
-                            </Link>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                    <AlertCard
+                      key={`${group.key}-${alert.code}-${alert.processId ?? index}`}
+                      alert={alert}
+                      period={period}
+                      sectionKey={group.key}
+                    />
                   ))
                 )}
               </div>

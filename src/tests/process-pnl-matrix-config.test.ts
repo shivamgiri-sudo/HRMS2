@@ -324,6 +324,13 @@ describe("process P&L matrix config", () => {
     ]);
   });
 
+  it("does not duplicate column keys in any preset", () => {
+    for (const preset of ["summary", "revenue", "cost", "profitability", "budget-risk", "full"] as const) {
+      const keys = getPresetColumns(preset).map((column) => column.key);
+      expect(new Set(keys).size, `${preset} has duplicate columns`).toBe(keys.length);
+    }
+  });
+
   it("defines all required presets and makes full wider than summary", () => {
     const summaryWidth = getPresetColumns("summary").length;
 
