@@ -44,11 +44,11 @@ export async function rosterPublished(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("wra.roster_date BETWEEN ? AND ?", "wra.roster_status = 'published'");
+  clauses.push("wra.roster_date BETWEEN ? AND ?", "wra.publish_status = 'published'");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -64,8 +64,8 @@ export async function rosterPublished(
            ws.shift_name,
            TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
            TIME_FORMAT(ws.end_time,   '%H:%i') AS shift_end,
-           ws.shift_duration_minutes,
-           wra.roster_status,
+           ws.required_minutes AS shift_duration_minutes,
+           wra.publish_status AS roster_status,
            b.branch_name,
            p.process_name
       FROM wfm_roster_assignment wra
@@ -97,8 +97,8 @@ export async function rosterVariance(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("wra.roster_date BETWEEN ? AND ?");
@@ -156,8 +156,8 @@ export async function shiftSwapRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e_req.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e_req.id IS NOT NULL"];
+  const params: unknown[]  = [];
 
   // Manual scope via requester employee — standard alias "e" not available here
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
@@ -232,12 +232,12 @@ export async function weekOffCalendar(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("wra.roster_date BETWEEN ? AND ?");
-  clauses.push("(wra.is_week_off = 1 OR ws.shift_name = 'WO')");
+  clauses.push("ws.shift_name = 'WO'");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {

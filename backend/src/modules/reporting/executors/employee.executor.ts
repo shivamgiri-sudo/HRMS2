@@ -41,8 +41,8 @@ export async function headcount(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
@@ -72,8 +72,8 @@ export async function employeeMaster(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   if (!filters.includeInactive) clauses.push("e.active_status = 1");
@@ -127,8 +127,8 @@ export async function managerMapping(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -174,8 +174,8 @@ export async function orgStructureSnapshot(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -207,8 +207,8 @@ export async function costCentreHeadcount(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -241,8 +241,8 @@ export async function employeeMovement(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
@@ -288,8 +288,8 @@ export async function confirmationDueList(
   const today = new Date().toISOString().slice(0, 10);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "e.employment_status = 'probation'");
@@ -335,8 +335,8 @@ export async function contractExpiryList(
   const today = new Date().toISOString().slice(0, 10);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "e.contract_end_date IS NOT NULL");
@@ -382,8 +382,8 @@ export async function lifecycleEvents(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["el.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["el.id IS NOT NULL"];
+  const params: unknown[]  = [];
   // Scope filtering on employee dimension
   if (scope.branchScope.mode === "restricted") {
     clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
@@ -431,8 +431,8 @@ export async function incrementPromotionHistory(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["sir.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["sir.id IS NOT NULL"];
+  const params: unknown[]  = [];
   if (scope.branchScope.mode === "restricted") {
     clauses.push(`e.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.branchScope.ids);
@@ -477,8 +477,8 @@ export async function birthdayList(
 ): Promise<ExecResult> {
   const month = Number(filters.month ?? new Date().getMonth() + 1);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "MONTH(e.date_of_birth) = ?");
@@ -520,8 +520,8 @@ export async function anniversaryList(
 ): Promise<ExecResult> {
   const month = Number(filters.month ?? new Date().getMonth() + 1);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "MONTH(e.date_of_joining) = ?");

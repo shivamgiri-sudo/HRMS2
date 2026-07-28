@@ -64,8 +64,8 @@ export async function agentPerformanceSummary(
     new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
 
   // Resolve scoped employee codes from mas_hrms
-  const eClauses: string[] = ["e.company_id = ?"];
-  const eParams: unknown[]  = [scope.companyId];
+  const eClauses: string[] = ["e.id IS NOT NULL"];
+  const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -136,8 +136,8 @@ export async function teamPerformanceSummary(
     new Date(from).getMonth() + 1, 0).toISOString().slice(0, 10);
 
   // Resolve scoped employees with manager info
-  const eClauses: string[] = ["e.company_id = ?"];
-  const eParams: unknown[]  = [scope.companyId];
+  const eClauses: string[] = ["e.id IS NOT NULL"];
+  const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -208,8 +208,8 @@ export async function qualityAuditLog(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const eClauses: string[] = ["e.company_id = ?"];
-  const eParams: unknown[]  = [scope.companyId];
+  const eClauses: string[] = ["e.id IS NOT NULL"];
+  const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 
@@ -265,8 +265,8 @@ export async function fatalErrorRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const eClauses: string[] = ["e.company_id = ?"];
-  const eParams: unknown[]  = [scope.companyId];
+  const eClauses: string[] = ["e.id IS NOT NULL"];
+  const eParams: unknown[]  = [];
   appendScopeConditions(scope, eClauses, eParams);
   appendFilterConditions(filters, eClauses, eParams);
 

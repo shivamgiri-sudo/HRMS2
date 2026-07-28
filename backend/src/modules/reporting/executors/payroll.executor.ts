@@ -45,8 +45,8 @@ export async function payrollRegister(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
@@ -66,7 +66,7 @@ export async function payrollRegister(
            p.process_name,
            d.dept_name AS department_name,
            des.designation_name,
-           COALESCE(spl.basic_pay,0) AS basic_pay,
+           COALESCE(spl.basic,0) AS basic_pay,
            COALESCE(spl.hra,0) AS hra,
            COALESCE(spl.gross_salary,0) AS gross_salary,
            COALESCE(spl.pf_employee,0) AS pf_employee,
@@ -75,8 +75,8 @@ export async function payrollRegister(
            COALESCE(spl.tds,0) AS tds,
            COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
            COALESCE(spl.total_deductions,0) AS total_deductions,
-           COALESCE(spl.net_pay,0) AS net_pay,
-           COALESCE(spl.payable_days,0) AS payable_days,
+           spl.net_salary AS net_pay,
+           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
            COALESCE(spl.lwp_days,0) AS lwp_days
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -119,8 +119,8 @@ export async function payrollVariance(
 
   // JOIN ON params must precede WHERE params in positional binding
   const joinParams: unknown[] = [currentMonth, previousMonth];
-  const clauses: string[] = ["e.company_id = ?"];
-  const whereParams: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const whereParams: unknown[] = [];
   appendScopeConditions(scope, clauses, whereParams);
   appendFilterConditions(filters, clauses, whereParams);
 
@@ -142,12 +142,12 @@ export async function payrollVariance(
            COALESCE(curr.gross_salary,0) AS current_gross,
            COALESCE(prev.gross_salary,0) AS previous_gross,
            COALESCE(curr.gross_salary,0) - COALESCE(prev.gross_salary,0) AS variance_gross,
-           COALESCE(curr.net_pay,0) AS current_net,
-           COALESCE(prev.net_pay,0) AS previous_net,
-           COALESCE(curr.net_pay,0) - COALESCE(prev.net_pay,0) AS variance_net,
+           COALESCE(curr.net_salary,0) AS current_net,
+           COALESCE(prev.net_salary,0) AS previous_net,
+           COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0) AS variance_net,
            CASE
-             WHEN ABS(COALESCE(curr.net_pay,0) - COALESCE(prev.net_pay,0)) > 5000 THEN 'HIGH_VARIANCE'
-             WHEN ABS(COALESCE(curr.net_pay,0) - COALESCE(prev.net_pay,0)) > 1000 THEN 'MEDIUM_VARIANCE'
+             WHEN ABS(COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0)) > 5000 THEN 'HIGH_VARIANCE'
+             WHEN ABS(COALESCE(curr.net_salary,0) - COALESCE(prev.net_salary,0)) > 1000 THEN 'MEDIUM_VARIANCE'
              ELSE 'NORMAL'
            END AS variance_flag
       FROM salary_prep_line curr
@@ -185,8 +185,8 @@ export async function salarySheetOnfido(
   const uanField  = scope.canViewSensitiveFields ? "e.uan_number"          : "'***MASKED***' AS uan_number";
   const bankField = scope.canViewSensitiveFields ? "e.bank_account_number" : "'***MASKED***' AS bank_account_number";
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
@@ -209,7 +209,7 @@ export async function salarySheetOnfido(
            ${panField},
            ${uanField},
            ${bankField},
-           COALESCE(spl.basic_pay,0) AS basic_pay,
+           COALESCE(spl.basic,0) AS basic_pay,
            COALESCE(spl.hra,0) AS hra,
            COALESCE(spl.special_allowance,0) AS special_allowance,
            COALESCE(spl.other_allowances,0) AS other_allowances,
@@ -222,8 +222,8 @@ export async function salarySheetOnfido(
            COALESCE(spl.advance_recovery,0) AS advance_recovery,
            COALESCE(spl.other_deductions,0) AS other_deductions,
            COALESCE(spl.total_deductions,0) AS total_deductions,
-           COALESCE(spl.net_pay,0) AS net_pay,
-           COALESCE(spl.payable_days,0) AS payable_days,
+           spl.net_salary AS net_pay,
+           COALESCE(spl.final_payable_days, spl.working_days, 0) AS payable_days,
            COALESCE(spl.lwp_days,0) AS lwp_days,
            COALESCE(spl.arrear_amount,0) AS arrear_amount
       FROM salary_prep_line spl
@@ -260,8 +260,8 @@ export async function bankAdvice(
   const ifscField = scope.canViewSensitiveFields ? "e.ifsc_code"           : "'***MASKED***' AS ifsc_code";
   const bankName  = scope.canViewSensitiveFields ? "e.bank_name"           : "'***MASKED***' AS bank_name";
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
@@ -281,7 +281,7 @@ export async function bankAdvice(
            ${bankField},
            ${ifscField},
            ${bankName},
-           COALESCE(spl.net_pay,0) AS amount,
+           COALESCE(spl.net_salary,0) AS amount,
            spr.run_month
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -309,8 +309,8 @@ export async function payrollReconciliation(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // Month is optional: omit to get multi-month view; supply to pin to one period
@@ -327,7 +327,7 @@ export async function payrollReconciliation(
            COUNT(*) AS employee_count,
            SUM(COALESCE(spl.gross_salary,0)) AS total_gross,
            SUM(COALESCE(spl.total_deductions,0)) AS total_deductions,
-           SUM(COALESCE(spl.net_pay,0)) AS total_net,
+           SUM(COALESCE(spl.net_salary,0)) AS total_net,
            SUM(COALESCE(spl.pf_employee,0)) AS total_pf_employee,
            SUM(COALESCE(spl.esic_employee,0)) AS total_esic_employee,
            SUM(COALESCE(spl.tds,0)) AS total_tds,
@@ -356,8 +356,8 @@ export async function arrearPaymentRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   // Only rows that carry an arrear component
@@ -385,7 +385,7 @@ export async function arrearPaymentRegister(
            COALESCE(spl.arrear_amount,0) AS arrear_amount,
            spr.run_month AS payment_month,
            COALESCE(spl.arrear_reason, '') AS reason,
-           COALESCE(spl.net_pay,0) AS net_pay
+           COALESCE(spl.net_salary,0) AS net_pay
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -414,8 +414,8 @@ export async function payrollCostSummary(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
@@ -433,7 +433,7 @@ export async function payrollCostSummary(
            SUM(COALESCE(spl.gross_salary,0))
              + SUM(COALESCE(spl.pf_employer,0))
              + SUM(COALESCE(spl.esic_employer,0)) AS total_ctc,
-           SUM(COALESCE(spl.net_pay,0)) AS total_net
+           SUM(COALESCE(spl.net_salary,0)) AS total_net
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id

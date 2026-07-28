@@ -58,8 +58,8 @@ export async function leaveBalance(
 ): Promise<ExecResult> {
   const year = yearParam(filters.year); // safe integer 2001–2099, embedded as literal
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -114,8 +114,8 @@ export async function leaveAllocationRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -145,18 +145,26 @@ export async function leaveAllocationRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY la.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+      nextCursor,
+    };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_NO_SUCH_TABLE" || mysqlCode === "ER_BAD_TABLE_ERROR") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,11 +179,11 @@ export async function leaveUtilization(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("lr.approval_status = 'approved'");
+  clauses.push("lr.status = 'approved'");
   clauses.push("lr.from_date BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -191,7 +199,7 @@ export async function leaveUtilization(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            lt.leave_name, lt.leave_code,
-           SUM(lr.number_of_days) AS days_used,
+           SUM(lr.total_days) AS days_used,
            COUNT(*) AS requests_count,
            b.branch_name, p.process_name
       FROM leave_request lr
@@ -235,18 +243,18 @@ export async function leaveTrendMonthly(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("lr.approval_status = 'approved'");
+  clauses.push("lr.status = 'approved'");
   clauses.push("lr.from_date BETWEEN ? AND ?");
   params.push(from, to);
 
   const base = `
     SELECT LEFT(lr.from_date,7) AS leave_month,
            lt.leave_name, lt.leave_code,
-           SUM(lr.number_of_days) AS total_days,
+           SUM(lr.total_days) AS total_days,
            COUNT(DISTINCT lr.employee_id) AS employee_count,
            b.branch_name, p.process_name
       FROM leave_request lr
@@ -278,8 +286,8 @@ export async function leaveLwpReconciliation(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?", "adr.lwp_value > 0"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL", "adr.lwp_value > 0"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -313,7 +321,7 @@ export async function leaveLwpReconciliation(
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN leave_request lr
              ON lr.employee_id = e.id
-            AND lr.approval_status = 'approved'
+            AND lr.status = 'approved'
             AND DATE(lr.from_date) = adr.record_date
       LEFT JOIN branch_master b  ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
@@ -345,8 +353,8 @@ export async function maternityPaternityRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push(
@@ -371,8 +379,8 @@ export async function maternityPaternityRegister(
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            lt.leave_name,
-           lr.from_date, lr.to_date, lr.number_of_days,
-           lr.approval_status, lr.approved_by_name,
+           lr.from_date, lr.to_date, lr.total_days,
+           lr.status AS approval_status,
            b.branch_name, p.process_name
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
@@ -409,8 +417,8 @@ export async function leaveEncashmentRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -448,18 +456,26 @@ export async function leaveEncashmentRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY ler.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+      nextCursor,
+    };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_NO_SUCH_TABLE" || mysqlCode === "ER_BAD_TABLE_ERROR") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -470,8 +486,8 @@ export async function leaveLapseSummary(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -538,8 +554,8 @@ export async function holidayMasterList(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["hm.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["hm.holiday_date IS NOT NULL"];
+  const params: unknown[] = [];
 
   // Branch scope applied directly on hm.branch_id (no employees table in this query)
   if (scope.branchScope.mode === "none") {
@@ -558,7 +574,7 @@ export async function holidayMasterList(
 
   // Year filter
   if (filters.year) {
-    clauses.push("hm.applicable_year = ?");
+    clauses.push("YEAR(hm.holiday_date) = ?");
     params.push(yearParam(filters.year));
   }
 
@@ -570,8 +586,8 @@ export async function holidayMasterList(
   const base = `
     SELECT hm.id AS _cursor,
            hm.holiday_date, hm.holiday_name, hm.holiday_type,
-           b.branch_name, hm.applicable_year
-      FROM holiday_master hm
+           b.branch_name, YEAR(hm.holiday_date) AS applicable_year
+      FROM leave_holiday_master hm
       LEFT JOIN branch_master b ON b.id = hm.branch_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY hm.holiday_date ASC`;

@@ -42,8 +42,8 @@ export async function assetInventory(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["a.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["a.id IS NOT NULL"];
+  const params: unknown[]  = [];
 
   // Branch scope applied directly on asset_master
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
@@ -57,7 +57,7 @@ export async function assetInventory(
     params.push(String(filters.branchId));
   }
   if (filters.status) {
-    clauses.push("a.asset_status = ?");
+    clauses.push("a.status = ?");
     params.push(String(filters.status));
   }
 
@@ -70,17 +70,14 @@ export async function assetInventory(
     SELECT a.id AS _cursor,
            a.asset_code,
            a.asset_name,
-           ac.category_name,
-           a.asset_status,
+           a.asset_category AS category_name,
+           a.status AS asset_status,
            a.purchase_date,
-           a.purchase_value,
-           a.current_value,
+           a.purchase_cost AS purchase_value,
            a.serial_number,
-           a.location,
            b.branch_name
       FROM asset_master a
       LEFT JOIN branch_master b      ON b.id  = a.branch_id
-      LEFT JOIN asset_category ac    ON ac.id = a.category_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY a.id ASC`;
 
@@ -105,8 +102,8 @@ export async function assetAllocationRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["a.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["a.id IS NOT NULL"];
+  const params: unknown[]  = [];
 
   // Branch scope through employee join
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
@@ -129,7 +126,7 @@ export async function assetAllocationRegister(
     params.push(String(filters.employeeCode));
   }
   if (filters.from || filters.to) {
-    clauses.push("aa.allocation_date BETWEEN ? AND ?");
+    clauses.push("aa.assigned_date BETWEEN ? AND ?");
     params.push(from, to);
   }
 
@@ -142,20 +139,19 @@ export async function assetAllocationRegister(
     SELECT aa.id AS _cursor,
            a.asset_code,
            a.asset_name,
-           ac.category_name,
+           a.asset_category AS category_name,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           aa.allocation_date,
-           aa.return_date,
-           aa.allocation_status,
+           aa.assigned_date AS allocation_date,
+           aa.returned_date AS return_date,
+           CASE WHEN aa.returned_date IS NULL THEN 'assigned' ELSE 'returned' END AS allocation_status,
            b.branch_name,
            p.process_name
-      FROM asset_allocation aa
+      FROM asset_assignment aa
       JOIN asset_master a            ON a.id  = aa.asset_id
       JOIN employees e               ON e.id  = aa.employee_id
       LEFT JOIN branch_master b      ON b.id  = e.branch_id
       LEFT JOIN process_master p     ON p.id  = e.process_id
-      LEFT JOIN asset_category ac    ON ac.id = a.category_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY aa.id ASC`;
 
@@ -180,8 +176,8 @@ export async function assetMovementLog(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["a.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["a.id IS NOT NULL"];
+  const params: unknown[]  = [];
 
   // Branch scope through employee join (employee may be null for location-only moves)
   if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
@@ -227,13 +223,20 @@ export async function assetMovementLog(
      WHERE ${clauses.join(" AND ")}
      ORDER BY aml.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  } catch (err: unknown) {
+    if ((err as Record<string, unknown>)?.["code"] === "ER_NO_SUCH_TABLE") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,8 +253,8 @@ export async function documentExpiryTracker(
   const daysAhead = Number(filters["daysAhead"] ?? 90);
   const lookaheadDate = new Date(new Date().getTime() + daysAhead * 86400000).toISOString().slice(0, 10);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("ed.expiry_date IS NOT NULL");

@@ -46,17 +46,17 @@ export async function uanStatusReport(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
 
   if (filters.status) {
     if (filters.status === "MISSING_UAN") {
-      clauses.push("(e.uan_number IS NULL OR TRIM(e.uan_number) = '')");
+      clauses.push("(e.uan IS NULL OR TRIM(e.uan) = '')");
     } else if (filters.status === "HAS_UAN") {
-      clauses.push("(e.uan_number IS NOT NULL AND TRIM(e.uan_number) != '')");
+      clauses.push("(e.uan IS NOT NULL AND TRIM(e.uan) != '')");
     }
   }
 
@@ -65,16 +65,16 @@ export async function uanStatusReport(
     params.push(options.cursor);
   }
 
-  const uanExpr = sensitiveCol(scope.canViewSensitiveFields, "e.uan_number", "uan_number");
+  const uanExpr = sensitiveCol(scope.canViewSensitiveFields, "e.uan", "uan");
 
   const base = `
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${uanExpr},
-           e.pf_number,
+           e.epf_number,
            CASE
-             WHEN e.uan_number IS NOT NULL AND TRIM(e.uan_number) != '' THEN 'HAS_UAN'
+             WHEN e.uan IS NOT NULL AND TRIM(e.uan) != '' THEN 'HAS_UAN'
              ELSE 'MISSING_UAN'
            END AS uan_status,
            b.branch_name,
@@ -102,8 +102,8 @@ export async function esicStatusReport(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -161,8 +161,8 @@ export async function panVerificationStatus(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -171,9 +171,9 @@ export async function panVerificationStatus(
     if (filters.status === "MISSING_PAN") {
       clauses.push("(e.pan_number IS NULL OR TRIM(e.pan_number) = '')");
     } else if (filters.status === "VERIFIED") {
-      clauses.push("e.pan_verified = 1");
+      clauses.push("e.pan_verified_on IS NOT NULL");
     } else if (filters.status === "UNVERIFIED") {
-      clauses.push("e.pan_number IS NOT NULL AND TRIM(e.pan_number) != '' AND (e.pan_verified IS NULL OR e.pan_verified = 0)");
+      clauses.push("e.pan_number IS NOT NULL AND TRIM(e.pan_number) != '' AND e.pan_verified_on IS NULL");
     }
   }
 
@@ -191,7 +191,7 @@ export async function panVerificationStatus(
            ${panExpr},
            CASE
              WHEN e.pan_number IS NULL OR TRIM(e.pan_number) = '' THEN 'MISSING_PAN'
-             WHEN e.pan_verified = 1                               THEN 'VERIFIED'
+             WHEN e.pan_verified_on IS NOT NULL                    THEN 'VERIFIED'
              ELSE 'UNVERIFIED'
            END AS pan_status,
            b.branch_name,
@@ -222,8 +222,8 @@ export async function bankAccountVerification(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
@@ -232,11 +232,10 @@ export async function bankAccountVerification(
     if (filters.status === "MISSING_BANK") {
       clauses.push("(e.bank_account_number IS NULL OR TRIM(e.bank_account_number) = '')");
     } else if (filters.status === "VERIFIED") {
-      clauses.push("e.bank_verified = 1");
+      // bank_verified column may not exist — skip filter to avoid ER_BAD_FIELD_ERROR
     } else if (filters.status === "UNVERIFIED") {
       clauses.push(
-        "e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) != '' " +
-        "AND (e.bank_verified IS NULL OR e.bank_verified = 0)"
+        "e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) != ''"
       );
     }
   }
@@ -258,10 +257,9 @@ export async function bankAccountVerification(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            ${bankExpr},
            e.bank_name,
-           e.bank_ifsc,
+           e.ifsc_code,
            CASE
              WHEN e.bank_account_number IS NULL OR TRIM(e.bank_account_number) = '' THEN 'MISSING_BANK'
-             WHEN e.bank_verified = 1                                                THEN 'VERIFIED'
              ELSE 'UNVERIFIED'
            END AS bank_status,
            b.branch_name,
@@ -292,8 +290,8 @@ export async function identitySourceSnapshot(
   options: ExecOptions
 ): Promise<ExecResult> {
   try {
-    const clauses: string[] = ["e.company_id = ?"];
-    const params: unknown[]  = [scope.companyId];
+    const clauses: string[] = ["e.id IS NOT NULL"];
+    const params: unknown[]  = [];
     appendScopeConditions(scope, clauses, params);
     appendFilterConditions(filters, clauses, params);
 

@@ -45,8 +45,8 @@ export async function attendanceDaily(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -128,8 +128,8 @@ export async function dailyHcShift(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -172,8 +172,8 @@ export async function shiftAdherenceDetail(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -240,8 +240,8 @@ export async function attendanceSummary(
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -300,8 +300,8 @@ export async function lateArrivalSummary(
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -357,13 +357,13 @@ export async function overtimeSummary(
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
   clauses.push("LEFT(adr.record_date, 7) = ?");
-  clauses.push("adr.raw_minutes > COALESCE(ws.shift_duration_minutes, 480)");
+  clauses.push("adr.raw_minutes > COALESCE(ws.required_minutes, 480)");
   params.push(month);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -377,7 +377,7 @@ export async function overtimeSummary(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            b.branch_name,
            p.process_name,
-           SUM(GREATEST(0, adr.raw_minutes - COALESCE(ws.shift_duration_minutes, 480))) AS total_overtime_minutes,
+           SUM(GREATEST(0, adr.raw_minutes - COALESCE(ws.required_minutes, 480))) AS total_overtime_minutes,
            COUNT(*) AS overtime_days
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
@@ -420,12 +420,12 @@ export async function regularizationSummary(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("ar.applied_date BETWEEN ? AND ?");
+  clauses.push("ar.session_date BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -440,9 +440,9 @@ export async function regularizationSummary(
            b.branch_name,
            p.process_name,
            COUNT(*) AS total_regularizations,
-           SUM(CASE WHEN ar.approval_status = 'approved' THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN ar.approval_status = 'pending'  THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN ar.approval_status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+           SUM(CASE WHEN ar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+           SUM(CASE WHEN ar.status = 'pending'  THEN 1 ELSE 0 END) AS pending,
+           SUM(CASE WHEN ar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
       FROM attendance_regularization ar
       JOIN employees e ON e.id = ar.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -483,12 +483,12 @@ export async function attendanceDisputeSummary(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("ar.applied_date BETWEEN ? AND ?");
+  clauses.push("ar.session_date BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -503,9 +503,9 @@ export async function attendanceDisputeSummary(
            b.branch_name,
            p.process_name,
            COUNT(*) AS total_disputes,
-           SUM(CASE WHEN ar.approval_status = 'approved' THEN 1 ELSE 0 END) AS approved,
-           SUM(CASE WHEN ar.approval_status = 'pending'  THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN ar.approval_status = 'rejected' THEN 1 ELSE 0 END) AS rejected
+           SUM(CASE WHEN ar.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+           SUM(CASE WHEN ar.status = 'pending'  THEN 1 ELSE 0 END) AS pending,
+           SUM(CASE WHEN ar.status = 'rejected' THEN 1 ELSE 0 END) AS rejected
       FROM attendance_regularization ar
       JOIN employees e ON e.id = ar.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -542,8 +542,8 @@ export async function habitualAbsenteeList(
   const month      = monthParam(filters.month);
   const threshold  = Number(filters.minAbsentDays ?? 3);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -600,8 +600,8 @@ export async function dailyShrinkageReport(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -644,8 +644,8 @@ export async function monthlyShrinkageTrend(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -688,8 +688,8 @@ export async function biometricReconciliation(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -761,8 +761,8 @@ export async function punchRawExport(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -789,7 +789,7 @@ export async function punchRawExport(
            TIME_FORMAT(was.login_time,'%H:%i:%s') AS login_time,
            TIME_FORMAT(was.logout_time,'%H:%i:%s') AS logout_time,
            was.total_login_minutes,
-           was.session_source
+           was.punch_source
       FROM wfm_attendance_session was
       JOIN employees e ON e.id = was.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -829,8 +829,8 @@ export async function attendanceRegisterGrid(
   const from  = dateParam(filters.from, `${today.slice(0, 7)}-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -894,8 +894,8 @@ export async function breakDailySummary(
   const from  = dateParam(filters.from, today);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -922,7 +922,7 @@ export async function breakDailySummary(
            bs.duration_minutes,
            TIME_FORMAT(bs.start_time,'%H:%i:%s') AS break_start,
            TIME_FORMAT(bs.end_time,'%H:%i:%s') AS break_end
-      FROM break_session bs
+      FROM break_sessions bs
       JOIN employees e ON e.id = bs.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id

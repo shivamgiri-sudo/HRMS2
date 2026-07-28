@@ -62,14 +62,14 @@ export async function pfContributionRegister(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
   const uanCol = scope.canViewSensitiveFields
-    ? "e.uan_number"
-    : "'***MASKED***' AS uan_number";
+    ? "e.uan"
+    : "'***MASKED***' AS uan";
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("spr.run_month = ?", "COALESCE(e.pf_applicable, 1) = 1");
+  clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -87,8 +87,8 @@ export async function pfContributionRegister(
            COALESCE(spl.pf_employee, 0) AS pf_employee,
            COALESCE(spl.pf_employer, 0) AS pf_employer,
            COALESCE(spl.pf_employee, 0) + COALESCE(spl.pf_employer, 0) AS total_pf,
-           e.pf_number,
-           COALESCE(spl.basic_pay, 0) AS pf_wage
+           e.epf_number,
+           COALESCE(spl.basic, 0) AS pf_wage
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
       JOIN employees e ON e.id = spl.employee_id
@@ -122,14 +122,14 @@ export async function pfEcrFormat(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
   const uanCol = scope.canViewSensitiveFields
-    ? "e.uan_number"
-    : "'***MASKED***' AS uan_number";
+    ? "e.uan"
+    : "'***MASKED***' AS uan";
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("spr.run_month = ?", "COALESCE(e.pf_applicable, 1) = 1");
+  clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -142,7 +142,7 @@ export async function pfEcrFormat(
            e.employee_code,
            ${uanCol},
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS member_name,
-           COALESCE(spl.pf_wage, spl.basic_pay, 0) AS pf_wages,
+           COALESCE(spl.basic, 0) AS pf_wages,
            COALESCE(spl.pf_employee, 0) AS epf_employee,
            COALESCE(spl.pf_employer, 0) AS eps_employer,
            spr.run_month
@@ -154,19 +154,27 @@ export async function pfEcrFormat(
      WHERE ${clauses.join(" AND ")}
      ORDER BY spl.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
-    nextCursor,
-  };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return {
+      rows: out,
+      rowCount: options.includeTotal ? total : rows.length,
+      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+      nextCursor,
+    };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,11 +190,11 @@ export async function esicContributionRegister(
     ? "e.esic_number"
     : "'***MASKED***' AS esic_number";
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("spr.run_month = ?", "COALESCE(e.esic_applicable, 1) = 1");
+  clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -238,8 +246,8 @@ export async function ptRegister(
 ): Promise<ExecResult> {
   const runMonth = monthParam(filters.month);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?", "COALESCE(spl.professional_tax, 0) > 0");
@@ -295,8 +303,8 @@ export async function tdsComputationRegister(
     ? "e.pan_number"
     : "'***MASKED***' AS pan_number";
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("spr.run_month = ?");
@@ -360,8 +368,8 @@ export async function form16Status(
     : "'***MASKED***' AS pan_number";
 
   // Build base scope/filter conditions (may throw ReportScopeAccessDeniedError — intentional)
-  const baseClauses: string[] = ["e.company_id = ?"];
-  const baseParams: unknown[] = [scope.companyId];
+  const baseClauses: string[] = ["e.id IS NOT NULL"];
+  const baseParams: unknown[] = [];
   appendScopeConditions(scope, baseClauses, baseParams);
   appendFilterConditions(filters, baseClauses, baseParams);
   baseClauses.push("e.active_status = 1");
@@ -463,8 +471,8 @@ export async function investmentDeclarationStatus(
     ? filters.financialYear
     : currentFinancialYear();
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("id_decl.financial_year = ?");
@@ -523,8 +531,8 @@ export async function gratuityLiabilityRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[] = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push(

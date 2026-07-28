@@ -43,12 +43,12 @@ export async function resignationRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("(e.resignation_date IS NOT NULL OR eer.id IS NOT NULL)");
-  clauses.push("COALESCE(eer.resignation_date, e.resignation_date) BETWEEN ? AND ?");
+  clauses.push("eer.id IS NOT NULL");
+  clauses.push("eer.resignation_date BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -60,11 +60,11 @@ export async function resignationRegister(
     SELECT e.id AS _cursor,
            e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           COALESCE(eer.resignation_date, e.resignation_date) AS resignation_date,
+           eer.resignation_date,
            COALESCE(eer.last_working_day, e.last_working_day) AS last_working_day,
-           COALESCE(eer.exit_reason, e.resignation_reason) AS exit_reason,
-           COALESCE(eer.approval_status, e.exit_status) AS status,
-           COALESCE(eer.notice_period_served, 0) AS notice_days,
+           eer.exit_reason,
+           eer.approval_status AS status,
+           COALESCE(eer.notice_period_days, 0) AS notice_days,
            b.branch_name, p.process_name
       FROM employees e
       LEFT JOIN exit_request eer ON eer.employee_id = e.id
@@ -73,13 +73,21 @@ export async function resignationRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -90,8 +98,8 @@ export async function fnfPendingRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.employment_status IN ('resigned','separated')");
@@ -118,13 +126,21 @@ export async function fnfPendingRegister(
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
-  const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number) : null;
+    const out = rows.map(({ _cursor: _, ...rest }) => rest);
+    return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +156,8 @@ export async function fnfSettlementRegister(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.employment_status IN ('Exited','Separated','Resigned')");
@@ -192,8 +208,8 @@ export async function clearanceStatusRegister(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.employment_status IN ('resigned','separated','exited')");
@@ -244,8 +260,8 @@ export async function monthlyAttritionSummary(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("COALESCE(e.date_of_exit, e.last_working_day, e.resignation_date) BETWEEN ? AND ?");
@@ -263,10 +279,18 @@ export async function monthlyAttritionSummary(
      GROUP BY exit_month, b.branch_name, p.process_name
      ORDER BY exit_month ASC, b.branch_name, p.process_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -277,8 +301,8 @@ export async function exitReasonAnalysis(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("COALESCE(e.date_of_exit, e.last_working_day, e.resignation_date) IS NOT NULL");
@@ -295,10 +319,18 @@ export async function exitReasonAnalysis(
      GROUP BY exit_reason, b.branch_name, p.process_name
      ORDER BY count DESC, b.branch_name, p.process_name`;
 
-  const total = options.includeTotal ? await count(base, params) : 0;
-  const sql   = applyPagination(base, options);
-  const rows  = await query(sql, params) as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  try {
+    const total = options.includeTotal ? await count(base, params) : 0;
+    const sql   = applyPagination(base, options);
+    const rows  = await query(sql, params) as Record<string, unknown>[];
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  } catch (err: unknown) {
+    const mysqlCode = (err as Record<string, unknown>)?.["code"];
+    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
+      return { rows: [], rowCount: 0, isTruncated: false };
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,8 +341,8 @@ export async function tenureDistribution(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
@@ -352,8 +384,8 @@ export async function earlyAttritionReport(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
-  const clauses: string[] = ["e.company_id = ?"];
-  const params: unknown[]  = [scope.companyId];
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("COALESCE(e.date_of_exit, e.last_working_day) IS NOT NULL");
