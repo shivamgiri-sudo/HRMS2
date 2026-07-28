@@ -1175,3 +1175,66 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
     data
   });
 }));
+
+// ── Week-off fairness scores ──────────────────────────────────────────────────
+
+wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+  const { getFairnessScoresForWeek } = await import("./weekoff-fairness.service.js");
+  const processId = String(req.query.processId ?? "");
+  const weekStartDate = String(req.query.weekStartDate ?? "");
+  if (!processId || !weekStartDate) {
+    return res.status(400).json({ success: false, message: "processId and weekStartDate required" });
+  }
+  const data = await getFairnessScoresForWeek(processId, weekStartDate);
+  return res.json({ success: true, data });
+}));
+
+wfmRouter.post("/weekoff/fairness-scores/compute", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+  const { computeAndStoreFairnessScores } = await import("./weekoff-fairness.service.js");
+  const { processId, weekStartDate } = req.body;
+  if (!processId || !weekStartDate) {
+    return res.status(400).json({ success: false, message: "processId and weekStartDate required" });
+  }
+  await computeAndStoreFairnessScores(processId, weekStartDate);
+  return res.json({ success: true, message: "Fairness scores computed and stored" });
+}));
+
+wfmRouter.post("/weekoff/allocations/record", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+  const { recordWeekOffAllocation } = await import("./weekoff-fairness.service.js");
+  const { employeeId, processId, weekStartDate, assignedDay, exceptionReason } = req.body;
+  if (!employeeId || !processId || !weekStartDate) {
+    return res.status(400).json({ success: false, message: "employeeId, processId and weekStartDate required" });
+  }
+  await recordWeekOffAllocation(employeeId, processId, weekStartDate, assignedDay ?? null, exceptionReason);
+  return res.json({ success: true, message: "Allocation recorded" });
+}));
+
+// ── Branch WFM SPOC config ────────────────────────────────────────────────────
+
+wfmRouter.get("/branch-spoc-config", requireRole("super_admin", "admin", "wfm"), h(async (req, res) => {
+  const { listSPOCConfigs } = await import("./branch-wfm-spoc.service.js");
+  const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+  const data = await listSPOCConfigs(branchId);
+  return res.json({ success: true, data });
+}));
+
+wfmRouter.post("/branch-spoc-config", requireRole("super_admin", "admin"), h(async (req, res) => {
+  const { createSPOCConfig } = await import("./branch-wfm-spoc.service.js");
+  const { branch_id, primary_spoc_user_id, backup_spoc_user_id, effective_from, effective_to } = req.body;
+  if (!branch_id || !primary_spoc_user_id || !effective_from) {
+    return res.status(400).json({ success: false, message: "branch_id, primary_spoc_user_id and effective_from required" });
+  }
+  const id = await createSPOCConfig(
+    { branch_id, primary_spoc_user_id, backup_spoc_user_id: backup_spoc_user_id ?? null, effective_from, effective_to: effective_to ?? null },
+    String(req.authUser.id),
+  );
+  return res.status(201).json({ success: true, id });
+}));
+
+wfmRouter.patch("/branch-spoc-config/:id", requireRole("super_admin", "admin"), h(async (req, res) => {
+  const { updateSPOCConfig } = await import("./branch-wfm-spoc.service.js");
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
+  await updateSPOCConfig(id, req.body);
+  return res.json({ success: true });
+}));

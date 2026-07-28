@@ -146,6 +146,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/vendors": "VENDOR_MANAGEMENT",
   "/wfm-attendance": "WFM_ATTENDANCE_DASHBOARD",
   "/wfm/auto-roster": "WFM_AUTO_ROSTER",
+  "/wfm/branch-spoc-config": "WFM_BRANCH_SPOC_CONFIG",
   "/wfm/dashboard": "WFM_DASHBOARD",
   "/wfm/extensions": "WFM_EXTENSIONS",
   "/wfm/live-tracker": "WFM_LIVE_TRACKER",

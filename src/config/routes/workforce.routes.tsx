@@ -41,6 +41,7 @@ const NativeBusinessActionQueue    = lazy(() => import("@/pages/NativeBusinessAc
 const BreakDeskDevices             = lazy(() => import("@/pages/BreakDeskDevices"));
 // BreakReports moved into ReportsHub — route redirects to hub
 const WeekoffFairness              = lazy(() => import("@/pages/wfm/WeekoffFairness"));
+const NativeBranchWFMSpocConfig    = lazy(() => import("@/pages/NativeBranchWFMSpocConfig"));
 
 export const workforceRouteElements = (
   <>
@@ -109,6 +110,9 @@ export const workforceRouteElements = (
           <NativeBusinessActionQueue />
         </ProtectedRoute>
       } />
+
+      {/* WFM SPOC Config — admin only */}
+      <Route path="/wfm/branch-spoc-config" element={<ProtectedRoute roles={['super_admin','admin']}><NativeBranchWFMSpocConfig /></ProtectedRoute>} />
 
       {/* Break management — CANONICAL device route: /wfm/break-desk-devices */}
       <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><BreakDeskDevices /></ProtectedRoute>} />

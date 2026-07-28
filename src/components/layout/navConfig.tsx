@@ -196,6 +196,7 @@ export const navGroups: NavGroup[] = [
           { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
           { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
           { label: "Week-off Fairness",      href: "/wfm/weekoff-fairness",      icon: ic(Target),        roles: ["admin","super_admin","wfm"], description: "Fairness scores & allocation" },
+          { label: "Branch SPOC Config",     href: "/wfm/branch-spoc-config",    icon: ic(ShieldCheck),   roles: ["admin","super_admin"], description: "Branch WFM final-approver assignment" },
         ],
       },
       {
