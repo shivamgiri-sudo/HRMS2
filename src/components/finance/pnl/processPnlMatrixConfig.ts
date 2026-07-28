@@ -96,17 +96,26 @@ function formatValue(value: ColumnValue): React.ReactNode {
   return Array.isArray(value) ? value.join(" + ") : value;
 }
 
-function sumColumn(rows: BpoPnlRow[], key: ProcessPnlColumnKey) {
+function sumColumn(rows: BpoPnlRow[], key: keyof BpoPnlRow) {
   return rows.reduce((total, row) => {
-    const value = row[key as keyof BpoPnlRow];
+    const value = row[key];
     return total + (typeof value === "number" ? value : 0);
   }, 0);
 }
 
+function ratioTotal(rows: BpoPnlRow[], numerator: keyof BpoPnlRow, denominator: keyof BpoPnlRow) {
+  const denominatorTotal = sumColumn(rows, denominator);
+  return denominatorTotal === 0 ? null : (sumColumn(rows, numerator) / denominatorTotal) * 100;
+}
+
+type ColumnOptions = Pick<ProcessPnlColumnDefinition, "align" | "sticky" | "widthClass"> & {
+  total?: (rows: BpoPnlRow[]) => React.ReactNode;
+};
+
 function column(
   key: ProcessPnlColumnKey,
   label: string,
-  options: Pick<ProcessPnlColumnDefinition, "align" | "sticky" | "widthClass"> = {},
+  options: ColumnOptions = {},
 ): ProcessPnlColumnDefinition {
   return {
     key,
@@ -114,12 +123,28 @@ function column(
     align: options.align ?? "right",
     ...options,
     render: (row) => formatValue(row[key as keyof BpoPnlRow] as ColumnValue),
-    total: (rows) => formatValue(sumColumn(rows, key)),
     sortValue: (row) => {
       const value = row[key as keyof BpoPnlRow] as ColumnValue;
       return Array.isArray(value) ? value.join(" + ") : value ?? "";
     },
   };
+}
+
+function additiveColumn(key: ProcessPnlColumnKey, label: string, options: ColumnOptions = {}) {
+  return column(key, label, { ...options, total: (rows) => formatValue(sumColumn(rows, key as keyof BpoPnlRow)) });
+}
+
+function weightedColumn(
+  key: ProcessPnlColumnKey,
+  label: string,
+  numerator: keyof BpoPnlRow,
+  denominator: keyof BpoPnlRow,
+  options: ColumnOptions = {},
+) {
+  return column(key, label, {
+    ...options,
+    total: (rows) => formatValue(ratioTotal(rows, numerator, denominator)),
+  });
 }
 
 const identityColumns: ProcessPnlColumnDefinition[] = [
@@ -130,54 +155,54 @@ const identityColumns: ProcessPnlColumnDefinition[] = [
 ];
 
 const revenueColumns: ProcessPnlColumnDefinition[] = [
-  column("recognizedRevenue", "Recognized revenue"),
-  column("earnedRevenue", "Earned revenue"),
-  column("invoicedRevenue", "Invoiced revenue"),
-  column("collectedRevenue", "Collected revenue"),
-  column("outstandingReceivable", "Outstanding receivable"),
-  column("unbilledRevenue", "Unbilled revenue"),
-  column("revenueVariance", "Revenue variance"),
-  column("revenueAtRisk", "Revenue at risk"),
+  additiveColumn("recognizedRevenue", "Recognized revenue"),
+  additiveColumn("earnedRevenue", "Earned revenue"),
+  additiveColumn("invoicedRevenue", "Invoiced revenue"),
+  additiveColumn("collectedRevenue", "Collected revenue"),
+  additiveColumn("outstandingReceivable", "Outstanding receivable"),
+  additiveColumn("unbilledRevenue", "Unbilled revenue"),
+  additiveColumn("revenueVariance", "Revenue variance"),
+  additiveColumn("revenueAtRisk", "Revenue at risk"),
   column("billingModels", "Billing models", { align: "left" }),
-  column("mandatedSeats", "Mandated seats"),
-  column("deliveredUnits", "Delivered units"),
-  column("billableUnits", "Billable units"),
+  additiveColumn("mandatedSeats", "Mandated seats"),
+  additiveColumn("deliveredUnits", "Delivered units"),
+  additiveColumn("billableUnits", "Billable units"),
   column("revenueDataStatus", "Revenue data", { align: "left" }),
 ];
 
 const costColumns: ProcessPnlColumnDefinition[] = [
-  column("agentSalary", "Agent salary"),
-  column("averageAgentSalary", "Average agent salary"),
-  column("agentSalaryPctRevenue", "Agent salary % revenue"),
-  column("dscPeople", "DSC people"),
-  column("dscNonPeople", "DSC non-people"),
-  column("dsc", "DSC"),
-  column("dscPctRevenue", "DSC % revenue"),
-  column("bmcPeople", "BMC people"),
-  column("bmcNonPeople", "BMC non-people"),
-  column("bmc", "BMC"),
-  column("bmcPctRevenue", "BMC % revenue"),
-  column("grnVendorActual", "GRN/vendor actual"),
-  column("peopleCostPctRevenue", "People cost % revenue"),
+  additiveColumn("agentSalary", "Agent salary"),
+  weightedColumn("averageAgentSalary", "Average agent salary", "agentSalary", "agentHeadcount"),
+  weightedColumn("agentSalaryPctRevenue", "Agent salary % revenue", "agentSalary", "recognizedRevenue"),
+  additiveColumn("dscPeople", "DSC people"),
+  additiveColumn("dscNonPeople", "DSC non-people"),
+  additiveColumn("dsc", "DSC"),
+  weightedColumn("dscPctRevenue", "DSC % revenue", "dsc", "recognizedRevenue"),
+  additiveColumn("bmcPeople", "BMC people"),
+  additiveColumn("bmcNonPeople", "BMC non-people"),
+  additiveColumn("bmc", "BMC"),
+  weightedColumn("bmcPctRevenue", "BMC % revenue", "bmc", "recognizedRevenue"),
+  additiveColumn("grnVendorActual", "GRN/vendor actual"),
+  weightedColumn("peopleCostPctRevenue", "People cost % revenue", "totalPeopleCost", "recognizedRevenue"),
 ];
 
 const profitabilityColumns: ProcessPnlColumnDefinition[] = [
-  column("contribution", "Contribution"),
-  column("contributionMarginPct", "Contribution margin %"),
-  column("ebitda", "EBITDA"),
-  column("ebitdaMarginPct", "EBITDA margin %"),
-  column("ebit", "EBIT"),
-  column("operatingProfitPct", "Operating profit %"),
-  column("pbt", "PBT"),
-  column("pat", "PAT"),
+  additiveColumn("contribution", "Contribution"),
+  weightedColumn("contributionMarginPct", "Contribution margin %", "contribution", "recognizedRevenue"),
+  additiveColumn("ebitda", "EBITDA"),
+  weightedColumn("ebitdaMarginPct", "EBITDA margin %", "ebitda", "recognizedRevenue"),
+  additiveColumn("ebit", "EBIT"),
+  weightedColumn("operatingProfitPct", "Operating profit %", "operatingProfit", "recognizedRevenue"),
+  additiveColumn("pbt", "PBT"),
+  additiveColumn("pat", "PAT"),
 ];
 
 const budgetColumns: ProcessPnlColumnDefinition[] = [
-  column("approvedBudget", "Approved budget"),
-  column("reservedBudget", "Reserved budget"),
-  column("consumedBudget", "Consumed budget"),
-  column("availableBudget", "Available budget"),
-  column("budgetUtilizationPct", "Budget utilization %"),
+  additiveColumn("approvedBudget", "Approved budget"),
+  additiveColumn("reservedBudget", "Reserved budget"),
+  additiveColumn("consumedBudget", "Consumed budget"),
+  additiveColumn("availableBudget", "Available budget"),
+  weightedColumn("budgetUtilizationPct", "Budget utilization %", "consumedBudget", "approvedBudget"),
 ];
 
 const summaryColumns: ProcessPnlColumnDefinition[] = [

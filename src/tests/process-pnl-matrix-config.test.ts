@@ -125,6 +125,14 @@ const row2: BpoPnlRow = {
   processStatus: "loss-making",
 };
 
+const accountingFallbackRow: BpoPnlRow = {
+  ...baseRow,
+  processId: "p-3",
+  revenueDataStatus: "accounting_fallback",
+  outstandingReceivable: 0,
+  revenueAtRisk: 0,
+};
+
 const state: ProcessPnlViewState = {
   preset: "summary",
   status: "all",
@@ -178,6 +186,34 @@ describe("process P&L matrix config", () => {
       "budget-exceeded": 1,
       "delivery-missing": 1,
     });
+  });
+
+  it("uses outstanding receivable for high-receivable filtering", () => {
+    expect(
+      filterMatrixRows([baseRow, row2], { ...state, issue: "high-receivable" }),
+    ).toEqual([baseRow]);
+  });
+
+  it("filters and counts accounting-fallback rows", () => {
+    expect(
+      filterMatrixRows([baseRow, accountingFallbackRow], {
+        ...state,
+        issue: "accounting-fallback",
+      }),
+    ).toEqual([accountingFallbackRow]);
+    expect(getIssueCounts([baseRow, accountingFallbackRow])["accounting-fallback"]).toBe(1);
+  });
+
+  it("only exposes meaningful totals and uses weighted percentage totals", () => {
+    const summary = getPresetColumns("summary");
+    const totalFor = (key: (typeof summary)[number]["key"]) =>
+      summary.find((column) => column.key === key)?.total;
+
+    expect(totalFor("processName")).toBeUndefined();
+    expect(totalFor("processStatus")).toBeUndefined();
+    expect(totalFor("revenueDataStatus")).toBeUndefined();
+    expect(totalFor("recognizedRevenue")?.([baseRow, row2])).toBe(190000);
+    expect(totalFor("ebitdaMarginPct")?.([baseRow, row2])).toBeCloseTo((20000 / 190000) * 100);
   });
 
   it("defines all presets and makes broad presets wider than summary", () => {

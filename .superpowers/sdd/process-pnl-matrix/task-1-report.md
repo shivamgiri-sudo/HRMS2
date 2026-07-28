@@ -29,3 +29,21 @@ Status: complete
 
 - The focused Vitest command emits the existing Vite recommendation to switch from the SWC React plugin to `@vitejs/plugin-react`; this is a warning only and was not introduced by Task 1.
 - Existing unrelated modified and untracked files remain untouched.
+
+## Fix pass
+
+- Replaced blanket totals with explicit totals only for additive measures.
+- Added weighted totals for percentage metrics, budget utilization, and average agent salary.
+- Left identity, status, text, and other non-additive columns without totals.
+- Added regression tests for `high-receivable`, `accounting-fallback`, and meaningful weighted totals.
+
+### Fix pass verification
+
+- Focused Vitest suite: **8 passed, 0 failed**.
+- TypeScript typecheck: **passed**.
+- Targeted ESLint: **passed**.
+- `git diff --check`: **passed**; warnings were limited to pre-existing unrelated CRLF files.
+
+### Fix pass concerns
+
+- The focused Vitest command continues to emit the existing Vite recommendation to switch from the SWC React plugin to `@vitejs/plugin-react`; this remains a warning only.
