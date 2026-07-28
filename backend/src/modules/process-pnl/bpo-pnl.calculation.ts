@@ -222,6 +222,87 @@ export function calculateRevenue(
   };
 }
 
+export type AllocationDriverMode = "weighted" | "equal" | "manual_percentage";
+
+export interface AllocationShare {
+  key: string;
+  /** Driver value for "weighted"/"equal" mode; configured percentage (0-100) for "manual_percentage". */
+  weight: number;
+}
+
+export interface AllocationOutcome {
+  /** key -> allocated amount, rounded to paise. For "weighted"/"equal" mode the amounts always
+   *  sum exactly to poolAmount (largest-remainder method on integer paise — no float drift). */
+  amounts: Map<string, number>;
+  /** For "manual_percentage" mode: whether the configured weights summed to 100 (+/- 0.01).
+   *  Always true for "weighted"/"equal" mode, since those always reconcile by construction. */
+  balanced: boolean;
+  /** For "manual_percentage" mode: the actual sum of configured weights. Null otherwise. */
+  percentTotal: number | null;
+}
+
+/**
+ * Single shared allocation primitive for splitting a branch/shared cost pool across processes
+ * (or any other keyed set). Replaces two independently-maintained, float-based copies of this
+ * logic that used to live in bpo-pnl.service.ts and bpo-pnl-allocation-overlay.service.ts.
+ *
+ * Manual-percentage mode intentionally does NOT renormalize configured percentages to force a
+ * 100% sum — that would silently change already-approved allocation policy data. It only reports
+ * whether the pool is balanced so callers can surface a data-quality signal.
+ */
+export function allocatePoolAmount(
+  poolAmount: number,
+  shares: AllocationShare[],
+  mode: AllocationDriverMode
+): AllocationOutcome {
+  const amounts = new Map<string, number>();
+  if (shares.length === 0) {
+    return { amounts, balanced: true, percentTotal: null };
+  }
+
+  if (mode === "manual_percentage") {
+    const percentTotal = shares.reduce((sum, share) => sum + n(share.weight), 0);
+    const balanced = Math.abs(percentTotal - 100) <= 0.01;
+    for (const share of shares) {
+      amounts.set(share.key, Math.round(poolAmount * (n(share.weight) / 100) * 100) / 100);
+    }
+    return { amounts, balanced, percentTotal };
+  }
+
+  const totalPaise = Math.round(n(poolAmount) * 100);
+  const weights = mode === "equal" ? shares.map(() => 1) : shares.map((share) => Math.max(0, n(share.weight)));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+
+  if (totalWeight <= 0) {
+    // Equal-split fallback (matches prior behaviour when driver totals are zero), still exact.
+    const evenPaise = Math.floor(totalPaise / shares.length);
+    const remainder = totalPaise - evenPaise * shares.length;
+    shares.forEach((share, index) => {
+      amounts.set(share.key, (evenPaise + (index < remainder ? 1 : 0)) / 100);
+    });
+    return { amounts, balanced: true, percentTotal: null };
+  }
+
+  // Largest-remainder method: floor each share's exact paise value, then hand out the leftover
+  // paise one at a time to the shares with the biggest fractional remainder. Guarantees the
+  // allocated amounts always sum to exactly totalPaise, unlike naive per-share rounding.
+  const raw = weights.map((weight) => (totalPaise * weight) / totalWeight);
+  const floors = raw.map((value) => Math.floor(value));
+  const allocatedPaise = floors.reduce((sum, value) => sum + value, 0);
+  const remainderPaise = totalPaise - allocatedPaise;
+  const order = raw
+    .map((value, index) => ({ index, remainder: value - floors[index] }))
+    .sort((a, b) => b.remainder - a.remainder);
+  const finalPaise = [...floors];
+  for (let i = 0; i < remainderPaise; i++) {
+    finalPaise[order[i % order.length].index] += 1;
+  }
+  shares.forEach((share, index) => {
+    amounts.set(share.key, finalPaise[index] / 100);
+  });
+  return { amounts, balanced: true, percentTotal: null };
+}
+
 export function calculateBpoCostWaterfall(input: BpoCostInput): BpoCostResult {
   const revenue = n(input.revenue);
   const agentSalary = n(input.agentSalary);

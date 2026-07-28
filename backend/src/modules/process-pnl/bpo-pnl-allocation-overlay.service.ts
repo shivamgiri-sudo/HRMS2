@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, type BpoPnlRow } from "./bpo-pnl.service.js";
+import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -138,19 +139,29 @@ function allocateBranchPool(
   const processPolicies = branchRows.map((row) => findPolicy(policies, branchId, poolType, row.processId));
   const hasManual = processPolicies.some((policy) => policy?.allocation_driver === "manual");
   if (hasManual) {
-    branchRows.forEach((row, index) => {
-      result.set(row.processId, amount * (n(processPolicies[index]?.manual_allocation_pct) / 100));
-    });
+    const shares: AllocationShare[] = branchRows.map((row, index) => ({
+      key: row.processId,
+      weight: n(processPolicies[index]?.manual_allocation_pct),
+    }));
+    const outcome = allocatePoolAmount(amount, shares, "manual_percentage");
+    if (!outcome.balanced) {
+      console.warn(
+        `[bpo-pnl-allocation-overlay] manual allocation for branch ${branchId} / pool ${poolType} sums to ` +
+        `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`
+      );
+    }
+    for (const [processId, allocated] of outcome.amounts) result.set(processId, allocated);
     return result;
   }
 
   const branchPolicy = findPolicy(policies, branchId, poolType);
   const driver = branchPolicy?.allocation_driver ?? "active_hc";
-  const values = branchRows.map((row) => driverValue(row, driver));
-  const total = values.reduce((sum, value) => sum + value, 0);
-  branchRows.forEach((row, index) => {
-    result.set(row.processId, total > 0 ? amount * (values[index] / total) : amount / branchRows.length);
-  });
+  const shares: AllocationShare[] = branchRows.map((row) => ({
+    key: row.processId,
+    weight: driverValue(row, driver),
+  }));
+  const outcome = allocatePoolAmount(amount, shares, driver === "equal" ? "equal" : "weighted");
+  for (const [processId, allocated] of outcome.amounts) result.set(processId, allocated);
   return result;
 }
 

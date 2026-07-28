@@ -128,39 +128,12 @@ router.get(
   })
 );
 
-router.post(
-  "/pnl/budgets",
-  requireWriteAccess,
-  requireRole(...BUDGET_CREATE_ROLES),
-  h(async (req, res) => {
-    const user = actor(req);
-    const branchId = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: req.body?.branchId,
-    });
-    if (!branchId) throw new Error("Branch is required");
-    const data = await branchBudgetService.saveDraft(
-      { ...req.body, branchId },
-      user.id,
-      user.role
-    );
-    res.status(201).json({ success: true, data });
-  })
-);
-
-router.post(
-  "/pnl/budgets/:id/submit",
-  requireWriteAccess,
-  requireRole(...BUDGET_CREATE_ROLES),
-  h(async (req, res) => {
-    const user = actor(req);
-    await scopedBudget(req, req.params.id);
-    const data = await branchBudgetService.submit(req.params.id, user.id, user.role);
-    res.json({ success: true, data });
-  })
-);
+// NOTE: POST /pnl/budgets and POST /pnl/budgets/:id/submit are owned exclusively by
+// budgetCoverageRouter (backend/src/modules/process-pnl/budget-coverage.routes.ts), which is
+// mounted ahead of this router (via grn.routes.ts, app.ts). Registering them here as well used
+// to shadow-collide with identical paths and leave this router's handlers dead code (Express
+// resolves to whichever router registered the path first). Do not re-add them here — extend
+// budgetCoverageService instead so there is exactly one submit/create path.
 
 router.post(
   "/pnl/budgets/:id/review",
@@ -205,6 +178,60 @@ function readFilters(req: AuthenticatedRequest, scopedBranchId?: string | null) 
   };
 }
 
+// The legacy processPnlService detail routes (below) compute their own
+// contributionMargin/operatingProfit/operatingMarginPct from a simpler
+// revenue-direct-indirect formula with no EBITDA/D&A/finance-cost/tax concept, while
+// canonicalPnlService's bpo_allocation_v2 engine computes a full EBITDA->EBIT->PBT->PAT
+// waterfall from GRN/vendor-allocation-aware cost inputs. The two can diverge for the same
+// process/period. Rather than restructure the service layering (process-pnl.service.ts is the
+// upstream base-row input for bpo-pnl.service.ts, so it cannot import canonical/bpo services
+// without creating a circular dependency), this composes both at the route layer: legacy
+// breakdown data stays as-is, but the profit/margin figures are always overwritten with the
+// canonical numbers before the response is sent.
+async function fetchCanonicalProfitRow(
+  processId: string,
+  filters: Partial<import("./process-pnl.types.js").PnlQueryFilters>
+): Promise<Record<string, unknown> | null> {
+  try {
+    const canonical = await canonicalPnlService.getProcessDetail(processId, filters);
+    return (canonical as { row?: Record<string, unknown> })?.row ?? null;
+  } catch {
+    // Canonical detail unavailable for this process (e.g. no revenue rule configured yet) —
+    // callers fall back to the legacy figures but flag it so the drift is visible, not silently
+    // hidden.
+    return null;
+  }
+}
+
+function mergeCanonicalProfit(
+  legacy: object,
+  row: Record<string, unknown> | null
+): Record<string, unknown> & { calculationEngine: string } {
+  const base = legacy as Record<string, unknown>;
+  if (!row) return { ...base, calculationEngine: "legacy_fallback" };
+  return {
+    ...base,
+    contributionMargin: row.contribution,
+    contributionMarginPct: row.contributionMarginPct,
+    operatingProfit: row.ebit,
+    operatingMarginPct: row.operatingProfitPct,
+    ebitda: row.ebitda,
+    ebitdaMarginPct: row.ebitdaMarginPct,
+    pbt: row.pbt,
+    pat: row.pat,
+    calculationEngine: "bpo_allocation_v2",
+  };
+}
+
+async function overlayCanonicalProfit(
+  processId: string,
+  filters: Partial<import("./process-pnl.types.js").PnlQueryFilters>,
+  legacy: object
+): Promise<Record<string, unknown> & { calculationEngine: string }> {
+  const row = await fetchCanonicalProfitRow(processId, filters);
+  return mergeCanonicalProfit(legacy, row);
+}
+
 async function scopedFilters(req: AuthenticatedRequest) {
   const user = req.authUser;
   const branchId = await resolveFinanceBranchScope({
@@ -229,7 +256,9 @@ router.get("/pnl/processes", h(async (req, res) => {
 }));
 
 router.get("/pnl/processes/:processId/overview", h(async (req, res) => {
-  const data = await processPnlService.getOverview(req.params.processId, await scopedFilters(req));
+  const filters = await scopedFilters(req);
+  const legacy = await processPnlService.getOverview(req.params.processId, filters);
+  const data = await overlayCanonicalProfit(req.params.processId, filters, legacy);
   res.json({ success: true, data });
 }));
 
@@ -275,7 +304,14 @@ router.get("/pnl/processes/:processId/ledger", h(async (req, res) => {
 }));
 
 router.get("/pnl/processes/:processId/detail", h(async (req, res) => {
-  const data = await processPnlService.getDetailBundle(req.params.processId, await scopedFilters(req));
+  const filters = await scopedFilters(req);
+  const bundle = await processPnlService.getDetailBundle(req.params.processId, filters);
+  const canonicalRow = await fetchCanonicalProfitRow(req.params.processId, filters);
+  const data = {
+    ...bundle,
+    overview: mergeCanonicalProfit(bundle.overview, canonicalRow),
+    record: mergeCanonicalProfit(bundle.record, canonicalRow),
+  };
   res.json({ success: true, data });
 }));
 

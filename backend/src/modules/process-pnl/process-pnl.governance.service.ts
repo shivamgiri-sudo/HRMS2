@@ -801,51 +801,13 @@ export const processPnlGovernanceService = {
     return { success: true, role: nextRole };
   },
 
-  async lockPeriod(periodId: string, actorUserId: string) {
-    await ensureRequiredTable("finance_period", "Run the Process P&L governance migration first.");
-    await ensureRequiredTable("pnl_period_signoff", "Run the Process P&L governance migration first.");
-
-    const required = ["finance_preparer", "finance_head", "accounts_head", "ceo"];
-    const signedRows = await queryRows<RowDataPacket>(
-      `SELECT signoff_role
-         FROM pnl_period_signoff
-        WHERE finance_period_id = ?
-          AND status = 'signed'`,
-      [periodId]
-    );
-    const signed = new Set(signedRows.map((row) => String(row.signoff_role)));
-    if (!required.every((role) => signed.has(role))) {
-      throw Object.assign(new Error("Finance Preparer, Finance Head, Accounts Head, and CEO signoffs are required before locking."), {
-        statusCode: 400,
-      });
-    }
-
-    await db.execute(
-      `UPDATE finance_period
-          SET status = 'locked',
-              locked_at = NOW(),
-              locked_by = ?
-        WHERE id = ?`,
-      [actorUserId, periodId]
-    );
-
-    return { success: true };
-  },
-
-  async recalculate(periodCode?: string) {
-    const period = periodCode || currentPeriod();
-    processPnlService.invalidateCaches();
-    const summary = await processPnlService.getSummary({ period });
-    const processes = await processPnlService.listProcesses({ period });
-    await ensureFinancePeriod(period);
-
-    return {
-      period,
-      generatedAt: summary.generatedAt,
-      processCount: processes.length,
-      revenue: summary.kpis.organisationRevenue,
-      operatingProfit: summary.kpis.operatingProfit,
-      alertCount: summary.alerts.length,
-    };
-  },
+  // NOTE: lockPeriod/recalculate were intentionally removed from this service (2026-07-29
+  // stabilization pass). They were dead code (zero callers repo-wide, confirmed by full grep) and
+  // unsafe: this lockPeriod flipped finance_period.status with no snapshot write and no
+  // pending-adjustment check, unlike the actually-wired canonicalPnlService.lockPeriod (which
+  // snapshots pnl_period_snapshot/pnl_period_snapshot_row transactionally before locking). A
+  // future accidental call to a governance-level lockPeriod would have locked a period with no
+  // audit trail. canonicalPnlService is the single source of truth for lock/recalculate; it
+  // already depends on this service for getPeriodClose, so delegating the other direction here
+  // would create a circular import — deletion, not delegation, is the correct fix.
 };

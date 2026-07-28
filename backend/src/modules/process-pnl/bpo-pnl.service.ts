@@ -3,8 +3,10 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import {
+  allocatePoolAmount,
   calculateBpoCostWaterfall,
   calculateRevenue,
+  type AllocationShare,
   type BpoBillingModel,
   type DeliveryMetricInput,
   type RevenueComponentInput,
@@ -620,19 +622,28 @@ function allocateBranchPools<T extends { amount: number }>(
     const usesManual = processPolicies.some((policy) => policy?.allocation_driver === "manual");
 
     if (usesManual) {
-      rows.forEach((row, index) => {
-        const manualPct = toNumber(processPolicies[index]?.manual_allocation_pct);
-        result.set(row.processId, poolAmount * (manualPct / 100));
-      });
+      const shares: AllocationShare[] = rows.map((row, index) => ({
+        key: row.processId,
+        weight: toNumber(processPolicies[index]?.manual_allocation_pct),
+      }));
+      const outcome = allocatePoolAmount(poolAmount, shares, "manual_percentage");
+      if (!outcome.balanced) {
+        console.warn(
+          `[bpo-pnl] manual allocation for branch ${branchId} / pool ${poolType} sums to ` +
+          `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`
+        );
+      }
+      for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
       continue;
     }
 
     const driver = branchPolicy?.allocation_driver ?? "active_hc";
-    const values = rows.map((row) => allocationDriverValue(row, driver));
-    const total = values.reduce((sum, value) => sum + value, 0);
-    rows.forEach((row, index) => {
-      result.set(row.processId, total > 0 ? poolAmount * (values[index] / total) : poolAmount / rows.length);
-    });
+    const shares: AllocationShare[] = rows.map((row) => ({
+      key: row.processId,
+      weight: allocationDriverValue(row, driver),
+    }));
+    const outcome = allocatePoolAmount(poolAmount, shares, driver === "equal" ? "equal" : "weighted");
+    for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
   }
   return result;
 }
