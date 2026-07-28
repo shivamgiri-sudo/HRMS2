@@ -30,7 +30,18 @@ export interface AccountAnswerResult {
   response?: AiGenerateResponse;
 }
 
+export class MiraDataUnavailableError extends Error {
+  readonly operation: string;
+
+  constructor(operation: string) {
+    super('Mira could not read the requested HRMS data right now.');
+    this.name = 'MiraDataUnavailableError';
+    this.operation = operation;
+  }
+}
+
 const CACHE_TTL_MS = 15_000;
+const CACHE_MAX_ENTRIES = 2_000;
 const cache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
 
 const INTENT_PATTERNS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
@@ -54,14 +65,15 @@ const OTHER_EMPLOYEE_PATTERNS = [
   /\b(other|another|someone else(?:'s)?|his|her|their)\s+(employee\s+)?(salary|attendance|leave|profile|details|documents|payslip)\b/i,
   /\b(salary|attendance|leave|profile|details|documents|payslip)\s+(of|for)\s+(?!me\b|my\b)/i,
   /\bwhich employees?\b/i,
-  /\bwho (?:has|is|was|needs|did)\b/i,
+  /\bwho (?:has|is|was|needs|did)\b[^?.]{0,120}\b(?:salary|attendance|leave|profile|documents?|payslip|absent|late|lwp|shift|week[ -]?off|pending|approval|loan|reimbursement)\b/i,
   /\bemployee\s+(?:code|id)\s*[:#-]?\s*[a-z0-9_-]+\b/i,
 ];
 
-function detectIntent(question: string): AccountIntent {
-  if (OTHER_EMPLOYEE_PATTERNS.some((pattern) => pattern.test(question))) return 'scope_violation';
+export function detectMiraIntent(question: string): AccountIntent {
+  const normalized = String(question ?? '').trim();
+  if (OTHER_EMPLOYEE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'scope_violation';
   for (const entry of INTENT_PATTERNS) {
-    if (entry.patterns.some((pattern) => pattern.test(question))) return entry.intent;
+    if (entry.patterns.some((pattern) => pattern.test(normalized))) return entry.intent;
   }
   return 'unknown';
 }
@@ -77,28 +89,80 @@ function textValue(value: unknown, fallback = 'Not available'): string {
 }
 
 function formatCurrency(value: unknown): string {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(numberValue(value));
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(numberValue(value));
 }
 
 function formatDate(value: unknown): string {
   if (!value) return 'Not available';
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
-  return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+  const raw = String(value).trim();
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const date = dateOnly
+    ? new Date(`${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}T12:00:00+05:30`)
+    : new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw.slice(0, 10);
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
 }
 
-async function queryRows(sql: string, params: unknown[] = []): Promise<RowDataPacket[]> {
+function currentIndiaYear(): number {
+  return Number(new Intl.DateTimeFormat('en-IN', {
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  }).format(new Date()));
+}
+
+function currentIndiaMonth(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    timeZone: 'Asia/Kolkata',
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value ?? '';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '';
+  return `${year}-${month}`;
+}
+
+async function queryRows(
+  operation: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<RowDataPacket[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params);
     return rows;
-  } catch {
-    return [];
+  } catch (error) {
+    console.error(`[Mira] ${operation} query failed`, error instanceof Error ? error.message : error);
+    throw new MiraDataUnavailableError(operation);
   }
 }
 
-async function queryOne(sql: string, params: unknown[] = []): Promise<RowDataPacket> {
-  const rows = await queryRows(sql, params);
+async function queryOne(
+  operation: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<RowDataPacket> {
+  const rows = await queryRows(operation, sql, params);
   return rows[0] ?? ({} as RowDataPacket);
+}
+
+function pruneCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  while (cache.size >= CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
 }
 
 async function cached(
@@ -109,9 +173,21 @@ async function cached(
   const key = `${userId}:${intent}`;
   const hit = cache.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.value;
+  if (hit) cache.delete(key);
   const value = await loader();
+  pruneCache();
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
+}
+
+export function clearMiraCacheForUser(userId?: string): void {
+  if (!userId) {
+    cache.clear();
+    return;
+  }
+  for (const key of cache.keys()) {
+    if (key.startsWith(`${userId}:`)) cache.delete(key);
+  }
 }
 
 function localResponse(
@@ -125,7 +201,7 @@ function localResponse(
   return {
     answer,
     provider: 'mira-secure-local',
-    model: 'hrms-self-account-v1',
+    model: 'hrms-self-account-v2',
     latencyMs: Math.max(1, Date.now() - startedAt),
     safetyBlocked: false,
     fallbackUsed: false,
@@ -143,6 +219,7 @@ function dashboardAction(label = 'Open my dashboard'): AiAction {
 
 async function fetchProfile(employeeId: string): Promise<Record<string, unknown>> {
   const row = await queryOne(
+    'profile',
     `SELECT e.full_name, e.employee_code, e.date_of_joining, e.employment_status, e.employment_type,
             b.branch_name, p.process_name, m.full_name AS reporting_manager_name
        FROM employees e
@@ -157,6 +234,7 @@ async function fetchProfile(employeeId: string): Promise<Record<string, unknown>
 
 async function fetchSalary(employeeId: string): Promise<Record<string, unknown>> {
   const row = await queryOne(
+    'salary',
     `SELECT spl.gross_salary, spl.total_deductions, spl.net_salary, spl.basic, spl.hra,
             spl.special_allowance, spl.pf_employee, spl.esic_employee, spl.professional_tax,
             spl.tds, spl.lwp_deduction, spl.advance_recovery, spl.present_days,
@@ -171,8 +249,9 @@ async function fetchSalary(employeeId: string): Promise<Record<string, unknown>>
 }
 
 async function fetchLeave(employeeId: string): Promise<Record<string, unknown>> {
-  const year = new Date().getFullYear();
+  const year = currentIndiaYear();
   const rows = await queryRows(
+    'leave',
     `SELECT lt.leave_name, lt.leave_code, lbl.allocated_days, lbl.used_days, lbl.adjusted_days
        FROM leave_balance_ledger lbl
        JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
@@ -185,6 +264,7 @@ async function fetchLeave(employeeId: string): Promise<Record<string, unknown>> 
 
 async function fetchAttendance(employeeId: string): Promise<Record<string, unknown>> {
   const row = await queryOne(
+    'attendance',
     `SELECT SUM(attendance_status = 'present') AS present_days,
             SUM(attendance_status = 'half_day') AS half_days,
             SUM(attendance_status = 'absent') AS absent_days,
@@ -198,11 +278,12 @@ async function fetchAttendance(employeeId: string): Promise<Record<string, unkno
         AND record_date <= CURDATE()`,
     [employeeId],
   );
-  return { month: new Date().toISOString().slice(0, 7), row };
+  return { month: currentIndiaMonth(), row };
 }
 
 async function fetchRoster(employeeId: string): Promise<Record<string, unknown>> {
   const rows = await queryRows(
+    'roster',
     `SELECT DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS roster_date,
             st.shift_name, st.start_time, st.end_time,
             rda.is_week_off, rda.is_holiday, rda.acknowledgement_status
@@ -210,7 +291,7 @@ async function fetchRoster(employeeId: string): Promise<Record<string, unknown>>
        JOIN weekly_roster_cycle c ON c.id = rda.cycle_id
        LEFT JOIN wfm_shift_template st ON st.id = rda.shift_template_id
       WHERE rda.employee_id = ?
-        AND rda.roster_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        AND rda.roster_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 6 DAY)
         AND c.status IN ('published','acknowledged','active','attendance_locked','payroll_input_ready','closed')
       ORDER BY rda.roster_date`,
     [employeeId],
@@ -220,6 +301,7 @@ async function fetchRoster(employeeId: string): Promise<Record<string, unknown>>
 
 async function fetchDocuments(employeeId: string): Promise<Record<string, unknown>> {
   const rows = await queryRows(
+    'documents',
     `SELECT doc_type, doc_name, verified, created_at
        FROM employee_documents
       WHERE employee_id = ?
@@ -230,9 +312,11 @@ async function fetchDocuments(employeeId: string): Promise<Record<string, unknow
 }
 
 async function fetchPendingActions(userId: string, roleKeys: string[]): Promise<Record<string, unknown>> {
-  const roles = roleKeys.length ? roleKeys : ['employee'];
+  const roles = Array.from(new Set(roleKeys.map((role) => String(role).trim().toLowerCase()).filter(Boolean)));
+  if (!roles.length) roles.push('employee');
   const placeholders = roles.map(() => '?').join(',');
   const rows = await queryRows(
+    'pending_actions',
     `SELECT item_type, title, module_code, priority, status, due_at
        FROM work_item
       WHERE (assigned_to_user_id = ? OR assigned_to_role IN (${placeholders}))
@@ -247,11 +331,13 @@ async function fetchPendingActions(userId: string, roleKeys: string[]): Promise<
 async function fetchSupport(employeeId: string): Promise<Record<string, unknown>> {
   const [tickets, grievances] = await Promise.all([
     queryRows(
+      'support_tickets',
       `SELECT ticket_code, category, subject, priority, status, sla_due_at, created_at
          FROM helpdesk_ticket WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`,
       [employeeId],
     ),
     queryRows(
+      'grievances',
       `SELECT category, severity, status, created_at, resolved_at
          FROM grievance
         WHERE employee_id = ? AND (is_anonymous = 0 OR is_anonymous IS NULL)
@@ -264,6 +350,7 @@ async function fetchSupport(employeeId: string): Promise<Record<string, unknown>
 
 async function fetchPayrollReadiness(employeeId: string): Promise<Record<string, unknown>> {
   const row = await queryOne(
+    'payroll_readiness',
     `SELECT period_start, period_end, readiness_status, blocker_summary, confidence_score, scanned_at
        FROM payroll_readiness_snapshot
       WHERE employee_id = ? ORDER BY scanned_at DESC LIMIT 1`,
@@ -274,6 +361,7 @@ async function fetchPayrollReadiness(employeeId: string): Promise<Record<string,
 
 async function fetchLoans(employeeId: string): Promise<Record<string, unknown>> {
   const rows = await queryRows(
+    'loans',
     `SELECT loan_type, amount, deduction_per_month, deducted_amount, pending_amount,
             installments, start_date, end_date, status
        FROM employee_loans WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`,
@@ -284,6 +372,7 @@ async function fetchLoans(employeeId: string): Promise<Record<string, unknown>> 
 
 async function fetchReimbursements(employeeId: string): Promise<Record<string, unknown>> {
   const rows = await queryRows(
+    'reimbursements',
     `SELECT claim_type, claim_month, amount_claimed, amount_approved, status,
             submitted_at, approved_at, rejection_reason, processed_at
        FROM employee_reimbursement_claim
@@ -295,6 +384,7 @@ async function fetchReimbursements(employeeId: string): Promise<Record<string, u
 
 async function fetchJourney(employeeId: string): Promise<Record<string, unknown>> {
   const rows = await queryRows(
+    'journey',
     `SELECT event_type, event_date, description, module
        FROM employee_journey_log
       WHERE employee_id = ? ORDER BY event_date DESC, created_at DESC LIMIT 12`,
@@ -336,7 +426,7 @@ export async function answerSelfAccountQuestion(
   roleKeys: string[],
 ): Promise<AccountAnswerResult> {
   const startedAt = Date.now();
-  const intent = detectIntent(question);
+  const intent = detectMiraIntent(question);
   if (intent === 'unknown') return { handled: false, intent };
 
   if (intent === 'scope_violation') {
@@ -361,9 +451,14 @@ export async function answerSelfAccountQuestion(
     return {
       handled: true,
       intent,
-      response: localResponse(intent, 'Your login is not linked to an active employee record. Please contact HR or the HRMS administrator to correct the user-to-employee mapping.', startedAt, [
-        { key: 'employee-map-missing', label: 'Employee mapping missing', severity: 'high' },
-      ], [], 0.25),
+      response: localResponse(
+        intent,
+        'Your login is not linked to an active employee record. Please contact HR or the HRMS administrator to correct the user-to-employee mapping.',
+        startedAt,
+        [{ key: 'employee-map-missing', label: 'Employee mapping missing', severity: 'high' }],
+        [],
+        0.25,
+      ),
     };
   }
 
