@@ -14,9 +14,6 @@ on:
       - ".github/workflows/mira-test-diagnostics.yml"
       - "backend/src/modules/ai/**"
 
-permissions:
-  contents: write
-
 concurrency:
   group: mira-test-diagnostics-release
   cancel-in-progress: true
