@@ -26,15 +26,17 @@ describe("smart GRN validation schema hardening", () => {
     const runner = read("src/db/runFinanceSchemaHardeningMigrations.ts");
     const server = read("src/server.ts");
     const manual = read("sql/000_finance_hardening.sql");
+    const supplementalCall = server.indexOf("await runFinanceSupplementalMigrations()");
+    const hardeningCall = server.indexOf("await runFinanceSchemaHardeningMigrations()");
+    const migrationStart = server.lastIndexOf("handleMigrations()");
+    const runtimeStart = server.indexOf(".then(initializeRuntime)");
+
     expect(runner).toContain('"420_grn_validation_schema_hardening.sql"');
     expect(runner).toContain("schema_migrations");
-    expect(server).toContain("runFinanceSchemaHardeningMigrations");
-    expect(server.indexOf("runFinanceSupplementalMigrations")).toBeLessThan(
-      server.lastIndexOf("runFinanceSchemaHardeningMigrations")
-    );
-    expect(server.indexOf(".then(runFinanceSchemaHardeningMigrations)")).toBeLessThan(
-      server.indexOf(".then(initializeRuntime)")
-    );
+    expect(supplementalCall).toBeGreaterThan(-1);
+    expect(hardeningCall).toBeGreaterThan(supplementalCall);
+    expect(migrationStart).toBeGreaterThan(-1);
+    expect(runtimeStart).toBeGreaterThan(migrationStart);
     expect(manual).toContain("SOURCE sql/420_grn_validation_schema_hardening.sql;");
   });
 });
