@@ -25,6 +25,7 @@ export const FINANCE_SUPPLEMENTAL_MIGRATIONS = [
   "418_grn_allocation_pnl_attribution.sql",
   "419_grn_validation_override_control.sql",
   "424_employee_reimbursement_claim.sql",
+  "425_mira_openrouter_company_knowledge.sql",
 ] as const;
 
 export type SupplementalMigrationStatus = {

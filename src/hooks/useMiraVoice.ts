@@ -1,22 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-interface SpeechRecognitionAlternativeLike {
-  transcript: string;
-}
-
-interface SpeechRecognitionResultLike {
-  isFinal: boolean;
-  0: SpeechRecognitionAlternativeLike;
-}
-
-interface SpeechRecognitionEventLike extends Event {
-  results: ArrayLike<SpeechRecognitionResultLike>;
-}
-
-interface SpeechRecognitionErrorEventLike extends Event {
-  error?: string;
-}
-
+interface SpeechRecognitionAlternativeLike { transcript: string }
+interface SpeechRecognitionResultLike { isFinal: boolean; 0: SpeechRecognitionAlternativeLike }
+interface SpeechRecognitionEventLike extends Event { results: ArrayLike<SpeechRecognitionResultLike> }
+interface SpeechRecognitionErrorEventLike extends Event { error?: string }
 interface SpeechRecognitionLike {
   lang: string;
   continuous: boolean;
@@ -29,7 +16,6 @@ interface SpeechRecognitionLike {
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   onend: (() => void) | null;
 }
-
 type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
 
 declare global {
@@ -38,6 +24,18 @@ declare global {
     webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
   }
 }
+
+export type MiraVoiceLanguage = 'en-IN' | 'hi-IN';
+
+const PREFERRED_INDIAN_VOICE_NAMES = [
+  'Neerja',
+  'Prabhat',
+  'Heera',
+  'Ravi',
+  'English India',
+  'Hindi India',
+] as const;
+const PREFERRED_INDIAN_VOICE_NAMES_LOWER = PREFERRED_INDIAN_VOICE_NAMES.map((name) => name.toLowerCase());
 
 function cleanForSpeech(text: string): string {
   return text
@@ -49,20 +47,66 @@ function cleanForSpeech(text: string): string {
     .slice(0, 3000);
 }
 
+function voiceScore(voice: SpeechSynthesisVoice, language: MiraVoiceLanguage): number {
+  const name = voice.name.toLowerCase();
+  const lang = voice.lang.toLowerCase();
+  let score = 0;
+  if (lang === language.toLowerCase()) score += 100;
+  else if (language === 'en-IN' && lang.startsWith('en-')) score += 30;
+  else if (language === 'hi-IN' && lang.startsWith('hi')) score += 40;
+  if (PREFERRED_INDIAN_VOICE_NAMES_LOWER.some((preferred) => name.includes(preferred))) score += 80;
+  if (/natural|online/.test(name)) score += 40;
+  if (/microsoft|google/.test(name)) score += 20;
+  if (voice.localService) score += 5;
+  return score;
+}
+
 export function useMiraVoice() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [language, setLanguageState] = useState<MiraVoiceLanguage>(() =>
+    localStorage.getItem('mira_voice_language') === 'hi-IN' ? 'hi-IN' : 'en-IN',
+  );
+  const [selectedVoiceURI, setSelectedVoiceURIState] = useState(() => localStorage.getItem('mira_voice_uri') || '');
   const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('mira_auto_speak') === 'true');
 
   const recognitionSupported = typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
+  useEffect(() => { localStorage.setItem('mira_auto_speak', String(autoSpeak)); }, [autoSpeak]);
+  useEffect(() => { localStorage.setItem('mira_voice_language', language); }, [language]);
   useEffect(() => {
-    localStorage.setItem('mira_auto_speak', String(autoSpeak));
-  }, [autoSpeak]);
+    if (selectedVoiceURI) localStorage.setItem('mira_voice_uri', selectedVoiceURI);
+    else localStorage.removeItem('mira_voice_uri');
+  }, [selectedVoiceURI]);
+
+  useEffect(() => {
+    if (!speechSupported) return;
+    const load = () => setVoices(window.speechSynthesis.getVoices());
+    load();
+    window.speechSynthesis.addEventListener?.('voiceschanged', load);
+    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', load);
+  }, [speechSupported]);
+
+  const indianVoices = useMemo(() => voices
+    .filter((voice) => voice.lang.toLowerCase().startsWith(language === 'hi-IN' ? 'hi' : 'en'))
+    .sort((a, b) => voiceScore(b, language) - voiceScore(a, language)), [voices, language]);
+
+  const selectedVoice = useMemo(() => {
+    const explicit = voices.find((voice) => voice.voiceURI === selectedVoiceURI);
+    if (explicit) return explicit;
+    return [...voices].sort((a, b) => voiceScore(b, language) - voiceScore(a, language))[0];
+  }, [language, selectedVoiceURI, voices]);
+
+  const setLanguage = useCallback((value: MiraVoiceLanguage) => {
+    setLanguageState(value);
+    setSelectedVoiceURIState('');
+  }, []);
+  const setSelectedVoiceURI = useCallback((value: string) => setSelectedVoiceURIState(value), []);
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop();
@@ -73,17 +117,14 @@ export function useMiraVoice() {
 
   const startListening = useCallback((onFinal: (transcript: string) => void) => {
     if (!recognitionSupported || listening) return;
-
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) return;
-
     setVoiceError(null);
     const recognition = new Recognition();
-    recognition.lang = 'en-IN';
+    recognition.lang = language;
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-
     recognition.onresult = (event) => {
       let interim = '';
       let finalText = '';
@@ -99,33 +140,20 @@ export function useMiraVoice() {
         onFinal(finalText.trim());
       }
     };
-
     recognition.onerror = (event) => {
       const code = event.error || 'voice_error';
-      const message = code === 'not-allowed'
-        ? 'Microphone permission was denied.'
-        : code === 'no-speech'
-          ? 'No speech was detected.'
-          : 'Voice input could not be started.';
-      setVoiceError(message);
+      setVoiceError(code === 'not-allowed' ? 'Microphone permission was denied.' : code === 'no-speech' ? 'No speech was detected.' : 'Voice input could not be started.');
       setListening(false);
     };
-
     recognition.onend = () => {
       recognitionRef.current = null;
       setListening(false);
       setInterimTranscript('');
     };
-
     recognitionRef.current = recognition;
     setListening(true);
-    try {
-      recognition.start();
-    } catch {
-      setListening(false);
-      setVoiceError('Voice input could not be started.');
-    }
-  }, [listening, recognitionSupported]);
+    try { recognition.start(); } catch { setListening(false); setVoiceError('Voice input could not be started.'); }
+  }, [language, listening, recognitionSupported]);
 
   const stopSpeaking = useCallback(() => {
     if (!speechSupported) return;
@@ -137,20 +165,15 @@ export function useMiraVoice() {
     if (!speechSupported || !text.trim()) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(cleanForSpeech(text));
-    utterance.lang = 'en-IN';
-    utterance.rate = 1;
-    utterance.pitch = 1.03;
-
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find((voice) => voice.lang === 'en-IN')
-      ?? voices.find((voice) => voice.lang.startsWith('en-'));
-    if (preferred) utterance.voice = preferred;
-
+    utterance.lang = language;
+    utterance.rate = language === 'hi-IN' ? 0.92 : 0.96;
+    utterance.pitch = 1;
+    if (selectedVoice) utterance.voice = selectedVoice;
     utterance.onstart = () => setSpeaking(true);
     utterance.onend = () => setSpeaking(false);
     utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(utterance);
-  }, [speechSupported]);
+  }, [language, selectedVoice, speechSupported]);
 
   useEffect(() => () => {
     recognitionRef.current?.abort();
@@ -158,17 +181,8 @@ export function useMiraVoice() {
   }, [speechSupported]);
 
   return {
-    recognitionSupported,
-    speechSupported,
-    listening,
-    speaking,
-    interimTranscript,
-    voiceError,
-    autoSpeak,
-    setAutoSpeak,
-    startListening,
-    stopListening,
-    speak,
-    stopSpeaking,
+    recognitionSupported, speechSupported, listening, speaking, interimTranscript, voiceError,
+    autoSpeak, setAutoSpeak, language, setLanguage, voices: indianVoices, selectedVoiceURI,
+    selectedVoiceName: selectedVoice?.name || '', setSelectedVoiceURI, startListening, stopListening, speak, stopSpeaking,
   };
 }

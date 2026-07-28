@@ -84,6 +84,7 @@ export function CommandPalette({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [briefingLoaded, setBriefingLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const voice = useMiraVoice();
@@ -102,6 +103,14 @@ export function CommandPalette({
     }
     window.setTimeout(() => inputRef.current?.focus(), 80);
   }, [open, voice.stopListening, voice.stopSpeaking]);
+
+  useEffect(() => {
+    if (!open || briefingLoaded || messages.length > 0) return;
+    setBriefingLoaded(true);
+    void hrmsApi.get<{ success: boolean; data: AIResponse }>('/api/ai/briefing')
+      .then((response) => setMessages([{ id: `${Date.now()}-briefing`, role: 'assistant', content: response.data.answer, response: response.data }]))
+      .catch(() => undefined);
+  }, [briefingLoaded, messages.length, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -171,6 +180,7 @@ export function CommandPalette({
   const clearConversation = () => {
     voice.stopSpeaking();
     setMessages([]);
+    setBriefingLoaded(false);
     setInput('');
     setError(null);
   };
@@ -209,7 +219,7 @@ export function CommandPalette({
               <p className="truncate text-xs text-blue-100">{session?.assistant.tagline ?? 'Your private HR assistant'}</p>
               <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-300">
                 <ShieldCheck className="h-3 w-3" />
-                Self-account answers only · RBAC enforced
+                Live HRMS self-data · Approved company knowledge
               </div>
             </div>
             <button type="button" onClick={clearConversation} className="rounded-full p-2 text-white/70 hover:bg-white/10 hover:text-white" aria-label="Clear conversation">
@@ -320,6 +330,16 @@ export function CommandPalette({
         )}
 
         <footer className="border-t border-slate-200 bg-white p-3">
+          <div className="mb-2 flex items-center gap-2 text-[10px] text-slate-500">
+            <select value={voice.language} onChange={(event) => voice.setLanguage(event.target.value as 'en-IN' | 'hi-IN')} className="rounded-md border border-slate-200 bg-white px-2 py-1">
+              <option value="en-IN">Indian English</option>
+              <option value="hi-IN">Hindi</option>
+            </select>
+            <select value={voice.selectedVoiceURI} onChange={(event) => voice.setSelectedVoiceURI(event.target.value)} className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1" title="Indian voice">
+              <option value="">Best available Indian voice</option>
+              {voice.voices.map((item) => <option key={item.voiceURI} value={item.voiceURI}>{item.name}</option>)}
+            </select>
+          </div>
           <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
             <button
               type="button"
@@ -346,7 +366,7 @@ export function CommandPalette({
                   void sendMessage();
                 }
               }}
-              placeholder="Ask about your HRMS account…"
+              placeholder="Ask about your HRMS data or MAS Callnet…"
               rows={1}
               maxLength={1000}
               disabled={loading}
