@@ -1,0 +1,54 @@
+name: Mira Test Diagnostics
+
+on:
+  push:
+    branches:
+      - agent/mira-secure-voice-assistant
+    paths:
+      - ".github/workflows/mira-test-diagnostics.yml"
+      - "backend/src/modules/ai/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mira-test-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnostics:
+    name: Capture Mira test output
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Capture JSON test report
+        continue-on-error: true
+        run: npm --prefix backend exec -- vitest run src/modules/ai/ai-mira-security.test.ts --reporter=json --outputFile=../mira-test-results.json
+
+      - name: Capture readable test log
+        if: always()
+        continue-on-error: true
+        run: npm --prefix backend exec -- vitest run src/modules/ai/ai-mira-security.test.ts --reporter=verbose > mira-test.log 2>&1
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-test-diagnostics
+          path: |
+            mira-test-results.json
+            mira-test.log
+          if-no-files-found: error
+          retention-days: 1
