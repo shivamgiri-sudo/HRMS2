@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, CircleDollarSign } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, CircleDollarSign, PanelRightOpen } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { BpoPnlRow } from "@/hooks/useBpoProcessPnl";
 import { ProcessPnlMatrixTotals } from "@/components/finance/pnl/ProcessPnlMatrixTotals";
+import { ProcessPnlRowDrawer } from "@/components/finance/pnl/ProcessPnlRowDrawer";
+import { Button } from "@/components/ui/button";
 import {
   filterMatrixRows,
   getDefaultSort,
@@ -39,6 +41,7 @@ export function BpoPnlMatrixTable({
 }: BpoPnlMatrixTableProps) {
   const columns = useMemo(() => getPresetColumns(preset), [preset]);
   const [sort, setSort] = useState(() => getDefaultSort(preset));
+  const [selectedRow, setSelectedRow] = useState<BpoPnlRow | null>(null);
 
   useEffect(() => {
     setSort(getDefaultSort(preset));
@@ -144,12 +147,24 @@ export function BpoPnlMatrixTable({
                   const isSticky = column.sticky && index < stickyOffsets.length;
                   const content =
                     column.key === "processName" ? (
-                      <Link
-                        to={`/finance/process-pnl/${row.processId}?period=${period}`}
-                        className="font-bold text-slate-950 hover:text-emerald-700"
-                      >
-                        {column.render(row)}
-                      </Link>
+                      <div className="flex items-center justify-between gap-2">
+                        <Link
+                          to={`/finance/process-pnl/${row.processId}?period=${period}`}
+                          className="font-bold text-slate-950 hover:text-emerald-700"
+                        >
+                          {column.render(row)}
+                        </Link>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Open process snapshot"
+                          aria-label={`Open process snapshot for ${row.processName}`}
+                          onClick={() => setSelectedRow(row)}
+                        >
+                          <PanelRightOpen className="h-4 w-4" />
+                        </Button>
+                      </div>
                     ) : (
                       column.render(row)
                     );
@@ -178,6 +193,16 @@ export function BpoPnlMatrixTable({
           </tbody>
         </table>
       </div>
+      {selectedRow && (
+        <ProcessPnlRowDrawer
+          period={period}
+          row={selectedRow}
+          alerts={alerts}
+          onOpenChange={(open) => {
+            if (!open) setSelectedRow(null);
+          }}
+        />
+      )}
     </div>
   );
 }

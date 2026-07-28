@@ -29,4 +29,10 @@ describe("Process P&L page matrix contracts", () => {
     expect(matrixSource).toContain("onClick={() => handleSort(column.key)}");
     expect(matrixSource).toContain('preset === "full"');
   });
+
+  it("supports opening a process snapshot from the matrix", () => {
+    expect(matrixSource).toContain("setSelectedRow(row)");
+    expect(matrixSource).toContain("<ProcessPnlRowDrawer");
+    expect(matrixSource).toContain('title="Open process snapshot"');
+  });
 });

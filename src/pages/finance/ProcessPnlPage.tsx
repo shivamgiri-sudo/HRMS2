@@ -28,9 +28,23 @@ type MatrixTableControlProps = {
   status: ProcessPnlStatusFilter;
   issue: ProcessPnlIssueFilter;
   density: ProcessPnlDensity;
+  search?: string;
+  alerts?: unknown[];
 };
 
 const MatrixTableWithControls = BpoPnlMatrixTable as unknown as (props: MatrixTableControlProps) => React.JSX.Element;
+
+const matrixPresets: ProcessPnlMatrixPreset[] = ["summary", "revenue", "cost", "profitability", "budget-risk", "full"];
+const matrixStatusFilters: ProcessPnlStatusFilter[] = ["all", "profitable", "at-risk", "loss-making"];
+const matrixIssueFilters: ProcessPnlIssueFilter[] = [
+  "all",
+  "revenue-at-risk",
+  "delivery-missing",
+  "budget-exceeded",
+  "high-receivable",
+  "accounting-fallback",
+];
+const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
 
 function currentPeriod() {
   const now = new Date();
@@ -72,10 +86,10 @@ export default function ProcessPnlPage() {
         issue: ProcessPnlIssueFilter;
         density: ProcessPnlDensity;
       }> | null;
-      if (saved?.preset) setMatrixPreset(saved.preset);
-      if (saved?.status) setStatusFilter(saved.status);
-      if (saved?.issue) setIssueFilter(saved.issue);
-      if (saved?.density) setMatrixDensity(saved.density);
+      if (saved?.preset && matrixPresets.includes(saved.preset)) setMatrixPreset(saved.preset);
+      if (saved?.status && matrixStatusFilters.includes(saved.status)) setStatusFilter(saved.status);
+      if (saved?.issue && matrixIssueFilters.includes(saved.issue)) setIssueFilter(saved.issue);
+      if (saved?.density && matrixDensities.includes(saved.density)) setMatrixDensity(saved.density);
     } catch {
       // Ignore malformed or unavailable browser storage and use defaults.
     }
@@ -282,6 +296,8 @@ export default function ProcessPnlPage() {
                 status={statusFilter}
                 issue={issueFilter}
                 density={matrixDensity}
+                search={search}
+                alerts={summary?.alerts}
               />
             )}
           </TabsContent>
