@@ -15,6 +15,26 @@ const RETRY_DELAYS_MINUTES = [0, 5, 30, 120];
 
 let intervalTimer: NodeJS.Timeout | null = null;
 
+function isMissingReportTableError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && String((error as { code?: unknown }).code ?? '') === 'ER_NO_SUCH_TABLE';
+}
+
+async function reportEmailTablesAvailable(): Promise<boolean> {
+  try {
+    await db.execute<RowDataPacket[]>(`SELECT id FROM report_email_delivery LIMIT 1`);
+    return true;
+  } catch (error) {
+    if (isMissingReportTableError(error)) {
+      console.warn(`[${WORKER_NAME}] report_email_delivery table missing - worker disabled until reporting schema is migrated`);
+      return false;
+    }
+    throw error;
+  }
+}
+
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!local || !domain) return '***@***';
@@ -400,6 +420,9 @@ async function runDeliveryWorker(): Promise<void> {
 }
 
 export async function startReportEmailDeliveryWorker(): Promise<void> {
+  if (!(await reportEmailTablesAvailable())) {
+    return;
+  }
   console.log(`[${WORKER_NAME}] Starting (interval: ${INTERVAL_MS / 1000}s)`);
   void runDeliveryWorker();
   intervalTimer = setInterval(() => void runDeliveryWorker(), INTERVAL_MS);

@@ -227,10 +227,9 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
       void (async () => {
         try {
           const [submitterRows] = await db.execute<RowDataPacket[]>(
-            `SELECT phv.payroll_hr_id, u.id AS user_id
+            `SELECT phv.payroll_hr_id, e.user_id AS user_id
              FROM ats_payroll_hr_validation phv
              LEFT JOIN employees e ON e.id = phv.payroll_hr_id
-             LEFT JOIN users u ON u.employee_id = e.id
              WHERE phv.id = ? LIMIT 1`,
             [approval_id]
           );

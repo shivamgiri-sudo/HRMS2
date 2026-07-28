@@ -39,6 +39,7 @@ const NativeOfferLetterGeneration      = lazy(() => import("@/pages/NativeOfferL
 const ATSBulkImportPage                = lazy(() => import("@/pages/ATSBulkImportPage"));
 const NativeATSCandidateRegistration   = lazy(() => import("@/pages/NativeATSCandidateRegistration"));
 const NativeJobRequisition             = lazy(() => import("@/pages/NativeJobRequisition"));
+const IjpAdminPage                     = lazy(() => import("@/pages/recruitment/IjpAdminPage"));
 
 export const recruitmentRouteElements = (
   <>
@@ -128,5 +129,12 @@ export const recruitmentRouteElements = (
 
       {/* Offer letter */}
       <Route path="/offer-letter" element={<ProtectedRoute><Gate pageCode="ATS_OFFER"><NativeOfferLetterGeneration /></Gate></ProtectedRoute>} />
+
+      {/* Internal Job Postings - Admin */}
+      <Route path="/recruitment/ijp" element={
+        <ProtectedRoute roles={['super_admin', 'hr', 'hr_admin', 'recruitment_hr']}>
+          <Gate pageCode="ijp_admin"><IjpAdminPage /></Gate>
+        </ProtectedRoute>
+      } />
   </>
 );

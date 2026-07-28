@@ -169,35 +169,9 @@ export default function NativeComplianceAuditReport() {
   }
 
   function downloadReport() {
-    if (!report) return;
-    const lines: string[] = [
-      `JOINER/LEAVER COMPLIANCE AUDIT REPORT`,
-      `Employee: ${report.employee.full_name} (${report.employee.employee_code})`,
-      `Status: ${report.employee.employment_status} | Joining: ${fmtDate(report.employee.date_of_joining)} | Exit: ${fmtDate(report.employee.date_of_exit)}`,
-      `Generated: ${new Date().toLocaleString("en-IN")}`,
-      ``,
-      `TIMELINE (${report.timeline.length} events)`,
-      `─────────────────────────────────────────────────────────────────`,
-    ];
-    report.timeline.forEach((ev, i) => {
-      lines.push(`#${i + 1} [${ev.category}] ${fmt(ev.ts)} | ${ev.actor}`);
-      lines.push(`   ${ev.description}`);
-      const d = ev.details;
-      if (Object.keys(d).length) {
-        Object.entries(d).forEach(([k, v]) => {
-          if (v != null && v !== "") lines.push(`   ${k}: ${v}`);
-        });
-      }
-      lines.push(``);
-    });
-
-    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `compliance-report-${report.employee.employee_code}-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (!selectedEmpId) return;
+    // Server-side download — no client-side Blob/createObjectURL
+    window.location.href = `/api/lifecycle/employees/${selectedEmpId}/compliance-report/download`;
   }
 
   const emp = report?.employee;

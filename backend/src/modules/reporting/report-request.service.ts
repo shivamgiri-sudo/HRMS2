@@ -13,6 +13,7 @@ import {
   recordReportAuditEvent,
   REPORT_AUDIT_EVENTS,
 } from './report-audit.service.js';
+import { ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 const MAX_REQUESTS_PER_HOUR = 5;
 const DUPLICATE_WINDOW_MINUTES = 30;
@@ -70,6 +71,7 @@ export async function previewReportRequest(
   reportCode: string,
   filters: Record<string, unknown>
 ): Promise<PreviewRequestResult> {
+  await ensureReportingSchemaAvailable();
   const def = REPORT_CATALOG.find(r => r.code === reportCode);
   if (!def) throw Object.assign(new Error(`Report '${reportCode}' not found`), { statusCode: 404 });
 
@@ -100,6 +102,7 @@ export async function createReportRequest(
   filters: Record<string, unknown>,
   meta: { ip: string; userAgent: string; correlationId?: string }
 ): Promise<CreateReportRequestResult> {
+  await ensureReportingSchemaAvailable();
   // 1. Validate report exists in catalog
   const def = REPORT_CATALOG.find(r => r.code === reportCode);
   if (!def) {
@@ -298,13 +301,20 @@ export async function getMyReportRequests(
   page = 1,
   pageSize = 20
 ): Promise<{ rows: MyRequestRow[]; total: number }> {
-  const offset = (page - 1) * pageSize;
+  await ensureReportingSchemaAvailable();
+  // Ensure page/pageSize are valid integers — NaN from query params causes ER_WRONG_ARGUMENTS
+  const safePage = Math.max(1, Math.floor(Number.isFinite(page) ? page : 1));
+  const safePageSize = Math.max(1, Math.min(Math.floor(Number.isFinite(pageSize) ? pageSize : 20), 200));
+  const offset = (safePage - 1) * safePageSize;
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM report_request WHERE requested_by_user_id = ?`,
     [userId]
   );
-  const total = Number((countRows[0] as { total: number }).total);
+  const total = parseInt(String((countRows[0] as { total: unknown }).total ?? 0), 10);
 
+  // Use inline literal LIMIT/OFFSET (not parameterised) to avoid ER_WRONG_ARGUMENTS on some MySQL versions
+  const limitInt  = parseInt(String(safePageSize), 10);
+  const offsetInt = parseInt(String(offset), 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, request_reference, report_code, report_name_snapshot,
             requested_filters_json, official_email, status,
@@ -312,8 +322,8 @@ export async function getMyReportRequests(
      FROM report_request
      WHERE requested_by_user_id = ?
      ORDER BY requested_at DESC
-     LIMIT ? OFFSET ?`,
-    [userId, pageSize, offset]
+     LIMIT ${limitInt} OFFSET ${offsetInt}`,
+    [userId]
   );
 
   return {
@@ -342,6 +352,7 @@ export async function getMyReportRequestDetail(
   userId: string,
   requestId: string
 ): Promise<Record<string, unknown>> {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rr.*, rgf.file_size_bytes, rgf.generated_row_count, rgf.expires_at AS file_expires_at,
             rgf.deletion_status
@@ -386,6 +397,7 @@ export async function getMyReportRequestDetail(
 }
 
 export async function cancelReportRequest(userId: string, requestId: string): Promise<void> {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM report_request WHERE id = ? AND requested_by_user_id = ?`,
     [requestId, userId]
@@ -432,6 +444,7 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
   rows: Record<string, unknown>[];
   total: number;
 }> {
+  await ensureReportingSchemaAvailable();
   const page = f.page ?? 1;
   const pageSize = f.pageSize ?? 50;
   const offset = (page - 1) * pageSize;
@@ -457,28 +470,49 @@ export async function adminListReportRequests(f: AdminRequestFilter): Promise<{
   );
   const total = Number((countRows[0] as { total: number }).total);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
-            rr.requested_by_employee_code, rr.requested_by_employee_name,
-            rr.requester_role_snapshot, rr.official_email, rr.status,
-            rr.requested_at, rr.processing_started_at, rr.generation_completed_at,
-            rr.email_sent_at, rr.completed_at, rr.failed_at,
-            rr.failure_stage, rr.failure_code, rr.failure_message,
-            rr.retry_count, rr.requested_filters_json,
-            rgf.file_size_bytes, rgf.generated_row_count, rgf.sha256_checksum,
-            rgf.expires_at AS file_expires_at, rgf.deletion_status
-     FROM report_request rr
-     LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
-     ${where}
-     ORDER BY rr.requested_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset]
-  );
+  // Try full query with all columns; fall back to minimal set if prod schema is older
+  let rows: RowDataPacket[];
+  try {
+    const [r] = await db.execute<RowDataPacket[]>(
+      `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
+              rr.requested_by_employee_code, rr.requested_by_employee_name,
+              rr.requester_role_snapshot, rr.official_email, rr.status,
+              rr.requested_at, rr.processing_started_at, rr.generation_completed_at,
+              rr.email_sent_at, rr.completed_at, rr.failed_at,
+              rr.failure_stage, rr.failure_code, rr.failure_message,
+              rr.retry_count, rr.requested_filters_json,
+              rgf.file_size_bytes, rgf.generated_row_count, rgf.sha256_checksum,
+              rgf.expires_at AS file_expires_at, rgf.deletion_status
+       FROM report_request rr
+       LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
+       ${where}
+       ORDER BY rr.requested_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    rows = r;
+  } catch {
+    // Older prod schema missing some columns — fall back to safe minimal query
+    const [r] = await db.execute<RowDataPacket[]>(
+      `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
+              rr.requested_by_employee_code, rr.requested_by_employee_name,
+              rr.official_email, rr.status,
+              rr.requested_at, rr.generation_completed_at, rr.failed_at,
+              rr.failure_message, rr.requested_filters_json
+       FROM report_request rr
+       ${where}
+       ORDER BY rr.requested_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    rows = r;
+  }
 
   return { total, rows: rows as Record<string, unknown>[] };
 }
 
 export async function adminGetReportRequestDetail(requestId: string): Promise<Record<string, unknown>> {
+  await ensureReportingSchemaAvailable();
   const [reqRows] = await db.execute<RowDataPacket[]>(
     `SELECT rr.*, rgf.storage_key, rgf.file_size_bytes, rgf.generated_row_count,
             rgf.sha256_checksum, rgf.expires_at AS file_expires_at,
@@ -527,6 +561,7 @@ export async function adminRetryEmailDelivery(
   actorUserId: string,
   reason: string
 ): Promise<void> {
+  await ensureReportingSchemaAvailable();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, status FROM report_request WHERE id = ?`,
     [requestId]

@@ -25,6 +25,7 @@ const NativeExitCommandCenter       = lazy(() => import("@/pages/NativeExitComma
 const NativeExitManagement          = lazy(() => import("@/pages/NativeExitManagement"));
 const MyTeamPage                    = lazy(() => import("@/pages/MyTeamPage"));
 const EmployeeJourney               = lazy(() => import("@/pages/EmployeeJourney"));
+const IjpPage                       = lazy(() => import("@/pages/people/IjpPage"));
 
 export const peopleRouteElements = (
   <>
@@ -109,5 +110,8 @@ export const peopleRouteElements = (
         </ProtectedRoute>
       } />
       <Route path="/employee-journey" element={<ProtectedRoute><EmployeeJourney /></ProtectedRoute>} />
+
+      {/* Internal Job Postings */}
+      <Route path="/people/ijp" element={<ProtectedRoute><Gate pageCode="ijp_opportunities"><IjpPage /></Gate></ProtectedRoute>} />
   </>
 );

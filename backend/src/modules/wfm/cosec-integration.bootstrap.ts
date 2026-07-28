@@ -52,12 +52,6 @@ export async function bootstrapCosecIntegration(): Promise<boolean> {
     encrypt: env.NCOSEC_DB_ENCRYPT === "true",
     trust_server_certificate: env.NCOSEC_DB_TRUST_CERT === "true",
   });
-  const nextRunAt = nextCronRun(
-    env.NCOSEC_SYNC_CRON,
-    new Date(),
-    env.INTEGRATION_SCHEDULER_TIMEZONE,
-  );
-
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
@@ -128,13 +122,13 @@ export async function bootstrapCosecIntegration(): Promise<boolean> {
     await connection.execute(
       `INSERT INTO integration_schedule
          (id, integration_key, cron_expression, enabled, next_run_at)
-       VALUES (UUID(), ?, ?, 1, ?)
+       VALUES (UUID(), ?, ?, 0, NULL)
        ON DUPLICATE KEY UPDATE
          cron_expression = VALUES(cron_expression),
-         enabled = 1,
-         next_run_at = COALESCE(next_run_at, VALUES(next_run_at)),
+         enabled = 0,
+         next_run_at = NULL,
          updated_at = NOW()`,
-      [INTEGRATION_KEY, env.NCOSEC_SYNC_CRON, nextRunAt],
+      [INTEGRATION_KEY, env.NCOSEC_SYNC_CRON],
     );
     await connection.execute(
       `INSERT INTO integration_event_log
@@ -149,6 +143,7 @@ export async function bootstrapCosecIntegration(): Promise<boolean> {
             : `${env.NCOSEC_DB_NAME}.${env.NCOSEC_EVENT_TABLE}`,
           target: TARGET_TABLE,
           cron: env.NCOSEC_SYNC_CRON,
+          scheduler_mode: "disabled_generic_scheduler_dedicated_worker_enabled",
           access: "SELECT_ONLY",
         }),
       ],

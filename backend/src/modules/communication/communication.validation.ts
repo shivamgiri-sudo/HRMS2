@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-export const TemplateCategorySchema = z.enum(['onboarding','payroll','attendance','leave','performance','alerts','announcements','custom']);
-export const NotificationCategorySchema = z.enum(['onboarding','payroll','attendance','leave','performance','alerts','announcements']);
+export const TemplateCategorySchema = z.enum(['onboarding','payroll','attendance','leave','performance','alerts','announcements','career','custom']);
+export const NotificationCategorySchema = z.enum(['onboarding','payroll','attendance','leave','performance','alerts','announcements','career']);
 export const ChannelSchema = z.enum(['email','sms','whatsapp']);
 export const MultiChannelSchema = z.enum(['email','sms','whatsapp','multi']);
 export const DispatchStatusSchema = z.enum(['queued','sent','delivered','opened','clicked','bounced','failed']);

@@ -1,5 +1,5 @@
 // ========== Enums ==========
-export type TemplateCategory = 'onboarding' | 'payroll' | 'attendance' | 'leave' | 'performance' | 'alerts' | 'announcements' | 'custom';
+export type TemplateCategory = 'onboarding' | 'payroll' | 'attendance' | 'leave' | 'performance' | 'alerts' | 'announcements' | 'career' | 'custom';
 export type NotificationCategory = Exclude<TemplateCategory, 'custom'>;
 export type Channel = 'email' | 'sms' | 'whatsapp';
 export type MultiChannel = Channel | 'multi';

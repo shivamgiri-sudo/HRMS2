@@ -15,6 +15,17 @@ type DueSchedule = IntegrationSchedule & IntegrationConfig;
 let pollTimer: NodeJS.Timeout | undefined;
 let pollRunning = false;
 
+function isDedicatedWorkerIntegration(integrationKey: string): boolean {
+  return integrationKey === "cosec_biometric";
+}
+
+function shouldDisableScheduleForError(error: unknown): boolean {
+  return Boolean(
+    (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)?.nonRetryable
+    && (error as { nonRetryable?: boolean; disableSchedule?: boolean } | null)?.disableSchedule,
+  );
+}
+
 function lockName(integrationKey: string): string {
   const digest = createHash("sha256").update(integrationKey).digest("hex").slice(0, 40);
   return `hrms:integration:${digest}`;
@@ -58,6 +69,37 @@ async function recordSchedulerFailure(
   }
 }
 
+async function disableScheduleForFailure(
+  connection: PoolConnection,
+  integrationKey: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  await connection.execute(
+    `UPDATE integration_schedule
+        SET enabled = 0,
+            next_run_at = NULL,
+            last_run_at = NOW()
+      WHERE integration_key = ?`,
+    [integrationKey],
+  );
+
+  try {
+    await db.execute(
+      `INSERT INTO integration_event_log
+         (id, integration_key, event_type, description, metadata)
+       VALUES (UUID(), ?, 'scheduled_run_disabled', ?, ?)`,
+      [
+        integrationKey,
+        message,
+        JSON.stringify({ reason: "permanent_configuration_failure" }),
+      ],
+    );
+  } catch (logError) {
+    console.error(`[integration-scheduler] could not record disabled schedule for ${integrationKey}:`, logError);
+  }
+}
+
 async function executeWithRetries(connector: IntegrationConfig): Promise<void> {
   let lastError: unknown;
 
@@ -65,6 +107,11 @@ async function executeWithRetries(connector: IntegrationConfig): Promise<void> {
   if (connector.integration_key === "lms_sync") {
     const result = await runFullSync("scheduler");
     console.log(`[integration-scheduler] lms_sync complete — mapped:${result.mapped} progress:${result.progress} certs:${result.certifications} errors:${result.errors.length}`);
+    return;
+  }
+
+  if (isDedicatedWorkerIntegration(connector.integration_key)) {
+    console.log("[integration-scheduler] cosec_biometric is owned by cosec-sync worker; skipping generic scheduler run");
     return;
   }
 
@@ -106,6 +153,7 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
          FROM integration_schedule s
          JOIN integration_config ic ON ic.integration_key = s.integration_key
         WHERE s.integration_key = ?
+          AND s.integration_key <> 'cosec_biometric'
           AND s.enabled = 1
           AND ic.active_status = 1
           AND s.next_run_at IS NOT NULL
@@ -115,6 +163,7 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
     );
     const schedule = rows[0] as DueSchedule | undefined;
     if (!schedule) return false;
+    if (isDedicatedWorkerIntegration(schedule.integration_key)) return false;
 
     const nextRunAt = nextCronRun(
       schedule.cron_expression,
@@ -135,7 +184,12 @@ export async function runDueIntegrationSchedule(integrationKey: string): Promise
       await executeWithRetries(schedule);
       console.log(`[integration-scheduler] ${integrationKey} completed; next run ${nextRunAt.toISOString()}`);
     } catch (error) {
-      console.error(`[integration-scheduler] ${integrationKey} failed:`, error);
+      if (shouldDisableScheduleForError(error)) {
+        await disableScheduleForFailure(connection, integrationKey, error);
+        console.error(`[integration-scheduler] ${integrationKey} disabled after permanent configuration failure:`, error);
+      } else {
+        console.error(`[integration-scheduler] ${integrationKey} failed:`, error);
+      }
     } finally {
       await connection.execute(
         `UPDATE integration_schedule
@@ -162,6 +216,7 @@ export async function pollIntegrationSchedules(): Promise<number> {
          FROM integration_schedule s
          JOIN integration_config ic ON ic.integration_key = s.integration_key
         WHERE s.enabled = 1
+          AND s.integration_key <> 'cosec_biometric'
           AND ic.active_status = 1
           AND s.next_run_at IS NOT NULL
           AND s.next_run_at <= NOW()
@@ -182,9 +237,10 @@ export async function pollIntegrationSchedules(): Promise<number> {
 export async function initializeIntegrationSchedules(): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.integration_key, s.cron_expression
-       FROM integration_schedule s
-       JOIN integration_config ic ON ic.integration_key = s.integration_key
+      FROM integration_schedule s
+      JOIN integration_config ic ON ic.integration_key = s.integration_key
       WHERE s.enabled = 1
+        AND s.integration_key <> 'cosec_biometric'
         AND ic.active_status = 1
         AND s.next_run_at IS NULL`,
   );

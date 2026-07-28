@@ -66,6 +66,35 @@ function buildAggQuery(tableName: string): string {
 
 let dialerDb: mysql.Connection | null = null;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableUpsertError(error: unknown): boolean {
+  const err = error as { code?: string; errno?: number; message?: string };
+  if (err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.code === 'ER_LOCK_DEADLOCK') return true;
+  if (err?.errno === 1205 || err?.errno === 1213) return true;
+  return /lock wait timeout|deadlock/i.test(String(err?.message ?? ''));
+}
+
+async function executeAprUpsertWithRetry(sqlText: string, params: unknown[], key: string): Promise<void> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await db.execute(sqlText, params);
+      return;
+    } catch (error) {
+      if (!isRetryableUpsertError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+
+      const waitMs = attempt * 500;
+      console.warn(`[${WORKER_NAME}] Upsert retry ${attempt}/${maxAttempts - 1} for ${key} after lock contention (${waitMs}ms)`);
+      await sleep(waitMs);
+    }
+  }
+}
+
 async function getDialerDb(): Promise<mysql.Connection> {
   if (dialerDb) {
     try {
@@ -223,7 +252,7 @@ async function syncForDate(istDate: string): Promise<{ upserted: number; skipped
     };
 
     try {
-      await db.execute(
+      await executeAprUpsertWithRetry(
         `INSERT INTO apr
            (ReportDate, UserID, campaign_id,
             Calls, WAIT_TIME, TALK_TIME, DISPO_TIME, PAUSE_TIME, AHT,
@@ -274,7 +303,8 @@ async function syncForDate(istDate: string): Promise<{ upserted: number; skipped
           enrich.branch_name       || '',
           enrich.reporting_manager || '',
           enrich.cost_centre       || '',
-        ]
+        ],
+        key,
       );
       upserted++;
     } catch (err: any) {

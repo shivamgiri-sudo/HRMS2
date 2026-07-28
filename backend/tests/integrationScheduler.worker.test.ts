@@ -103,4 +103,48 @@ describe("Integration Hub scheduler worker", () => {
     expect(mockDbExecute.mock.calls[1][0]).toMatch(/SET next_run_at/i);
     expect(mockExecuteConnector).not.toHaveBeenCalled();
   });
+
+  it("does not claim cosec_biometric because it is owned by the dedicated sync worker", async () => {
+    const connection = {
+      execute: vi.fn()
+        .mockResolvedValueOnce([[{ acquired: 1 }], []])
+        .mockResolvedValueOnce([[], []])
+        .mockResolvedValueOnce([[{ released: 1 }], []]),
+      release: vi.fn(),
+    };
+    mockGetConnection.mockResolvedValue(connection);
+
+    await expect(runDueIntegrationSchedule("cosec_biometric")).resolves.toBe(false);
+    expect(mockExecuteConnector).not.toHaveBeenCalled();
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
+
+  it("disables the schedule when the connector has a permanent credential configuration failure", async () => {
+    const credentialError = Object.assign(
+      new Error("Stored credentials for integration shivamgiri_quality could not be decrypted. Re-save the connector credentials."),
+      { nonRetryable: true, disableSchedule: true },
+    );
+    const connection = {
+      execute: vi.fn()
+        .mockResolvedValueOnce([[{ acquired: 1 }], []])
+        .mockResolvedValueOnce([[{ ...dueSchedule, integration_key: "shivamgiri_quality" }], []])
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+        .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+        .mockResolvedValueOnce([[{ released: 1 }], []]),
+      release: vi.fn(),
+    };
+    mockGetConnection.mockResolvedValue(connection);
+    mockExecuteConnector.mockRejectedValue(credentialError);
+    mockDbExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
+
+    await expect(runDueIntegrationSchedule("shivamgiri_quality")).resolves.toBe(true);
+
+    expect(connection.execute.mock.calls[3][0]).toMatch(/SET enabled = 0/i);
+    expect(mockDbExecute).toHaveBeenCalledWith(
+      expect.stringMatching(/scheduled_run_disabled/i),
+      expect.any(Array),
+    );
+    expect(connection.release).toHaveBeenCalledOnce();
+  });
 });

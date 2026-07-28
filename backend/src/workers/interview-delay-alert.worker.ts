@@ -57,10 +57,10 @@ async function sendDelayAlert(row: {
   applied_role: string;
   recruiter_name: string;
   recruiter_email: string | null;
-  reporting_manager: string | null;
+  reporting_manager_email: string | null;
   delay_minutes: number;
 }): Promise<void> {
-  const to = row.reporting_manager?.trim();
+  const to = row.reporting_manager_email?.trim();
   if (!to || !to.includes('@')) {
     console.warn(`[InterviewDelayAlert] No reporting_manager email for recruiter "${row.recruiter_name}" — skipping candidate ${row.candidate_id}`);
     return;
@@ -146,15 +146,24 @@ async function findDelayedInterviews(): Promise<any[]> {
          COALESCE(qt.branch_name, c.branch_display_name, c.applied_for_branch) AS branch_name,
          COALESCE(c.role_applied, c.applied_for_process) AS applied_role,
          COALESCE(rr.name, 'Unassigned')                 AS recruiter_name,
-         rr.email                                        AS recruiter_email,
-         rr.reporting_manager                            AS reporting_manager,
+         COALESCE(NULLIF(rr.email, ''), NULLIF(recruiter_user.email, '')) AS recruiter_email,
+         COALESCE(
+           CASE
+             WHEN rr.reporting_manager IS NOT NULL AND rr.reporting_manager LIKE '%@%' THEN rr.reporting_manager
+             ELSE NULL
+           END,
+           NULLIF(manager_user.email, ''),
+           NULLIF(manager_emp.email, '')
+         )                                              AS reporting_manager_email,
          TIMESTAMPDIFF(MINUTE, qt.called_at, NOW())      AS delay_minutes,
-         u.id                                            AS recruiter_user_id
+         emp.user_id                                     AS recruiter_user_id
        FROM ats_queue_token qt
        JOIN ats_candidate c ON c.id = qt.candidate_id
        LEFT JOIN ats_recruiter_roster rr ON rr.id = COALESCE(qt.recruiter_id, qt.assigned_recruiter_id)
        LEFT JOIN employees emp ON emp.id = rr.employee_id
-       LEFT JOIN users u ON u.employee_id = emp.id
+       LEFT JOIN auth_user recruiter_user ON recruiter_user.id = emp.user_id
+       LEFT JOIN employees manager_emp ON manager_emp.id = emp.reporting_manager_id
+       LEFT JOIN auth_user manager_user ON manager_user.id = manager_emp.user_id
        WHERE qt.queue_status IN ('called', 'in_interview')
          AND qt.called_at IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, qt.called_at, NOW()) >= ?

@@ -39,7 +39,7 @@ const NativeRTABoard               = lazy(() => import("@/pages/NativeRTABoard")
 const NativeBusinessCommandCenter  = lazy(() => import("@/pages/NativeBusinessCommandCenter"));
 const NativeBusinessActionQueue    = lazy(() => import("@/pages/NativeBusinessActionQueue"));
 const BreakDeskDevices             = lazy(() => import("@/pages/BreakDeskDevices"));
-const BreakReports                 = lazy(() => import("@/pages/BreakReports"));
+// BreakReports moved into ReportsHub — route redirects to hub
 const WeekoffFairness              = lazy(() => import("@/pages/wfm/WeekoffFairness"));
 
 export const workforceRouteElements = (
@@ -52,7 +52,7 @@ export const workforceRouteElements = (
       <Route path="/attendance-regularization" element={<ProtectedRoute><Gate pageCode="ATTENDANCE_REGULARIZATION"><AttendanceRegularization /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/attendance/regularizations" element={<Navigate to="/attendance-regularization" replace />} />
-      <Route path="/attendance/disputes"        element={<ProtectedRoute><NativeAttendanceDisputes /></ProtectedRoute>} />
+      <Route path="/attendance/disputes"        element={<ProtectedRoute><Gate pageCode="ATTENDANCE_DISPUTES"><NativeAttendanceDisputes /></Gate></ProtectedRoute>} />
       <Route path="/attendance/billing-config"  element={<ProtectedRoute><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></ProtectedRoute>} />
       <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
@@ -114,6 +114,6 @@ export const workforceRouteElements = (
       <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><BreakDeskDevices /></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/break-management/devices" element={<Navigate to="/wfm/break-desk-devices" replace />} />
-      <Route path="/break-reports" element={<ProtectedRoute roles={['super_admin','admin','hr','wfm','manager','process_manager']}><BreakReports /></ProtectedRoute>} />
+      <Route path="/break-reports" element={<Navigate to="/reports?view=library&report=break-daily-summary" replace />} />
   </>
 );

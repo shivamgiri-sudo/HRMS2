@@ -154,6 +154,7 @@ export const atsFormConfigService = {
              AND (
                LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
                OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr%'
+               OR LOWER(COALESCE(des.designation_name,'')) LIKE '%team leader%'
              )
            ORDER BY name`
         );
@@ -265,6 +266,7 @@ export const atsFormConfigService = {
         LOWER(COALESCE(des.designation_name,'')) LIKE '%recruiter%'
         OR LOWER(COALESCE(des.designation_name,'')) LIKE '%executive%'
         OR LOWER(COALESCE(des.designation_name,'')) LIKE '%hr manager%'
+        OR LOWER(COALESCE(des.designation_name,'')) LIKE '%team leader%'
       )
     `;
 

@@ -34,7 +34,7 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
        e.first_name,
        e.date_of_joining,
        e.branch_id,
-       ob.offer_id
+       ob.id AS bridge_id
      FROM employees e
      JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
      WHERE e.active_status = 0
@@ -57,7 +57,7 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
         employeeName: emp.first_name,
         branchId: emp.branch_id,
         actorUserId: 'system_retry',
-        triggerEventId: emp.offer_id ?? null,
+        triggerEventId: emp.bridge_id ?? null,
         joiningDate: emp.date_of_joining,
       });
       report.succeeded++;

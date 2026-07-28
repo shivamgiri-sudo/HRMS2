@@ -691,13 +691,14 @@ export const jobRequisitionService = {
           c.full_name AS candidate_name,
           c.mobile,
           c.email,
-          c.alternate_mobile,
-          c.current_address,
+          profile.alt_mobile_number AS alternate_mobile,
+          profile.present_address AS current_address,
           c.current_stage AS latest_stage,
           COALESCE(rec_emp.full_name, rec_emp2.full_name) AS recruiter_name,
           jrc.outcome_at AS date_of_selection
        FROM job_requisition_candidate jrc
        JOIN ats_candidate c ON c.id = jrc.candidate_id
+       LEFT JOIN candidate_onboarding_profile profile ON profile.candidate_id = c.id
        LEFT JOIN employees rec_emp ON rec_emp.user_id = jrc.linked_by AND rec_emp.active_status = 1
        LEFT JOIN employees rec_emp2 ON rec_emp2.id = jrc.linked_by AND rec_emp2.active_status = 1
        WHERE jrc.requisition_id = ?
@@ -868,12 +869,22 @@ export const jobRequisitionService = {
   ): Promise<void> {
     // Find all active users with approver roles for this branch
     const [users] = await db.execute<RowDataPacket[]>(
-      `SELECT u.id FROM users u
-       WHERE u.active_status = 1
-         AND u.role IN ('super_admin','branch_head')
-         AND (u.branch_name = ? OR u.role = 'super_admin')
+      `SELECT DISTINCT ur.user_id AS id
+         FROM user_roles ur
+         LEFT JOIN employees e
+           ON e.user_id = ur.user_id
+          AND e.active_status = 1
+         LEFT JOIN branch_master b
+           ON b.id = e.branch_id
+       WHERE ur.active_status = 1
+         AND ur.role_key IN ('super_admin','branch_head')
+         AND (
+           ur.role_key = 'super_admin'
+           OR b.branch_name = ?
+           OR b.branch_code = ?
+         )
        LIMIT 50`,
-      [requisition.branch_name]
+      [requisition.branch_name, requisition.branch_name]
     );
     await Promise.allSettled(
       (users as RowDataPacket[]).map((u) =>
@@ -1011,7 +1022,7 @@ export const jobRequisitionService = {
         END) AS onboarding_count,
 
         COUNT(DISTINCT CASE
-          WHEN ob.employee_code IS NOT NULL OR ob.employee_id IS NOT NULL
+          WHEN ob.employee_id IS NOT NULL
           THEN ob.id
         END) AS joined_count,
 
@@ -1285,7 +1296,7 @@ export const jobRequisitionService = {
       `SELECT
          COALESCE(e.id, ob.employee_id) AS employee_id,
          COALESCE(e.full_name, c.full_name) AS full_name,
-         COALESCE(e.employee_code, ob.employee_code) AS employee_code,
+         e.employee_code AS employee_code,
          COALESCE(e.date_of_joining, ob.joining_date) AS date_of_joining,
          ob.bridge_status,
          c.id            AS candidate_id,
@@ -1294,7 +1305,7 @@ export const jobRequisitionService = {
        FROM job_requisition_candidate jrc
        JOIN ats_candidate c          ON c.id = jrc.candidate_id
        JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
-            AND (ob.employee_code IS NOT NULL OR ob.employee_id IS NOT NULL)
+            AND ob.employee_id IS NOT NULL
        LEFT JOIN employees e         ON e.id = ob.employee_id
        LEFT JOIN lms_employee_mapping lm ON lm.employee_id = e.id
        WHERE jrc.requisition_id = ?

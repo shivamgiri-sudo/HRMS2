@@ -1,6 +1,7 @@
 import {
   BadgeCheck,
   BookOpen,
+  Briefcase,
   CalendarDays,
   Clock,
   Clock3,
@@ -170,11 +171,12 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       </ReferencePanel>
 
       <ReferencePanel title="Quick Links" bodyClassName="p-3">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <ReferenceQuickLink icon={CalendarDays} title="Apply Leave" subtitle="Request time off" href="/leaves" tone="green" />
           <ReferenceQuickLink icon={FileText} title="View Payslip" subtitle="Check your salary details" href="/payroll/payslips" tone="blue" />
           <ReferenceQuickLink icon={Headphones} title="Raise Helpdesk" subtitle="Get support for issues" href="/helpdesk" tone="amber" />
           <ReferenceQuickLink icon={FolderOpen} title="View Documents" subtitle="Access your documents" href="/profile" tone="violet" />
+          <ReferenceQuickLink icon={Briefcase} title="Internal Jobs" subtitle="Career opportunities" href="/people/ijp" tone="green" />
         </div>
       </ReferencePanel>
     </div>

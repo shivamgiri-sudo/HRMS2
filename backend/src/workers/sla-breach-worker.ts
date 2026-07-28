@@ -74,13 +74,12 @@ async function findSLABreachCandidates(): Promise<any[]> {
          c.recruiter_assigned_name AS recruiter_name,
          qt.token AS q_token,
          TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) AS pending_minutes,
-         -- resolve the recruiter's user account for inbox delivery
-         u.id AS recruiter_user_id
+         -- employees.user_id is the HRMS portal user id in mas_hrms
+         emp.user_id AS recruiter_user_id
        FROM ats_candidate c
        LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id AND qt.status = 'active'
        LEFT JOIN ats_recruiter_roster rr ON rr.id = c.recruiter_id
        LEFT JOIN employees emp ON emp.id = rr.employee_id
-       LEFT JOIN users u ON u.employee_id = emp.id
        WHERE c.status = 'Waiting'
          AND c.recruiter_assigned_name IS NOT NULL
          AND TIMESTAMPDIFF(MINUTE, COALESCE(qt.arrival_time, qt.created_at), NOW()) >= ?

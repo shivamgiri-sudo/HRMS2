@@ -132,15 +132,15 @@ export async function executeReportForWorker(
         `SELECT e.employee_code,
                 COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                 b.branch_name, p.process_name, lt.leave_name, lt.leave_code,
-                COALESCE(lbl.opening_balance,0) AS opening_balance,
-                COALESCE(lbl.credited,0) AS credited,
-                COALESCE(lbl.debited,0) AS debited,
-                COALESCE(lbl.closing_balance,0) AS closing_balance
+                COALESCE(lbl.allocated_days,0) AS allocated_days,
+                COALESCE(lbl.used_days,0) AS used_days,
+                COALESCE(lbl.adjusted_days,0) AS adjusted_days,
+                COALESCE(lbl.allocated_days,0) + COALESCE(lbl.adjusted_days,0) - COALESCE(lbl.used_days,0) AS remaining_days
            FROM employees e
            LEFT JOIN branch_master b ON b.id = e.branch_id
            LEFT JOIN process_master p ON p.id = e.process_id
            JOIN leave_type_master lt ON lt.active_status = 1
-           LEFT JOIN leave_balance_ledger lbl ON lbl.employee_id = e.id AND lbl.leave_type_id = lt.id AND lbl.year = ?
+           LEFT JOIN leave_balance_ledger lbl ON lbl.employee_id = e.id AND lbl.leave_type_id = lt.id AND lbl.balance_year = ?
           WHERE ${clauses.join(' AND ')}
           ORDER BY e.employee_code, lt.leave_name`,
         [year, ...params]

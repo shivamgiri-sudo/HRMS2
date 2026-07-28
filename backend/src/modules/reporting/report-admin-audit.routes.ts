@@ -10,6 +10,7 @@ import {
   adminRetryEmailDelivery,
 } from './report-request.service.js';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from './report-audit.service.js';
+import { ensureReportingSchemaAvailable } from './report-schema-availability.js';
 
 export const reportAdminAuditRouter = Router();
 
@@ -21,6 +22,7 @@ reportAdminAuditRouter.use(requireAuth, requireRole('super_admin'));
 
 // GET /api/admin/report-requests — list with full filters
 reportAdminAuditRouter.get('/', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const q = req.query as Record<string, string>;
   const result = await adminListReportRequests({
     requestReference: q.requestReference,
@@ -40,37 +42,59 @@ reportAdminAuditRouter.get('/', h(async (req, res) => {
 
 // GET /api/admin/report-requests/overview-stats — KPI tiles for admin dashboard
 reportAdminAuditRouter.get('/overview-stats', h(async (_req, res) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(*) AS total_all_time,
-       SUM(CASE WHEN DATE(requested_at) = CURDATE() THEN 1 ELSE 0 END) AS today,
-       SUM(CASE WHEN status = 'QUEUED' THEN 1 ELSE 0 END) AS queued,
-       SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END) AS processing,
-       SUM(CASE WHEN status = 'EMAILED' THEN 1 ELSE 0 END) AS emailed,
-       SUM(CASE WHEN status IN ('GENERATION_FAILED','DELIVERY_FAILED') THEN 1 ELSE 0 END) AS failed,
-       SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) AS retried,
-       COUNT(DISTINCT requested_by_user_id) AS unique_users,
-       ROUND(AVG(CASE WHEN generation_completed_at IS NOT NULL AND processing_started_at IS NOT NULL
-                 THEN TIMESTAMPDIFF(SECOND, processing_started_at, generation_completed_at) END), 1) AS avg_generation_seconds,
-       ROUND(AVG(CASE WHEN email_sent_at IS NOT NULL AND email_queued_at IS NOT NULL
-                 THEN TIMESTAMPDIFF(SECOND, email_queued_at, email_sent_at) END), 1) AS avg_delivery_seconds
-     FROM report_request`
-  );
+  await ensureReportingSchemaAvailable();
 
-  const [topReports] = await db.execute<RowDataPacket[]>(
-    `SELECT report_code, report_name_snapshot, COUNT(*) AS request_count
-     FROM report_request
-     WHERE requested_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
-     GROUP BY report_code, report_name_snapshot
-     ORDER BY request_count DESC
-     LIMIT 10`
-  );
+  // Defensive: some columns may not exist on older prod schema — use safe fallbacks
+  let stats: Record<string, unknown> = {};
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total_all_time,
+         SUM(CASE WHEN DATE(requested_at) = CURDATE() THEN 1 ELSE 0 END) AS today,
+         SUM(CASE WHEN status = 'QUEUED' THEN 1 ELSE 0 END) AS queued,
+         SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END) AS processing,
+         SUM(CASE WHEN status IN ('EMAILED','GENERATED','DELIVERED') THEN 1 ELSE 0 END) AS emailed,
+         SUM(CASE WHEN status IN ('GENERATION_FAILED','DELIVERY_FAILED','FAILED') THEN 1 ELSE 0 END) AS failed,
+         COUNT(DISTINCT requested_by_user_id) AS unique_users
+       FROM report_request`
+    );
+    stats = (rows[0] as Record<string, unknown>) ?? {};
+  } catch {
+    // Table exists but some columns absent — return zeros
+    stats = { total_all_time: 0, today: 0, queued: 0, processing: 0, emailed: 0, failed: 0, unique_users: 0 };
+  }
 
-  return res.json({ success: true, data: { stats: rows[0], topReports } });
+  // retry_count and timing columns added in later migrations — query separately, safe fallback
+  try {
+    const [extra] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) AS retried,
+         ROUND(AVG(CASE WHEN generation_completed_at IS NOT NULL AND processing_started_at IS NOT NULL
+                   THEN TIMESTAMPDIFF(SECOND, processing_started_at, generation_completed_at) END), 1) AS avg_generation_seconds
+       FROM report_request`
+    );
+    Object.assign(stats, extra[0] ?? {});
+  } catch { /* column absent on old schema — skip */ }
+
+  let topReports: RowDataPacket[] = [];
+  try {
+    const [tr] = await db.execute<RowDataPacket[]>(
+      `SELECT report_code, report_name_snapshot, COUNT(*) AS request_count
+       FROM report_request
+       WHERE requested_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+       GROUP BY report_code, report_name_snapshot
+       ORDER BY request_count DESC
+       LIMIT 10`
+    );
+    topReports = tr;
+  } catch { /* safe fallback */ }
+
+  return res.json({ success: true, data: { stats, topReports } });
 }));
 
 // GET /api/admin/report-requests/:requestId — full detail with audit timeline
 reportAdminAuditRouter.get('/:requestId', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const requestId = String(req.params.requestId);
   const detail = await adminGetReportRequestDetail(requestId);
 
@@ -89,6 +113,7 @@ reportAdminAuditRouter.get('/:requestId', h(async (req, res) => {
 
 // POST /api/admin/report-requests/:requestId/retry — retry email delivery
 reportAdminAuditRouter.post('/:requestId/retry', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const requestId = String(req.params.requestId);
   const reason = String(req.body?.reason ?? '').trim();
 
@@ -102,6 +127,7 @@ reportAdminAuditRouter.post('/:requestId/retry', h(async (req, res) => {
 
 // POST /api/admin/report-requests/:requestId/cancel — admin cancel
 reportAdminAuditRouter.post('/:requestId/cancel', h(async (req, res) => {
+  await ensureReportingSchemaAvailable();
   const requestId = String(req.params.requestId);
   const reason = String(req.body?.reason ?? 'Cancelled by administrator').trim();
 

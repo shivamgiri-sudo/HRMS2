@@ -120,9 +120,15 @@ export async function listAll(filters: WithdrawalFilters): Promise<RowDataPacket
   const where = conditions.join(" AND ");
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT dcw.*, u.full_name AS requester_name
+    `SELECT dcw.*,
+            COALESCE(
+              NULLIF(requester_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(requester_emp.first_name, ''), ' ', COALESCE(requester_emp.last_name, ''))), ''),
+              requester_user.email
+            ) AS requester_name
      FROM dpdp_consent_withdrawal dcw
-     LEFT JOIN users u ON u.id = dcw.requester_id
+     LEFT JOIN auth_user requester_user ON requester_user.id = dcw.requester_id
+     LEFT JOIN employees requester_emp ON requester_emp.user_id = requester_user.id AND requester_emp.active_status = 1
      WHERE ${where}
      ORDER BY dcw.created_at DESC
      LIMIT 500`,
@@ -140,9 +146,15 @@ export async function getById(
   isHr = false
 ): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT dcw.*, u.full_name AS requester_name
+    `SELECT dcw.*,
+            COALESCE(
+              NULLIF(requester_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(requester_emp.first_name, ''), ' ', COALESCE(requester_emp.last_name, ''))), ''),
+              requester_user.email
+            ) AS requester_name
      FROM dpdp_consent_withdrawal dcw
-     LEFT JOIN users u ON u.id = dcw.requester_id
+     LEFT JOIN auth_user requester_user ON requester_user.id = dcw.requester_id
+     LEFT JOIN employees requester_emp ON requester_emp.user_id = requester_user.id AND requester_emp.active_status = 1
      WHERE dcw.id = ?
      LIMIT 1`,
     [id]
@@ -309,9 +321,15 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
  */
 export async function getAudit(id: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT dwal.*, u.full_name AS performed_by_name
+    `SELECT dwal.*,
+            COALESCE(
+              NULLIF(performed_emp.full_name, ''),
+              NULLIF(TRIM(CONCAT(COALESCE(performed_emp.first_name, ''), ' ', COALESCE(performed_emp.last_name, ''))), ''),
+              performed_user.email
+            ) AS performed_by_name
      FROM dpdp_withdrawal_audit_log dwal
-     LEFT JOIN users u ON u.id = dwal.performed_by
+     LEFT JOIN auth_user performed_user ON performed_user.id = dwal.performed_by
+     LEFT JOIN employees performed_emp ON performed_emp.user_id = performed_user.id AND performed_emp.active_status = 1
      WHERE dwal.withdrawal_id = ?
      ORDER BY dwal.performed_at DESC`,
     [id]
