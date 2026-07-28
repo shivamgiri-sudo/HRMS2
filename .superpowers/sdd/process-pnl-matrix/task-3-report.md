@@ -41,3 +41,22 @@ git diff --check -- src/components/finance/pnl/ProcessPnlMatrixTotals.tsx src/co
 
 - The checked-in Task 2 page currently passes only `rows`, `period`, `preset`, `status`, `issue`, and `density`; it does not pass the brief's `search` or `alerts` props. The matrix accepts and consumes both props, but page-level wiring is outside this task's allowed write scope.
 - Chrome DevTools MCP is not configured, so no live-browser visual verification was possible.
+
+## Focused Fix Pass
+
+### Changes
+
+- Restored the Full Matrix composite accounting definitions: `Incentive/reward` now uses `incentiveRevenue + rewardRevenue`, and `Penalty/SLA` now uses `penalty + slaDeduction` for rendering, sorting, and totals.
+- Added shared config formatting for compact INR currency, formatted numbers, and percentages. The matrix body and sticky totals row both receive these rendered values from the same column definitions.
+- Added regression coverage for composite full-matrix fields and totals, along with currency, number, and percent output formatting.
+
+### Commands and results
+
+```bash
+node backend/node_modules/vitest/vitest.mjs run src/tests/process-pnl-matrix-config.test.ts src/tests/process-pnl-page.contract.test.tsx --config vite.config.ts --globals
+npm run typecheck
+```
+
+- Focused Vitest command: passed, 2 files and 13 tests.
+- Typecheck: passed.
+- Production build: passed. Existing Vite chunk-size warnings remain.

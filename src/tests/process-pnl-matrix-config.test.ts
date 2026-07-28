@@ -143,6 +143,14 @@ const state: ProcessPnlViewState = {
   search: "",
 };
 
+const formatCompactCurrency = (value: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+
 describe("process P&L matrix config", () => {
   it("returns the exact summary column order", () => {
     expect(getPresetColumns("summary").map((column) => column.key)).toEqual([
@@ -212,8 +220,13 @@ describe("process P&L matrix config", () => {
     expect(totalFor("processName")).toBeUndefined();
     expect(totalFor("processStatus")).toBeUndefined();
     expect(totalFor("revenueDataStatus")).toBeUndefined();
-    expect(totalFor("recognizedRevenue")?.([baseRow, row2])).toBe(190000);
-    expect(totalFor("ebitdaMarginPct")?.([baseRow, row2])).toBeCloseTo((20000 / 190000) * 100);
+    expect(totalFor("recognizedRevenue")?.([baseRow, row2])).toBe(formatCompactCurrency(190000));
+    expect(totalFor("ebitdaMarginPct")?.([baseRow, row2])).toBe(`${((20000 / 190000) * 100).toFixed(1)}%`);
+    expect(summary.find((column) => column.key === "recognizedRevenue")?.render(baseRow)).toBe(
+      formatCompactCurrency(95000),
+    );
+    expect(summary.find((column) => column.key === "agentSalaryPctRevenue")?.render(baseRow)).toBe("42.0%");
+    expect(getPresetColumns("full").find((column) => column.key === "plannedDeliveryUnits")?.render(baseRow)).toBe("1,000");
   });
 
   it("defines all required presets and makes full wider than summary", () => {
@@ -223,5 +236,25 @@ describe("process P&L matrix config", () => {
       expect(getPresetColumns(preset).length).toBeGreaterThan(0);
     }
     expect(getPresetColumns("full").length).toBeGreaterThan(summaryWidth);
+  });
+
+  it("keeps composite incentive and penalty fields complete in the full matrix", () => {
+    const full = getPresetColumns("full");
+    const incentive = full.find((column) => column.key === "incentiveRevenue");
+    const penalty = full.find((column) => column.key === "penalty");
+    const rowWithComposites = {
+      ...baseRow,
+      incentiveRevenue: 5000,
+      rewardRevenue: 2000,
+      penalty: 300,
+      slaDeduction: 200,
+    };
+
+    expect(incentive?.label).toBe("Incentive/reward");
+    expect(incentive?.render(rowWithComposites)).toBe(formatCompactCurrency(7000));
+    expect(incentive?.total?.([rowWithComposites, row2])).toBe(formatCompactCurrency(12000));
+    expect(penalty?.label).toBe("Penalty/SLA");
+    expect(penalty?.render(rowWithComposites)).toBe(formatCompactCurrency(500));
+    expect(penalty?.total?.([rowWithComposites, row2])).toBe(formatCompactCurrency(500));
   });
 });

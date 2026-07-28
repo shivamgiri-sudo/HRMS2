@@ -105,9 +105,80 @@ export interface ProcessPnlViewState {
 
 type ColumnValue = number | string | string[] | null | undefined;
 
-function formatValue(value: ColumnValue): React.ReactNode {
+const currencyColumnKeys = new Set<ProcessPnlColumnKey>([
+  "grossPotentialRevenue",
+  "baseEarnedRevenue",
+  "minimumCommitmentTopUp",
+  "incentiveRevenue",
+  "penalty",
+  "creditNote",
+  "recognizedRevenue",
+  "earnedRevenue",
+  "invoicedRevenue",
+  "collectedRevenue",
+  "outstandingReceivable",
+  "unbilledRevenue",
+  "revenueVariance",
+  "revenueAtRisk",
+  "agentSalary",
+  "averageAgentSalary",
+  "dscPeople",
+  "dscNonPeople",
+  "dsc",
+  "bmcPeople",
+  "bmcNonPeople",
+  "bmc",
+  "grnVendorActual",
+  "contribution",
+  "ebitda",
+  "ebit",
+  "pbt",
+  "pat",
+  "approvedBudget",
+  "reservedBudget",
+  "consumedBudget",
+  "availableBudget",
+]);
+
+const percentageColumnKeys = new Set<ProcessPnlColumnKey>([
+  "agentSalaryPctRevenue",
+  "dscPctRevenue",
+  "bmcPctRevenue",
+  "ebitdaMarginPct",
+  "budgetUtilizationPct",
+  "seatFillPct",
+  "deliveryAttainmentPct",
+  "acceptancePct",
+  "peopleCostPctRevenue",
+  "contributionMarginPct",
+  "operatingProfitPct",
+]);
+
+const numberColumnKeys = new Set<ProcessPnlColumnKey>([
+  "mandatedSeats",
+  "activeHc",
+  "agentHeadcount",
+  "billableHc",
+  "plannedDeliveryUnits",
+  "deliveredUnits",
+  "billableUnits",
+]);
+
+function formatValue(key: ProcessPnlColumnKey, value: ColumnValue): React.ReactNode {
   if (value == null || value === "") return "-";
-  return Array.isArray(value) ? value.join(" + ") : value;
+  if (Array.isArray(value)) return value.join(" + ").replaceAll("_", " ");
+  if (typeof value !== "number") return value;
+  if (currencyColumnKeys.has(key)) {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
+  }
+  if (percentageColumnKeys.has(key)) return `${value.toFixed(1)}%`;
+  if (numberColumnKeys.has(key)) return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 1 }).format(value);
+  return value;
 }
 
 function sumColumn(rows: BpoPnlRow[], key: keyof BpoPnlRow) {
@@ -136,7 +207,7 @@ function column(
     label,
     align: options.align ?? "right",
     ...options,
-    render: (row) => formatValue(row[key as keyof BpoPnlRow] as ColumnValue),
+    render: (row) => formatValue(key, row[key as keyof BpoPnlRow] as ColumnValue),
     sortValue: (row) => {
       const value = row[key as keyof BpoPnlRow] as ColumnValue;
       return Array.isArray(value) ? value.join(" + ") : value ?? "";
@@ -145,7 +216,24 @@ function column(
 }
 
 function additiveColumn(key: ProcessPnlColumnKey, label: string, options: ColumnOptions = {}) {
-  return column(key, label, { ...options, total: (rows) => formatValue(sumColumn(rows, key as keyof BpoPnlRow)) });
+  return column(key, label, {
+    ...options,
+    total: (rows) => formatValue(key, sumColumn(rows, key as keyof BpoPnlRow)),
+  });
+}
+
+function compositeColumn(
+  key: ProcessPnlColumnKey,
+  label: string,
+  getValue: (row: BpoPnlRow) => number,
+  options: ColumnOptions = {},
+) {
+  return {
+    ...column(key, label, options),
+    render: (row: BpoPnlRow) => formatValue(key, getValue(row)),
+    total: (rows: BpoPnlRow[]) => formatValue(key, rows.reduce((total, row) => total + getValue(row), 0)),
+    sortValue: getValue,
+  };
 }
 
 function weightedColumn(
@@ -157,7 +245,7 @@ function weightedColumn(
 ) {
   return column(key, label, {
     ...options,
-    total: (rows) => formatValue(ratioTotal(rows, numerator, denominator)),
+    total: (rows) => formatValue(key, ratioTotal(rows, numerator, denominator)),
   });
 }
 
@@ -194,8 +282,8 @@ const revenueColumns: ProcessPnlColumnDefinition[] = [
   additiveColumn("grossPotentialRevenue", "Potential revenue"),
   additiveColumn("baseEarnedRevenue", "Base earned"),
   additiveColumn("minimumCommitmentTopUp", "Min. commitment"),
-  additiveColumn("incentiveRevenue", "Incentive/reward"),
-  additiveColumn("penalty", "Penalty/SLA"),
+  compositeColumn("incentiveRevenue", "Incentive/reward", (row) => row.incentiveRevenue + row.rewardRevenue),
+  compositeColumn("penalty", "Penalty/SLA", (row) => row.penalty + row.slaDeduction),
   additiveColumn("creditNote", "Credit note"),
   additiveColumn("recognizedRevenue", "Recognized revenue"),
   additiveColumn("earnedRevenue", "Earned revenue"),
