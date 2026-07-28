@@ -34,6 +34,11 @@ const GENERAL_VOC_OPTIONS = new Set([
   "Candidate Not Interested",
   "No Show",
   "Age Barrier",
+  "Sales Skills Not Up to the Mark",
+  "Not Comfortable in Sales",
+  "Underconfident / Nervous",
+  "MTI Issue",
+  "Not Fit for the Process",
 ]);
 
 const SKILL_VOC_OPTIONS = new Set([
