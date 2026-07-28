@@ -40,17 +40,13 @@ export class MiraDataUnavailableError extends Error {
   }
 }
 
-const CACHE_TTL_MS = 15_000;
-const CACHE_MAX_ENTRIES = 2_000;
-const cache = new Map<string, { expiresAt: number; value: Record<string, unknown> }>();
-
-const INTENT_PATTERNS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
+const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   { intent: 'salary', patterns: [/\bsalary\b/i, /\bpayslip\b/i, /\bpay slip\b/i, /\bnet pay\b/i, /\bgross pay\b/i, /\btake[ -]?home\b/i, /\bctc\b/i, /\bearnings?\b/i, /\bdeductions?\b/i] },
-  { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? left\b/i, /\bleaves? remaining\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i] },
+  { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i] },
   { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i] },
-  { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\bweek off\b/i, /\bweekly off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i] },
+  { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i] },
   { intent: 'documents', patterns: [/\bdocuments?\b/i, /\bdoc status\b/i, /\bkyc\b/i, /\bmissing docs?\b/i, /\bverified docs?\b/i] },
-  { intent: 'pending_actions', patterns: [/\bpending actions?\b/i, /\bpending tasks?\b/i, /\bmy inbox\b/i, /\bwork inbox\b/i, /\bapprovals? pending\b/i, /\bwhat do i need to do\b/i] },
+  { intent: 'pending_actions', patterns: [/\bpending actions?\b/i, /\bpending tasks?\b/i, /\bmy inbox\b/i, /\bwork inbox\b/i, /\bapprovals? pending\b/i, /\bwhat do i need to do\b/i, /\bactions? (?:are )?pending (?:from|for) my side\b/i] },
   { intent: 'support', patterns: [/\bhelpdesk\b/i, /\bsupport tickets?\b/i, /\bmy tickets?\b/i, /\bgrievances?\b/i, /\bcomplaints?\b/i] },
   { intent: 'payroll_readiness', patterns: [/\bpayroll readiness\b/i, /\bpayroll blocked\b/i, /\bsalary hold\b/i, /\bpayroll status\b/i] },
   { intent: 'loans', patterns: [/\bloan\b/i, /\badvance recovery\b/i, /\binstallments?\b/i, /\bemi\b/i] },
@@ -61,136 +57,105 @@ const INTENT_PATTERNS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   { intent: 'help', patterns: [/^help$/i, /\bwhat can you do\b/i, /\bhow can you help\b/i, /\bshow capabilities\b/i] },
 ];
 
-const OTHER_EMPLOYEE_PATTERNS = [
+const CROSS_EMPLOYEE_PATTERNS = [
   /\b(other|another|someone else(?:'s)?|his|her|their)\s+(employee\s+)?(salary|attendance|leave|profile|details|documents|payslip)\b/i,
-  /\b(salary|attendance|leave|profile|details|documents|payslip)\s+(of|for)\s+(?!me\b|my\b)/i,
+  /\b(salary|attendance|leave|profile|details|documents|payslip)\s+(?:of|for)\s+(?!me\b|my\b)/i,
   /\bwhich employees?\b/i,
+  /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement)\b/i,
   /\bwho (?:has|is|was|needs|did)\b[^?.]{0,120}\b(?:salary|attendance|leave|profile|documents?|payslip|absent|late|lwp|shift|week[ -]?off|pending|approval|loan|reimbursement)\b/i,
   /\bemployee\s+(?:code|id)\s*[:#-]?\s*[a-z0-9_-]+\b/i,
 ];
 
 export function detectMiraIntent(question: string): AccountIntent {
-  const normalized = String(question ?? '').trim();
-  if (OTHER_EMPLOYEE_PATTERNS.some((pattern) => pattern.test(normalized))) return 'scope_violation';
-  for (const entry of INTENT_PATTERNS) {
-    if (entry.patterns.some((pattern) => pattern.test(normalized))) return entry.intent;
+  const text = String(question ?? '').trim();
+  if (CROSS_EMPLOYEE_PATTERNS.some((pattern) => pattern.test(text))) return 'scope_violation';
+  for (const entry of INTENTS) {
+    if (entry.patterns.some((pattern) => pattern.test(text))) return entry.intent;
   }
   return 'unknown';
 }
 
-function numberValue(value: unknown): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function textValue(value: unknown, fallback = 'Not available'): string {
-  const text = String(value ?? '').trim();
-  return text || fallback;
-}
-
-function formatCurrency(value: unknown): string {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 2,
-  }).format(numberValue(value));
-}
-
-function formatDate(value: unknown): string {
-  if (!value) return 'Not available';
-  const raw = String(value).trim();
-  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  const date = dateOnly
-    ? new Date(`${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}T12:00:00+05:30`)
-    : new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw.slice(0, 10);
-  return new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'Asia/Kolkata',
-  }).format(date);
-}
-
-function currentIndiaYear(): number {
-  return Number(new Intl.DateTimeFormat('en-IN', {
-    year: 'numeric',
-    timeZone: 'Asia/Kolkata',
-  }).format(new Date()));
-}
-
-function currentIndiaMonth(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    year: 'numeric',
-    month: '2-digit',
-    timeZone: 'Asia/Kolkata',
-  }).formatToParts(new Date());
-  const year = parts.find((part) => part.type === 'year')?.value ?? '';
-  const month = parts.find((part) => part.type === 'month')?.value ?? '';
-  return `${year}-${month}`;
-}
-
-async function queryRows(
-  operation: string,
-  sql: string,
-  params: unknown[] = [],
-): Promise<RowDataPacket[]> {
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-    return rows;
-  } catch (error) {
-    console.error(`[Mira] ${operation} query failed`, error instanceof Error ? error.message : error);
-    throw new MiraDataUnavailableError(operation);
-  }
-}
-
-async function queryOne(
-  operation: string,
-  sql: string,
-  params: unknown[] = [],
-): Promise<RowDataPacket> {
-  const rows = await queryRows(operation, sql, params);
-  return rows[0] ?? ({} as RowDataPacket);
-}
-
-function pruneCache(): void {
-  const now = Date.now();
-  for (const [key, entry] of cache) {
-    if (entry.expiresAt <= now) cache.delete(key);
-  }
-  while (cache.size >= CACHE_MAX_ENTRIES) {
-    const oldestKey = cache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    cache.delete(oldestKey);
-  }
-}
-
-async function cached(
-  userId: string,
-  intent: AccountIntent,
-  loader: () => Promise<Record<string, unknown>>,
-): Promise<Record<string, unknown>> {
-  const key = `${userId}:${intent}`;
-  const hit = cache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.value;
-  if (hit) cache.delete(key);
-  const value = await loader();
-  pruneCache();
-  cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
-  return value;
-}
+const CACHE_TTL_MS = 15_000;
+const CACHE_LIMIT = 2_000;
+const cache = new Map<string, { expiresAt: number; value: unknown }>();
 
 export function clearMiraCacheForUser(userId?: string): void {
   if (!userId) {
     cache.clear();
     return;
   }
-  for (const key of cache.keys()) {
-    if (key.startsWith(`${userId}:`)) cache.delete(key);
+  for (const key of cache.keys()) if (key.startsWith(`${userId}:`)) cache.delete(key);
+}
+
+async function cached<T>(userId: string, intent: AccountIntent, loader: () => Promise<T>): Promise<T> {
+  const key = `${userId}:${intent}`;
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && hit.expiresAt > now) return hit.value as T;
+  if (hit) cache.delete(key);
+  const value = await loader();
+  for (const [cacheKey, entry] of cache) if (entry.expiresAt <= now) cache.delete(cacheKey);
+  while (cache.size >= CACHE_LIMIT) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    cache.delete(oldest);
+  }
+  cache.set(key, { expiresAt: now + CACHE_TTL_MS, value });
+  return value;
+}
+
+async function rows(operation: string, sql: string, params: unknown[] = []): Promise<RowDataPacket[]> {
+  try {
+    const [result] = await db.execute<RowDataPacket[]>(sql, params);
+    return result;
+  } catch (error) {
+    console.error(`[Mira] ${operation} query failed`, error instanceof Error ? error.message : error);
+    throw new MiraDataUnavailableError(operation);
   }
 }
 
-function localResponse(
+async function one(operation: string, sql: string, params: unknown[] = []): Promise<RowDataPacket> {
+  return (await rows(operation, sql, params))[0] ?? ({} as RowDataPacket);
+}
+
+const n = (value: unknown): number => {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const t = (value: unknown, fallback = 'Not available'): string => String(value ?? '').trim() || fallback;
+
+const money = (value: unknown): string => new Intl.NumberFormat('en-IN', {
+  style: 'currency', currency: 'INR', maximumFractionDigits: 2,
+}).format(n(value));
+
+function date(value: unknown): string {
+  if (!value) return 'Not available';
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const parsed = match ? new Date(`${match[1]}-${match[2]}-${match[3]}T12:00:00+05:30`) : new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10);
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata',
+  }).format(parsed);
+}
+
+function indiaYear(): number {
+  return Number(new Intl.DateTimeFormat('en-IN', { year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date()));
+}
+
+function indiaMonth(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', timeZone: 'Asia/Kolkata',
+  }).formatToParts(new Date());
+  return `${parts.find((part) => part.type === 'year')?.value ?? ''}-${parts.find((part) => part.type === 'month')?.value ?? ''}`;
+}
+
+function action(label = 'Open my dashboard', url = '/my-dashboard'): AiAction {
+  return { key: url.replace(/\W+/g, '-') || 'dashboard', label, url, priority: 'low' };
+}
+
+function response(
   intent: AccountIntent,
   answer: string,
   startedAt: number,
@@ -213,187 +178,127 @@ function localResponse(
   };
 }
 
-function dashboardAction(label = 'Open my dashboard'): AiAction {
-  return { key: 'my-dashboard', label, url: '/my-dashboard', priority: 'low' };
+const handled = (
+  intent: AccountIntent,
+  answer: string,
+  startedAt: number,
+  insights: AiInsight[] = [],
+  actions: AiAction[] = [],
+  confidence = 1,
+): AccountAnswerResult => ({ handled: true, intent, response: response(intent, answer, startedAt, insights, actions, confidence) });
+
+async function profile(employeeId: string): Promise<RowDataPacket> {
+  return one('profile', `SELECT e.full_name, e.employee_code, e.date_of_joining, e.employment_status, e.employment_type,
+      b.branch_name, p.process_name, m.full_name AS reporting_manager_name
+    FROM employees e
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN employees m ON m.id = e.reporting_manager_id
+    WHERE e.id = ? LIMIT 1`, [employeeId]);
 }
 
-async function fetchProfile(employeeId: string): Promise<Record<string, unknown>> {
-  const row = await queryOne(
-    'profile',
-    `SELECT e.full_name, e.employee_code, e.date_of_joining, e.employment_status, e.employment_type,
-            b.branch_name, p.process_name, m.full_name AS reporting_manager_name
-       FROM employees e
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN employees m ON m.id = e.reporting_manager_id
-      WHERE e.id = ? LIMIT 1`,
-    [employeeId],
-  );
-  return { row };
+async function salary(employeeId: string): Promise<RowDataPacket> {
+  return one('salary', `SELECT spl.gross_salary, spl.total_deductions, spl.net_salary, spl.basic, spl.hra,
+      spl.special_allowance, spl.pf_employee, spl.esic_employee, spl.professional_tax, spl.tds,
+      spl.lwp_deduction, spl.advance_recovery, spl.present_days, spl.working_days, spl.lwp_days,
+      spr.run_month, spr.status AS run_status
+    FROM salary_prep_line spl
+    JOIN salary_prep_run spr ON spr.id = spl.run_id
+    WHERE spl.employee_id = ? AND spr.status <> 'draft'
+    ORDER BY spr.run_month DESC LIMIT 1`, [employeeId]);
 }
 
-async function fetchSalary(employeeId: string): Promise<Record<string, unknown>> {
-  const row = await queryOne(
-    'salary',
-    `SELECT spl.gross_salary, spl.total_deductions, spl.net_salary, spl.basic, spl.hra,
-            spl.special_allowance, spl.pf_employee, spl.esic_employee, spl.professional_tax,
-            spl.tds, spl.lwp_deduction, spl.advance_recovery, spl.present_days,
-            spl.working_days, spl.lwp_days, spr.run_month, spr.status AS run_status
-       FROM salary_prep_line spl
-       JOIN salary_prep_run spr ON spr.id = spl.run_id
-      WHERE spl.employee_id = ? AND spr.status <> 'draft'
-      ORDER BY spr.run_month DESC LIMIT 1`,
-    [employeeId],
-  );
-  return { row };
-}
-
-async function fetchLeave(employeeId: string): Promise<Record<string, unknown>> {
-  const year = currentIndiaYear();
-  const rows = await queryRows(
-    'leave',
-    `SELECT lt.leave_name, lt.leave_code, lbl.allocated_days, lbl.used_days, lbl.adjusted_days
-       FROM leave_balance_ledger lbl
-       JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
+async function leave(employeeId: string): Promise<{ year: number; rows: RowDataPacket[] }> {
+  const year = indiaYear();
+  return {
+    year,
+    rows: await rows('leave', `SELECT lt.leave_name, lt.leave_code, lbl.allocated_days, lbl.used_days, lbl.adjusted_days
+      FROM leave_balance_ledger lbl
+      JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
       WHERE lbl.employee_id = ? AND lbl.balance_year = ?
-      ORDER BY lt.leave_name`,
-    [employeeId, year],
-  );
-  return { year, rows };
+      ORDER BY lt.leave_name`, [employeeId, year]),
+  };
 }
 
-async function fetchAttendance(employeeId: string): Promise<Record<string, unknown>> {
-  const row = await queryOne(
-    'attendance',
-    `SELECT SUM(attendance_status = 'present') AS present_days,
-            SUM(attendance_status = 'half_day') AS half_days,
-            SUM(attendance_status = 'absent') AS absent_days,
-            SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late_marks,
-            SUM(COALESCE(lwp_value, 0)) AS lwp_days,
-            ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS total_hours,
-            COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days
-       FROM attendance_daily_record
+async function attendance(employeeId: string): Promise<{ month: string; row: RowDataPacket }> {
+  return {
+    month: indiaMonth(),
+    row: await one('attendance', `SELECT SUM(attendance_status = 'present') AS present_days,
+        SUM(attendance_status = 'half_day') AS half_days,
+        SUM(attendance_status = 'absent') AS absent_days,
+        SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late_marks,
+        SUM(COALESCE(lwp_value, 0)) AS lwp_days,
+        ROUND(SUM(COALESCE(raw_minutes, 0)) / 60, 2) AS total_hours,
+        COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days
+      FROM attendance_daily_record
       WHERE employee_id = ?
         AND record_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-        AND record_date <= CURDATE()`,
-    [employeeId],
-  );
-  return { month: currentIndiaMonth(), row };
+        AND record_date <= CURDATE()`, [employeeId]),
+  };
 }
 
-async function fetchRoster(employeeId: string): Promise<Record<string, unknown>> {
-  const rows = await queryRows(
-    'roster',
-    `SELECT DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS roster_date,
-            st.shift_name, st.start_time, st.end_time,
-            rda.is_week_off, rda.is_holiday, rda.acknowledgement_status
-       FROM roster_daily_assignment rda
-       JOIN weekly_roster_cycle c ON c.id = rda.cycle_id
-       LEFT JOIN wfm_shift_template st ON st.id = rda.shift_template_id
-      WHERE rda.employee_id = ?
-        AND rda.roster_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 6 DAY)
-        AND c.status IN ('published','acknowledged','active','attendance_locked','payroll_input_ready','closed')
-      ORDER BY rda.roster_date`,
-    [employeeId],
-  );
-  return { rows };
+async function roster(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('roster', `SELECT DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS roster_date,
+      st.shift_name, st.start_time, st.end_time, rda.is_week_off, rda.is_holiday, rda.acknowledgement_status
+    FROM roster_daily_assignment rda
+    JOIN weekly_roster_cycle c ON c.id = rda.cycle_id
+    LEFT JOIN wfm_shift_template st ON st.id = rda.shift_template_id
+    WHERE rda.employee_id = ?
+      AND rda.roster_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 6 DAY)
+      AND c.status IN ('published','acknowledged','active','attendance_locked','payroll_input_ready','closed')
+    ORDER BY rda.roster_date`, [employeeId]);
 }
 
-async function fetchDocuments(employeeId: string): Promise<Record<string, unknown>> {
-  const rows = await queryRows(
-    'documents',
-    `SELECT doc_type, doc_name, verified, created_at
-       FROM employee_documents
-      WHERE employee_id = ?
-      ORDER BY created_at DESC LIMIT 100`,
-    [employeeId],
-  );
-  return { rows };
+async function documents(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('documents', `SELECT doc_type, doc_name, verified, created_at
+    FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC LIMIT 100`, [employeeId]);
 }
 
-async function fetchPendingActions(userId: string, roleKeys: string[]): Promise<Record<string, unknown>> {
+async function pendingActions(userId: string, roleKeys: string[]): Promise<RowDataPacket[]> {
   const roles = Array.from(new Set(roleKeys.map((role) => String(role).trim().toLowerCase()).filter(Boolean)));
   if (!roles.length) roles.push('employee');
   const placeholders = roles.map(() => '?').join(',');
-  const rows = await queryRows(
-    'pending_actions',
-    `SELECT item_type, title, module_code, priority, status, due_at
-       FROM work_item
-      WHERE (assigned_to_user_id = ? OR assigned_to_role IN (${placeholders}))
-        AND status NOT IN ('completed','cancelled')
-      ORDER BY FIELD(priority,'critical','high','medium','low'), due_at ASC
-      LIMIT 12`,
-    [userId, ...roles],
-  );
-  return { rows };
+  return rows('pending_actions', `SELECT item_type, title, module_code, priority, status, due_at
+    FROM work_item
+    WHERE (assigned_to_user_id = ? OR assigned_to_role IN (${placeholders}))
+      AND status NOT IN ('completed','cancelled')
+    ORDER BY FIELD(priority,'critical','high','medium','low'), due_at ASC LIMIT 12`, [userId, ...roles]);
 }
 
-async function fetchSupport(employeeId: string): Promise<Record<string, unknown>> {
+async function support(employeeId: string): Promise<{ tickets: RowDataPacket[]; grievances: RowDataPacket[] }> {
   const [tickets, grievances] = await Promise.all([
-    queryRows(
-      'support_tickets',
-      `SELECT ticket_code, category, subject, priority, status, sla_due_at, created_at
-         FROM helpdesk_ticket WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`,
-      [employeeId],
-    ),
-    queryRows(
-      'grievances',
-      `SELECT category, severity, status, created_at, resolved_at
-         FROM grievance
-        WHERE employee_id = ? AND (is_anonymous = 0 OR is_anonymous IS NULL)
-        ORDER BY created_at DESC LIMIT 10`,
-      [employeeId],
-    ),
+    rows('support_tickets', `SELECT ticket_code, category, subject, priority, status, sla_due_at, created_at
+      FROM helpdesk_ticket WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`, [employeeId]),
+    rows('grievances', `SELECT category, severity, status, created_at, resolved_at
+      FROM grievance WHERE employee_id = ? AND (is_anonymous = 0 OR is_anonymous IS NULL)
+      ORDER BY created_at DESC LIMIT 10`, [employeeId]),
   ]);
   return { tickets, grievances };
 }
 
-async function fetchPayrollReadiness(employeeId: string): Promise<Record<string, unknown>> {
-  const row = await queryOne(
-    'payroll_readiness',
-    `SELECT period_start, period_end, readiness_status, blocker_summary, confidence_score, scanned_at
-       FROM payroll_readiness_snapshot
-      WHERE employee_id = ? ORDER BY scanned_at DESC LIMIT 1`,
-    [employeeId],
-  );
-  return { row };
+async function payrollReadiness(employeeId: string): Promise<RowDataPacket> {
+  return one('payroll_readiness', `SELECT period_start, period_end, readiness_status, blocker_summary, confidence_score, scanned_at
+    FROM payroll_readiness_snapshot WHERE employee_id = ? ORDER BY scanned_at DESC LIMIT 1`, [employeeId]);
 }
 
-async function fetchLoans(employeeId: string): Promise<Record<string, unknown>> {
-  const rows = await queryRows(
-    'loans',
-    `SELECT loan_type, amount, deduction_per_month, deducted_amount, pending_amount,
-            installments, start_date, end_date, status
-       FROM employee_loans WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`,
-    [employeeId],
-  );
-  return { rows };
+async function loans(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('loans', `SELECT loan_type, amount, deduction_per_month, deducted_amount, pending_amount,
+      installments, start_date, end_date, status
+    FROM employee_loans WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`, [employeeId]);
 }
 
-async function fetchReimbursements(employeeId: string): Promise<Record<string, unknown>> {
-  const rows = await queryRows(
-    'reimbursements',
-    `SELECT claim_type, claim_month, amount_claimed, amount_approved, status,
-            submitted_at, approved_at, rejection_reason, processed_at
-       FROM employee_reimbursement_claim
-      WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`,
-    [employeeId],
-  );
-  return { rows };
+async function reimbursements(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('reimbursements', `SELECT claim_type, claim_month, amount_claimed, amount_approved, status,
+      submitted_at, approved_at, rejection_reason, processed_at
+    FROM employee_reimbursement_claim WHERE employee_id = ? ORDER BY created_at DESC LIMIT 10`, [employeeId]);
 }
 
-async function fetchJourney(employeeId: string): Promise<Record<string, unknown>> {
-  const rows = await queryRows(
-    'journey',
-    `SELECT event_type, event_date, description, module
-       FROM employee_journey_log
-      WHERE employee_id = ? ORDER BY event_date DESC, created_at DESC LIMIT 12`,
-    [employeeId],
-  );
-  return { rows };
+async function journey(employeeId: string): Promise<RowDataPacket[]> {
+  return rows('journey', `SELECT event_type, event_date, description, module
+    FROM employee_journey_log WHERE employee_id = ? ORDER BY event_date DESC, created_at DESC LIMIT 12`, [employeeId]);
 }
 
-function helpAnswer(): string {
+function helpText(): string {
   return `${MIRA_NAME} can privately answer questions about your own HRMS account, including:\n\n` +
     `• profile, employee code, joining date, branch, process and reporting manager\n` +
     `• salary and payslip summary\n` +
@@ -428,217 +333,160 @@ export async function answerSelfAccountQuestion(
   const startedAt = Date.now();
   const intent = detectMiraIntent(question);
   if (intent === 'unknown') return { handled: false, intent };
-
   if (intent === 'scope_violation') {
-    return {
-      handled: true,
-      intent,
-      response: localResponse(
-        intent,
-        `I can only discuss your own account in this chat. I will not reveal another employee's salary, attendance, leave, documents, profile, or other personal HR information. Authorised business users should use the relevant scoped HRMS dashboard instead.`,
-        startedAt,
-        [{ key: 'privacy-protected', label: 'Other employee data blocked', severity: 'low' }],
-      ),
-    };
+    return handled(intent,
+      `I can only discuss your own account in this chat. I will not reveal another employee's salary, attendance, leave, documents, profile, or other personal HR information. Authorised business users should use the relevant scoped HRMS dashboard instead.`,
+      startedAt,
+      [{ key: 'privacy-protected', label: 'Other employee data blocked', severity: 'low' }]);
   }
-
-  if (intent === 'help') {
-    return { handled: true, intent, response: localResponse(intent, helpAnswer(), startedAt, [], [dashboardAction()]) };
-  }
+  if (intent === 'help') return handled(intent, helpText(), startedAt, [], [action()]);
 
   const employee = await getEmployeeForUser(userId);
   if (!employee?.id) {
-    return {
-      handled: true,
-      intent,
-      response: localResponse(
-        intent,
-        'Your login is not linked to an active employee record. Please contact HR or the HRMS administrator to correct the user-to-employee mapping.',
-        startedAt,
-        [{ key: 'employee-map-missing', label: 'Employee mapping missing', severity: 'high' }],
-        [],
-        0.25,
-      ),
-    };
+    return handled(intent,
+      'Your login is not linked to an active employee record. Please contact HR or the HRMS administrator to correct the user-to-employee mapping.',
+      startedAt,
+      [{ key: 'employee-map-missing', label: 'Employee mapping missing', severity: 'high' }], [], 0.25);
   }
+  const employeeId = employee.id;
 
   if (intent === 'profile') {
-    const { row } = await cached(userId, intent, () => fetchProfile(employee.id)) as { row: RowDataPacket };
-    if (!row?.employee_code) return { handled: true, intent, response: localResponse(intent, 'Your profile record could not be loaded right now.', startedAt, [], [], 0.3) };
-    const answer = `Here are your current profile details:\n\n` +
-      `• Name: ${textValue(row.full_name)}\n` +
-      `• Employee code: ${textValue(row.employee_code)}\n` +
-      `• Joining date: ${formatDate(row.date_of_joining)}\n` +
-      `• Employment status: ${textValue(row.employment_status)}\n` +
-      `• Employment type: ${textValue(row.employment_type)}\n` +
-      `• Branch: ${textValue(row.branch_name)}\n` +
-      `• Process: ${textValue(row.process_name)}\n` +
-      `• Reporting manager: ${textValue(row.reporting_manager_name)}`;
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [], [dashboardAction('Open my profile dashboard')]) };
+    const row = await cached(userId, intent, () => profile(employeeId));
+    if (!row.employee_code) return handled(intent, 'Your profile record could not be loaded right now.', startedAt, [], [], 0.3);
+    return handled(intent, `Here are your current profile details:\n\n` +
+      `• Name: ${t(row.full_name)}\n• Employee code: ${t(row.employee_code)}\n• Joining date: ${date(row.date_of_joining)}\n` +
+      `• Employment status: ${t(row.employment_status)}\n• Employment type: ${t(row.employment_type)}\n` +
+      `• Branch: ${t(row.branch_name)}\n• Process: ${t(row.process_name)}\n• Reporting manager: ${t(row.reporting_manager_name)}`,
+      startedAt, [], [action('Open my profile dashboard')]);
   }
 
   if (intent === 'salary') {
-    const { row } = await cached(userId, intent, () => fetchSalary(employee.id)) as { row: RowDataPacket };
-    if (!row?.run_month) return { handled: true, intent, response: localResponse(intent, 'No finalized payslip or salary preparation record is available for your account yet.', startedAt, [], [dashboardAction()], 0.5) };
-    const answer = `Your latest finalized salary summary for ${textValue(row.run_month)} is:\n\n` +
-      `• Gross earnings: ${formatCurrency(row.gross_salary)}\n` +
-      `• Total deductions: ${formatCurrency(row.total_deductions)}\n` +
-      `• Net take-home: ${formatCurrency(row.net_salary)}\n` +
-      `• Basic: ${formatCurrency(row.basic)}\n` +
-      `• HRA: ${formatCurrency(row.hra)}\n` +
-      `• Special allowance: ${formatCurrency(row.special_allowance)}\n` +
-      `• PF: ${formatCurrency(row.pf_employee)}\n` +
-      `• ESIC: ${formatCurrency(row.esic_employee)}\n` +
-      `• Professional tax: ${formatCurrency(row.professional_tax)}\n` +
-      `• TDS: ${formatCurrency(row.tds)}\n` +
-      `• LWP deduction: ${formatCurrency(row.lwp_deduction)}\n` +
-      `• Advance recovery: ${formatCurrency(row.advance_recovery)}\n` +
-      `• Present / working days: ${numberValue(row.present_days)} / ${numberValue(row.working_days)}`;
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [
-      { key: 'net-pay', label: 'Net take-home', value: numberValue(row.net_salary), severity: 'low' },
-    ], [dashboardAction('Open payroll dashboard')]) };
+    const row = await cached(userId, intent, () => salary(employeeId));
+    if (!row.run_month) return handled(intent, 'No finalized payslip or salary preparation record is available for your account yet.', startedAt, [], [action()], 0.5);
+    return handled(intent, `Your latest finalized salary summary for ${t(row.run_month)} is:\n\n` +
+      `• Gross earnings: ${money(row.gross_salary)}\n• Total deductions: ${money(row.total_deductions)}\n` +
+      `• Net take-home: ${money(row.net_salary)}\n• Basic: ${money(row.basic)}\n• HRA: ${money(row.hra)}\n` +
+      `• Special allowance: ${money(row.special_allowance)}\n• PF: ${money(row.pf_employee)}\n• ESIC: ${money(row.esic_employee)}\n` +
+      `• Professional tax: ${money(row.professional_tax)}\n• TDS: ${money(row.tds)}\n` +
+      `• LWP deduction: ${money(row.lwp_deduction)}\n• Advance recovery: ${money(row.advance_recovery)}\n` +
+      `• Present / working days: ${n(row.present_days)} / ${n(row.working_days)}`,
+      startedAt, [{ key: 'net-pay', label: 'Net take-home', value: n(row.net_salary), severity: 'low' }], [action('Open payroll dashboard')]);
   }
 
   if (intent === 'leave') {
-    const { year, rows } = await cached(userId, intent, () => fetchLeave(employee.id)) as { year: number; rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, `No leave balance ledger is available for ${year}. Please check with HR if allocation should already be visible.`, startedAt, [], [dashboardAction()], 0.5) };
-    const lines = rows.map((row) => {
-      const available = Math.max(0, numberValue(row.allocated_days) + numberValue(row.adjusted_days) - numberValue(row.used_days));
-      return `• ${textValue(row.leave_name)} (${textValue(row.leave_code)}): ${available} available, ${numberValue(row.used_days)} used, ${numberValue(row.allocated_days)} allocated`;
+    const data = await cached(userId, intent, () => leave(employeeId));
+    if (!data.rows.length) return handled(intent, `No leave balance ledger is available for ${data.year}. Please check with HR if allocation should already be visible.`, startedAt, [], [action()], 0.5);
+    const lines = data.rows.map((row) => {
+      const available = Math.max(0, n(row.allocated_days) + n(row.adjusted_days) - n(row.used_days));
+      return `• ${t(row.leave_name)} (${t(row.leave_code)}): ${available} available, ${n(row.used_days)} used, ${n(row.allocated_days)} allocated`;
     });
-    return { handled: true, intent, response: localResponse(intent, `Your ${year} leave balances are:\n\n${lines.join('\n')}`, startedAt, [
-      { key: 'leave-types', label: `${rows.length} leave types found`, count: rows.length, severity: 'low' },
-    ], [dashboardAction('Open leave dashboard')]) };
+    return handled(intent, `Your ${data.year} leave balances are:\n\n${lines.join('\n')}`, startedAt,
+      [{ key: 'leave-types', label: `${data.rows.length} leave types found`, count: data.rows.length, severity: 'low' }], [action('Open leave dashboard')]);
   }
 
   if (intent === 'attendance') {
-    const { month, row } = await cached(userId, intent, () => fetchAttendance(employee.id)) as { month: string; row: RowDataPacket };
-    const workingDays = numberValue(row.working_days);
-    const presentEquivalent = numberValue(row.present_days) + (numberValue(row.half_days) * 0.5);
-    const percentage = workingDays > 0 ? Math.round((presentEquivalent / workingDays) * 1000) / 10 : 0;
-    const answer = `Your attendance summary for ${month} is:\n\n` +
-      `• Present days: ${numberValue(row.present_days)}\n` +
-      `• Half days: ${numberValue(row.half_days)}\n` +
-      `• Absent days: ${numberValue(row.absent_days)}\n` +
-      `• Late marks: ${numberValue(row.late_marks)}\n` +
-      `• LWP days: ${numberValue(row.lwp_days)}\n` +
-      `• Hours logged: ${numberValue(row.total_hours)}\n` +
-      `• Attendance percentage: ${percentage}%`;
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [
-      { key: 'attendance-percent', label: `${percentage}% attendance`, value: percentage, severity: percentage < 85 ? 'high' : percentage < 95 ? 'medium' : 'low' },
-    ], [{ key: 'attendance', label: 'Open attendance', url: '/attendance', priority: 'low' }]) };
+    const data = await cached(userId, intent, () => attendance(employeeId));
+    const working = n(data.row.working_days);
+    const equivalent = n(data.row.present_days) + n(data.row.half_days) * 0.5;
+    const percentage = working ? Math.round((equivalent / working) * 1000) / 10 : 0;
+    return handled(intent, `Your attendance summary for ${data.month} is:\n\n` +
+      `• Present days: ${n(data.row.present_days)}\n• Half days: ${n(data.row.half_days)}\n• Absent days: ${n(data.row.absent_days)}\n` +
+      `• Late marks: ${n(data.row.late_marks)}\n• LWP days: ${n(data.row.lwp_days)}\n• Hours logged: ${n(data.row.total_hours)}\n` +
+      `• Attendance percentage: ${percentage}%`, startedAt,
+      [{ key: 'attendance-percent', label: `${percentage}% attendance`, value: percentage, severity: percentage < 85 ? 'high' : percentage < 95 ? 'medium' : 'low' }],
+      [action('Open attendance', '/attendance')]);
   }
 
   if (intent === 'roster') {
-    const { rows } = await cached(userId, intent, () => fetchRoster(employee.id)) as { rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, 'No published roster is available for your account for the next 7 days.', startedAt, [], [dashboardAction()], 0.5) };
-    const lines = rows.map((row) => {
-      if (numberValue(row.is_week_off) === 1) return `• ${formatDate(row.roster_date)}: Week off`;
-      if (numberValue(row.is_holiday) === 1) return `• ${formatDate(row.roster_date)}: Holiday`;
-      return `• ${formatDate(row.roster_date)}: ${textValue(row.shift_name, 'Shift')} (${textValue(row.start_time, '--')}–${textValue(row.end_time, '--')})`;
-    });
-    return { handled: true, intent, response: localResponse(intent, `Your published roster for the next 7 days:\n\n${lines.join('\n')}`, startedAt, [], [dashboardAction('Open roster dashboard')]) };
+    const data = await cached(userId, intent, () => roster(employeeId));
+    if (!data.length) return handled(intent, 'No published roster is available for your account for the next 7 days.', startedAt, [], [action()], 0.5);
+    const lines = data.map((row) => n(row.is_week_off) === 1 ? `• ${date(row.roster_date)}: Week off`
+      : n(row.is_holiday) === 1 ? `• ${date(row.roster_date)}: Holiday`
+        : `• ${date(row.roster_date)}: ${t(row.shift_name, 'Shift')} (${t(row.start_time, '--')}–${t(row.end_time, '--')})`);
+    return handled(intent, `Your published roster for the next 7 days:\n\n${lines.join('\n')}`, startedAt, [], [action('Open roster dashboard')]);
   }
 
   if (intent === 'documents') {
-    const { rows } = await cached(userId, intent, () => fetchDocuments(employee.id)) as { rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, 'No employee document records are currently visible in your account.', startedAt, [], [dashboardAction()], 0.5) };
-    const verified = rows.filter((row) => numberValue(row.verified) === 1).length;
-    const pending = rows.filter((row) => numberValue(row.verified) !== 1);
-    const pendingNames = pending.slice(0, 8).map((row) => textValue(row.doc_name, textValue(row.doc_type))).join(', ');
-    const answer = `Your document status:\n\n• Total documents: ${rows.length}\n• Verified: ${verified}\n• Pending verification: ${pending.length}` +
-      (pendingNames ? `\n• Pending items: ${pendingNames}` : '');
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [
-      { key: 'pending-documents', label: `${pending.length} pending documents`, count: pending.length, severity: pending.length ? 'medium' : 'low' },
-    ], [dashboardAction('Open document dashboard')]) };
+    const data = await cached(userId, intent, () => documents(employeeId));
+    if (!data.length) return handled(intent, 'No employee document records are currently visible in your account.', startedAt, [], [action()], 0.5);
+    const verified = data.filter((row) => n(row.verified) === 1).length;
+    const pending = data.filter((row) => n(row.verified) !== 1);
+    const names = pending.slice(0, 8).map((row) => t(row.doc_name, t(row.doc_type))).join(', ');
+    return handled(intent, `Your document status:\n\n• Total documents: ${data.length}\n• Verified: ${verified}\n• Pending verification: ${pending.length}${names ? `\n• Pending items: ${names}` : ''}`,
+      startedAt, [{ key: 'pending-documents', label: `${pending.length} pending documents`, count: pending.length, severity: pending.length ? 'medium' : 'low' }], [action('Open document dashboard')]);
   }
 
   if (intent === 'pending_actions') {
-    const { rows } = await cached(userId, intent, () => fetchPendingActions(userId, roleKeys)) as { rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, 'You have no open work items or assigned approvals at the moment.', startedAt, [
-      { key: 'pending-actions', label: 'No pending actions', count: 0, severity: 'low' },
-    ], [dashboardAction()]) };
-    const lines = rows.slice(0, 8).map((row) => `• [${textValue(row.priority, 'medium')}] ${textValue(row.title)}${row.due_at ? ` — due ${formatDate(row.due_at)}` : ''}`);
-    return { handled: true, intent, response: localResponse(intent, `You have ${rows.length} open assigned item(s). The highest-priority items are:\n\n${lines.join('\n')}`, startedAt, [
-      { key: 'pending-actions', label: `${rows.length} pending actions`, count: rows.length, severity: rows.some((row) => row.priority === 'critical') ? 'critical' : 'medium' },
-    ], [dashboardAction('Open work dashboard')]) };
+    const data = await cached(userId, intent, () => pendingActions(userId, roleKeys));
+    if (!data.length) return handled(intent, 'You have no open work items or assigned approvals at the moment.', startedAt,
+      [{ key: 'pending-actions', label: 'No pending actions', count: 0, severity: 'low' }], [action()]);
+    const lines = data.slice(0, 8).map((row) => `• [${t(row.priority, 'medium')}] ${t(row.title)}${row.due_at ? ` — due ${date(row.due_at)}` : ''}`);
+    return handled(intent, `You have ${data.length} open assigned item(s). The highest-priority items are:\n\n${lines.join('\n')}`, startedAt,
+      [{ key: 'pending-actions', label: `${data.length} pending actions`, count: data.length, severity: data.some((row) => row.priority === 'critical') ? 'critical' : 'medium' }], [action('Open work dashboard')]);
   }
 
   if (intent === 'support') {
-    const { tickets, grievances } = await cached(userId, intent, () => fetchSupport(employee.id)) as { tickets: RowDataPacket[]; grievances: RowDataPacket[] };
-    const openTickets = tickets.filter((row) => !['resolved', 'closed'].includes(String(row.status))).length;
-    const openGrievances = grievances.filter((row) => !['resolved', 'closed'].includes(String(row.status))).length;
-    const answer = `Your support status:\n\n• Helpdesk tickets: ${tickets.length} recent, ${openTickets} open\n• Grievances: ${grievances.length} recent, ${openGrievances} open` +
-      (tickets[0] ? `\n• Latest ticket: ${textValue(tickets[0].subject)} — ${textValue(tickets[0].status)}` : '');
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [
-      { key: 'open-support', label: `${openTickets + openGrievances} open support items`, count: openTickets + openGrievances, severity: openTickets + openGrievances ? 'medium' : 'low' },
-    ], [dashboardAction()]) };
+    const data = await cached(userId, intent, () => support(employeeId));
+    const openTickets = data.tickets.filter((row) => !['resolved', 'closed'].includes(String(row.status))).length;
+    const openGrievances = data.grievances.filter((row) => !['resolved', 'closed'].includes(String(row.status))).length;
+    return handled(intent, `Your support status:\n\n• Helpdesk tickets: ${data.tickets.length} recent, ${openTickets} open\n` +
+      `• Grievances: ${data.grievances.length} recent, ${openGrievances} open${data.tickets[0] ? `\n• Latest ticket: ${t(data.tickets[0].subject)} — ${t(data.tickets[0].status)}` : ''}`,
+      startedAt, [{ key: 'open-support', label: `${openTickets + openGrievances} open support items`, count: openTickets + openGrievances, severity: openTickets + openGrievances ? 'medium' : 'low' }], [action()]);
   }
 
   if (intent === 'payroll_readiness') {
-    const { row } = await cached(userId, intent, () => fetchPayrollReadiness(employee.id)) as { row: RowDataPacket };
-    if (!row?.readiness_status) return { handled: true, intent, response: localResponse(intent, 'No payroll readiness scan is available for your account yet.', startedAt, [], [dashboardAction()], 0.5) };
-    const answer = `Your latest payroll readiness status is ${textValue(row.readiness_status)} for ${formatDate(row.period_start)} to ${formatDate(row.period_end)}.` +
-      (row.blocker_summary ? `\n\nBlocker summary: ${textValue(row.blocker_summary)}` : '') +
-      `\nLast scanned: ${formatDate(row.scanned_at)}`;
+    const row = await cached(userId, intent, () => payrollReadiness(employeeId));
+    if (!row.readiness_status) return handled(intent, 'No payroll readiness scan is available for your account yet.', startedAt, [], [action()], 0.5);
     const blocked = ['blocked', 'hold'].includes(String(row.readiness_status).toLowerCase());
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [
-      { key: 'payroll-readiness', label: `Payroll ${textValue(row.readiness_status)}`, severity: blocked ? 'high' : 'low' },
-    ], [dashboardAction('Open payroll dashboard')], numberValue(row.confidence_score) || 0.8) };
+    return handled(intent, `Your latest payroll readiness status is ${t(row.readiness_status)} for ${date(row.period_start)} to ${date(row.period_end)}.` +
+      `${row.blocker_summary ? `\n\nBlocker summary: ${t(row.blocker_summary)}` : ''}\nLast scanned: ${date(row.scanned_at)}`,
+      startedAt, [{ key: 'payroll-readiness', label: `Payroll ${t(row.readiness_status)}`, severity: blocked ? 'high' : 'low' }],
+      [action('Open payroll dashboard')], n(row.confidence_score) || 0.8);
   }
 
   if (intent === 'loans') {
-    const { rows } = await cached(userId, intent, () => fetchLoans(employee.id)) as { rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, 'No employee loan or salary advance record is linked to your account.', startedAt, [], [dashboardAction()]) };
-    const pending = rows.reduce((sum, row) => sum + numberValue(row.pending_amount), 0);
-    const lines = rows.slice(0, 5).map((row) => `• ${textValue(row.loan_type)}: ${textValue(row.status)}, pending ${formatCurrency(row.pending_amount)}, monthly deduction ${formatCurrency(row.deduction_per_month)}`);
-    return { handled: true, intent, response: localResponse(intent, `Your loan/advance summary:\n\n${lines.join('\n')}\n\nTotal pending amount: ${formatCurrency(pending)}`, startedAt, [
-      { key: 'loan-pending', label: 'Pending loan amount', value: pending, severity: pending > 0 ? 'medium' : 'low' },
-    ], [dashboardAction('Open payroll dashboard')]) };
+    const data = await cached(userId, intent, () => loans(employeeId));
+    if (!data.length) return handled(intent, 'No employee loan or salary advance record is linked to your account.', startedAt, [], [action()]);
+    const pending = data.reduce((sum, row) => sum + n(row.pending_amount), 0);
+    const lines = data.slice(0, 5).map((row) => `• ${t(row.loan_type)}: ${t(row.status)}, pending ${money(row.pending_amount)}, monthly deduction ${money(row.deduction_per_month)}`);
+    return handled(intent, `Your loan/advance summary:\n\n${lines.join('\n')}\n\nTotal pending amount: ${money(pending)}`, startedAt,
+      [{ key: 'loan-pending', label: 'Pending loan amount', value: pending, severity: pending > 0 ? 'medium' : 'low' }], [action('Open payroll dashboard')]);
   }
 
   if (intent === 'reimbursements') {
-    const { rows } = await cached(userId, intent, () => fetchReimbursements(employee.id)) as { rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, 'No reimbursement claims are linked to your account.', startedAt, [], [dashboardAction()]) };
-    const lines = rows.slice(0, 8).map((row) => `• ${textValue(row.claim_type)} (${textValue(row.claim_month)}): ${textValue(row.status)}, claimed ${formatCurrency(row.amount_claimed)}${row.amount_approved != null ? `, approved ${formatCurrency(row.amount_approved)}` : ''}`);
-    return { handled: true, intent, response: localResponse(intent, `Your recent reimbursement claims:\n\n${lines.join('\n')}`, startedAt, [
-      { key: 'claims', label: `${rows.length} recent claims`, count: rows.length, severity: rows.some((row) => row.status === 'rejected') ? 'medium' : 'low' },
-    ], [dashboardAction('Open reimbursement dashboard')]) };
+    const data = await cached(userId, intent, () => reimbursements(employeeId));
+    if (!data.length) return handled(intent, 'No reimbursement claims are linked to your account.', startedAt, [], [action()]);
+    const lines = data.slice(0, 8).map((row) => `• ${t(row.claim_type)} (${t(row.claim_month)}): ${t(row.status)}, claimed ${money(row.amount_claimed)}${row.amount_approved != null ? `, approved ${money(row.amount_approved)}` : ''}`);
+    return handled(intent, `Your recent reimbursement claims:\n\n${lines.join('\n')}`, startedAt,
+      [{ key: 'claims', label: `${data.length} recent claims`, count: data.length, severity: data.some((row) => row.status === 'rejected') ? 'medium' : 'low' }], [action('Open reimbursement dashboard')]);
   }
 
   if (intent === 'journey') {
-    const { rows } = await cached(userId, intent, () => fetchJourney(employee.id)) as { rows: RowDataPacket[] };
-    if (!rows.length) return { handled: true, intent, response: localResponse(intent, 'No employee journey events are available for your account yet.', startedAt, [], [dashboardAction()], 0.5) };
-    const lines = rows.slice(0, 10).map((row) => `• ${formatDate(row.event_date)} — ${textValue(row.event_type)}${row.description ? `: ${textValue(row.description)}` : ''}`);
-    return { handled: true, intent, response: localResponse(intent, `Your recent employee journey events:\n\n${lines.join('\n')}`, startedAt, [], [dashboardAction('Open my dashboard')]) };
+    const data = await cached(userId, intent, () => journey(employeeId));
+    if (!data.length) return handled(intent, 'No employee journey events are available for your account yet.', startedAt, [], [action()], 0.5);
+    const lines = data.slice(0, 10).map((row) => `• ${date(row.event_date)} — ${t(row.event_type)}${row.description ? `: ${t(row.description)}` : ''}`);
+    return handled(intent, `Your recent employee journey events:\n\n${lines.join('\n')}`, startedAt, [], [action('Open my dashboard')]);
   }
 
   if (intent === 'account_overview') {
-    const [profile, attendance, leave, roster, pending] = await Promise.all([
-      cached(userId, 'profile', () => fetchProfile(employee.id)),
-      cached(userId, 'attendance', () => fetchAttendance(employee.id)),
-      cached(userId, 'leave', () => fetchLeave(employee.id)),
-      cached(userId, 'roster', () => fetchRoster(employee.id)),
-      cached(userId, 'pending_actions', () => fetchPendingActions(userId, roleKeys)),
+    const [p, a, l, r, pending] = await Promise.all([
+      cached(userId, 'profile', () => profile(employeeId)),
+      cached(userId, 'attendance', () => attendance(employeeId)),
+      cached(userId, 'leave', () => leave(employeeId)),
+      cached(userId, 'roster', () => roster(employeeId)),
+      cached(userId, 'pending_actions', () => pendingActions(userId, roleKeys)),
     ]);
-    const p = (profile as { row: RowDataPacket }).row;
-    const a = (attendance as { row: RowDataPacket }).row;
-    const leaveRows = (leave as { rows: RowDataPacket[] }).rows;
-    const rosterRows = (roster as { rows: RowDataPacket[] }).rows;
-    const actionRows = (pending as { rows: RowDataPacket[] }).rows;
-    const totalLeave = leaveRows.reduce((sum, row) => sum + Math.max(0, numberValue(row.allocated_days) + numberValue(row.adjusted_days) - numberValue(row.used_days)), 0);
-    const nextShift = rosterRows[0];
-    const answer = `Here is your current HRMS account summary:\n\n` +
-      `• Employee: ${textValue(p?.full_name)} (${textValue(p?.employee_code)})\n` +
-      `• Branch / process: ${textValue(p?.branch_name)} / ${textValue(p?.process_name)}\n` +
-      `• This month's attendance: ${numberValue(a?.present_days)} present, ${numberValue(a?.absent_days)} absent, ${numberValue(a?.late_marks)} late marks\n` +
-      `• Leave available: ${totalLeave} days across ${leaveRows.length} leave types\n` +
-      `• Pending assigned actions: ${actionRows.length}\n` +
-      `• Next roster entry: ${nextShift ? `${formatDate(nextShift.roster_date)} — ${numberValue(nextShift.is_week_off) ? 'Week off' : numberValue(nextShift.is_holiday) ? 'Holiday' : textValue(nextShift.shift_name, 'Shift')}` : 'Not published'}`;
-    return { handled: true, intent, response: localResponse(intent, answer, startedAt, [
-      { key: 'pending-actions', label: `${actionRows.length} pending actions`, count: actionRows.length, severity: actionRows.length ? 'medium' : 'low' },
-      { key: 'leave-available', label: `${totalLeave} leave days available`, value: totalLeave, severity: 'low' },
-    ], [dashboardAction()]) };
+    const totalLeave = l.rows.reduce((sum, row) => sum + Math.max(0, n(row.allocated_days) + n(row.adjusted_days) - n(row.used_days)), 0);
+    const next = r[0];
+    return handled(intent, `Here is your current HRMS account summary:\n\n` +
+      `• Employee: ${t(p.full_name)} (${t(p.employee_code)})\n• Branch / process: ${t(p.branch_name)} / ${t(p.process_name)}\n` +
+      `• This month's attendance: ${n(a.row.present_days)} present, ${n(a.row.absent_days)} absent, ${n(a.row.late_marks)} late marks\n` +
+      `• Leave available: ${totalLeave} days across ${l.rows.length} leave types\n• Pending assigned actions: ${pending.length}\n` +
+      `• Next roster entry: ${next ? `${date(next.roster_date)} — ${n(next.is_week_off) ? 'Week off' : n(next.is_holiday) ? 'Holiday' : t(next.shift_name, 'Shift')}` : 'Not published'}`,
+      startedAt, [
+        { key: 'pending-actions', label: `${pending.length} pending actions`, count: pending.length, severity: pending.length ? 'medium' : 'low' },
+        { key: 'leave-available', label: `${totalLeave} leave days available`, value: totalLeave, severity: 'low' },
+      ], [action()]);
   }
 
   return { handled: false, intent: 'unknown' };
