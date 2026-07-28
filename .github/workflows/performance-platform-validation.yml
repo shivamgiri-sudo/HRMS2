@@ -2,32 +2,14 @@ name: Performance Platform Validation
 
 on:
   pull_request:
-    branches: [main]
-    paths:
-      - "backend/sql/520_performance_ingestion_platform.sql"
-      - "backend/sql/521_performance_multi_source_lineage.sql"
-      - "backend/sql/522_performance_governance_audit.sql"
-      - "backend/src/modules/performance-ingestion/**"
-      - "backend/src/modules/performance-intelligence/**"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/src/server.ts"
-      - "backend/src/workers/all-workers.ts"
-      - "src/components/performance-hub/**"
-      - "src/pages/PerformanceHub.tsx"
-      - "src/types/performanceHub.ts"
-      - "src/types/performanceIngestion.ts"
-      - "src/types/performanceAudit.ts"
-      - "docs/performance-ingestion-platform.md"
-      - "docs/performance-scheduled-sync.md"
-      - "docs/performance-governance-audit.md"
-      - ".github/workflows/performance-platform-validation.yml"
-  push:
     branches:
+      - main
       - agent/performance-ingestion-platform
     paths:
       - "backend/sql/520_performance_ingestion_platform.sql"
       - "backend/sql/521_performance_multi_source_lineage.sql"
       - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/scripts/performance-manual-upload-verify.ts"
       - "backend/src/modules/performance-ingestion/**"
       - "backend/src/modules/performance-intelligence/**"
       - "backend/src/db/runPendingMigrations.ts"
@@ -41,6 +23,31 @@ on:
       - "docs/performance-ingestion-platform.md"
       - "docs/performance-scheduled-sync.md"
       - "docs/performance-governance-audit.md"
+      - "docs/performance-manual-upload-certification.md"
+      - ".github/workflows/performance-platform-validation.yml"
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+      - agent/performance-manual-upload-certification
+    paths:
+      - "backend/sql/520_performance_ingestion_platform.sql"
+      - "backend/sql/521_performance_multi_source_lineage.sql"
+      - "backend/sql/522_performance_governance_audit.sql"
+      - "backend/scripts/performance-manual-upload-verify.ts"
+      - "backend/src/modules/performance-ingestion/**"
+      - "backend/src/modules/performance-intelligence/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/src/server.ts"
+      - "backend/src/workers/all-workers.ts"
+      - "src/components/performance-hub/**"
+      - "src/pages/PerformanceHub.tsx"
+      - "src/types/performanceHub.ts"
+      - "src/types/performanceIngestion.ts"
+      - "src/types/performanceAudit.ts"
+      - "docs/performance-ingestion-platform.md"
+      - "docs/performance-scheduled-sync.md"
+      - "docs/performance-governance-audit.md"
+      - "docs/performance-manual-upload-certification.md"
       - ".github/workflows/performance-platform-validation.yml"
 
 permissions:
@@ -82,6 +89,8 @@ jobs:
           src/modules/performance-ingestion/__tests__/performance-source-adapters.test.ts
           src/modules/performance-ingestion/__tests__/performance-governance.service.test.ts
           src/modules/performance-ingestion/__tests__/performance-scheduler.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-manual-upload.service.test.ts
+          src/modules/performance-ingestion/__tests__/performance-manual-upload-verification.service.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.formulas.test.ts
           src/modules/performance-intelligence/__tests__/performance-intelligence.service.test.ts
 
