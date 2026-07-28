@@ -39,6 +39,10 @@ jobs:
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
+      - name: Capture reimbursement schema evidence
+        run: |
+          grep -RniE "reimburs|expense[_ -]?claim|claim_type|amount_claimed|amount_approved" backend/sql backend/src > reimbursement-search.txt || true
+
       - name: Capture JSON test report
         working-directory: backend
         continue-on-error: true
@@ -58,5 +62,6 @@ jobs:
           path: |
             mira-test-results.json
             mira-test.log
+            reimbursement-search.txt
           if-no-files-found: error
           retention-days: 1
