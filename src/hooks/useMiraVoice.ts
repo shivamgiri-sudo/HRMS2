@@ -27,6 +27,16 @@ declare global {
 
 export type MiraVoiceLanguage = 'en-IN' | 'hi-IN';
 
+const PREFERRED_INDIAN_VOICE_NAMES = [
+  'Neerja',
+  'Prabhat',
+  'Heera',
+  'Ravi',
+  'English India',
+  'Hindi India',
+] as const;
+const PREFERRED_INDIAN_VOICE_NAMES_LOWER = PREFERRED_INDIAN_VOICE_NAMES.map((name) => name.toLowerCase());
+
 function cleanForSpeech(text: string): string {
   return text
     .replace(/https?:\/\/\S+/g, '')
@@ -44,7 +54,7 @@ function voiceScore(voice: SpeechSynthesisVoice, language: MiraVoiceLanguage): n
   if (lang === language.toLowerCase()) score += 100;
   else if (language === 'en-IN' && lang.startsWith('en-')) score += 30;
   else if (language === 'hi-IN' && lang.startsWith('hi')) score += 40;
-  if (/neerja|prabhat|heera|ravi|english india|hindi india/.test(name)) score += 80;
+  if (PREFERRED_INDIAN_VOICE_NAMES_LOWER.some((preferred) => name.includes(preferred))) score += 80;
   if (/natural|online/.test(name)) score += 40;
   if (/microsoft|google/.test(name)) score += 20;
   if (voice.localService) score += 5;
