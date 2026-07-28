@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { verifyPerformanceRun } from "../src/modules/performance-ingestion/performance-manual-upload-verification.service.js";
-import { closeDbPool } from "../src/db/mysql.js";
+import { db } from "../src/db/mysql.js";
 
 function argument(name: string): string | null {
   const direct = process.argv.find((value) => value.startsWith(`${name}=`));
@@ -50,5 +50,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await closeDbPool().catch(() => undefined);
+    await db.end().catch(() => undefined);
   });
