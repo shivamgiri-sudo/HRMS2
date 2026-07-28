@@ -10,6 +10,7 @@ export type EmailAttachment = {
 
 export type EmailSendInput = {
   to: string;
+  cc?: string;
   subject: string;
   html: string;
   text?: string;
@@ -87,6 +88,7 @@ export const emailService = {
     const result = await transporter.sendMail({
       from: fromAddress(),
       to: input.to,
+      ...(input.cc ? { cc: input.cc } : {}),
       subject: input.subject,
       html: input.html,
       text: input.text,
