@@ -800,6 +800,7 @@ export default function NativeReportsCenterV2() {
   const [favCodes, setFavCodes] = useState<Set<string>>(() => new Set(loadList(LS_FAVS)));
   const [requestMessage, setRequestMessage] = useState("");
   const [downloadState, setDownloadState] = useState<"idle" | "loading" | "error">("idle");
+  const [downloadError, setDownloadError] = useState<string>("");
   const [duplicateInfo, setDuplicateInfo] = useState<{ hasDuplicates: boolean; duplicateCount: number }>({ hasDuplicates: false, duplicateCount: 0 });
 
   const isSuperAdmin = userRoles.includes("super_admin");
@@ -939,11 +940,11 @@ export default function NativeReportsCenterV2() {
       const params = new URLSearchParams();
       Object.entries(filterValues).forEach(([k, v]) => { if (v) params.set(k, v); });
       const url = `/api/reports/suite/${selectedReport.code}/export?${params.toString()}`;
-      const token = localStorage.getItem("token") ?? sessionStorage.getItem("token") ?? "";
+      const token = localStorage.getItem("hrms_access_token") ?? sessionStorage.getItem("hrms_access_token") ?? "";
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!resp.ok) {
-        const body = await resp.json().catch(() => ({})) as { error?: string; reason?: string };
-        throw new Error(body.reason ?? body.error ?? `Server error ${resp.status}`);
+        const body = await resp.json().catch(() => ({})) as { error?: string; reason?: string; message?: string };
+        throw new Error(body.message ?? body.reason ?? body.error ?? `Server error ${resp.status}`);
       }
       const blob = await resp.blob();
       const a = document.createElement("a");
@@ -955,8 +956,10 @@ export default function NativeReportsCenterV2() {
       URL.revokeObjectURL(a.href);
       setDownloadState("idle");
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Download failed";
+      setDownloadError(msg);
       setDownloadState("error");
-      window.setTimeout(() => setDownloadState("idle"), 5000);
+      window.setTimeout(() => { setDownloadState("idle"); setDownloadError(""); }, 6000);
       console.error("XLSX download failed:", err);
     }
   }
@@ -1213,7 +1216,7 @@ export default function NativeReportsCenterV2() {
                         </button>
                       </div>
                       {downloadState === "error" && (
-                        <p className="text-xs text-red-600 max-w-xs text-right">Download failed. Try Request by Email.</p>
+                        <p className="text-xs text-red-600 max-w-xs text-right">{downloadError || "Download failed. Try Request by Email."}</p>
                       )}
                       {requestMessage && (
                         <p className="text-xs text-blue-700 max-w-xs text-right">{requestMessage}</p>
