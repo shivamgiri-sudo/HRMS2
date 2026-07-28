@@ -9,13 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { useProcessPnl } from "@/hooks/useProcessPnl";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
-import { PnlWaterfallChart } from "@/components/finance/pnl/PnlWaterfallChart";
-import { ProfitabilityTrendChart } from "@/components/finance/pnl/ProfitabilityTrendChart";
-import { PnlDataQualityPanel } from "@/components/finance/pnl/PnlDataQualityPanel";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
+import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
 import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
 import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
 
@@ -58,10 +55,6 @@ function formatCurrency(value: number | null | undefined, compact = false) {
     notation: compact ? "compact" : "standard",
     maximumFractionDigits: compact ? 1 : 0,
   }).format(value ?? 0);
-}
-
-function percent(value: number | null | undefined) {
-  return value == null ? "-" : `${value.toFixed(1)}%`;
 }
 
 export default function ProcessPnlPage() {
@@ -113,7 +106,6 @@ export default function ProcessPnlPage() {
     search: search || undefined,
   };
   const bpoQuery = useBpoProcessPnl(filters);
-  const { summaryQuery: legacySummaryQuery } = useProcessPnl(filters);
   const summary = bpoQuery.data;
   const rows = summary?.rows ?? [];
   const branches = Array.from(
@@ -303,30 +295,16 @@ export default function ProcessPnlPage() {
           </TabsContent>
 
           <TabsContent value="alerts" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {summary ? (
-                <PnlWaterfallChart
-                  revenue={summary.kpis.recognizedRevenue}
-                  directCost={summary.kpis.agentSalary + summary.kpis.dsc}
-                  indirectCost={summary.kpis.bmc}
-                  profit={summary.kpis.ebitda}
-                />
-              ) : (
-                <Skeleton className="h-72 rounded-3xl" />
-              )}
-              {summary ? (
-                <PnlDataQualityPanel alerts={summary.alerts} />
-              ) : (
-                <Skeleton className="h-72 rounded-3xl" />
-              )}
-            </div>
-            <div className="mt-4">
-              {legacySummaryQuery.data ? (
-                <ProfitabilityTrendChart trend={legacySummaryQuery.data.trend} />
-              ) : (
-                <Skeleton className="h-96 rounded-3xl" />
-              )}
-            </div>
+            {bpoQuery.isLoading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-28 rounded-md" />
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-72 rounded-md" />)}
+                </div>
+              </div>
+            ) : summary ? (
+              <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
+            ) : null}
           </TabsContent>
         </Tabs>
       </div>

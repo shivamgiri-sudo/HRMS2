@@ -13,6 +13,11 @@ describe("Process P&L page matrix contracts", () => {
     expect(pageSource).toContain('TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>');
   });
 
+  it("mounts the focused alerts workspace instead of the retired charts tab", () => {
+    expect(pageSource).toContain("<ProcessPnlAlertsWorkspace");
+    expect(pageSource).not.toContain('TabsContent value="charts"');
+  });
+
   it("owns the matrix filter state", () => {
     expect(pageSource).toContain("const [matrixPreset, setMatrixPreset]");
     expect(pageSource).toContain("const [statusFilter, setStatusFilter]");
