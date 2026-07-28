@@ -103,19 +103,27 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: Finance calculations and contracts
+      - name: Core finance calculations and contracts
         run: >-
           npm --prefix backend exec -- vitest run
           src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
           src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
-          src/modules/process-pnl/__tests__/process-lob.test.ts
-          src/modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts
-          src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts
           src/modules/finance/__tests__/finance.schema-contract.test.ts
           src/modules/finance/__tests__/budget-coverage.contract.test.ts
           src/modules/finance/__tests__/grn-validation-override.contract.test.ts
-          src/modules/finance/__tests__/grn-validation-schema-hardening.contract.test.ts
+
+      - name: Process LOB unit contract
+        run: npm --prefix backend exec -- vitest run src/modules/process-pnl/__tests__/process-lob.test.ts
+
+      - name: Process LOB MySQL integration contract
+        run: npm --prefix backend exec -- vitest run src/modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts
+
+      - name: P&L master UI contract
+        run: npm --prefix backend exec -- vitest run src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts
+
+      - name: GRN validation schema-hardening contract
+        run: npm --prefix backend exec -- vitest run src/modules/finance/__tests__/grn-validation-schema-hardening.contract.test.ts
 
       - name: Frontend build
         run: npm run build
