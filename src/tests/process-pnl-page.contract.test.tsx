@@ -3,6 +3,10 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const pageSource = readFileSync(resolve(process.cwd(), "src/pages/finance/ProcessPnlPage.tsx"), "utf8");
+const matrixSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/BpoPnlMatrixTable.tsx"),
+  "utf8",
+);
 
 describe("Process P&L page matrix contracts", () => {
   it("exposes the alerts and reconciliation tab", () => {
@@ -18,5 +22,11 @@ describe("Process P&L page matrix contracts", () => {
   it("renders the matrix toolbar with a summary default", () => {
     expect(pageSource).toContain("<ProcessPnlMatrixToolbar");
     expect(pageSource).toContain('useState<ProcessPnlMatrixPreset>("summary")');
+  });
+
+  it("renders config-driven totals and sortable matrix headers", () => {
+    expect(matrixSource).toContain("<ProcessPnlMatrixTotals");
+    expect(matrixSource).toContain("onClick={() => handleSort(column.key)}");
+    expect(matrixSource).toContain('preset === "full"');
   });
 });

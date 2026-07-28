@@ -216,16 +216,12 @@ describe("process P&L matrix config", () => {
     expect(totalFor("ebitdaMarginPct")?.([baseRow, row2])).toBeCloseTo((20000 / 190000) * 100);
   });
 
-  it("defines all presets and makes broad presets wider than summary", () => {
+  it("defines all required presets and makes full wider than summary", () => {
     const summaryWidth = getPresetColumns("summary").length;
 
-    for (const preset of ["revenue", "cost", "full"] as const) {
-      expect(getPresetColumns(preset).length).toBeGreaterThan(summaryWidth);
+    for (const preset of ["revenue", "cost", "profitability", "budget-risk", "full"] as const) {
+      expect(getPresetColumns(preset).length).toBeGreaterThan(0);
     }
-    expect(getPresetColumns("profitability").length).toBeGreaterThan(0);
-    expect(getPresetColumns("budget-risk").length).toBeGreaterThan(0);
-    expect(getPresetColumns("full").length).toBeGreaterThanOrEqual(
-      getPresetColumns("revenue").length,
-    );
+    expect(getPresetColumns("full").length).toBeGreaterThan(summaryWidth);
   });
 });

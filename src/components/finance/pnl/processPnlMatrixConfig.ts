@@ -27,6 +27,7 @@ export type ProcessPnlColumnKey =
   | "processName"
   | "clientName"
   | "branchName"
+  | "costCentreCode"
   | "processStatus"
   | "revenueDataStatus"
   | "recognizedRevenue"
@@ -39,8 +40,21 @@ export type ProcessPnlColumnKey =
   | "revenueAtRisk"
   | "billingModels"
   | "mandatedSeats"
+  | "activeHc"
+  | "agentHeadcount"
+  | "billableHc"
+  | "seatFillPct"
+  | "plannedDeliveryUnits"
   | "deliveredUnits"
   | "billableUnits"
+  | "deliveryAttainmentPct"
+  | "acceptancePct"
+  | "grossPotentialRevenue"
+  | "baseEarnedRevenue"
+  | "minimumCommitmentTopUp"
+  | "incentiveRevenue"
+  | "penalty"
+  | "creditNote"
   | "earnedRevenue"
   | "invoicedRevenue"
   | "collectedRevenue"
@@ -154,7 +168,35 @@ const identityColumns: ProcessPnlColumnDefinition[] = [
   column("processStatus", "Status", { align: "left" }),
 ];
 
+const fullIdentityColumns: ProcessPnlColumnDefinition[] = [
+  identityColumns[0],
+  identityColumns[1],
+  identityColumns[2],
+  column("costCentreCode", "Cost centre", { align: "left", widthClass: "min-w-[130px]" }),
+];
+
+const commercialColumns: ProcessPnlColumnDefinition[] = [
+  column("billingModels", "Billing models", { align: "left" }),
+  column("revenueDataStatus", "Revenue data", { align: "left" }),
+  additiveColumn("mandatedSeats", "Mandated seats"),
+  additiveColumn("activeHc", "Active HC"),
+  additiveColumn("agentHeadcount", "Agent HC"),
+  additiveColumn("billableHc", "Billable HC"),
+  weightedColumn("seatFillPct", "Seat fill %", "activeHc", "mandatedSeats"),
+  additiveColumn("plannedDeliveryUnits", "Planned units"),
+  additiveColumn("deliveredUnits", "Delivered units"),
+  additiveColumn("billableUnits", "Billable units"),
+  weightedColumn("deliveryAttainmentPct", "Delivery %", "deliveredUnits", "plannedDeliveryUnits"),
+  weightedColumn("acceptancePct", "Acceptance %", "billableUnits", "deliveredUnits"),
+];
+
 const revenueColumns: ProcessPnlColumnDefinition[] = [
+  additiveColumn("grossPotentialRevenue", "Potential revenue"),
+  additiveColumn("baseEarnedRevenue", "Base earned"),
+  additiveColumn("minimumCommitmentTopUp", "Min. commitment"),
+  additiveColumn("incentiveRevenue", "Incentive/reward"),
+  additiveColumn("penalty", "Penalty/SLA"),
+  additiveColumn("creditNote", "Credit note"),
   additiveColumn("recognizedRevenue", "Recognized revenue"),
   additiveColumn("earnedRevenue", "Earned revenue"),
   additiveColumn("invoicedRevenue", "Invoiced revenue"),
@@ -163,10 +205,6 @@ const revenueColumns: ProcessPnlColumnDefinition[] = [
   additiveColumn("unbilledRevenue", "Unbilled revenue"),
   additiveColumn("revenueVariance", "Revenue variance"),
   additiveColumn("revenueAtRisk", "Revenue at risk"),
-  column("billingModels", "Billing models", { align: "left" }),
-  additiveColumn("mandatedSeats", "Mandated seats"),
-  additiveColumn("deliveredUnits", "Delivered units"),
-  additiveColumn("billableUnits", "Billable units"),
   column("revenueDataStatus", "Revenue data", { align: "left" }),
 ];
 
@@ -210,15 +248,15 @@ const summaryColumns: ProcessPnlColumnDefinition[] = [
   identityColumns[1],
   identityColumns[2],
   identityColumns[3],
-  revenueColumns[0],
+  revenueColumns[6],
   costColumns[2],
   costColumns[6],
   costColumns[10],
   profitabilityColumns[2],
   profitabilityColumns[3],
   budgetColumns[4],
-  revenueColumns[7],
-  revenueColumns[12],
+  revenueColumns[13],
+  revenueColumns[14],
 ];
 
 const presetColumns: Record<ProcessPnlMatrixPreset, ProcessPnlColumnDefinition[]> = {
@@ -226,10 +264,11 @@ const presetColumns: Record<ProcessPnlMatrixPreset, ProcessPnlColumnDefinition[]
   revenue: [...identityColumns, ...revenueColumns],
   cost: [...identityColumns, ...costColumns],
   profitability: [...identityColumns, ...profitabilityColumns],
-  "budget-risk": [...identityColumns, ...budgetColumns, revenueColumns[7], revenueColumns[12]],
+  "budget-risk": [...identityColumns, ...budgetColumns, revenueColumns[13], revenueColumns[14]],
   full: [
-    ...identityColumns,
-    ...revenueColumns,
+    ...fullIdentityColumns,
+    ...commercialColumns,
+    ...revenueColumns.filter((column) => column.key !== "revenueDataStatus"),
     ...costColumns,
     ...profitabilityColumns,
     ...budgetColumns,
