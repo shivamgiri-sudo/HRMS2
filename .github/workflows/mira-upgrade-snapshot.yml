@@ -1,6 +1,10 @@
 name: Apply Mira Upgrade
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/mira-upgrade-snapshot.yml"
   push:
     branches:
       - agent/mira-openrouter-company-voice
@@ -11,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-mira-upgrade
+  group: apply-mira-upgrade-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
