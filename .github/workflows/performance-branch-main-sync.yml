@@ -1,0 +1,79 @@
+name: Performance Branch Main Sync
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+    paths:
+      - .github/workflows/performance-branch-main-sync.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout performance branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/performance-ingestion-platform
+          fetch-depth: 0
+
+      - name: Merge current main without losing performance work
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp backend/package.json /tmp/performance-package.json
+          git fetch origin main
+
+          set +e
+          git merge --no-commit --no-ff origin/main
+          merge_status=$?
+          set -e
+
+          conflicts="$(git diff --name-only --diff-filter=U || true)"
+          unexpected="$(printf '%s\n' "$conflicts" | grep -v '^backend/package.json$' | sed '/^$/d' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected merge conflicts:"
+            printf '%s\n' "$unexpected"
+            git merge --abort || true
+            exit 1
+          fi
+
+          if printf '%s\n' "$conflicts" | grep -qx 'backend/package.json'; then
+            git checkout --theirs backend/package.json
+            node <<'NODE'
+          const fs = require('fs');
+          const mainPackage = JSON.parse(fs.readFileSync('backend/package.json', 'utf8'));
+          const performancePackage = JSON.parse(fs.readFileSync('/tmp/performance-package.json', 'utf8'));
+          mainPackage.scripts = {
+            ...mainPackage.scripts,
+            'performance:install-ingestion-schema': performancePackage.scripts['performance:install-ingestion-schema'],
+          };
+          fs.writeFileSync('backend/package.json', `${JSON.stringify(mainPackage, null, 2)}\n`);
+          NODE
+            git add backend/package.json
+          fi
+
+          remaining="$(git diff --name-only --diff-filter=U || true)"
+          if [ -n "$remaining" ]; then
+            echo "Unresolved merge conflicts remain:"
+            printf '%s\n' "$remaining"
+            git merge --abort || true
+            exit 1
+          fi
+
+          rm -f .github/workflows/performance-branch-main-sync.yml
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Branch already contains current main."
+            exit 0
+          fi
+
+          git commit -m "merge(main): sync latest HRMS changes into performance platform"
+          git push origin HEAD:agent/performance-ingestion-platform
