@@ -1,21 +1,22 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { HrmsModernShell, HrmsBentoTile } from "@/components/ui/hrms-modern";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Briefcase, ClipboardList, BarChart3 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent } from "@/components/ui/card";
+import { Briefcase, ClipboardList, CheckCircle2, Clock, Users, TrendingUp } from "lucide-react";
 import { IjpAdminPostings } from "@/components/ijp/IjpAdminPostings";
 import { IjpApplicationsReview } from "@/components/ijp/IjpApplicationsReview";
 import { useIjpStats } from "@/components/ijp/useIjp";
-import { Skeleton } from "@/components/ui/skeleton";
 
-function IjpStatsCards() {
+function IjpAdminStats() {
   const { data: stats, isLoading } = useIjpStats();
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-6">
-        {[1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-24" />
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-24 rounded-xl" />
         ))}
       </div>
     );
@@ -24,37 +25,43 @@ function IjpStatsCards() {
   if (!stats) return null;
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-6">
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription>Total Postings</CardDescription>
-          <CardTitle className="text-3xl">{stats.total_postings}</CardTitle>
-        </CardHeader>
-      </Card>
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription>Open Postings</CardDescription>
-          <CardTitle className="text-3xl text-green-600">{stats.open_postings}</CardTitle>
-        </CardHeader>
-      </Card>
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription>Total Applications</CardDescription>
-          <CardTitle className="text-3xl">{stats.total_applications}</CardTitle>
-        </CardHeader>
-      </Card>
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription>Pending Review</CardDescription>
-          <CardTitle className="text-3xl text-amber-600">{stats.pending_review}</CardTitle>
-        </CardHeader>
-      </Card>
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription>Selected (Month)</CardDescription>
-          <CardTitle className="text-3xl text-blue-600">{stats.selected_this_month}</CardTitle>
-        </CardHeader>
-      </Card>
+    <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+      <HrmsBentoTile
+        title="Total Postings"
+        value={stats.total_postings}
+        detail="all time"
+        icon={<Briefcase className="h-5 w-5 text-slate-600" />}
+        accentClassName="from-slate-400 to-slate-500"
+      />
+      <HrmsBentoTile
+        title="Open Now"
+        value={stats.open_postings}
+        detail="accepting applications"
+        icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />}
+        accentClassName="from-emerald-500 to-teal-500"
+      />
+      <HrmsBentoTile
+        title="Total Applications"
+        value={stats.total_applications}
+        detail="all postings"
+        icon={<Users className="h-5 w-5 text-blue-600" />}
+        accentClassName="from-blue-500 to-cyan-500"
+      />
+      <HrmsBentoTile
+        title="Pending Review"
+        value={stats.pending_review}
+        detail="awaiting HR action"
+        icon={<Clock className="h-5 w-5 text-amber-600" />}
+        accentClassName="from-amber-400 to-orange-500"
+      />
+      <HrmsBentoTile
+        title="Selected (Month)"
+        value={stats.selected_this_month}
+        detail="this month"
+        icon={<TrendingUp className="h-5 w-5 text-violet-600" />}
+        accentClassName="from-violet-500 to-purple-500"
+        className="col-span-2 sm:col-span-1"
+      />
     </div>
   );
 }
@@ -75,49 +82,52 @@ export default function IjpAdminPage() {
 
   return (
     <DashboardLayout>
-      <div className="container py-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Internal Job Postings</h1>
-          <p className="text-muted-foreground">
-            Create and manage internal career opportunities
-          </p>
-        </div>
-
-        <IjpStatsCards />
+      <HrmsModernShell
+        eyebrow="Recruitment"
+        title="Internal Job Postings"
+        description="Create and manage internal career opportunities. Review applications and track selection progress."
+        icon={<Briefcase className="h-6 w-6" />}
+      >
+        <IjpAdminStats />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 max-w-md">
-            <TabsTrigger value="postings" className="gap-2">
-              <Briefcase className="h-4 w-4" />
+          <TabsList className="h-10 w-full max-w-xs grid grid-cols-2">
+            <TabsTrigger value="postings" className="gap-1.5 text-xs sm:text-sm">
+              <Briefcase className="h-3.5 w-3.5" />
               Postings
             </TabsTrigger>
-            <TabsTrigger value="applications" className="gap-2">
-              <ClipboardList className="h-4 w-4" />
+            <TabsTrigger value="applications" className="gap-1.5 text-xs sm:text-sm">
+              <ClipboardList className="h-3.5 w-3.5" />
               Applications
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="postings" className="mt-6">
+          <TabsContent value="postings" className="mt-4">
             <IjpAdminPostings onViewApplications={handleViewApplications} />
           </TabsContent>
 
-          <TabsContent value="applications" className="mt-6">
+          <TabsContent value="applications" className="mt-4">
             {viewingPostingId ? (
-              <IjpApplicationsReview postingId={viewingPostingId} onBack={handleBackToPostings} />
+              <IjpApplicationsReview
+                postingId={viewingPostingId}
+                onBack={handleBackToPostings}
+              />
             ) : (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <ClipboardList className="mx-auto h-12 w-12 text-muted-foreground/50 mb-4" />
-                  <p className="text-lg font-medium">Select a Posting</p>
-                  <p className="text-muted-foreground">
-                    Go to Postings tab and click "View Applications" on any posting
+              <Card className="border-dashed">
+                <CardContent className="py-14 text-center">
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-slate-100">
+                    <ClipboardList className="h-7 w-7 text-slate-400" />
+                  </div>
+                  <p className="text-base font-semibold text-slate-700">No posting selected</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Go to the <strong>Postings</strong> tab and click <strong>View Applications</strong> on any posting.
                   </p>
                 </CardContent>
               </Card>
             )}
           </TabsContent>
         </Tabs>
-      </div>
+      </HrmsModernShell>
     </DashboardLayout>
   );
 }
