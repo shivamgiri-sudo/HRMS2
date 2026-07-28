@@ -26,9 +26,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          head -c 11000 .mira-patch/part-00 > /tmp/part-00
-          mv /tmp/part-00 .mira-patch/part-00
-          cat .mira-patch/part-* > /tmp/mira-patch.b64
+          {
+            head -c 11000 .mira-patch/part-00
+            cat .mira-patch/part-01 .mira-patch/part-02 .mira-patch/part-03 .mira-patch/part-04 .mira-patch/part-05 .mira-patch/part-06 .mira-patch/part-07
+          } > /tmp/mira-patch.b64
           test "$(wc -c < /tmp/mira-patch.b64)" -eq 64692
           echo "10f6aac7658d0fe428d749282f388d5f25cc06c1e0ba936d6bbf29c07c2563a0  /tmp/mira-patch.b64" | sha256sum -c -
           base64 -d /tmp/mira-patch.b64 > /tmp/mira-patch.tar.gz
