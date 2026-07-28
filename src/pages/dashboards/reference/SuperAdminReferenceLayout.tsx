@@ -161,7 +161,7 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
             {activities.length ? activities.slice(0, 8).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={BellRing} title={String(row.user ?? row.user_name ?? row.actor ?? "System")} subtitle={String(row.action ?? row.description ?? "System activity")} value={String(row.timestamp ?? row.created_at ?? "—")} tone={String(row.status ?? "").toLowerCase().includes("error") ? "red" : "blue"} />
             )) : modules.slice(0, 8).map((row, index) => (
-              <ReferenceListRow key={String(row.module ?? index)} icon={Activity} title={String(row.module ?? `Module ${index + 1}`)} subtitle={`${formatValue(row.recordCount)} records`} value={String(row.status ?? "—")} tone={String(row.status ?? "").toLowerCase() === "operational" ? "green" : "amber"} />
+              <ReferenceListRow key={String(row.module ?? index)} icon={Activity} title={String(row.module ?? `Module ${index + 1}`)} subtitle={`${row.recordCountEstimated ? "Approximately " : ""}${formatValue(row.recordCount)} records`} value={String(row.status ?? "—")} tone={String(row.status ?? "").toLowerCase() === "operational" ? "green" : "amber"} />
             ))}
           </div>
         </ReferencePanel>

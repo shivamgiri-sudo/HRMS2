@@ -15,4 +15,28 @@ describe("super admin system dashboard contract", () => {
   it("provides a system-health freshness timestamp", () => {
     expect(service).toContain("generatedAt: new Date().toISOString()");
   });
+
+  it("does not full-scan every large module table for record counts", () => {
+    const systemDashboard = service.slice(
+      service.indexOf("async getSystemDashboard()"),
+      service.indexOf("async getWorkforceDashboard("),
+    );
+
+    expect(systemDashboard).toContain("information_schema.TABLES");
+    expect(systemDashboard).toContain("recordCountEstimated: true");
+    expect(systemDashboard).not.toContain(
+      "SELECT 'ATS' AS module_name, COUNT(*) AS record_count",
+    );
+  });
+
+  it("loads independent workforce panels concurrently", () => {
+    const workforceDashboard = service.slice(
+      service.indexOf("async getWorkforceDashboard("),
+      service.indexOf("async getSystemDashboard(") > service.indexOf("async getWorkforceDashboard(")
+        ? service.indexOf("async getSystemDashboard(")
+        : undefined,
+    );
+
+    expect(workforceDashboard).toContain("secondaryPanelResults = await Promise.all");
+  });
 });

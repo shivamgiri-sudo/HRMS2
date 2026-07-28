@@ -433,24 +433,42 @@ export const managementService = {
         `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
       ).catch(() => [[{ count: 0 }]] as any),
       db.execute<RowDataPacket[]>(
-        `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
-           FROM ats_candidate
+        `SELECT 'ATS' AS module_name,
+                COALESCE((SELECT TABLE_ROWS FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate'), 0) AS record_count,
+                (SELECT MAX(created_at) FROM ats_candidate) AS last_activity,
+                0 AS error_count
          UNION ALL
-         SELECT 'Payroll', COUNT(*), MAX(updated_at), SUM(status = 'failed')
-           FROM salary_prep_run
+         SELECT 'Payroll',
+                COALESCE((SELECT TABLE_ROWS FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_prep_run'), 0),
+                (SELECT MAX(run_month) FROM salary_prep_run),
+                (SELECT COUNT(*) FROM salary_prep_run WHERE status = 'failed')
          UNION ALL
-         SELECT 'Leave', COUNT(*), MAX(COALESCE(applied_at, created_at)), 0
-           FROM leave_request
+         SELECT 'Leave',
+                COALESCE((SELECT TABLE_ROWS FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'leave_request'), 0),
+                (SELECT MAX(COALESCE(applied_at, created_at)) FROM leave_request),
+                0
          UNION ALL
-         SELECT 'Attendance', COUNT(*), MAX(updated_at), 0
-           FROM attendance_daily_record
+         SELECT 'Attendance',
+                COALESCE((SELECT TABLE_ROWS FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance_daily_record'), 0),
+                (SELECT MAX(record_date) FROM attendance_daily_record),
+                0
          UNION ALL
-         SELECT 'Integration Hub', COUNT(*), MAX(completed_at),
-                SUM(status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
-           FROM integration_connector_run
+         SELECT 'Integration Hub',
+                COALESCE((SELECT TABLE_ROWS FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_connector_run'), 0),
+                (SELECT MAX(started_at) FROM integration_connector_run),
+                (SELECT COUNT(*) FROM integration_connector_run
+                  WHERE status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
          UNION ALL
-         SELECT 'KPI', COUNT(*), MAX(created_at), 0
-           FROM kpi_daily_actual`
+         SELECT 'KPI',
+                COALESCE((SELECT TABLE_ROWS FROM information_schema.TABLES
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_daily_actual'), 0),
+                (SELECT MAX(score_date) FROM kpi_daily_actual),
+                0`
       ),
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -472,10 +490,11 @@ export const managementService = {
       const errorCount = numberValue(row.error_count);
       return {
         module: String(row.module_name),
-        status: errorCount > 0 ? "degraded" : recordCount > 0 ? "operational" : "degraded",
+        status: errorCount > 0 ? "degraded" : "operational",
         lastActivity: row.last_activity ?? null,
         errorCount,
         recordCount,
+        recordCountEstimated: true,
       };
     });
 
@@ -728,151 +747,150 @@ export const managementService = {
     const analystsInTraining =
       numberValue(training.ats_training) + numberValue(training.training_stage_candidates);
 
-    // Add missing fields for dashboard
-    const [onLeaveResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT employee_id) as count
-       FROM leave_request
-       WHERE status = 'approved'
-         AND CURDATE() BETWEEN start_date AND end_date`
-    );
+    // Independent secondary panels run concurrently; executing these serially made
+    // the dashboard latency equal to the sum of every panel query.
+    const secondaryPanelResults = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT employee_id) as count
+         FROM leave_request
+         WHERE status = 'approved'
+           AND CURDATE() BETWEEN start_date AND end_date`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT status, COUNT(*) as count
+         FROM leave_request
+         WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+         GROUP BY status`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT id, employee_code, full_name as employee_name, designation_id, date_of_joining as joining_date
+         FROM employees
+         WHERE employment_status = 'active'
+           AND date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         ORDER BY date_of_joining DESC
+         LIMIT 10`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           b.id,
+           b.branch_name as name,
+           COUNT(DISTINCT e.id) as employee_count,
+           ROUND(
+             COUNT(DISTINCT s.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0),
+             2
+           ) as present_pct,
+           COUNT(DISTINCT s.employee_id) as present_count
+         FROM branch_master b
+         LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
+         LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
+           AND s.session_date >= CURDATE()
+           AND s.session_date < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+           AND s.current_status IN ('Logged In','Active','Login','Rostered')
+         WHERE b.active_status = 1
+         GROUP BY b.id, b.branch_name
+         HAVING employee_count > 0
+         ORDER BY employee_count DESC
+         LIMIT 15`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(DISTINCT lr.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0) as usage_pct
+         FROM employees e
+         LEFT JOIN leave_request lr ON lr.employee_id = e.id
+           AND lr.status = 'approved'
+           AND lr.start_date >= DATE_FORMAT(CURDATE(), '%Y-01-01')
+           AND lr.start_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR)
+         WHERE e.employment_status = 'active'`,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM expense_claim WHERE status = 'pending'`,
+      ).catch(() => [[{ count: 0 }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`,
+      ).catch(() => [[{ overdue: 0 }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`,
+      ).catch(() => [[{ count: 0 }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM employee_document
+         WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE() AND active_status = 1`,
+      ).catch(() => [[{ count: 0 }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM policy_acknowledgement
+         WHERE acknowledged = 0`,
+      ).catch(() => [[{ count: 0 }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           ROUND(
+             SUM(pa.status IN ('completed','approved')) * 100.0
+             / NULLIF(COUNT(*), 0)
+           , 2) AS completion_pct
+         FROM performance_appraisal pa
+         WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`,
+      ).catch(() => [[{ completion_pct: null }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           pm.id,
+           pm.process_name,
+           COUNT(DISTINCT e.id) AS headcount,
+           SUM(adr.attendance_status = 'present') AS present_count,
+           SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')) AS expected_to_work,
+           ROUND(
+             SUM(adr.attendance_status = 'present') * 100.0 /
+             NULLIF(SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')), 0),
+           2) AS attendance_pct
+         FROM process_master pm
+         LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
+           AND adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE())
+         WHERE pm.active_status = 1
+         GROUP BY pm.id, pm.process_name
+         HAVING headcount > 0
+         ORDER BY headcount DESC
+         LIMIT 15`,
+      ).catch(() => [[]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id, e.employee_code, e.full_name as employee_name,
+           e.designation_id, e.employment_status,
+           b.branch_name,
+           COALESCE(dm.designation_name, e.designation_id) as designation_name,
+           COALESCE(adr.attendance_status, 'not_marked') as today_status
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+         LEFT JOIN attendance_daily_record adr
+           ON adr.employee_id = e.id AND adr.record_date = CURDATE()
+         WHERE e.employment_status = 'active'
+         ORDER BY e.full_name ASC
+         LIMIT 20`,
+      ).catch(() => [[]] as any),
+    ]);
+    const [
+      [onLeaveResult],
+      [branchCountResult],
+      [leaveSummaryResult],
+      [recentJoinersResult],
+      [branchSnapshotResult],
+      [leaveUsageResult],
+      [expenseResult],
+      [overtaskResult],
+      [timesheetResult],
+      [expiredDocsResult],
+      [pendingPolicyResult],
+      [appraisalResult],
+      [processBreakdownResult],
+      [teamMembersResult],
+    ] = secondaryPanelResults;
+
     const onLeaveCount = numberValue(onLeaveResult[0]?.count);
-
-    const [branchCountResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
-    );
     const totalBranches = numberValue(branchCountResult[0]?.count);
-
-    const [leaveSummaryResult] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) as count
-       FROM leave_request
-       WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-       GROUP BY status`
-    );
-
-    const [recentJoinersResult] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_code, full_name as employee_name, designation_id, date_of_joining as joining_date
-       FROM employees
-       WHERE employment_status = 'active'
-         AND date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       ORDER BY date_of_joining DESC
-       LIMIT 10`
-    );
-
-    const [branchSnapshotResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         b.id,
-         b.branch_name as name,
-         COUNT(DISTINCT e.id) as employee_count,
-         ROUND(
-           COUNT(DISTINCT s.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0),
-           2
-         ) as present_pct,
-         COUNT(DISTINCT s.employee_id) as present_count
-       FROM branch_master b
-       LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
-       LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
-         AND DATE(s.session_date) = CURDATE()
-         AND s.current_status IN ('Logged In','Active','Login','Rostered')
-       WHERE b.active_status = 1
-       GROUP BY b.id, b.branch_name
-       HAVING employee_count > 0
-       ORDER BY employee_count DESC
-       LIMIT 15`
-    );
-
-    // Calculate leave balance usage percentage
-    const [leaveUsageResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         COUNT(DISTINCT lr.employee_id) * 100.0 / NULLIF(COUNT(DISTINCT e.id), 0) as usage_pct
-       FROM employees e
-       LEFT JOIN leave_request lr ON lr.employee_id = e.id
-         AND lr.status = 'approved'
-         AND YEAR(lr.start_date) = YEAR(CURDATE())
-       WHERE e.employment_status = 'active'`
-    );
     const leaveBalanceUsagePct = leaveUsageResult[0]?.usage_pct
       ? Number(Number(leaveUsageResult[0].usage_pct).toFixed(2))
       : null;
-
-    // Manager-specific: expense claims, work items
-    const [expenseResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM expense_claim WHERE status = 'pending'`
-    ).catch(() => [[{ count: 0 }]] as any);
-
-    const [overtaskResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
-    ).catch(() => [[{ overdue: 0 }]] as any);
-
-    // Pending timesheets (work_item type = timesheet)
-    const [timesheetResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
-    ).catch(() => [[{ count: 0 }]] as any);
-
-    // Expired employee documents
-    const [expiredDocsResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM employee_document
-       WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE() AND active_status = 1`
-    ).catch(() => [[{ count: 0 }]] as any);
-
-    // Pending policy acknowledgements
-    const [pendingPolicyResult] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count FROM policy_acknowledgement
-       WHERE acknowledged = 0`
-    ).catch(() => [[{ count: 0 }]] as any);
-
-    // Appraisal completion percentage
-    const [appraisalResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         ROUND(
-           SUM(pa.status IN ('completed','approved')) * 100.0
-           / NULLIF(COUNT(*), 0)
-         , 2) AS completion_pct
-       FROM performance_appraisal pa
-       WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
-    ).catch(() => [[{ completion_pct: null }]] as any);
-
-    // Process breakdown for Operations dashboard
-    const [processBreakdownResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         pm.id,
-         pm.process_name,
-         COUNT(DISTINCT e.id) AS headcount,
-         SUM(adr.attendance_status = 'present') AS present_count,
-         SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')) AS expected_to_work,
-         ROUND(
-           SUM(adr.attendance_status = 'present') * 100.0 /
-           NULLIF(SUM(adr.attendance_status NOT IN ('on_leave','leave','leave_approved','week_off','holiday')), 0),
-         2) AS attendance_pct
-       FROM process_master pm
-       LEFT JOIN employees e ON e.process_id = pm.id AND e.employment_status = 'active'
-       LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id
-         AND adr.record_date = (SELECT MAX(r) FROM (SELECT MAX(record_date) AS r FROM attendance_daily_record WHERE record_date <= CURDATE()) sub)
-       WHERE pm.active_status = 1
-       GROUP BY pm.id, pm.process_name
-       HAVING headcount > 0
-       ORDER BY headcount DESC
-       LIMIT 15`
-    ).catch(() => [[]] as any);
-
-    // Team members snapshot for Manager dashboard roster panel
-    const [teamMembersResult] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         e.id, e.employee_code, e.full_name as employee_name,
-         e.designation_id, e.employment_status,
-         b.branch_name,
-         COALESCE(dm.designation_name, e.designation_id) as designation_name,
-         COALESCE(
-           (SELECT adr.attendance_status FROM attendance_daily_record adr
-            WHERE adr.employee_id = e.id AND adr.record_date = CURDATE() LIMIT 1),
-           'not_marked'
-         ) as today_status
-       FROM employees e
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN designation_master dm ON dm.id = e.designation_id
-       WHERE e.employment_status = 'active'
-       ORDER BY e.full_name ASC
-       LIMIT 20`
-    ).catch(() => [[]] as any);
 
     return {
       generated_at: new Date().toISOString(),

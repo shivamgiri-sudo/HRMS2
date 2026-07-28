@@ -127,6 +127,28 @@ Release approval must identify:
 No manual server deployment, PM2 restart, Nginx change, migration, or production write is
 part of this validation package.
 
+## Local Performance Validation (2026-07-23)
+
+- `GET /api/management/system-dashboard` improved from approximately 19.1 seconds
+  to 3.34 seconds in the authenticated local runtime.
+- Large module record totals now use MySQL metadata estimates instead of synchronous
+  full-table counts. The response includes `recordCountEstimated: true`, and the UI
+  labels these values as approximate; they must not be used for exact reconciliation.
+- Independent workforce secondary panels execute concurrently, and date predicates
+  used by attendance and leave panels are index-friendly.
+- Backend dashboard contract tests: 28 passed across 8 files.
+- Active frontend live-data contract: 26 passed.
+- Backend and frontend TypeScript checks passed; the production frontend build passed.
+- The shared database was saturated by orphaned, hours-old recruiter analytics queries
+  from an earlier implementation. They were observed read-only and were not terminated.
+  Workforce latency must therefore be remeasured in an isolated staging environment
+  before approval.
+
+The generic frontend test invocation also discovers stale suites inside `.worktrees/`;
+those copies reported two failures and one import failure. The active-tree test passes
+when `.worktrees/**` is excluded. Cleanup or separate validation of those worktrees is
+outside this dashboard patch and must not be represented as an active-source failure.
+
 ## External Sign-off
 
 The following cannot be self-approved by the implementation agent:
