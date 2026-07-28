@@ -51,7 +51,7 @@ jobs:
 
       - name: Run Mira privacy contract tests
         working-directory: backend
-        run: npx vitest run src/modules/ai/ai-mira-security.test.ts
+        run: npx vitest run src/modules/ai/__tests__/ai-mira-security.test.ts
 
       - name: Frontend typecheck
         run: npm run typecheck
