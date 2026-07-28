@@ -1,0 +1,32 @@
+name: Mira Test Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/mira-test-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm --prefix backend ci
+      - name: Capture full backend test report
+        continue-on-error: true
+        run: npm --prefix backend exec -- vitest run --reporter=json --outputFile=backend-test-results.json
+      - name: Upload diagnostic report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mira-backend-test-results
+          path: backend-test-results.json
+          retention-days: 1
