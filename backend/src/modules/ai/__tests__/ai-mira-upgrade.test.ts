@@ -55,7 +55,7 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
     mocks.execute.mockResolvedValueOnce([[{ working_days: 0 }]]);
     await answerSelfAccountQuestion('Summarise my attendance last month', 'user-self', ['employee']);
     const [sql] = mocks.execute.mock.calls[0];
-    expect(String(sql)).toContain("DATE_SUB(CURDATE(), INTERVAL 1 MONTH)");
+    expect(String(sql)).toContain('DATE_SUB(CURDATE(), INTERVAL 1 MONTH)');
     expect(String(sql)).toContain('LAST_DAY');
   });
 
@@ -120,7 +120,6 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
     expect(String(options.body).toLowerCase()).toContain('approved context');
   });
 
-
   it('keeps live self-service before any external AI rate limit', () => {
     const routes = source('../ai-insights.routes.ts');
     const localIndex = routes.indexOf('answerSelfAccountQuestion(safeQuestion');
@@ -151,13 +150,17 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
     expect(response.answer.toLowerCase()).not.toContain('context analysed');
   });
 
-  it('keeps provider creation restricted to registered providers and preserves one default', () => {
+  it('keeps provider creation UUID-safe, transactional and production-encrypted', () => {
     const routes = source('../ai-insights.routes.ts');
     const config = source('../ai-provider-config.service.ts');
     expect(routes).toContain('Provider is not supported by this HRMS build');
     expect(routes).toContain('activeStatus');
     expect(routes).toContain('isDefault');
-    expect(config).toContain("UPDATE ai_provider_config SET is_default = FALSE WHERE id != ?");
+    expect(config).toContain('UPDATE ai_provider_config SET is_default = FALSE WHERE provider_key != ?');
+    expect(config).toContain('AI_ENCRYPTION_KEY or ENCRYPTION_KEY must be configured in production');
+    expect(config).toContain('beginTransaction');
+    expect(config).toContain('FOR UPDATE');
+    expect(config).not.toContain('const id = (result as any).insertId');
   });
 
   it('registers OpenRouter, proactive briefing and company knowledge routes', () => {
