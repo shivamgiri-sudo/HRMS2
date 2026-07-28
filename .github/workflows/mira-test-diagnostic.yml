@@ -23,11 +23,11 @@ jobs:
       - run: npm --prefix backend ci
       - name: Capture full backend test report
         continue-on-error: true
-        run: npm --prefix backend exec -- vitest run --reporter=json --outputFile=backend-test-results.json
+        run: npm --prefix backend exec -- vitest run --reporter=json --outputFile=/tmp/backend-test-results.json
       - name: Upload diagnostic report
         uses: actions/upload-artifact@v4
         with:
           name: mira-backend-test-results
-          path: backend/backend-test-results.json
+          path: /tmp/backend-test-results.json
           if-no-files-found: error
           retention-days: 1
