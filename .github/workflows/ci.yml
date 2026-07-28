@@ -147,7 +147,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2; do
-            npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts && exit 0
+            (cd backend && npm exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts) && exit 0
             echo "Authentication security contract attempt $attempt failed."
           done
           exit 1
@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2; do
-            npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts && exit 0
+            (cd backend && npm exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts) && exit 0
             echo "Document vault security contract attempt $attempt failed."
           done
           exit 1
@@ -165,7 +165,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2; do
-            npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts && exit 0
+            (cd backend && npm exec -- vitest run src/db/__tests__/migration-governance.test.ts) && exit 0
             echo "Migration governance contract attempt $attempt failed."
           done
           exit 1
@@ -174,7 +174,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2; do
-            npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts && exit 0
+            (cd backend && npm exec -- vitest run src/db/__tests__/connection-reliability.test.ts) && exit 0
             echo "Database connection reliability contract attempt $attempt failed."
           done
           exit 1
@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2; do
-            npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts && exit 0
+            (cd backend && npm exec -- vitest run src/workers/__tests__/worker-safety.test.ts) && exit 0
             echo "Worker safety contract attempt $attempt failed."
           done
           exit 1
