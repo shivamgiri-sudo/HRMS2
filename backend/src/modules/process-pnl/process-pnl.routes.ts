@@ -15,6 +15,7 @@ import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService } from "./branch-budget.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
+import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
@@ -314,6 +315,14 @@ async function scopedFilters(req: AuthenticatedRequest) {
 // Canonical endpoints: summary/trend/export/close all use the same allocation-aware engine.
 router.get("/pnl/summary", h(async (req, res) => {
   const data = await canonicalPnlService.getSummary(await scopedFilters(req));
+  res.json({ success: true, data });
+}));
+
+// Transposed statement (P&L components as rows, entities as dynamic columns) — read-only
+// composition over the same canonical engine as /pnl/summary. See pnl-statement.service.ts.
+router.get("/pnl/statement", h(async (req, res) => {
+  const viewBy = (req.query.viewBy ? String(req.query.viewBy) : "process") as StatementViewBy;
+  const data = await pnlStatementService.getStatement(await scopedFilters(req), viewBy);
   res.json({ success: true, data });
 }));
 

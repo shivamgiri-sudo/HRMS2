@@ -1,0 +1,53 @@
+import { useQuery } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
+import type { BpoPnlFilters } from "@/hooks/useBpoProcessPnl";
+
+export type PnlStatementViewBy = "process" | "branch" | "lob";
+
+export interface PnlStatementColumn {
+  id: string;
+  code: string;
+  name: string;
+  branchName: string | null;
+  processName: string | null;
+  status: string | null;
+}
+
+export interface PnlStatementRow {
+  componentKey: string;
+  displayName: string;
+  section: "headcount" | "revenue" | "cost" | "profitability";
+  format: "CURRENCY" | "PERCENTAGE" | "COUNT";
+  isSubtotal: boolean;
+  values: Record<string, number | null>;
+}
+
+export interface PnlStatement {
+  viewBy: PnlStatementViewBy;
+  calculationEngine?: string;
+  generatedAt: string;
+  columns: PnlStatementColumn[];
+  rows: PnlStatementRow[];
+}
+
+function queryString(filters: BpoPnlFilters, viewBy: PnlStatementViewBy) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) params.set(key, value as string);
+  });
+  params.set("viewBy", viewBy);
+  return `?${params.toString()}`;
+}
+
+export function usePnlStatement(filters: BpoPnlFilters, viewBy: PnlStatementViewBy) {
+  return useQuery({
+    queryKey: ["pnl-statement", filters, viewBy],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: PnlStatement }>(
+        `/api/finance/pnl/statement${queryString(filters, viewBy)}`
+      );
+      return response.data;
+    },
+    staleTime: 60_000,
+  });
+}
