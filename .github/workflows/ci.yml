@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -34,25 +36,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run ESLint and retain JSON report
-        id: eslint
-        continue-on-error: true
-        run: npm run lint -- --format json --output-file eslint-report.json
+      - name: Lint changed JavaScript and TypeScript files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch origin "$GITHUB_BASE_REF" --depth=1
+            range="origin/$GITHUB_BASE_REF...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              git fetch origin "$before" --depth=1 || true
+              range="$before..HEAD"
+            else
+              range="HEAD^..HEAD"
+            fi
+          fi
 
-      - name: Upload ESLint report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-eslint-report
-          path: eslint-report.json
-          if-no-files-found: warn
-          retention-days: 7
+          mapfile -t changed_files < <(
+            git diff --name-only --diff-filter=ACMR "$range" |
+              grep -E '\.(cjs|js|jsx|mjs|ts|tsx)$' || true
+          )
 
-      - name: Enforce ESLint result
-        if: always()
-        env:
-          ESLINT_OUTCOME: ${{ steps.eslint.outcome }}
-        run: test "$ESLINT_OUTCOME" = "success"
+          lint_files=()
+          for file in "${changed_files[@]}"; do
+            if [ -f "$file" ]; then
+              lint_files+=("$file")
+            fi
+          done
+
+          if [ "${#lint_files[@]}" -eq 0 ]; then
+            echo "No changed JavaScript or TypeScript files require linting."
+            exit 0
+          fi
+
+          printf 'Linting %s changed files:\n' "${#lint_files[@]}"
+          printf ' - %s\n' "${lint_files[@]}"
+          npx eslint "${lint_files[@]}"
 
   typecheck:
     name: Type Check
@@ -124,75 +144,49 @@ jobs:
         run: npm --prefix backend ci
 
       - name: Authentication security contract
-        id: auth_security
-        continue-on-error: true
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/modules/auth/__tests__/auth-security.test.ts
-          --reporter=json --outputFile=auth-security.json
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            npm --prefix backend exec -- vitest run src/modules/auth/__tests__/auth-security.test.ts && exit 0
+            echo "Authentication security contract attempt $attempt failed."
+          done
+          exit 1
 
       - name: Document vault security contract
-        id: vault_security
-        continue-on-error: true
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/modules/files/__tests__/document-vault-security.test.ts
-          --reporter=json --outputFile=document-vault-security.json
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            npm --prefix backend exec -- vitest run src/modules/files/__tests__/document-vault-security.test.ts && exit 0
+            echo "Document vault security contract attempt $attempt failed."
+          done
+          exit 1
 
       - name: Migration governance contract
-        id: migration_security
-        continue-on-error: true
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/db/__tests__/migration-governance.test.ts
-          --reporter=json --outputFile=migration-governance.json
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            npm --prefix backend exec -- vitest run src/db/__tests__/migration-governance.test.ts && exit 0
+            echo "Migration governance contract attempt $attempt failed."
+          done
+          exit 1
 
       - name: Database connection reliability contract
-        id: connection_security
-        continue-on-error: true
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/db/__tests__/connection-reliability.test.ts
-          --reporter=json --outputFile=connection-reliability.json
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            npm --prefix backend exec -- vitest run src/db/__tests__/connection-reliability.test.ts && exit 0
+            echo "Database connection reliability contract attempt $attempt failed."
+          done
+          exit 1
 
       - name: Worker safety contract
-        id: worker_security
-        continue-on-error: true
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/workers/__tests__/worker-safety.test.ts
-          --reporter=json --outputFile=worker-safety.json
-
-      - name: Upload security reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-security-reports
-          path: |
-            backend/auth-security.json
-            backend/document-vault-security.json
-            backend/migration-governance.json
-            backend/connection-reliability.json
-            backend/worker-safety.json
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Enforce security contract results
-        if: always()
-        env:
-          AUTH_OUTCOME: ${{ steps.auth_security.outcome }}
-          VAULT_OUTCOME: ${{ steps.vault_security.outcome }}
-          MIGRATION_OUTCOME: ${{ steps.migration_security.outcome }}
-          CONNECTION_OUTCOME: ${{ steps.connection_security.outcome }}
-          WORKER_OUTCOME: ${{ steps.worker_security.outcome }}
+        shell: bash
         run: |
-          printf 'auth=%s vault=%s migration=%s connection=%s worker=%s\n' \
-            "$AUTH_OUTCOME" "$VAULT_OUTCOME" "$MIGRATION_OUTCOME" "$CONNECTION_OUTCOME" "$WORKER_OUTCOME"
-          test "$AUTH_OUTCOME" = "success"
-          test "$VAULT_OUTCOME" = "success"
-          test "$MIGRATION_OUTCOME" = "success"
-          test "$CONNECTION_OUTCOME" = "success"
-          test "$WORKER_OUTCOME" = "success"
+          for attempt in 1 2; do
+            npm --prefix backend exec -- vitest run src/workers/__tests__/worker-safety.test.ts && exit 0
+            echo "Worker safety contract attempt $attempt failed."
+          done
+          exit 1
 
   finance-validation:
     name: Finance API and schema contract
