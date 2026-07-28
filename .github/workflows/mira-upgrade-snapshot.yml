@@ -22,7 +22,7 @@ jobs:
         with:
           ref: agent/mira-openrouter-company-voice
           fetch-depth: 0
-      - name: Verify and apply staged source payload
+      - name: Verify and apply staged application sources
         shell: bash
         run: |
           set -euo pipefail
@@ -37,9 +37,9 @@ jobs:
           gzip -t /tmp/mira-patch.tar.gz
           test "$(tar -tzf /tmp/mira-patch.tar.gz | grep -vc '/$')" -eq 17
           tar -xzf /tmp/mira-patch.tar.gz
+          rm -f .github/workflows/mira-upgrade-validation.yml
           git rm .mira-patch/part-00 .mira-patch/part-01 .mira-patch/part-02 .mira-patch/part-03 .mira-patch/part-04 .mira-patch/part-05 .mira-patch/part-06 .mira-patch/part-07
-          git rm .github/workflows/mira-upgrade-snapshot.yml
-          git add -- .github/workflows/mira-upgrade-validation.yml backend/sql/000_ai_supplemental.sql backend/sql/425_mira_openrouter_company_knowledge.sql backend/src/db/runFinanceSupplementalMigrations.ts backend/src/modules/ai/__tests__/ai-mira-security.test.ts backend/src/modules/ai/__tests__/ai-mira-upgrade-migration.test.ts backend/src/modules/ai/__tests__/ai-mira-upgrade.test.ts backend/src/modules/ai/ai-account.service.ts backend/src/modules/ai/ai-company-knowledge.service.ts backend/src/modules/ai/ai-insights.routes.ts backend/src/modules/ai/ai-provider-config.service.ts backend/src/modules/ai/ai-provider.registry.ts backend/src/modules/ai/providers/openrouter.provider.ts src/components/ai/CommandPalette.tsx src/hooks/useMiraVoice.ts src/pages/AIProviderSettings.tsx src/pages/PeopleOSCopilot.tsx
+          git add -- backend/sql/000_ai_supplemental.sql backend/sql/425_mira_openrouter_company_knowledge.sql backend/src/db/runFinanceSupplementalMigrations.ts backend/src/modules/ai/__tests__/ai-mira-security.test.ts backend/src/modules/ai/__tests__/ai-mira-upgrade-migration.test.ts backend/src/modules/ai/__tests__/ai-mira-upgrade.test.ts backend/src/modules/ai/ai-account.service.ts backend/src/modules/ai/ai-company-knowledge.service.ts backend/src/modules/ai/ai-insights.routes.ts backend/src/modules/ai/ai-provider-config.service.ts backend/src/modules/ai/ai-provider.registry.ts backend/src/modules/ai/providers/openrouter.provider.ts src/components/ai/CommandPalette.tsx src/hooks/useMiraVoice.ts src/pages/AIProviderSettings.tsx src/pages/PeopleOSCopilot.tsx
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git diff --cached --check
