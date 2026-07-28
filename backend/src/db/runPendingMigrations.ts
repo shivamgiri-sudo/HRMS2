@@ -999,7 +999,7 @@ export type SchemaVerificationState = {
   valid: boolean;
 };
 
-let verificationState: SchemaVerificationState = {
+const verificationState: SchemaVerificationState = {
   state: "unverified",
   appliedCount: 0,
   pendingCount: 0,

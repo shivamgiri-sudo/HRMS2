@@ -109,7 +109,7 @@ function dateOnly(value: unknown): string | null {
   if (!raw) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
 
-  const dmy = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) {
     const [, day, month, year] = dmy;
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
