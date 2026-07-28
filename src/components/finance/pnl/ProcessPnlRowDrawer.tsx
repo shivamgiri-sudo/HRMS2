@@ -107,8 +107,8 @@ export function ProcessPnlRowDrawer({
             </Link>
           </Button>
           <Button variant="outline" asChild>
-            <Link to={`/finance/branch-budget?period=${period}`}>
-              Branch budget <ArrowUpRight className="ml-1.5 h-4 w-4" />
+            <Link to={`/finance/process-pnl/period-close?period=${period}`}>
+              Period close <ArrowUpRight className="ml-1.5 h-4 w-4" />
             </Link>
           </Button>
         </div>

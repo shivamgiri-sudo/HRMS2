@@ -77,12 +77,16 @@ export default function ProcessPnlPage() {
 
   useEffect(() => {
     if (!matrixViewReady) return;
-    window.localStorage.setItem(MATRIX_VIEW_STORAGE_KEY, JSON.stringify({
-      preset: matrixPreset,
-      status: statusFilter,
-      issue: issueFilter,
-      density: matrixDensity,
-    }));
+    try {
+      window.localStorage.setItem(MATRIX_VIEW_STORAGE_KEY, JSON.stringify({
+        preset: matrixPreset,
+        status: statusFilter,
+        issue: issueFilter,
+        density: matrixDensity,
+      }));
+    } catch {
+      console.debug("Unable to persist matrix view preferences");
+    }
   }, [matrixDensity, matrixPreset, matrixViewReady, issueFilter, statusFilter]);
 
   const filters = {

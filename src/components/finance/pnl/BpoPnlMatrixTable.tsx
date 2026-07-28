@@ -27,7 +27,7 @@ export interface BpoPnlMatrixTableProps {
   alerts?: BpoPnlSummary["alerts"];
 }
 
-const stickyOffsets = ["0px", "220px", "370px"];
+const stickyOffsets = ["0px", "220px", "370px", "500px"];
 
 export function BpoPnlMatrixTable({
   rows,

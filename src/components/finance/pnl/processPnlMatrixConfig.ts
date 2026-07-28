@@ -105,6 +105,26 @@ export interface ProcessPnlViewState {
 
 type ColumnValue = number | string | string[] | null | undefined;
 
+function labelize(value: string) {
+  return value
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\b\w/g, (match) => match.toLocaleUpperCase());
+}
+
+const displayLabels: Partial<Record<ProcessPnlColumnKey, Record<string, string>>> = {
+  processStatus: {
+    profitable: "Profitable",
+    "at-risk": "At Risk",
+    "loss-making": "Loss Making",
+  },
+  revenueDataStatus: {
+    configured: "Live Delivery",
+    configured_no_delivery: "Delivery Missing",
+    accounting_fallback: "Accounting Fallback",
+  },
+};
+
 const currencyColumnKeys = new Set<ProcessPnlColumnKey>([
   "grossPotentialRevenue",
   "baseEarnedRevenue",
@@ -166,8 +186,8 @@ const numberColumnKeys = new Set<ProcessPnlColumnKey>([
 
 function formatValue(key: ProcessPnlColumnKey, value: ColumnValue): React.ReactNode {
   if (value == null || value === "") return "-";
-  if (Array.isArray(value)) return value.join(" + ").replaceAll("_", " ");
-  if (typeof value !== "number") return value;
+  if (Array.isArray(value)) return value.map(labelize).join(" + ");
+  if (typeof value !== "number") return displayLabels[key]?.[value] ?? value;
   if (currencyColumnKeys.has(key)) {
     return new Intl.NumberFormat("en-IN", {
       style: "currency",
@@ -191,6 +211,11 @@ function sumColumn(rows: BpoPnlRow[], key: keyof BpoPnlRow) {
 function ratioTotal(rows: BpoPnlRow[], numerator: keyof BpoPnlRow, denominator: keyof BpoPnlRow) {
   const denominatorTotal = sumColumn(rows, denominator);
   return denominatorTotal === 0 ? null : (sumColumn(rows, numerator) / denominatorTotal) * 100;
+}
+
+function averageTotal(rows: BpoPnlRow[], numerator: keyof BpoPnlRow, denominator: keyof BpoPnlRow) {
+  const denominatorTotal = sumColumn(rows, denominator);
+  return denominatorTotal === 0 ? null : sumColumn(rows, numerator) / denominatorTotal;
 }
 
 type ColumnOptions = Pick<ProcessPnlColumnDefinition, "align" | "sticky" | "widthClass"> & {
@@ -249,17 +274,31 @@ function weightedColumn(
   });
 }
 
+function averageColumn(
+  key: ProcessPnlColumnKey,
+  label: string,
+  numerator: keyof BpoPnlRow,
+  denominator: keyof BpoPnlRow,
+  options: ColumnOptions = {},
+) {
+  return column(key, label, {
+    ...options,
+    total: (rows) => formatValue(key, averageTotal(rows, numerator, denominator)),
+  });
+}
+
 const identityColumns: ProcessPnlColumnDefinition[] = [
   column("processName", "Process", { align: "left", sticky: true, widthClass: "min-w-[220px]" }),
   column("clientName", "Client", { align: "left", sticky: true, widthClass: "min-w-[150px]" }),
   column("branchName", "Branch", { align: "left", sticky: true, widthClass: "min-w-[130px]" }),
-  column("processStatus", "Status", { align: "left" }),
+  column("processStatus", "Status", { align: "left", sticky: true, widthClass: "min-w-[128px]" }),
 ];
 
 const fullIdentityColumns: ProcessPnlColumnDefinition[] = [
   identityColumns[0],
   identityColumns[1],
   identityColumns[2],
+  identityColumns[3],
   column("costCentreCode", "Cost centre", { align: "left", widthClass: "min-w-[130px]" }),
 ];
 
@@ -298,7 +337,7 @@ const revenueColumns: ProcessPnlColumnDefinition[] = [
 
 const costColumns: ProcessPnlColumnDefinition[] = [
   additiveColumn("agentSalary", "Agent salary"),
-  weightedColumn("averageAgentSalary", "Average agent salary", "agentSalary", "agentHeadcount"),
+  averageColumn("averageAgentSalary", "Average agent salary", "agentSalary", "agentHeadcount"),
   weightedColumn("agentSalaryPctRevenue", "Agent salary % revenue", "agentSalary", "recognizedRevenue"),
   additiveColumn("dscPeople", "DSC people"),
   additiveColumn("dscNonPeople", "DSC non-people"),
@@ -313,6 +352,7 @@ const costColumns: ProcessPnlColumnDefinition[] = [
 ];
 
 const profitabilityColumns: ProcessPnlColumnDefinition[] = [
+  additiveColumn("recognizedRevenue", "Recognized revenue"),
   additiveColumn("contribution", "Contribution"),
   weightedColumn("contributionMarginPct", "Contribution margin %", "contribution", "recognizedRevenue"),
   additiveColumn("ebitda", "EBITDA"),
@@ -331,28 +371,68 @@ const budgetColumns: ProcessPnlColumnDefinition[] = [
   weightedColumn("budgetUtilizationPct", "Budget utilization %", "consumedBudget", "approvedBudget"),
 ];
 
+function pickColumn(columns: ProcessPnlColumnDefinition[], key: ProcessPnlColumnKey) {
+  const definition = columns.find((column) => column.key === key);
+  if (!definition) throw new Error(`Missing Process P&L matrix column: ${key}`);
+  return definition;
+}
+
 const summaryColumns: ProcessPnlColumnDefinition[] = [
-  identityColumns[0],
-  identityColumns[1],
-  identityColumns[2],
-  identityColumns[3],
-  revenueColumns[6],
-  costColumns[2],
-  costColumns[6],
-  costColumns[10],
-  profitabilityColumns[2],
-  profitabilityColumns[3],
-  budgetColumns[4],
-  revenueColumns[13],
-  revenueColumns[14],
+  pickColumn(identityColumns, "processName"),
+  pickColumn(identityColumns, "clientName"),
+  pickColumn(identityColumns, "branchName"),
+  pickColumn(identityColumns, "processStatus"),
+  pickColumn(revenueColumns, "recognizedRevenue"),
+  pickColumn(costColumns, "agentSalaryPctRevenue"),
+  pickColumn(costColumns, "dscPctRevenue"),
+  pickColumn(costColumns, "bmcPctRevenue"),
+  pickColumn(profitabilityColumns, "ebitda"),
+  pickColumn(profitabilityColumns, "ebitdaMarginPct"),
+  pickColumn(budgetColumns, "budgetUtilizationPct"),
+  pickColumn(revenueColumns, "revenueAtRisk"),
+  pickColumn(revenueColumns, "revenueDataStatus"),
 ];
 
 const presetColumns: Record<ProcessPnlMatrixPreset, ProcessPnlColumnDefinition[]> = {
   summary: summaryColumns,
-  revenue: [...identityColumns, ...revenueColumns],
-  cost: [...identityColumns, ...costColumns],
+  revenue: [
+    ...identityColumns,
+    pickColumn(commercialColumns, "billingModels"),
+    pickColumn(commercialColumns, "mandatedSeats"),
+    pickColumn(commercialColumns, "deliveredUnits"),
+    pickColumn(commercialColumns, "billableUnits"),
+    pickColumn(revenueColumns, "earnedRevenue"),
+    pickColumn(revenueColumns, "recognizedRevenue"),
+    pickColumn(revenueColumns, "invoicedRevenue"),
+    pickColumn(revenueColumns, "collectedRevenue"),
+    pickColumn(revenueColumns, "outstandingReceivable"),
+    pickColumn(revenueColumns, "unbilledRevenue"),
+    pickColumn(revenueColumns, "revenueAtRisk"),
+    pickColumn(revenueColumns, "revenueVariance"),
+  ],
+  cost: [
+    ...identityColumns,
+    pickColumn(costColumns, "agentSalary"),
+    pickColumn(costColumns, "averageAgentSalary"),
+    pickColumn(costColumns, "agentSalaryPctRevenue"),
+    pickColumn(costColumns, "dscPeople"),
+    pickColumn(costColumns, "dscNonPeople"),
+    pickColumn(costColumns, "dsc"),
+    pickColumn(costColumns, "bmcPeople"),
+    pickColumn(costColumns, "bmcNonPeople"),
+    pickColumn(costColumns, "bmc"),
+    pickColumn(costColumns, "grnVendorActual"),
+    pickColumn(costColumns, "peopleCostPctRevenue"),
+  ],
   profitability: [...identityColumns, ...profitabilityColumns],
-  "budget-risk": [...identityColumns, ...budgetColumns, revenueColumns[13], revenueColumns[14]],
+  "budget-risk": [
+    ...identityColumns,
+    ...budgetColumns,
+    pickColumn(revenueColumns, "revenueAtRisk"),
+    pickColumn(revenueColumns, "outstandingReceivable"),
+    pickColumn(revenueColumns, "unbilledRevenue"),
+    pickColumn(revenueColumns, "revenueDataStatus"),
+  ],
   full: [
     ...fullIdentityColumns,
     ...commercialColumns,
@@ -386,9 +466,9 @@ export function getDefaultSort(
   preset: ProcessPnlMatrixPreset,
 ): { sortKey: ProcessPnlColumnKey; sortDirection: ProcessPnlSortDirection } {
   if (preset === "summary") return { sortKey: "ebitda", sortDirection: "asc" };
-  if (preset === "revenue") return { sortKey: "recognizedRevenue", sortDirection: "desc" };
-  if (preset === "cost") return { sortKey: "agentSalary", sortDirection: "desc" };
-  if (preset === "profitability") return { sortKey: "ebitda", sortDirection: "desc" };
+  if (preset === "revenue") return { sortKey: "revenueAtRisk", sortDirection: "desc" };
+  if (preset === "cost") return { sortKey: "agentSalaryPctRevenue", sortDirection: "desc" };
+  if (preset === "profitability") return { sortKey: "ebitda", sortDirection: "asc" };
   if (preset === "budget-risk") return { sortKey: "budgetUtilizationPct", sortDirection: "desc" };
   return { sortKey: "processName", sortDirection: "asc" };
 }

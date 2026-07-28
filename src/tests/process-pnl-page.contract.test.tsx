@@ -7,6 +7,14 @@ const matrixSource = readFileSync(
   resolve(process.cwd(), "src/components/finance/pnl/BpoPnlMatrixTable.tsx"),
   "utf8",
 );
+const drawerSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlRowDrawer.tsx"),
+  "utf8",
+);
+const alertsWorkspaceSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/pnl/ProcessPnlAlertsWorkspace.tsx"),
+  "utf8",
+);
 
 describe("Process P&L page matrix contracts", () => {
   it("exposes the alerts and reconciliation tab", () => {
@@ -39,5 +47,22 @@ describe("Process P&L page matrix contracts", () => {
     expect(matrixSource).toContain("setSelectedRow(row)");
     expect(matrixSource).toContain("<ProcessPnlRowDrawer");
     expect(matrixSource).toContain('title="Open process snapshot"');
+  });
+
+  it("guards matrix preference writes when browser storage is unavailable", () => {
+    expect(pageSource).toContain("window.localStorage.setItem");
+    expect(pageSource).toContain("Unable to persist matrix view preferences");
+  });
+
+  it("does not expose unauthorized branch-budget links from the row drawer", () => {
+    expect(drawerSource).not.toContain("/finance/branch-budget");
+    expect(drawerSource).toContain("/finance/process-pnl/period-close");
+  });
+
+  it("exposes action-oriented alert workspace sections and controls", () => {
+    expect(alertsWorkspaceSource).toContain("Reconciliation blockers");
+    expect(alertsWorkspaceSource).toContain("Data coverage gaps");
+    expect(alertsWorkspaceSource).toContain("severityFilter");
+    expect(alertsWorkspaceSource).toContain("groupBy");
   });
 });

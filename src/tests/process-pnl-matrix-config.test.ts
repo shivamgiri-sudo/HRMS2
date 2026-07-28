@@ -229,6 +229,101 @@ describe("process P&L matrix config", () => {
     expect(getPresetColumns("full").find((column) => column.key === "plannedDeliveryUnits")?.render(baseRow)).toBe("1,000");
   });
 
+  it("totals average agent salary as a currency ratio, not a percentage", () => {
+    const cost = getPresetColumns("cost");
+    const averageAgentSalary = cost.find((column) => column.key === "averageAgentSalary");
+
+    expect(averageAgentSalary?.total?.([baseRow, row2])).toBe(formatCompactCurrency(80000 / 36));
+  });
+
+  it("matches the approved preset column designs", () => {
+    expect(getPresetColumns("revenue").map((column) => column.key)).toEqual([
+      "processName",
+      "clientName",
+      "branchName",
+      "processStatus",
+      "billingModels",
+      "mandatedSeats",
+      "deliveredUnits",
+      "billableUnits",
+      "earnedRevenue",
+      "recognizedRevenue",
+      "invoicedRevenue",
+      "collectedRevenue",
+      "outstandingReceivable",
+      "unbilledRevenue",
+      "revenueAtRisk",
+      "revenueVariance",
+    ]);
+
+    expect(getPresetColumns("cost").map((column) => column.key)).toEqual([
+      "processName",
+      "clientName",
+      "branchName",
+      "processStatus",
+      "agentSalary",
+      "averageAgentSalary",
+      "agentSalaryPctRevenue",
+      "dscPeople",
+      "dscNonPeople",
+      "dsc",
+      "bmcPeople",
+      "bmcNonPeople",
+      "bmc",
+      "grnVendorActual",
+      "peopleCostPctRevenue",
+    ]);
+
+    expect(getPresetColumns("profitability").map((column) => column.key)).toEqual([
+      "processName",
+      "clientName",
+      "branchName",
+      "processStatus",
+      "recognizedRevenue",
+      "contribution",
+      "contributionMarginPct",
+      "ebitda",
+      "ebitdaMarginPct",
+      "ebit",
+      "operatingProfitPct",
+      "pbt",
+      "pat",
+    ]);
+
+    expect(getPresetColumns("budget-risk").map((column) => column.key)).toEqual([
+      "processName",
+      "clientName",
+      "branchName",
+      "processStatus",
+      "approvedBudget",
+      "reservedBudget",
+      "consumedBudget",
+      "availableBudget",
+      "budgetUtilizationPct",
+      "revenueAtRisk",
+      "outstandingReceivable",
+      "unbilledRevenue",
+      "revenueDataStatus",
+    ]);
+  });
+
+  it("uses the approved default sort for every preset", () => {
+    expect(getDefaultSort("summary")).toEqual({ sortKey: "ebitda", sortDirection: "asc" });
+    expect(getDefaultSort("revenue")).toEqual({ sortKey: "revenueAtRisk", sortDirection: "desc" });
+    expect(getDefaultSort("cost")).toEqual({ sortKey: "agentSalaryPctRevenue", sortDirection: "desc" });
+    expect(getDefaultSort("profitability")).toEqual({ sortKey: "ebitda", sortDirection: "asc" });
+    expect(getDefaultSort("budget-risk")).toEqual({ sortKey: "budgetUtilizationPct", sortDirection: "desc" });
+  });
+
+  it("keeps status visible in the full matrix identity columns", () => {
+    expect(getPresetColumns("full").slice(0, 4).map((column) => column.key)).toEqual([
+      "processName",
+      "clientName",
+      "branchName",
+      "processStatus",
+    ]);
+  });
+
   it("defines all required presets and makes full wider than summary", () => {
     const summaryWidth = getPresetColumns("summary").length;
 
@@ -256,5 +351,13 @@ describe("process P&L matrix config", () => {
     expect(penalty?.label).toBe("Penalty/SLA");
     expect(penalty?.render(rowWithComposites)).toBe(formatCompactCurrency(500));
     expect(penalty?.total?.([rowWithComposites, row2])).toBe(formatCompactCurrency(500));
+  });
+
+  it("renders status and source enums as readable labels", () => {
+    const summary = getPresetColumns("summary");
+
+    expect(summary.find((column) => column.key === "processStatus")?.render(row2)).toBe("Loss Making");
+    expect(summary.find((column) => column.key === "revenueDataStatus")?.render(row2)).toBe("Delivery Missing");
+    expect(getPresetColumns("revenue").find((column) => column.key === "billingModels")?.render(baseRow)).toBe("Per Unit");
   });
 });
