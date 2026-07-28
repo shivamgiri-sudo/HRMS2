@@ -63,5 +63,8 @@ jobs:
             mira-test-results.json
             mira-test.log
             reimbursement-search.txt
+            backend/src/modules/ai/ai-account.service.ts
+            backend/src/db/runPendingMigrations.ts
+            backend/sql/000_run_all.sql
           if-no-files-found: error
           retention-days: 1
