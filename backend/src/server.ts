@@ -18,7 +18,7 @@ import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
-import { startPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
+import { startPerformanceIngestionScheduler, stopPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
@@ -79,6 +79,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // Stop workers with exported stop functions
     stopIntegrationScheduler();
     stopPayrollNightlyRecalcWorker();
+    stopPerformanceIngestionScheduler();
 
     // Clear all registered timers
     clearAllTimers();

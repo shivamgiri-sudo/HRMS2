@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
   registerTimer,
+  unregisterTimer,
   withWorkerLock,
 } from "../../workers/worker-utils.js";
 import { performanceGovernanceService } from "./performance-governance.service.js";
@@ -287,6 +288,11 @@ export function startPerformanceIngestionScheduler(): void {
   }, 30_000);
   initialTimer.unref();
   registerTimer(`${TIMER_NAME}:initial`, initialTimer);
+}
+
+export function stopPerformanceIngestionScheduler(): void {
+  unregisterTimer(TIMER_NAME);
+  unregisterTimer(`${TIMER_NAME}:initial`);
 }
 
 export const performanceSchedulerService = {

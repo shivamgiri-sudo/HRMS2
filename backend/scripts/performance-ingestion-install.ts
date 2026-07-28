@@ -5,9 +5,9 @@ import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
 
 const INGESTION_MIGRATIONS = [
-  "520_performance_ingestion_platform.sql",
-  "521_performance_multi_source_lineage.sql",
-  "522_performance_governance_audit.sql",
+  "580_performance_ingestion_platform.sql",
+  "581_performance_multi_source_lineage.sql",
+  "582_performance_governance_audit.sql",
 ] as const;
 
 function requireApplyFlag(): void {
@@ -36,9 +36,33 @@ async function main() {
   });
 
   try {
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        filename        VARCHAR(255) NOT NULL PRIMARY KEY,
+        applied_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        checksum_sha256 VARCHAR(64)  NULL,
+        environment     VARCHAR(50)  NULL,
+        start_time      DATETIME     NULL,
+        end_time        DATETIME     NULL,
+        duration_ms     INT          NULL,
+        executor        VARCHAR(255) NULL,
+        success         TINYINT(1)   NOT NULL DEFAULT 1,
+        error_message   TEXT         NULL
+      )
+    `);
     for (const filename of INGESTION_MIGRATIONS) {
       const migrationPath = path.resolve(currentDir, `../sql/${filename}`);
-      await connection.query(fs.readFileSync(migrationPath, "utf8"));
+      const sql = fs.readFileSync(migrationPath, "utf8");
+      const start = Date.now();
+      await connection.query(sql);
+      const durationMs = Date.now() - start;
+      // Record in schema_migrations so the main migration runner does not re-run these
+      await connection.query(
+        `INSERT INTO schema_migrations (filename, applied_at, environment, start_time, end_time, duration_ms, executor, success)
+         VALUES (?, NOW(), ?, NOW(), NOW(), ?, 'performance-ingestion-install', 1)
+         ON DUPLICATE KEY UPDATE applied_at = applied_at`,
+        [filename, process.env.NODE_ENV ?? "production", durationMs],
+      );
     }
     const [rows] = await connection.query(
       `SELECT

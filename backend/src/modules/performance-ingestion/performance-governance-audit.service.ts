@@ -34,10 +34,10 @@ export const performanceGovernanceAuditService = {
     const conditions: string[] = [];
     const params: string[] = [];
 
-    if (scope.level === "ORG_ALL") {
-      conditions.push("1 = 1");
-    } else {
-      conditions.push("pga.dataset_id IS NOT NULL", scoped.sql);
+    if (scope.level !== "ORG_ALL") {
+      // Allow records with no dataset_id (identity/process-map actions) OR records
+      // scoped to a dataset the user can access.
+      conditions.push(`(pga.dataset_id IS NULL OR (${scoped.sql}))`);
       params.push(...scoped.params);
     }
 
@@ -88,7 +88,7 @@ export const performanceGovernanceAuditService = {
         `SELECT DISTINCT pga.action_code
            FROM performance_governance_audit pga
            LEFT JOIN performance_source_dataset psd ON psd.id = pga.dataset_id
-          WHERE ${scope.level === "ORG_ALL" ? "1 = 1" : `pga.dataset_id IS NOT NULL AND ${scoped.sql}`}
+          WHERE ${scope.level === "ORG_ALL" ? "1 = 1" : `(pga.dataset_id IS NULL OR (${scoped.sql}))`}
           ORDER BY pga.action_code ASC`,
         scope.level === "ORG_ALL" ? [] : scoped.params,
       ),
