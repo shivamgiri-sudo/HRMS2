@@ -31,8 +31,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          wc -c .mira-patch/part-*
+          sha256sum .mira-patch/part-*
+          cat > /tmp/expected-parts.sha256 <<'EOF'
+          415efe92c41ae2406e617b68e6478201c6c7451ddc9b8ce479deab0e048a5b53  .mira-patch/part-00
+          66036a9453a79293c9c15c7bc70d23f282b255f2ac0e1aaca1a6071fcd32700a  .mira-patch/part-01
+          119e2624bf3b50f1398d1e1c5b87746cf3de96a3bf141bba3d8fdc8bf11ce798  .mira-patch/part-02
+          3f2e919ff9023299344c73eb00030ccee38863fddb857a033559075f0fe86ddd  .mira-patch/part-03
+          540d68f4136d19ef85dfbeedd063841badc405bdf2cf1840c8355955c5f1a58f  .mira-patch/part-04
+          81965c77f7bafbf0055bb860cdbc6cfb749a0e93d74e66a7356fd6a84a616409  .mira-patch/part-05
+          078c6f30c1a4847e71615ba53ad4f74e3ccaf0cabba9aab11bb7485f9215aae0  .mira-patch/part-06
+          bc61ea3bc5ee9cb8ec0a5b601f278420184e6af9d39f32cfe37a4b59f6d4da9f  .mira-patch/part-07
+          EOF
+          sha256sum -c /tmp/expected-parts.sha256
           cat .mira-patch/part-* > /tmp/mira-patch.b64
           test "$(wc -c < /tmp/mira-patch.b64)" -eq 64692
+          echo "10f6aac7658d0fe428d749282f388d5f25cc06c1e0ba936d6bbf29c07c2563a0  /tmp/mira-patch.b64" | sha256sum -c -
           base64 -d /tmp/mira-patch.b64 > /tmp/mira-patch.tar.gz
           echo "d407fb4a30254f046b6307ae758b19cdd9089c264a6a4855406e7924669d6b03  /tmp/mira-patch.tar.gz" | sha256sum -c -
           gzip -t /tmp/mira-patch.tar.gz
