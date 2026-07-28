@@ -5,8 +5,9 @@ on:
     branches: [main]
     paths:
       - "backend/src/modules/ai/**"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/sql/000_run_all.sql"
+      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/scripts/migrate.ts"
+      - "backend/src/server.ts"
       - "backend/sql/424_employee_reimbursement_claim.sql"
       - "src/components/ai/**"
       - "src/hooks/useMiraVoice.ts"
@@ -17,8 +18,9 @@ on:
       - "agent/mira-secure-voice-assistant"
     paths:
       - "backend/src/modules/ai/**"
-      - "backend/src/db/runPendingMigrations.ts"
-      - "backend/sql/000_run_all.sql"
+      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/scripts/migrate.ts"
+      - "backend/src/server.ts"
       - "backend/sql/424_employee_reimbursement_claim.sql"
       - "src/components/ai/**"
       - "src/hooks/useMiraVoice.ts"
@@ -26,114 +28,19 @@ on:
       - ".github/workflows/mira-security.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: mira-security-release
+  group: mira-security-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    name: Mira privacy, type and build checks
+    name: Mira privacy, migration, type and build checks
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout feature branch
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: agent/mira-secure-voice-assistant
-          fetch-depth: 0
-
-      - name: Apply verified release corrections
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          service_path = Path('backend/src/modules/ai/ai-account.service.ts')
-          service = service_path.read_text()
-
-          pending_old = r"/\bwhat do i need to do\b/i] },"
-          pending_new = r"/\bwhat do i need to do\b/i, /\bactions? (?:are )?pending (?:from|for) my side\b/i] },"
-          if pending_new not in service:
-              if pending_old not in service:
-                  raise SystemExit('pending action intent anchor not found')
-              service = service.replace(pending_old, pending_new, 1)
-
-          scope_old = r"  /\bwhich employees?\b/i,"
-          scope_line = r"  /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement)\b/i,"
-          if scope_line not in service:
-              if scope_old not in service:
-                  raise SystemExit('scope pattern anchor not found')
-              service = service.replace(scope_old, scope_old + "\n" + scope_line, 1)
-          service_path.write_text(service)
-
-          migration_path = Path('backend/sql/424_employee_reimbursement_claim.sql')
-          migration_path.write_text("""-- 424_employee_reimbursement_claim.sql
--- Canonical schema for employee payroll reimbursement claims.
--- Replaces reliance on route-import-time CREATE TABLE while remaining additive and idempotent.
-
-USE mas_hrms;
-
-CREATE TABLE IF NOT EXISTS employee_reimbursement_claim (
-  id                CHAR(36)                                                    NOT NULL,
-  employee_id       VARCHAR(36)                                                 NOT NULL,
-  claim_type        ENUM('LTA','MEDICAL','INTERNET','PHONE','FUEL','OTHER')     NOT NULL,
-  claim_month       VARCHAR(7)                                                  NOT NULL,
-  amount_claimed    DECIMAL(10,2)                                               NOT NULL,
-  amount_approved   DECIMAL(10,2)                                               NULL,
-  description       TEXT                                                        NULL,
-  documents_url     VARCHAR(500)                                                NULL,
-  status            ENUM('draft','submitted','approved','rejected','processed') NOT NULL DEFAULT 'draft',
-  submitted_at      DATETIME                                                    NULL,
-  approved_by       VARCHAR(36)                                                 NULL,
-  approved_at       DATETIME                                                    NULL,
-  rejected_by       VARCHAR(36)                                                 NULL,
-  rejected_at       DATETIME                                                    NULL,
-  rejection_reason  TEXT                                                        NULL,
-  payroll_run_id    VARCHAR(36)                                                 NULL,
-  processed_at      DATETIME                                                    NULL,
-  created_at        DATETIME                                                    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at        DATETIME                                                    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_erc_emp (employee_id),
-  KEY idx_erc_month (claim_month),
-  KEY idx_erc_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-SELECT 'Migration 424 applied: employee reimbursement claim schema ready' AS status;
-""")
-
-          manifest_path = Path('backend/src/db/runPendingMigrations.ts')
-          manifest = manifest_path.read_text()
-          manifest_anchor = '  "423_cost_centre_lob_compatibility.sql",\n'
-          manifest_line = '  "424_employee_reimbursement_claim.sql",\n'
-          if manifest_line not in manifest:
-              if manifest_anchor not in manifest:
-                  raise SystemExit('runPendingMigrations anchor not found')
-              manifest = manifest.replace(manifest_anchor, manifest_anchor + manifest_line, 1)
-              manifest_path.write_text(manifest)
-
-          bootstrap_path = Path('backend/sql/000_run_all.sql')
-          bootstrap = bootstrap_path.read_text()
-          bootstrap_anchor = 'SOURCE sql/411_branch_budget_grn_approval_flow.sql;\n'
-          bootstrap_line = 'SOURCE sql/424_employee_reimbursement_claim.sql;\n'
-          if bootstrap_line not in bootstrap:
-              if bootstrap_anchor not in bootstrap:
-                  raise SystemExit('000_run_all anchor not found')
-              bootstrap = bootstrap.replace(bootstrap_anchor, bootstrap_anchor + bootstrap_line, 1)
-              bootstrap_path.write_text(bootstrap)
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/src/modules/ai/ai-account.service.ts \
-                  backend/sql/424_employee_reimbursement_claim.sql \
-                  backend/sql/000_run_all.sql \
-                  backend/src/db/runPendingMigrations.ts
-          git diff --cached --check
-          if ! git diff --cached --quiet; then
-            git commit -m "fix(ai): close Mira release verification gaps"
-            git push origin HEAD:agent/mira-secure-voice-assistant
-          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -150,9 +57,12 @@ SELECT 'Migration 424 applied: employee reimbursement claim schema ready' AS sta
       - name: Install backend dependencies
         run: npm --prefix backend ci
 
-      - name: Run Mira privacy contract tests
+      - name: Run Mira release contract tests
         working-directory: backend
-        run: npx vitest run src/modules/ai/__tests__/ai-mira-security.test.ts
+        run: >-
+          npx vitest run
+          src/modules/ai/__tests__/ai-mira-security.test.ts
+          src/modules/ai/__tests__/ai-mira-migration.test.ts
 
       - name: Frontend typecheck
         run: npm run typecheck
