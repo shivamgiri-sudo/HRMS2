@@ -104,18 +104,35 @@ jobs:
           retention-days: 3
 
       - name: Finance calculations and contracts
-        run: >-
-          npm --prefix backend exec -- vitest run
-          src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts
-          src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts
-          src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts
-          src/modules/process-pnl/__tests__/process-lob.test.ts
-          src/modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts
-          src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts
-          src/modules/finance/__tests__/finance.schema-contract.test.ts
-          src/modules/finance/__tests__/budget-coverage.contract.test.ts
-          src/modules/finance/__tests__/grn-validation-override.contract.test.ts
-          src/modules/finance/__tests__/grn-validation-schema-hardening.contract.test.ts
+        id: finance-tests
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm --prefix backend exec -- vitest run \
+            src/modules/process-pnl/__tests__/branch-budget.calculation.test.ts \
+            src/modules/process-pnl/__tests__/bpo-pnl.calculation.test.ts \
+            src/modules/process-pnl/__tests__/bpo-pnl.schema-contract.test.ts \
+            src/modules/process-pnl/__tests__/process-lob.test.ts \
+            src/modules/process-pnl/__tests__/process-lob-mysql.integration.test.ts \
+            src/modules/process-pnl/__tests__/pnl-master-ui.contract.test.ts \
+            src/modules/finance/__tests__/finance.schema-contract.test.ts \
+            src/modules/finance/__tests__/budget-coverage.contract.test.ts \
+            src/modules/finance/__tests__/grn-validation-override.contract.test.ts \
+            src/modules/finance/__tests__/grn-validation-schema-hardening.contract.test.ts \
+            > /tmp/finance-tests.log 2>&1; then
+            tail -n 240 /tmp/finance-tests.log
+            exit 1
+          fi
+          cat /tmp/finance-tests.log
+
+      - name: Upload finance test diagnostics
+        if: failure() && steps.finance-tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: finance-test-diagnostics
+          path: /tmp/finance-tests.log
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Frontend build
         run: npm run build
