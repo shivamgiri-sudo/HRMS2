@@ -365,6 +365,7 @@ const MIGRATION_MANIFEST: string[] = [
   "422_vendor_payment_lob_bridge.sql",
   "423_cost_centre_lob_compatibility.sql",
   "424_employee_reimbursement_claim.sql",
+  "425_branch_budget_cost_centre_allocation.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
   "502_designation_bgv_requirements.sql",

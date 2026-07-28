@@ -14,6 +14,7 @@ import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService } from "./branch-budget.service.js";
+import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
@@ -158,6 +159,73 @@ router.post(
       user.id,
       effectiveRole,
       req.body?.remarks ? String(req.body.remarks) : undefined
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/branch-budget/cost-centres",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const data = await branchBudgetAllocationService.listActiveCostCentres(branchId);
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/branch-budget/monthly-drivers",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const periodCode = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    const data = await branchBudgetAllocationService.getMonthlyDrivers(branchId, periodCode);
+    res.json({ success: true, data });
+  })
+);
+
+router.put(
+  "/pnl/branch-budget/monthly-drivers",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.body?.branchId,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const periodCode = String(req.body?.periodCode ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    const drivers = Array.isArray(req.body?.drivers) ? req.body.drivers : [];
+    const data = await branchBudgetAllocationService.saveMonthlyDrivers(
+      branchId,
+      periodCode,
+      drivers.map((d: any) => ({
+        costCentreId: String(d.costCentreId),
+        plannedHeadcount: Number(d.plannedHeadcount ?? 0),
+        revenueRatePerHead: Number(d.revenueRatePerHead ?? 0),
+        remarks: d.remarks ? String(d.remarks) : null,
+      })),
+      user.id
     );
     res.json({ success: true, data });
   })

@@ -30,11 +30,14 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  BRANCH_SHARING_METHODS,
   budgetLineRecordToInput,
   calculateBudgetLine,
   type BranchBudgetLineInput,
   type BranchBudgetSummary,
   type BudgetAttributionScope,
+  type MonthlyDriverInput,
+  useBranchBudgetAllocations,
   useBranchBudgetDetail,
   useBranchBudgets,
 } from "@/hooks/useBranchBudget";
@@ -126,6 +129,7 @@ function unwrapList(value: any): any[] {
 function blankLine(preset: Partial<BranchBudgetLineInput> = {}): BranchBudgetLineInput {
   return {
     attributionScope: "branch_common",
+    planningLevel: "branch",
     costCentreId: null,
     processId: null,
     head: "",
@@ -140,7 +144,7 @@ function blankLine(preset: Partial<BranchBudgetLineInput> = {}): BranchBudgetLin
     gstType: "cgst_sgst",
     recoverableTaxPct: 100,
     preferredVendorId: null,
-    allocationDriver: "agent_headcount",
+    allocationDriver: "equal_split",
     justification: "",
     ...preset,
   };
@@ -308,6 +312,10 @@ export default function BranchBudgetManagementWorkspace() {
     queryKey: ["budget-vendors"],
     queryFn: () => hrmsApi.get<any>("/api/erp/vendors?limit=500"),
   });
+  const { costCentresQuery: activeCostCentresQuery, monthlyDriversQuery, saveMonthlyDrivers } =
+    useBranchBudgetAllocations(branchId || null, period);
+  const activeCostCentres = activeCostCentresQuery.data ?? [];
+  const [driverDraft, setDriverDraft] = useState<Record<string, MonthlyDriverInput>>({});
 
   const allBranches = unwrapList(branchResponse).filter((item) => Number(item.active_status ?? 1) === 1);
   const branches = capabilities?.branchLocked && capabilities.scopedBranchId
@@ -348,6 +356,33 @@ export default function BranchBudgetManagementWorkspace() {
     setExpandedHeads((current) => current.size ? current : new Set(items.map((item) => item.expense_head_id)));
   }, [coverageQuery.data]);
 
+  useEffect(() => {
+    const drivers = monthlyDriversQuery.data ?? [];
+    if (!drivers.length) return;
+    setDriverDraft(
+      Object.fromEntries(
+        drivers.map((driver) => [
+          driver.costCentreId,
+          {
+            costCentreId: driver.costCentreId,
+            plannedHeadcount: driver.plannedHeadcount,
+            revenueRatePerHead: driver.revenueRatePerHead,
+            remarks: driver.remarks ?? "",
+          },
+        ])
+      )
+    );
+  }, [monthlyDriversQuery.data]);
+
+  async function saveDrivers() {
+    try {
+      await saveMonthlyDrivers.mutateAsync(Object.values(driverDraft));
+      toast.success("Monthly drivers saved for this branch and period");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Monthly drivers could not be saved");
+    }
+  }
+
   const totals = useMemo(
     () => lines.reduce((sum, line) => {
       const amount = calculateBudgetLine(line);
@@ -380,10 +415,14 @@ export default function BranchBudgetManagementWorkspace() {
   }
 
   function setScope(index: number, scope: BudgetAttributionScope) {
+    const line = lines[index];
+    const isBranchShared = BRANCH_SHARING_METHODS.some((method) => method.value === line.allocationDriver);
     updateLine(index, {
       attributionScope: scope,
-      costCentreId: scope === "cost_centre" ? lines[index].costCentreId : null,
-      processId: scope === "process" ? lines[index].processId : null,
+      planningLevel: scope === "branch_common" ? "branch" : "cost_centre",
+      costCentreId: scope === "cost_centre" ? line.costCentreId : null,
+      processId: scope === "process" ? line.processId : null,
+      allocationDriver: scope === "branch_common" && !isBranchShared ? "equal_split" : line.allocationDriver,
     });
   }
 
@@ -432,6 +471,12 @@ export default function BranchBudgetManagementWorkspace() {
       if (Number(line.unitRate) < 0) throw new Error(`${label}: Unit rate cannot be negative`);
       if (scope === "cost_centre" && !line.costCentreId) throw new Error(`${label}: Cost centre is mandatory`);
       if (scope === "process" && !line.processId) throw new Error(`${label}: Process is mandatory`);
+      if (scope === "branch_common" && line.allocationDriver === "manual") {
+        const total = (line.manualAllocations ?? []).reduce((sum, entry) => sum + Number(entry.percentage || 0), 0);
+        if (Math.abs(total - 100) > 0.01) {
+          throw new Error(`${label}: Manual cost-centre split must total 100% (currently ${total.toFixed(2)}%)`);
+        }
+      }
     });
   }
 
@@ -556,6 +601,35 @@ export default function BranchBudgetManagementWorkspace() {
             <TabsContent value="plan" className="space-y-5">
               <Card className="rounded-3xl border-slate-200 shadow-sm"><CardContent className="grid gap-4 p-5 md:grid-cols-3"><div className="space-y-2"><Label>Period *</Label><Input type="month" value={period} disabled={!capabilities?.canCreate || locked} onChange={(event) => { setPeriod(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="space-y-2"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked) || !capabilities?.canCreate || locked} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="space-y-2"><Label>Financial year</Label><Input value={financialYear(period)} readOnly /></div></CardContent></Card>
               {locked && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{currentBudget?.budget_number} is {statusLabel(currentBudget?.status ?? "locked")}. It is read-only until revision is requested.</div>}
+              {branchId && (
+                <Card className="rounded-3xl border-slate-200 shadow-sm">
+                  <CardHeader className="border-b border-slate-100 bg-slate-50/70"><CardTitle className="text-base">Monthly drivers — {period}</CardTitle><p className="mt-1 text-xs text-slate-500">Planned headcount and revenue rate per head for each active cost centre. Required before a Branch common line can use Manpower or Revenue share sharing.</p></CardHeader>
+                  <CardContent className="space-y-3 p-5">
+                    {activeCostCentresQuery.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !activeCostCentres.length ? <p className="text-sm text-slate-500">This branch has no active cost centres yet.</p> : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[640px] text-sm">
+                          <thead><tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 pr-3">Cost centre</th><th className="py-2 pr-3">Planned headcount</th><th className="py-2 pr-3">Revenue rate / head</th><th className="py-2 pr-3">Calculated planned revenue</th></tr></thead>
+                          <tbody>
+                            {activeCostCentres.map((cc) => {
+                              const draft = driverDraft[cc.id] ?? { costCentreId: cc.id, plannedHeadcount: 0, revenueRatePerHead: 0, remarks: "" };
+                              const calculatedRevenue = Number(draft.plannedHeadcount || 0) * Number(draft.revenueRatePerHead || 0);
+                              return (
+                                <tr key={cc.id} className="border-b border-slate-100 last:border-0">
+                                  <td className="py-2 pr-3 font-medium text-slate-700">{cc.costCentreName}</td>
+                                  <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEdit} value={draft.plannedHeadcount} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, plannedHeadcount: Number(event.target.value) } }))} /></td>
+                                  <td className="py-2 pr-3"><Input type="number" min="0" step="0.01" className="h-9 w-32" disabled={!canEdit} value={draft.revenueRatePerHead} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, revenueRatePerHead: Number(event.target.value) } }))} /></td>
+                                  <td className="py-2 pr-3 text-slate-600">{money(calculatedRevenue)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {canEdit && Boolean(activeCostCentres.length) && <Button size="sm" variant="outline" disabled={saveMonthlyDrivers.isPending} onClick={() => void saveDrivers()}>{saveMonthlyDrivers.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save monthly drivers</Button>}
+                  </CardContent>
+                </Card>
+              )}
               {detailQuery.isLoading && detailId ? <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div> : lines.map((line, index) => {
                 const scope = scopeOf(line);
                 const head = activeMasters.find((entry) => entry.headName === line.head);
@@ -568,7 +642,7 @@ export default function BranchBudgetManagementWorkspace() {
                       <Field label="Attribution scope *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={scope} disabled={!canEdit} onChange={(event) => setScope(index, event.target.value as BudgetAttributionScope)}><option value="branch_common">Branch common</option><option value="cost_centre">Direct to cost centre</option><option value="process">Direct to process</option></select></Field>
                       <Field label={`Cost centre ${scope === "cost_centre" ? "*" : ""}`}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.costCentreId ?? ""} disabled={!canEdit || scope !== "cost_centre"} onChange={(event) => { const selected = costCentres.find((item) => item.id === event.target.value); updateLine(index, { attributionScope: "cost_centre", costCentreId: event.target.value || null, processId: selected?.process_id ?? null }); }}><option value="">Select cost centre</option>{costCentres.map((item) => <option key={item.id} value={item.id}>{item.cost_centre_name ?? item.name}</option>)}</select></Field>
                       <Field label={`Process ${scope === "process" ? "*" : ""}`}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.processId ?? ""} disabled={!canEdit || scope !== "process"} onChange={(event) => updateLine(index, { attributionScope: "process", processId: event.target.value || null, costCentreId: null })}><option value="">Select process</option>{processes.map((item) => <option key={item.id} value={item.id}>{item.process_name ?? item.name}</option>)}</select></Field>
-                      <Field label="Allocation driver *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.allocationDriver ?? ""} disabled={!canEdit} onChange={(event) => updateLine(index, { allocationDriver: event.target.value })}>{ALLOCATION_DRIVERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+                      <Field label={scope === "branch_common" ? "Sharing method *" : "Allocation driver *"}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.allocationDriver ?? ""} disabled={!canEdit} onChange={(event) => updateLine(index, { allocationDriver: event.target.value })}>{scope === "branch_common" ? BRANCH_SHARING_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>) : ALLOCATION_DRIVERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
                       <Field label="Head *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.head} disabled={!canEdit || mastersQuery.isLoading} onChange={(event) => applyHead(index, event.target.value)}><option value="">Select Head</option>{activeMasters.map((entry) => <option key={entry.id} value={entry.headName}>{entry.headName}</option>)}</select></Field>
                       <Field label="Sub-head *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.subHead ?? ""} disabled={!canEdit || !line.head} onChange={(event) => applySubHead(index, event.target.value)}><option value="">Select Sub-head</option>{subHeads.map((entry) => <option key={entry.id} value={entry.subHeadName}>{entry.subHeadName}</option>)}</select></Field>
                       <Field label="Item / service *" span={2}><Input value={line.itemName} disabled={!canEdit} onChange={(event) => updateLine(index, { itemName: event.target.value })} /></Field>
@@ -583,6 +657,52 @@ export default function BranchBudgetManagementWorkspace() {
                       <Field label="Recoverable GST % *"><Input type="number" min="0" max="100" value={line.recoverableTaxPct} disabled={!canEdit || ["exempt", "non_gst"].includes(line.taxTreatment)} onChange={(event) => updateLine(index, { recoverableTaxPct: Number(event.target.value) })} /></Field>
                       <Field label="Business justification and quantity/rate basis *" span={4}><Textarea value={line.justification} disabled={!canEdit} onChange={(event) => updateLine(index, { justification: event.target.value })} /></Field>
                       <div className="grid gap-3 md:col-span-2 sm:grid-cols-4 xl:col-span-4"><Metric label="Without tax" value={money(amount.base)} /><Metric label="Tax" value={money(amount.tax)} tone="blue" /><Metric label="With tax" value={money(amount.gross)} tone="emerald" /><Metric label="P&L cost" value={money(amount.pnlCost)} tone="amber" /></div>
+                      {scope === "branch_common" && line.allocationDriver === "manual" && Boolean(activeCostCentres.length) && (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 md:col-span-2 xl:col-span-4">
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Manual cost-centre split % (must total 100%)</p>
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {activeCostCentres.map((cc) => {
+                              const existing = line.manualAllocations?.find((entry) => entry.costCentreId === cc.id);
+                              return (
+                                <div key={cc.id} className="flex items-center gap-2">
+                                  <span className="flex-1 truncate text-sm text-slate-600">{cc.costCentreName}</span>
+                                  <Input type="number" min="0" max="100" step="0.01" className="h-9 w-24" disabled={!canEdit} value={existing?.percentage ?? 0} onChange={(event) => {
+                                    const percentage = Number(event.target.value);
+                                    const rest = (line.manualAllocations ?? []).filter((entry) => entry.costCentreId !== cc.id);
+                                    updateLine(index, { manualAllocations: [...rest, { costCentreId: cc.id, percentage }] });
+                                  }} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <p className="mt-2 text-xs text-slate-500">Total: {(line.manualAllocations ?? []).reduce((sum, entry) => sum + Number(entry.percentage || 0), 0)}%</p>
+                        </div>
+                      )}
+                      {scope === "branch_common" && (() => {
+                        const savedLine = detailQuery.data?.lines.find((record) => record.id === line.id);
+                        const allocations = savedLine?.allocations;
+                        if (!allocations?.length) return null;
+                        return (
+                          <div className="md:col-span-2 xl:col-span-4">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Computed cost-centre allocation (last saved)</p>
+                            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                              <table className="w-full min-w-[560px] text-sm">
+                                <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 px-3">Cost centre</th><th className="py-2 px-3">Share %</th><th className="py-2 px-3">With tax</th><th className="py-2 px-3">P&L cost</th></tr></thead>
+                                <tbody>
+                                  {allocations.map((row) => (
+                                    <tr key={row.id} className="border-b border-slate-100 last:border-0">
+                                      <td className="py-2 px-3">{row.cost_centre_name}</td>
+                                      <td className="py-2 px-3">{Number(row.allocation_percentage).toFixed(2)}%</td>
+                                      <td className="py-2 px-3">{money(Number(row.gross_amount))}</td>
+                                      <td className="py-2 px-3">{money(Number(row.pnl_cost_amount))}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                 );

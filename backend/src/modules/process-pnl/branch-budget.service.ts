@@ -2,6 +2,12 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import {
+  computeLineAllocations,
+  getLineAllocations,
+  replaceLineAllocations,
+  type ManualAllocationInput,
+} from "./branch-budget-allocation.service.js";
 
 export type BudgetTaxTreatment =
   | "inclusive"
@@ -21,6 +27,8 @@ export type BudgetStatus =
   | "revision_required"
   | "closed";
 
+export type BudgetPlanningLevel = "branch" | "cost_centre";
+
 export interface BudgetLineInput {
   id?: string;
   costCentreId?: string | null;
@@ -39,6 +47,12 @@ export interface BudgetLineInput {
   preferredVendorId?: string | null;
   allocationDriver?: string | null;
   justification: string;
+  /** Defaults to "cost_centre" — today's single-attribution behaviour, unchanged. Set to
+   *  "branch" to split this line's amount across the branch's active cost centres by
+   *  allocationDriver (now acted on as the sharing method) instead of attributing to one. */
+  planningLevel?: BudgetPlanningLevel;
+  /** Only used when planningLevel = "branch" and allocationDriver = "manual". */
+  manualAllocations?: ManualAllocationInput[];
 }
 
 export interface SaveBudgetInput {
@@ -365,7 +379,16 @@ export const branchBudgetService = {
         ORDER BY created_at, id`,
       [id]
     );
-    return { ...headers[0], lines, approvals };
+
+    const linesWithAllocations = await Promise.all(
+      lines.map(async (line) => {
+        if (String(line.planning_level) !== "branch") return line;
+        const allocations = await getLineAllocations(String(line.id));
+        return { ...line, allocations };
+      })
+    );
+
+    return { ...headers[0], lines: linesWithAllocations, approvals };
   },
 
   async saveDraft(
@@ -527,19 +550,22 @@ export const branchBudgetService = {
       for (const item of calculated) {
         const line = item.line;
         const value = item.values;
+        const lineId = line.id || randomUUID();
+        const planningLevel: BudgetPlanningLevel = line.planningLevel === "branch" ? "branch" : "cost_centre";
         await connection.execute(
           `INSERT INTO finance_budget_line
-           (id, budget_id, cost_centre_id, process_id, head, sub_head,
+           (id, budget_id, cost_centre_id, planning_level, process_id, head, sub_head,
             item_name, item_description, quantity, unit, unit_rate,
             tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
             cgst_amount, sgst_amount, igst_amount, base_amount, tax_amount,
             gross_amount, recoverable_tax_amount, pnl_cost_amount,
             preferred_vendor_id, allocation_driver, justification)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
-            line.id || randomUUID(),
+            lineId,
             budgetId,
             item.attribution.costCentreId,
+            planningLevel,
             item.attribution.processId,
             line.head.trim(),
             line.subHead?.trim() || null,
@@ -565,6 +591,23 @@ export const branchBudgetService = {
             line.justification.trim(),
           ]
         );
+
+        if (planningLevel === "branch") {
+          const allocations = await computeLineAllocations(
+            input.branchId,
+            input.periodCode,
+            line.allocationDriver,
+            {
+              baseAmount: value.baseAmount,
+              taxAmount: value.taxAmount,
+              grossAmount: value.grossAmount,
+              pnlCostAmount: value.pnlCostAmount,
+            },
+            line.manualAllocations,
+            connection
+          );
+          await replaceLineAllocations(connection, lineId, allocations, actorId);
+        }
       }
 
       await auditInTransaction(

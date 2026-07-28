@@ -10,6 +10,23 @@ export type BudgetTaxTreatment =
 export type BudgetGstType = "cgst_sgst" | "igst" | "none";
 export type TaxTreatment = BudgetTaxTreatment;
 export type BudgetAttributionScope = "branch_common" | "cost_centre" | "process";
+export type BudgetPlanningLevel = "branch" | "cost_centre";
+
+/** Sharing methods supported for a branch-level (planningLevel = "branch") line — reuses the
+ *  allocationDriver field, now actually acted on server-side instead of only stored. */
+export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual";
+export const BRANCH_SHARING_METHODS: { value: BranchSharingMethod; label: string }[] = [
+  { value: "total_manpower", label: "Manpower (planned headcount)" },
+  { value: "agent_headcount", label: "Agent headcount" },
+  { value: "revenue_share", label: "Revenue share" },
+  { value: "equal_split", label: "Equal split" },
+  { value: "manual", label: "Manual %" },
+];
+
+export interface ManualAllocationInput {
+  costCentreId: string;
+  percentage: number;
+}
 
 export interface BranchBudgetLineInput {
   id?: string;
@@ -30,6 +47,11 @@ export interface BranchBudgetLineInput {
   preferredVendorId?: string | null;
   allocationDriver?: string | null;
   justification: string;
+  /** Defaults to "cost_centre" (today's behaviour). Set to "branch" to split this line across
+   *  the branch's active cost centres by allocationDriver instead of attributing to one. */
+  planningLevel?: BudgetPlanningLevel;
+  /** Only used when planningLevel = "branch" and allocationDriver = "manual". */
+  manualAllocations?: ManualAllocationInput[];
 }
 
 export interface SaveBranchBudgetInput {
@@ -60,11 +82,30 @@ export interface BranchBudgetSummary {
   line_count: number;
 }
 
+export interface BranchBudgetAllocationRecord {
+  id: string;
+  budget_line_id: string;
+  cost_centre_id: string;
+  cost_centre_name: string | null;
+  cost_centre_code: string | null;
+  driver_value: number;
+  allocation_percentage: number;
+  planned_unit: number;
+  base_amount: number;
+  tax_amount: number;
+  gross_amount: number;
+  pnl_cost_amount: number;
+  rounding_adjustment: number;
+  entry_source: "calculated" | "manual";
+}
+
 export interface BranchBudgetLineRecord {
   id: string;
   budget_id: string;
   cost_centre_id: string | null;
   cost_centre_name: string | null;
+  planning_level: BudgetPlanningLevel;
+  allocations?: BranchBudgetAllocationRecord[];
   process_id: string | null;
   process_name: string | null;
   head: string;
@@ -169,11 +210,13 @@ export function budgetLineRecordToInput(
 ): BranchBudgetLineInput {
   return {
     id: line.id,
-    attributionScope: line.cost_centre_id
-      ? "cost_centre"
-      : line.process_id
-        ? "process"
-        : "branch_common",
+    attributionScope: line.planning_level === "branch"
+      ? "branch_common"
+      : line.cost_centre_id
+        ? "cost_centre"
+        : line.process_id
+          ? "process"
+          : "branch_common",
     costCentreId: line.cost_centre_id,
     processId: line.process_id,
     head: line.head,
@@ -190,6 +233,11 @@ export function budgetLineRecordToInput(
     preferredVendorId: line.preferred_vendor_id,
     allocationDriver: line.allocation_driver,
     justification: line.justification,
+    planningLevel: line.planning_level === "branch" ? "branch" : "cost_centre",
+    manualAllocations: line.allocations?.map((a) => ({
+      costCentreId: a.cost_centre_id,
+      percentage: a.allocation_percentage,
+    })),
   };
 }
 
@@ -275,4 +323,69 @@ export function useBranchBudgetDetail(id?: string | null) {
       return response.data;
     },
   });
+}
+
+export interface CostCentreOption {
+  id: string;
+  costCentreCode: string;
+  costCentreName: string;
+}
+
+export interface MonthlyDriverRecord {
+  costCentreId: string;
+  costCentreName: string;
+  plannedHeadcount: number;
+  revenueRatePerHead: number;
+  calculatedPlannedRevenue: number;
+  remarks: string | null;
+  status: "draft" | "approved";
+}
+
+export interface MonthlyDriverInput {
+  costCentreId: string;
+  plannedHeadcount: number;
+  revenueRatePerHead: number;
+  remarks?: string | null;
+}
+
+/** Branch Budget foundation (PR 2): active cost centres + monthly driver setup (planned
+ *  headcount, revenue rate per head) needed before manpower/revenue sharing methods can split a
+ *  branch-level line across cost centres. */
+export function useBranchBudgetAllocations(branchId?: string | null, periodCode?: string | null) {
+  const queryClient = useQueryClient();
+
+  const costCentresQuery = useQuery({
+    queryKey: ["branch-budget-cost-centres", branchId],
+    enabled: Boolean(branchId),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: CostCentreOption[] }>(
+        `/api/finance/pnl/branch-budget/cost-centres?branchId=${branchId}`
+      );
+      return response.data;
+    },
+  });
+
+  const monthlyDriversQuery = useQuery({
+    queryKey: ["branch-budget-monthly-drivers", branchId, periodCode],
+    enabled: Boolean(branchId) && Boolean(periodCode),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: MonthlyDriverRecord[] }>(
+        `/api/finance/pnl/branch-budget/monthly-drivers?branchId=${branchId}&period=${periodCode}`
+      );
+      return response.data;
+    },
+  });
+
+  const saveMonthlyDrivers = useMutation({
+    mutationFn: async (drivers: MonthlyDriverInput[]) => {
+      const response = await hrmsApi.put<{ success: boolean; data: MonthlyDriverRecord[] }>(
+        "/api/finance/pnl/branch-budget/monthly-drivers",
+        { branchId, periodCode, drivers }
+      );
+      return response.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["branch-budget-monthly-drivers", branchId, periodCode] }),
+  });
+
+  return { costCentresQuery, monthlyDriversQuery, saveMonthlyDrivers };
 }
