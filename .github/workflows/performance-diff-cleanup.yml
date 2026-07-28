@@ -1,0 +1,66 @@
+name: Performance Diff Cleanup
+
+on:
+  push:
+    branches:
+      - agent/performance-ingestion-platform
+    paths:
+      - .github/workflows/performance-diff-cleanup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout performance branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/performance-ingestion-platform
+          fetch-depth: 0
+
+      - name: Remove merge-only noise and preserve main dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+
+          git checkout origin/main -- \
+            scripts/allocate-2026-leave-balances.sql \
+            scripts/check-branch-aliases.sql \
+            scripts/cleanup-duplicate-salary-records.sql \
+            scripts/create-missing-kpi-metrics.sql \
+            scripts/fix-branch-aliases.sql \
+            scripts/fix-mas47814-final.sql \
+            scripts/fix-mas47814-salary-gap-v2.sql \
+            scripts/fix-mas47814-salary-gap.sql \
+            scripts/objection-analysis.sql \
+            scripts/setup-friendly-branch-names.sql \
+            scripts/verify-kpi-metrics.sql \
+            scripts/wfm_auto_roster_preflight.sql
+
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'backend/package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.scripts['performance:install-ingestion-schema'] = 'tsx scripts/performance-ingestion-install.ts --apply';
+          pkg.devDependencies['@types/pdfkit'] = '^0.17.6';
+          const ordered = Object.fromEntries(Object.entries(pkg.devDependencies).sort(([a], [b]) => a.localeCompare(b)));
+          pkg.devDependencies = ordered;
+          fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+
+          rm -f .github/workflows/performance-diff-cleanup.yml
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No cleanup changes required."
+            exit 0
+          fi
+
+          git commit -m "chore(performance): clean merged diff and preserve main dependencies"
+          git push origin HEAD:agent/performance-ingestion-platform
