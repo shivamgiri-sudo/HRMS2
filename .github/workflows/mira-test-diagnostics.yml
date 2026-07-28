@@ -40,13 +40,15 @@ jobs:
         run: npm --prefix backend ci
 
       - name: Capture JSON test report
+        working-directory: backend
         continue-on-error: true
-        run: npm --prefix backend exec -- vitest run src/modules/ai/ai-mira-security.test.ts --reporter=json --outputFile=../mira-test-results.json
+        run: npx vitest run src/modules/ai/ai-mira-security.test.ts --reporter=json --outputFile=../mira-test-results.json
 
       - name: Capture readable test log
         if: always()
+        working-directory: backend
         continue-on-error: true
-        run: npm --prefix backend exec -- vitest run src/modules/ai/ai-mira-security.test.ts --reporter=verbose > mira-test.log 2>&1
+        run: npx vitest run src/modules/ai/ai-mira-security.test.ts --reporter=verbose > ../mira-test.log 2>&1
 
       - name: Upload diagnostics
         if: always()
