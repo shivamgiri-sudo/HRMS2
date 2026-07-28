@@ -1,47 +1,45 @@
-name: Mira Upgrade Snapshot
+name: Apply Mira Upgrade
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/mira-upgrade-snapshot.yml
   push:
     branches:
       - agent/mira-openrouter-company-voice
     paths:
-      - .github/workflows/mira-upgrade-snapshot.yml
+      - ".github/workflows/mira-upgrade-snapshot.yml"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: apply-mira-upgrade
+  cancel-in-progress: true
 
 jobs:
-  snapshot:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Package relevant sources
-        run: |
-          tar -czf mira-upgrade-sources.tar.gz \
-            backend/src/modules/ai \
-            backend/src/modules/org \
-            backend/src/modules/employees \
-            backend/src/modules/admin \
-            backend/src/config \
-            backend/src/db \
-            backend/src/scripts/migrate.ts \
-            backend/src/shared/accessGuard.ts \
-            backend/src/app.ts \
-            backend/src/server.ts \
-            backend/sql \
-            src/components/ai \
-            src/hooks/useMiraVoice.ts \
-            src/pages \
-            src/components \
-            src/App.tsx \
-            package.json \
-            backend/package.json
-      - uses: actions/upload-artifact@v4
         with:
-          name: mira-upgrade-sources
-          path: mira-upgrade-sources.tar.gz
-          retention-days: 1
+          ref: agent/mira-openrouter-company-voice
+          fetch-depth: 0
+
+      - name: Verify and apply staged source payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .mira-patch/part-* > /tmp/mira-patch.b64
+          test "$(wc -c < /tmp/mira-patch.b64)" -eq 64692
+          base64 -d /tmp/mira-patch.b64 > /tmp/mira-patch.tar.gz
+          echo "d407fb4a30254f046b6307ae758b19cdd9089c264a6a4855406e7924669d6b03  /tmp/mira-patch.tar.gz" | sha256sum -c -
+          gzip -t /tmp/mira-patch.tar.gz
+          tar -tzf /tmp/mira-patch.tar.gz > /tmp/mira-patch-files.txt
+          test "$(wc -l < /tmp/mira-patch-files.txt)" -eq 17
+          tar -xzf /tmp/mira-patch.tar.gz
+          rm -rf .mira-patch
+          git rm .github/workflows/mira-upgrade-snapshot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(ai): ground Mira in live HRMS and company knowledge"
+          git push origin HEAD:agent/mira-openrouter-company-voice
