@@ -47,18 +47,35 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
     });
   }
 
-  // If salary_slab provided, verify it exists in payroll masters (non-blocking if table not yet created)
+  // If salary_slab provided, verify it exists in the approved salary master.
+  //
+  // This was previously a single UNION across salary_grade_master + payroll_salary_slabs with
+  // `LIMIT 1` placed before the UNION — invalid MySQL syntax, so the statement ALWAYS failed with
+  // ER_PARSE_ERROR (verified against the live schema; it fails even when both tables exist). The
+  // catch below then swallowed the error and left slabRows empty, so EVERY slab was rejected as
+  // "not found in the approved salary master" — including the real, active slabs that do exist in
+  // payroll_salary_slabs. Each table is now queried independently and guarded separately, so a
+  // table missing on a given installation (salary_grade_master has no CREATE TABLE anywhere in
+  // backend/sql) can no longer suppress the lookup against one that is present.
   if (hasSlab) {
     let slabRows: SlabRow[] = [];
     try {
       [slabRows] = await db.execute<SlabRow[]>(
-        `SELECT id FROM salary_grade_master WHERE grade_code = ? AND active_status = 1 LIMIT 1
-         UNION
-         SELECT id FROM payroll_salary_slabs WHERE slab_code = ? AND active_status = 1 LIMIT 1`,
-        [f.salary_slab, f.salary_slab]
+        `SELECT id FROM payroll_salary_slabs WHERE slab_code = ? AND active_status = 1 LIMIT 1`,
+        [f.salary_slab]
       );
     } catch {
       slabRows = [];
+    }
+    if (!Array.isArray(slabRows) || !slabRows.length) {
+      try {
+        [slabRows] = await db.execute<SlabRow[]>(
+          `SELECT id FROM salary_grade_master WHERE grade_code = ? AND active_status = 1 LIMIT 1`,
+          [f.salary_slab]
+        );
+      } catch {
+        slabRows = [];
+      }
     }
     if (!Array.isArray(slabRows) || !slabRows.length) {
       return res.status(400).json({
