@@ -8,6 +8,8 @@ import type { RowDataPacket } from 'mysql2'
 import mysql from 'mysql2/promise'
 import { env } from '../../config/env.js'
 import { getUserRoleContext } from '../../shared/roleResolver.js'
+import { logSourceFailure } from "../../shared/apiResponse.js"
+import { randomUUID } from "node:crypto"
 
 const performanceDashboardRouter = Router()
 performanceDashboardRouter.use(requireAuth)
@@ -250,7 +252,7 @@ performanceDashboardRouter.post('/feedback-response', requireRole('admin', 'hr',
     }
 
     try {
-      const responseId = require('crypto').randomUUID()
+      const responseId = randomUUID()
       await db.execute(
         `INSERT INTO performance_feedback_response
          (response_id, request_id, competency_id, rating, comments, submitted_at)
@@ -309,6 +311,7 @@ performanceDashboardRouter.get('/agent-matrix', requireRole(...PERF_ROLES),
       )
       return res.json({ success: true, matrix: rows })
     } catch (err) {
+      logSourceFailure("performance-dashboard", err, { endpoint: "agent-matrix" })
       return res.json({ success: true, matrix: [] })
     }
   }))
@@ -344,6 +347,7 @@ performanceDashboardRouter.get('/trend', requireRole(...PERF_ROLES),
         sales_trend: [],
       })
     } catch (err) {
+      logSourceFailure("performance-dashboard", err, { endpoint: "trend" })
       return res.json({ success: true, apr_trend: [], audit_trend: [], sales_trend: [] })
     }
   }))
@@ -376,6 +380,7 @@ performanceDashboardRouter.get('/process-comparison', requireRole(...PERF_ROLES)
       )
       return res.json({ success: true, processes: rows })
     } catch (err) {
+      logSourceFailure("performance-dashboard", err, { endpoint: "process-comparison" })
       return res.json({ success: true, processes: [] })
     }
   }))
@@ -420,6 +425,7 @@ performanceDashboardRouter.get('/utilization', requireRole(...PERF_ROLES),
       )
       return res.json({ success: true, utilization: rows })
     } catch (err) {
+      logSourceFailure("performance-dashboard", err, { endpoint: "utilization" })
       return res.json({ success: true, utilization: [] })
     }
   }))

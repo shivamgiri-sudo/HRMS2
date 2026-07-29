@@ -182,17 +182,31 @@ export async function createEmployeeFromCandidate(
       `SELECT
          c.full_name,
          c.mobile,
-         c.applied_for_branch,
-         c.applied_for_process,
+         -- applied_for_branch / applied_for_process are VARCHAR(255) and hold a
+         -- branch_master id on some rows and a branch *name* on others. Both
+         -- employees.branch_id and .process_id are foreign keys, so assigning
+         -- the raw value either violates the constraint or silently stores
+         -- NULL. Resolve it to a real id, accepting id or name, and leave it
+         -- NULL only when neither matches.
+         (SELECT b.id FROM branch_master b
+           WHERE b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch
+           LIMIT 1) AS branch_id,
+         (SELECT pm.id FROM process_master pm
+           WHERE pm.id = c.applied_for_process OR pm.process_name = c.applied_for_process
+           LIMIT 1) AS process_id,
          c.education,
          COALESCE(p.gender, c.gender) AS gender,
          COALESCE(p.date_of_birth, c.date_of_birth) AS date_of_birth,
          COALESCE(p.personal_email_id, c.email) AS personal_email,
          c.mobile AS personal_phone,
          p.alt_mobile_number AS alternate_mobile,
-         COALESCE(p.pan_number, c.pan_number) AS pan_number,
-         COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number,
-         COALESCE(p.uan_number, c.uan_number) AS uan_number,
+         -- PAN and Aadhaar come from the candidate only. The onboarding profile
+         -- stores them masked (pan_number_masked / aadhaar_number_masked), and a
+         -- masked value written into employee_statutory_info would be worse than
+         -- an absent one — it looks like a real identifier and cannot be filed.
+         c.pan_number,
+         c.aadhar_number,
+         COALESCE(p.uan_number, p.uan, c.uan_number) AS uan_number,
          COALESCE(p.present_address, c.current_address) AS current_address,
          COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
          -- The statutory forms need these; they were collected and then dropped.
@@ -245,8 +259,8 @@ export async function createEmployeeFromCandidate(
         candRow?.marital_status ?? null,
         candRow?.current_address ?? null,
         candRow?.permanent_address ?? null,
-        candRow?.applied_for_branch ?? null,
-        candRow?.applied_for_process ?? null,
+        candRow?.branch_id ?? null,
+        candRow?.process_id ?? null,
         offer.department_id ?? null,
         offer.designation_id ?? null,
         offer.date_of_joining,
@@ -332,7 +346,7 @@ export async function createEmployeeFromCandidate(
         employeeCode,
         // Name and branch live on the candidate; the offer has neither column.
         employeeName: candRow?.full_name ?? null,
-        branchId: candRow?.applied_for_branch ?? null,
+        branchId: candRow?.branch_id ?? null,
         actorUserId: approverId,
         triggerEventId: offerId,
         joiningDate: offer.date_of_joining,
@@ -405,7 +419,7 @@ export async function createEmployeeFromCandidate(
       employeeCode,
       employeeName: candRow?.full_name ?? null,
       candidateId,
-      branchId: candRow?.applied_for_branch ?? null,
+      branchId: candRow?.branch_id ?? null,
     });
 
     // Consent and BGV problems are deliberately non-blocking, but the warnings

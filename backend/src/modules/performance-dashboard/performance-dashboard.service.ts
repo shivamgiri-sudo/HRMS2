@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js'
 import type { RowDataPacket } from 'mysql2'
+import { randomUUID } from "node:crypto"
 
 /**
  * Get performance goals for a user
@@ -86,7 +87,7 @@ export async function submitFeedbackResponse(
   rating: number,
   comments?: string
 ): Promise<{ responseId: string }> {
-  const responseId = require('crypto').randomUUID()
+  const responseId = randomUUID()
   await db.execute(
     `INSERT INTO performance_feedback_response
      (response_id, request_id, competency_id, rating, comments, submitted_at)

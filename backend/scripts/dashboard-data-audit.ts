@@ -35,7 +35,9 @@ const REQUIRED_TABLES = [
   "exit_request",
   "salary_prep_run",
   "salary_prep_line",
-  "statutory_filing_tracker",
+  // statutory_filing_tracker was listed here but exists in neither the migrations nor
+  // production, so this check reported a permanent false failure. Tracked in the
+  // dashboard SQL manifest as an optional dependency instead.
   "work_item",
 ] as const;
 
@@ -156,6 +158,30 @@ async function main(): Promise<void> {
   console.log("Dashboard MySQL audit — read only");
   console.table(databaseRows);
 
+  // Flag-driven modes. Any flag suppresses the legacy full dump so output stays readable.
+  const argv = process.argv.slice(2);
+  const flags = new Set(argv.filter((a) => a.startsWith("--")));
+  const positional = argv.filter((a) => !a.startsWith("--"));
+  const subject = String(positional[0] ?? process.env.DASHBOARD_TEST_EMPLOYEE_CODE ?? "mas47814").trim();
+
+  if (flags.size > 0) {
+    const {
+      runSchemaMode, runDataAvailabilityMode, runScopeReportMode,
+      runDashboardsMode, runValidateMode, runDrilldownMode,
+    } = await import("./dashboard-audit-modes.js");
+
+    let problems = 0;
+    if (flags.has("--schema")) problems += await runSchemaMode();
+    if (flags.has("--data-availability")) await runDataAvailabilityMode();
+    if (flags.has("--scope-report")) await runScopeReportMode();
+    if (flags.has("--dashboards")) await runDashboardsMode(subject);
+    if (flags.has("--validate")) problems += await runValidateMode(subject);
+    if (flags.has("--drilldown")) problems += await runDrilldownMode(subject);
+
+    console.log(`\nAudit completed (read only). ${problems} blocking problem(s) found.`);
+    process.exit(problems > 0 ? 1 : 0);
+  }
+
   const checks: Array<{ table: string; exists: boolean; columns: string }> = [];
   for (const table of REQUIRED_TABLES) {
     const exists = await tableExists(table);
@@ -222,8 +248,7 @@ async function main(): Promise<void> {
     WHERE active_status = 1
   `);
 
-  const employeeCode = String(process.argv[2] ?? process.env.DASHBOARD_TEST_EMPLOYEE_CODE ?? "mas47814").trim();
-  if (employeeCode) await auditDashboardUser(employeeCode);
+  if (subject) await auditDashboardUser(subject);
 
   console.log("\nAudit completed. No INSERT, UPDATE, DELETE, ALTER or DROP statement was executed.");
   process.exit(0);

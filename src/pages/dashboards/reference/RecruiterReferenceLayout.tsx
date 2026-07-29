@@ -132,11 +132,13 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
             {openPositions.length > 0 ? openPositions.map((row, i) => (
               <ReferenceListRow
                 key={i}
-                left={String(row.role ?? row.designation ?? row.position ?? "Role")}
-                right={String(row.openings ?? row.count ?? row.vacancies ?? "")}
-                sub={String(row.process ?? row.branch ?? row.department ?? "")}
-                badge={row.urgency ? String(row.urgency) : undefined}
-                badgeTone={String(row.urgency ?? "").toLowerCase() === "urgent" ? "red" : "amber"}
+                title={String(row.role ?? row.designation ?? row.position ?? "Role")}
+                value={String(row.openings ?? row.count ?? row.vacancies ?? "")}
+                subtitle={[
+                  String(row.process ?? row.branch ?? row.department ?? ""),
+                  row.urgency ? String(row.urgency) : "",
+                ].filter(Boolean).join(" · ")}
+                tone={String(row.urgency ?? "").toLowerCase() === "urgent" ? "red" : "amber"}
               />
             )) : (
               <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">
@@ -157,11 +159,13 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
             {recentCandidates.map((row, i) => (
               <ReferenceListRow
                 key={i}
-                left={String(row.candidate_name ?? row.name ?? "Candidate")}
-                right={String(row.stage ?? row.status ?? "")}
-                sub={String(row.role ?? row.process ?? row.applied_for ?? "")}
-                badge={row.source ? String(row.source) : undefined}
-                badgeTone="blue"
+                title={String(row.candidate_name ?? row.name ?? "Candidate")}
+                value={String(row.stage ?? row.status ?? "")}
+                subtitle={[
+                  String(row.role ?? row.process ?? row.applied_for ?? ""),
+                  row.source ? String(row.source) : "",
+                ].filter(Boolean).join(" · ")}
+                tone="blue"
               />
             ))}
           </div>
@@ -169,10 +173,10 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <ReferenceQuickLink href="/ats/candidates" title="Candidate Pipeline" icon={Users} />
-        <ReferenceQuickLink href="/ats/walk-in" title="Walk-in Registry" icon={Calendar} />
+        <ReferenceQuickLink href="/ats/candidate-master" title="Candidate Pipeline" icon={Users} />
+        <ReferenceQuickLink href="/ats/walkin-queue" title="Walk-in Registry" icon={Calendar} />
         <ReferenceQuickLink href="/ats/offer-approvals" title="Offer Approvals" icon={Briefcase} />
-        <ReferenceQuickLink href="/ats/reports" title="ATS Reports" icon={TrendingUp} />
+        <ReferenceQuickLink href="/ats/sourcing-analysis" title="ATS Reports" icon={TrendingUp} />
       </div>
     </div>
   );

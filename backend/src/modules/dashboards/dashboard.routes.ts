@@ -148,8 +148,13 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     });
   }
 
+  // salary_prep_run has no `run_label` and no `closed_at` — neither has ever existed in
+  // any migration, so this endpoint raised ER_BAD_FIELD_ERROR and returned 500 on every
+  // payroll dashboard load. The label is derived below; `auto_closed_at` is the real
+  // closure timestamp (294_payroll_window_closure.sql).
   const currentRun = await db.execute<RowDataPacket[]>(
-    `SELECT id, run_month, status, run_label, created_at, closed_at, attendance_snapshot_locked, tds_mode
+    `SELECT id, run_month, status, branch_filter, total_employees, created_at,
+            auto_closed_at, attendance_snapshot_locked, tds_mode
        FROM salary_prep_run
       WHERE id = ?`,
     [runId],
@@ -164,15 +169,34 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
 
   const salaryScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
   const salaryBill = await db.execute<RowDataPacket[]>(
+    // gross_pay / gross_amount / net_pay / net_amount exist in no migration. COALESCE
+    // does not protect against unknown identifiers — MySQL resolves them before
+    // evaluating — so the old chain guaranteed a 500 rather than a fallback.
     `SELECT COUNT(DISTINCT spl.employee_id) AS emp_count,
-            COALESCE(SUM(spl.gross_pay), SUM(spl.gross_salary), SUM(spl.gross_amount), 0) AS total_gross,
-            COALESCE(SUM(spl.net_pay), SUM(spl.net_salary), SUM(spl.net_amount), 0) AS total_net,
+            COALESCE(SUM(spl.gross_salary), 0) AS total_gross,
+            COALESCE(SUM(spl.net_salary), 0) AS total_net,
             COALESCE(SUM(spl.total_deductions), 0) AS total_deductions
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
       WHERE spl.run_id = ? AND ${salaryScope.sql}`,
     [currentRun.id, ...salaryScope.params],
   ).then(([rows]) => (rows as any[])[0] ?? null);
+
+  // The run has no stored label; compose a stable one so the existing `currentRun.label`
+  // contract on the frontend keeps working.
+  const runLabel = [currentRun.run_month, currentRun.branch_filter].filter(Boolean).join(" · ");
+
+  const totalGross = Number(salaryBill?.total_gross ?? 0);
+  const totalNet = Number(salaryBill?.total_net ?? 0);
+
+  // Net exceeding gross is arithmetically impossible and is present in the finalized
+  // runs today. Surface it rather than rendering it as a fact the viewer will trust.
+  const dataIntegrity: string[] = [];
+  if (salaryBill && totalNet > totalGross) {
+    dataIntegrity.push(
+      `Net pay (${totalNet}) exceeds gross pay (${totalGross}) for this run — the salary lines are inconsistent and these totals should not be relied on.`,
+    );
+  }
 
   return res.json({
     success: true,
@@ -182,18 +206,22 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
         id: currentRun.id,
         month: currentRun.run_month,
         status: currentRun.status ?? "draft",
-        label: currentRun.run_label,
+        label: runLabel,
+        totalEmployees: currentRun.total_employees === null || currentRun.total_employees === undefined
+          ? null
+          : Number(currentRun.total_employees),
         attendanceLocked: Boolean(currentRun.attendance_snapshot_locked),
         tdsMode: currentRun.tds_mode,
         createdAt: currentRun.created_at,
-        closedAt: currentRun.closed_at,
+        closedAt: currentRun.auto_closed_at,
       } : null,
       salaryBill: salaryBill ? {
         employeeCount: Number(salaryBill.emp_count ?? 0),
-        totalGross: Number(salaryBill.total_gross ?? 0),
-        totalNet: Number(salaryBill.total_net ?? 0),
+        totalGross,
+        totalNet,
         totalDeductions: Number(salaryBill.total_deductions ?? 0),
       } : null,
+      dataIntegrity,
       unavailableSources: {
         pendingQueues: "Queue records are not linked to a payroll run",
         disbursement: "Disbursement records are month-linked, not run-linked",

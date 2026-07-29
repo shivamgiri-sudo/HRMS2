@@ -485,6 +485,10 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const networkErrorCount = activeQueryResults.filter((query) => query.isError).length;
   const refreshAll = () => { for (const query of activeQueryResults) void query.refetch(); };
 
+  // A source that is simply empty is NOT an error and must not appear in this banner —
+  // otherwise real breakage hides among routine empties, which is how a hard 500 and a
+  // permanently-blank panel both survived three audits. Empty sources are reported on
+  // their own tiles via metricUnavailableReason() instead.
   const errorMessage = useMemo(() => {
     const parts: string[] = [];
     if (networkErrorCount > 0) parts.push(`${networkErrorCount} API request${networkErrorCount === 1 ? "" : "s"} failed`);
@@ -540,11 +544,11 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {variant === "wfm_attendance" ? <WfmAttendanceReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "hr" ? <HrReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "ceo" ? <CeoReferenceLayout data={data} filters={filterControl} /> : null}
-        {variant === "payroll" ? <PayrollReferenceLayout data={data} /> : null}
-        {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} /> : null}
-        {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} /> : null}
-        {variant === "quality" ? <QualityReferenceLayout data={data} /> : null}
-        {variant === "operations" ? <OperationsReferenceLayout data={data} /> : null}
+        {variant === "payroll" ? <PayrollReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} filters={filterControl} /> : null}
+        {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "quality" ? <QualityReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "operations" ? <OperationsReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "recruiter" ? <RecruiterReferenceLayout data={data} /> : null}
         {variant === "it_manager" ? <ItManagerReferenceLayout data={data} /> : null}
       </main>

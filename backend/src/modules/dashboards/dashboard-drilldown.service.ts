@@ -9,24 +9,58 @@ export interface DrilldownResult {
   totalCount?: number;
 }
 
+/**
+ * Metric drilldowns ("click a tile to see who").
+ *
+ * Two defects made every one of these unusable:
+ *
+ *  1. The switch keyed on an older metric-code generation (ONBOARDING_PENDING,
+ *     TAT_BREACHED, INCENTIVE_PENDING, RESIGNATION_PENDING) while the metric catalog
+ *     emits ONBOARDING / TAT / INCENTIVE / RESIGNATION. The route gate validates against
+ *     the catalog, so the old names 404 and the new names fell through to the
+ *     "not yet implemented" default.
+ *  2. The handlers that did run referenced columns and tables that do not exist
+ *     (`branches`, `employees.status`, `bridge_status`, `nm.match_status`,
+ *     `ats_candidate.first_name`, `b.batch_status`, `er.exit_status`, …).
+ *
+ * Every column below is verified against the live schema. Legacy code names are kept
+ * as aliases so any caller that hardcoded them keeps working.
+ */
 export async function getDrilldown(
   metricCode: string,
   scope: DashboardScope,
-  filters?: Record<string, unknown>
+  _filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   switch (metricCode) {
     case "HEADCOUNT":
       return drillHeadcount(scope);
+    case "ONBOARDING":
     case "ONBOARDING_PENDING":
-      return drillOnboardingPending(scope);
+      return drillOnboarding(scope);
+    case "ATTENDANCE":
+      return drillAttendance(scope);
+    case "PAYROLL_READINESS":
+      return drillPayrollReadiness(scope);
+    case "TAT":
     case "TAT_BREACHED":
-      return drillTatBreached(scope);
+      return drillTat(scope);
     case "NAME_MISMATCH":
       return drillNameMismatch(scope);
+    case "INCENTIVE":
     case "INCENTIVE_PENDING":
-      return drillIncentivePending(scope);
+      return drillIncentive(scope);
+    case "RESIGNATION":
     case "RESIGNATION_PENDING":
-      return drillResignationPending(scope);
+      return drillResignation(scope);
+    case "BGV":
+      return drillBgv(scope);
+    case "DPDP":
+    case "DPDP_WITHDRAWAL":
+      return drillDpdp(scope);
+    case "APPOINTMENT_ESIGN":
+      return drillAppointmentEsign(scope);
+    case "JOINING_DOC_ESIGN":
+      return drillJoiningDocEsign(scope);
     default:
       return {
         metricCode,
@@ -36,151 +70,251 @@ export async function getDrilldown(
   }
 }
 
+/**
+ * Candidate-keyed tables carry no branch/process columns. The only route to scope is
+ * via the candidate's applied_for_* fields, which hold branch/process NAMES rather than
+ * FK ids — hence the join on *_master name rather than id.
+ */
+const CANDIDATE_SCOPE_JOIN = `
+  LEFT JOIN ats_candidate cand ON cand.id = %CANDIDATE_ID%
+  LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
+  LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process`;
+
+const candidateScopeJoin = (candidateIdExpr: string) =>
+  CANDIDATE_SCOPE_JOIN.replace("%CANDIDATE_ID%", candidateIdExpr);
+
+function sourceUnavailable(err: unknown): never {
+  throw Object.assign(err as Error, { errorCode: "SOURCE_UNAVAILABLE" });
+}
+
 // ─── HEADCOUNT: grouped by branch ────────────────────────────────────────────
 async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
-
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    // `branches` does not exist (the table is branch_master) and employees has no
+    // `status` column — the old query threw on both.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         e.branch_id AS branchId,
-         b.branch_name AS branchName,
-         COUNT(*) AS count
-       FROM employees e
-       LEFT JOIN branches b ON b.id = e.branch_id
-       WHERE e.status = 'active' AND ${scopeSql}
-       GROUP BY e.branch_id, b.branch_name
-       ORDER BY count DESC`,
-      scopeParams
+      `SELECT e.branch_id AS branchId,
+              b.branch_name AS branchName,
+              COUNT(*) AS count
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE e.active_status = 1
+          AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
+          AND ${scopeSql}
+        GROUP BY e.branch_id, b.branch_name
+        ORDER BY count DESC`,
+      params,
     );
-
     return {
       metricCode: "HEADCOUNT",
-      records: rows.map((r: any) => ({
+      records: (rows as any[]).map((r) => ({
         branchId: r.branchId,
-        branchName: r.branchName ?? "Unknown",
+        branchName: r.branchName ?? "Unassigned",
         count: Number(r.count),
       })),
-      totalCount: (rows as any[]).reduce((a, r: any) => a + Number(r.count), 0),
+      totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
     };
-  } catch (err: any) {
-    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
-// ─── ONBOARDING_PENDING: grouped by status with top 10 candidates ─────────────
-async function drillOnboardingPending(scope: DashboardScope): Promise<DrilldownResult> {
+// ─── ONBOARDING ──────────────────────────────────────────────────────────────
+async function drillOnboarding(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const join = candidateScopeJoin("b.candidate_id");
 
     const [statusRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         bridge_status AS status,
-         COUNT(*) AS count
-       FROM ats_onboarding_bridge b
-       WHERE ${scopeSql}
-       GROUP BY bridge_status
-       ORDER BY count DESC`,
-      scopeParams
+      `SELECT b.status AS status, COUNT(*) AS count
+         FROM ats_onboarding_bridge b ${join}
+        WHERE ${scopeSql}
+        GROUP BY b.status
+        ORDER BY count DESC`,
+      params,
     );
 
+    // ats_candidate stores full_name; it has no first_name/last_name.
     const [topRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         b.id AS bridgeId,
-         b.candidate_id AS candidateId,
-         CONCAT(c.first_name, ' ', c.last_name) AS candidateName,
-         b.bridge_status AS status,
-         b.created_at AS createdAt
-       FROM ats_onboarding_bridge b
-       LEFT JOIN ats_candidate c ON c.id = b.candidate_id
-       WHERE b.bridge_status IN ('pending','initiated','stuck') AND ${scopeSql}
-       ORDER BY b.created_at ASC
-       LIMIT 10`,
-      scopeParams
+      `SELECT b.id AS bridgeId,
+              b.candidate_id AS candidateId,
+              cand.full_name AS candidateName,
+              b.status AS status,
+              b.created_at AS createdAt
+         FROM ats_onboarding_bridge b ${join}
+        WHERE b.status IN ('pending','initiated','stuck','profile_submitted')
+          AND ${scopeSql}
+        ORDER BY b.created_at ASC
+        LIMIT 25`,
+      params,
     );
 
     return {
-      metricCode: "ONBOARDING_PENDING",
-      records: (statusRows as any[]).map((r: any) => ({
+      metricCode: "ONBOARDING",
+      records: (statusRows as any[]).map((r) => ({
         status: r.status,
         count: Number(r.count),
         candidates: (topRows as any[])
-          .filter((c: any) => c.status === r.status)
-          .map((c: any) => ({
+          .filter((c) => c.status === r.status)
+          .map((c) => ({
             bridgeId: c.bridgeId,
             candidateId: c.candidateId,
             candidateName: c.candidateName ?? "—",
             createdAt: c.createdAt,
           })),
       })),
+      totalCount: (statusRows as any[]).reduce((a, r) => a + Number(r.count), 0),
     };
-  } catch (err: any) {
-    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
-// ─── TAT_BREACHED ─────────────────────────────────────────────────────────────
-async function drillTatBreached(scope: DashboardScope): Promise<DrilldownResult> {
+// ─── ATTENDANCE: today's exceptions ──────────────────────────────────────────
+async function drillAttendance(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "t.branch_id", "t.process_id");
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+
+    // Anchor on the latest day that actually carries records. Production attendance
+    // trails by a day or two, so CURDATE() routinely selects a near-empty day.
+    const [dayRows] = await db.execute<RowDataPacket[]>(
+      `SELECT record_date FROM attendance_daily_record
+        GROUP BY record_date HAVING COUNT(*) > 10
+        ORDER BY record_date DESC LIMIT 1`,
+    );
+    const day = (dayRows as any[])[0]?.record_date;
+    if (!day) {
+      return { metricCode: "ATTENDANCE", records: [], note: "No attendance day has usable records" };
+    }
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         t.id AS taskId,
-         t.task_type AS taskType,
-         t.entity_id AS entityId,
-         t.due_at AS dueAt,
-         TIMESTAMPDIFF(HOUR, t.due_at, NOW()) AS ageHours,
-         t.assigned_to_role AS assignedToRole
-       FROM task_tat_instance t
-       WHERE t.status = 'sla_breached' AND ${scopeSql}
-       ORDER BY t.due_at ASC
-       LIMIT 100`,
-      scopeParams
+      `SELECT a.employee_id AS employeeId,
+              e.employee_code AS employeeCode,
+              COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
+              b.branch_name AS branchName,
+              a.attendance_status AS attendanceStatus,
+              a.late_mark AS lateMark
+         FROM attendance_daily_record a
+         JOIN employees e ON e.id = a.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE a.record_date = ?
+          AND (a.attendance_status IN ('absent','missing_punch','half_day') OR a.late_mark = 1)
+          AND ${scopeSql}
+        ORDER BY FIELD(a.attendance_status,'missing_punch','absent','half_day'), e.employee_code
+        LIMIT 200`,
+      [day, ...params],
     );
 
     return {
-      metricCode: "TAT_BREACHED",
-      records: (rows as any[]).map((r: any) => ({
+      metricCode: "ATTENDANCE",
+      records: (rows as any[]).map((r) => ({
+        employeeId: r.employeeId,
+        employeeCode: r.employeeCode,
+        employeeName: r.employeeName ?? "—",
+        branchName: r.branchName ?? "Unassigned",
+        attendanceStatus: r.attendanceStatus,
+        lateMark: Boolean(r.lateMark),
+      })),
+      totalCount: rows.length,
+      note: `Exceptions for ${String(day)} (latest day with attendance records)`,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── PAYROLL_READINESS ───────────────────────────────────────────────────────
+async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    // Counts only, never per-employee bank/PAN/UAN values: this drilldown is reachable
+    // from dashboards whose viewers are not payroll roles.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT b.branch_name AS branchName,
+              COUNT(*) AS total,
+              SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = '' THEN 1 ELSE 0 END) AS missingPan,
+              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' THEN 1 ELSE 0 END) AS missingUan
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE e.active_status = 1 AND ${scopeSql}
+        GROUP BY e.branch_id, b.branch_name
+        ORDER BY missingPan DESC`,
+      params,
+    );
+    return {
+      metricCode: "PAYROLL_READINESS",
+      records: (rows as any[]).map((r) => ({
+        branchName: r.branchName ?? "Unassigned",
+        total: Number(r.total),
+        missingPan: Number(r.missingPan),
+        missingUan: Number(r.missingUan),
+      })),
+      totalCount: (rows as any[]).reduce((a, r) => a + Number(r.total), 0),
+      note: "Aggregated counts only — individual payroll identifiers are not exposed here",
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── TAT ─────────────────────────────────────────────────────────────────────
+async function drillTat(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    // task_tat_instance has branch_id but no process_id, so process-level narrowing is
+    // not expressible here; branch scope still applies.
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "t.branch_id", "t.branch_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.id AS taskId,
+              t.task_type AS taskType,
+              t.task_title AS taskTitle,
+              t.entity_id AS entityId,
+              t.due_at AS dueAt,
+              TIMESTAMPDIFF(HOUR, t.due_at, NOW()) AS ageHours,
+              t.owner_role AS ownerRole,
+              t.status AS status
+         FROM task_tat_instance t
+        WHERE t.status NOT IN ('completed','cancelled')
+          AND t.due_at IS NOT NULL AND t.due_at < NOW()
+          AND ${scopeSql}
+        ORDER BY t.due_at ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "TAT",
+      records: (rows as any[]).map((r) => ({
         taskId: r.taskId,
         taskType: r.taskType,
+        taskTitle: r.taskTitle,
         entityId: r.entityId,
         dueAt: r.dueAt,
         ageHours: Number(r.ageHours ?? 0),
-        assignedToRole: r.assignedToRole,
+        ownerRole: r.ownerRole,
+        status: r.status,
       })),
       totalCount: rows.length,
     };
-  } catch (err: any) {
-    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
-// ─── NAME_MISMATCH ────────────────────────────────────────────────────────────
+// ─── NAME_MISMATCH ───────────────────────────────────────────────────────────
 async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
-
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    // Real columns: overall_match_status, blocks_employee_code, mismatch_sources,
+    // last_calculated_at. The old query used match_status / is_blocking /
+    // mismatch_fields / created_at, none of which exist.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         nm.candidate_id AS candidateId,
-         CONCAT(c.first_name, ' ', c.last_name) AS name,
-         nm.mismatch_fields AS mismatches,
-         nm.is_blocking AS blocking,
-         nm.match_status AS matchStatus,
-         nm.created_at AS detectedAt
-       FROM candidate_name_match_summary nm
-       LEFT JOIN ats_candidate c ON c.id = nm.candidate_id
-       LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = nm.candidate_id
-       WHERE nm.match_status IN ('mismatch','partial','pending') AND ${scopeSql}
-       ORDER BY nm.is_blocking DESC, nm.created_at ASC
-       LIMIT 100`,
-      scopeParams
+      `SELECT nm.candidate_id AS candidateId,
+              cand.full_name AS name,
+              nm.mismatch_sources AS mismatches,
+              nm.blocks_employee_code AS blocking,
+              nm.overall_match_status AS matchStatus,
+              nm.last_calculated_at AS detectedAt
+         FROM candidate_name_match_summary nm
+         ${candidateScopeJoin("nm.candidate_id")}
+        WHERE nm.overall_match_status IN ('mismatch','partial','pending')
+          AND ${scopeSql}
+        ORDER BY nm.blocks_employee_code DESC, nm.last_calculated_at ASC
+        LIMIT 100`,
+      params,
     );
-
     return {
       metricCode: "NAME_MISMATCH",
-      records: (rows as any[]).map((r: any) => ({
+      records: (rows as any[]).map((r) => ({
         candidateId: r.candidateId,
         name: r.name ?? "—",
         mismatches: r.mismatches,
@@ -190,84 +324,218 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
       })),
       totalCount: rows.length,
     };
-  } catch (err: any) {
-    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
-// ─── INCENTIVE_PENDING ────────────────────────────────────────────────────────
-async function drillIncentivePending(scope: DashboardScope): Promise<DrilldownResult> {
+// ─── INCENTIVE ───────────────────────────────────────────────────────────────
+async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
-
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+    // batch_ref (not batch_name), status (not batch_status); the approval step table
+    // uses status/step_number and has no step_name.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         b.id AS batchId,
-         b.batch_name AS batchName,
-         b.total_amount AS amount,
-         b.batch_status AS batchStatus,
-         s.step_name AS currentStep,
-         s.required_role AS pendingRole,
-         b.created_at AS createdAt
-       FROM incentive_upload_batch b
-       LEFT JOIN incentive_approval_step s
-         ON s.batch_id = b.id AND s.step_status = 'pending'
-       WHERE b.batch_status = 'pending' AND ${scopeSql}
-       ORDER BY b.created_at ASC
-       LIMIT 100`,
-      scopeParams
+      `SELECT b.id AS batchId,
+              b.batch_ref AS batchRef,
+              b.total_amount AS amount,
+              b.status AS batchStatus,
+              s.step_number AS currentStep,
+              s.required_role AS pendingRole,
+              b.created_at AS createdAt
+         FROM incentive_upload_batch b
+         LEFT JOIN incentive_approval_step s
+           ON s.batch_id = b.id AND s.status = 'pending'
+        WHERE b.status = 'pending' AND ${scopeSql}
+        ORDER BY b.created_at ASC
+        LIMIT 100`,
+      params,
     );
-
     return {
-      metricCode: "INCENTIVE_PENDING",
-      records: (rows as any[]).map((r: any) => ({
+      metricCode: "INCENTIVE",
+      records: (rows as any[]).map((r) => ({
         batchId: r.batchId,
-        batchName: r.batchName ?? `Batch #${r.batchId}`,
+        batchRef: r.batchRef ?? `Batch ${r.batchId}`,
         amount: Number(r.amount ?? 0),
-        currentStep: r.currentStep ?? "Unknown",
+        batchStatus: r.batchStatus,
+        currentStep: r.currentStep ?? null,
         pendingRole: r.pendingRole ?? null,
         createdAt: r.createdAt,
       })),
       totalCount: rows.length,
     };
-  } catch (err: any) {
-    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
-// ─── RESIGNATION_PENDING ──────────────────────────────────────────────────────
-async function drillResignationPending(scope: DashboardScope): Promise<DrilldownResult> {
+// ─── RESIGNATION ─────────────────────────────────────────────────────────────
+async function drillResignation(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "er.branch_id", "er.process_id");
-
+    // exit_request has no branch_id/process_id — scope through the employee.
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         er.id AS exitId,
-         CONCAT(e.first_name, ' ', e.last_name) AS employeeName,
-         er.submitted_at AS submittedAt,
-         DATEDIFF(NOW(), er.submitted_at) AS daysPending,
-         er.exit_status AS exitStatus,
-         er.exit_reason AS exitReason
-       FROM exit_request er
-       LEFT JOIN employees e ON e.id = er.employee_id
-       WHERE er.exit_status NOT IN ('completed','cancelled') AND ${scopeSql}
-       ORDER BY er.submitted_at ASC`,
-      scopeParams
+      `SELECT er.id AS exitId,
+              COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
+              e.employee_code AS employeeCode,
+              er.submitted_at AS submittedAt,
+              DATEDIFF(NOW(), er.submitted_at) AS daysPending,
+              er.status AS exitStatus,
+              er.exit_reason_category AS exitReason,
+              er.last_working_day_proposed AS lastWorkingDay
+         FROM exit_request er
+         LEFT JOIN employees e ON e.id = er.employee_id
+        WHERE er.status NOT IN ('completed','cancelled','revoked')
+          AND ${scopeSql}
+        ORDER BY er.submitted_at ASC
+        LIMIT 100`,
+      params,
     );
-
     return {
-      metricCode: "RESIGNATION_PENDING",
-      records: (rows as any[]).map((r: any) => ({
+      metricCode: "RESIGNATION",
+      records: (rows as any[]).map((r) => ({
         exitId: r.exitId,
         employeeName: r.employeeName ?? "—",
+        employeeCode: r.employeeCode,
         submittedAt: r.submittedAt,
         daysPending: Number(r.daysPending ?? 0),
         exitStatus: r.exitStatus,
         exitReason: r.exitReason,
+        lastWorkingDay: r.lastWorkingDay,
       })),
       totalCount: rows.length,
     };
-  } catch (err: any) {
-    throw Object.assign(err, { errorCode: "SOURCE_UNAVAILABLE" });
-  }
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── BGV ─────────────────────────────────────────────────────────────────────
+async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT bgv.candidate_id AS candidateId,
+              cand.full_name AS name,
+              bgv.check_type AS checkType,
+              bgv.status AS status,
+              bgv.match_score AS matchScore,
+              bgv.created_at AS createdAt
+         FROM candidate_bgv_check bgv
+         ${candidateScopeJoin("bgv.candidate_id")}
+        WHERE COALESCE(bgv.status,'pending') NOT IN ('verified','passed','completed')
+          AND ${scopeSql}
+        ORDER BY bgv.created_at ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "BGV",
+      records: (rows as any[]).map((r) => ({
+        candidateId: r.candidateId,
+        name: r.name ?? "—",
+        checkType: r.checkType,
+        status: r.status ?? "pending",
+        matchScore: r.matchScore === null ? null : Number(r.matchScore),
+        createdAt: r.createdAt,
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── DPDP ────────────────────────────────────────────────────────────────────
+async function drillDpdp(_scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    // dpdp_consent_withdrawal carries no branch/process/employee FK, so it cannot be
+    // row-scoped. Returning it unscoped would leak across branches, so expose counts
+    // by status only.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status, COUNT(*) AS count,
+              SUM(CASE WHEN sla_due_at IS NOT NULL AND sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue
+         FROM dpdp_consent_withdrawal
+        GROUP BY status
+        ORDER BY count DESC`,
+    );
+    return {
+      metricCode: "DPDP",
+      records: (rows as any[]).map((r) => ({
+        status: r.status,
+        count: Number(r.count),
+        overdue: Number(r.overdue ?? 0),
+      })),
+      totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
+      note: "Aggregate only — DPDP requests carry no branch/process link to scope by",
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── APPOINTMENT_ESIGN ───────────────────────────────────────────────────────
+async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT alr.id AS requestId,
+              alr.candidate_id AS candidateId,
+              cand.full_name AS name,
+              alr.status AS status,
+              alr.candidate_esign_status AS candidateEsignStatus,
+              alr.company_sign_status AS companySignStatus,
+              alr.created_at AS createdAt
+         FROM appointment_letter_request alr
+         ${candidateScopeJoin("alr.candidate_id")}
+        WHERE COALESCE(alr.status,'pending') NOT IN ('completed','cancelled')
+          AND ${scopeSql}
+        ORDER BY alr.created_at ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "APPOINTMENT_ESIGN",
+      records: (rows as any[]).map((r) => ({
+        requestId: r.requestId,
+        candidateId: r.candidateId,
+        name: r.name ?? "—",
+        status: r.status,
+        candidateEsignStatus: r.candidateEsignStatus,
+        companySignStatus: r.companySignStatus,
+        createdAt: r.createdAt,
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── JOINING_DOC_ESIGN ───────────────────────────────────────────────────────
+async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    // Rows key on employee_id when the joiner has converted, candidate_id before that.
+    // Scope through the employee, which is the only reliable branch/process link.
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT jd.id AS checklistId,
+              jd.employee_id AS employeeId,
+              COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
+              jd.document_name AS documentName,
+              jd.status AS status,
+              jd.verification_status AS verificationStatus,
+              jd.due_at AS dueAt,
+              CASE WHEN jd.due_at IS NOT NULL AND jd.due_at < NOW() THEN 1 ELSE 0 END AS overdue
+         FROM employee_joining_document_checklist jd
+         LEFT JOIN employees e ON e.id = jd.employee_id
+        WHERE COALESCE(jd.status,'pending') NOT IN ('completed','verified')
+          AND ${scopeSql}
+        ORDER BY jd.due_at IS NULL, jd.due_at ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "JOINING_DOC_ESIGN",
+      records: (rows as any[]).map((r) => ({
+        checklistId: r.checklistId,
+        employeeId: r.employeeId,
+        employeeName: r.employeeName ?? "—",
+        documentName: r.documentName,
+        status: r.status,
+        verificationStatus: r.verificationStatus,
+        dueAt: r.dueAt,
+        overdue: Boolean(r.overdue),
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
 }

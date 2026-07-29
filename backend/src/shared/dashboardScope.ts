@@ -1,6 +1,21 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getUserRoleContext } from "./roleResolver.js";
+import { logSourceFailure } from "./apiResponse.js";
+
+/**
+ * Swallow a scope-resolution query failure into an empty row set.
+ *
+ * Callers treat "no rows" as fail-closed (deny / empty scope), which is the correct
+ * security posture — but it means a transient DB fault silently narrows a user's
+ * visibility with no trace. Always log so that is diagnosable.
+ */
+function emptyOnError(context: string, detail: Record<string, unknown> = {}) {
+  return (err: unknown) => {
+    logSourceFailure("dashboard-scope", err, { query: context, ...detail });
+    return [[]] as any;
+  };
+}
 
 export type ScopeLevel =
   | "ORG_ALL"
@@ -85,7 +100,8 @@ async function loadAssignmentScopes(userId: string, roleKeys: readonly string[])
       const role = String(row.role_key ?? "").trim().toLowerCase();
       return !role || allowedRoles.has(role);
     });
-  } catch {
+  } catch (err) {
+    logSourceFailure("dashboard-scope", err, { query: "user_assignment_scope", userId });
     return [];
   }
 }
@@ -102,7 +118,7 @@ async function resolveEmployeeScope(userId: string): Promise<{
       ORDER BY updated_at DESC
       LIMIT 1`,
     [userId],
-  ).catch(() => [[]] as any);
+  ).catch(emptyOnError("employees by user_id", { site: "resolveEmployeeScope" }));
 
   const row = rows[0] as RowDataPacket | undefined;
   return {
@@ -121,7 +137,7 @@ async function branchesForProcesses(processIds: readonly string[]): Promise<stri
         AND branch_id IS NOT NULL
         AND active_status = 1`,
     [...processIds],
-  ).catch(() => [[]] as any);
+  ).catch(emptyOnError("branch_master by process", { site: "branchesForProcesses" }));
   return unique(rows.map((row) => row.branch_id));
 }
 
@@ -238,7 +254,7 @@ export async function narrowDashboardScope(
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM branch_master WHERE id = ? AND active_status = 1 LIMIT 1",
       [branchId],
-    ).catch(() => [[]] as any);
+    ).catch(emptyOnError("branch_master validity", { site: "narrowDashboardScope" }));
     if (rows.length === 0) return deny();
   }
 
@@ -246,7 +262,7 @@ export async function narrowDashboardScope(
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM process_master WHERE id = ? AND active_status = 1 LIMIT 1",
       [processId],
-    ).catch(() => [[]] as any);
+    ).catch(emptyOnError("process_master validity", { site: "narrowDashboardScope" }));
     if (rows.length === 0) return deny();
   }
 
@@ -257,7 +273,7 @@ export async function narrowDashboardScope(
           AND branch_id IN (${scope.branchIds.map(() => "?").join(",")})
           AND active_status = 1 LIMIT 1`,
       [processId, ...scope.branchIds],
-    ).catch(() => [[]] as any);
+    ).catch(emptyOnError("process within branch scope", { site: "narrowDashboardScope" }));
     if (rows.length === 0) return deny();
   }
 
@@ -268,7 +284,7 @@ export async function narrowDashboardScope(
           AND process_id IN (${scope.processIds.map(() => "?").join(",")})
           AND active_status = 1 LIMIT 1`,
       [branchId, ...scope.processIds],
-    ).catch(() => [[]] as any);
+    ).catch(emptyOnError("branch within process scope", { site: "narrowDashboardScope" }));
     if (rows.length === 0) return deny();
   }
 
@@ -276,7 +292,7 @@ export async function narrowDashboardScope(
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT 1 FROM employees WHERE branch_id = ? AND process_id = ? AND active_status = 1 LIMIT 1",
       [branchId, processId],
-    ).catch(() => [[]] as any);
+    ).catch(emptyOnError("branch+process pair validity", { site: "narrowDashboardScope" }));
     if (rows.length === 0) return deny();
   }
 

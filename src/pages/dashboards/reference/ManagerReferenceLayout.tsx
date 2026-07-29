@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   BriefcaseBusiness,
   CalendarDays,
@@ -36,7 +37,7 @@ import {
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 
-export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceDashboardData; managerName: string }) {
+export function ManagerReferenceLayout({ data, managerName, filters }: { data: ReferenceDashboardData; managerName: string; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
   const team = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
@@ -81,7 +82,7 @@ export function ManagerReferenceLayout({ data, managerName }: { data: ReferenceD
 
   return (
     <div className="reference-dashboard-page">
-      <ReferenceHeader title="Manager Dashboard 👋" subtitle={`Overview of ${managerName}'s team and key management insights.`} right={productHeaderControls} />
+      <ReferenceHeader title="Manager Dashboard 👋" subtitle={`Overview of ${managerName}'s team and key management insights.`} right={filters ?? productHeaderControls} />
 
       <ReferenceMetricGrid
         columns={6}

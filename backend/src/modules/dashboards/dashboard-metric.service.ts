@@ -7,6 +7,7 @@ import {
   buildScopeWhereEmployees,
 } from "../../shared/dashboardScope.js";
 import { enrichMetric, type MetricEnrichment } from "./dashboard-target.service.js";
+import { logSourceFailure } from "../../shared/apiResponse.js";
 import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
 
 // ─── Shared metric wrapper shape ──────────────────────────────────────────────
@@ -21,6 +22,18 @@ export interface MetricResult {
   drilldownApi: string;
   actionUrl: null;
   detail: Record<string, number | null>;
+  /**
+   * Set when the metric's own query threw. Carries the driver code (e.g.
+   * ER_BAD_FIELD_ERROR) so a broken panel is distinguishable from an empty one.
+   */
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  /**
+   * Rows the metric's source held within the caller's scope. `0` means the metric
+   * genuinely measured nothing — which must render as "no data recorded" rather than
+   * a confident "0". `null` means the metric does not report it.
+   */
+  sourceRowCount?: number | null;
 }
 
 async function wrapEnriched(
@@ -31,6 +44,7 @@ async function wrapEnriched(
   higherIsBetter: boolean,
   branchId?: string | null,
   processId?: string | null,
+  sourceRowCount?: number | null,
 ): Promise<MetricResult> {
   let enrichment: Partial<MetricEnrichment> = {
     previousValue: null, target: null, variance: null, variancePct: null,
@@ -44,7 +58,11 @@ async function wrapEnriched(
         const statusMap: Record<string, MetricResult["status"]> = { good: "ok", warning: "warn", critical: "critical", unknown: "unknown" };
         status = statusMap[enrichment.status] ?? status;
       }
-    } catch { /* enrichment is best-effort */ }
+    } catch (err) {
+      // Enrichment is best-effort — the metric value still stands without a target/trend.
+      // Logged because a silent failure here is indistinguishable from an unseeded catalog.
+      logSourceFailure("dashboard-metric.enrich", err, { metricCode });
+    }
   }
   return {
     value,
@@ -57,15 +75,34 @@ async function wrapEnriched(
     drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
     actionUrl: null,
     detail,
+    errorCode: null,
+    errorMessage: null,
+    sourceRowCount: sourceRowCount ?? null,
   };
 }
 
-function nullResult(metricCode: string): MetricResult {
+/**
+ * Returned when a metric query fails. The shape is unchanged from a "no data" result,
+ * so callers keep degrading gracefully — but the failure is now always logged, because
+ * a silently-swallowed ER_BAD_FIELD_ERROR is indistinguishable from an empty table.
+ */
+function nullResult(metricCode: string, error?: unknown): MetricResult {
+  const failure = error === undefined
+    ? null
+    : logSourceFailure("dashboard-metric", error, { metricCode });
   return {
     value: null, previousValue: null, target: null, variance: null,
     variancePct: null, status: "unknown", trend: null,
     drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
     actionUrl: null, detail: {},
+    // Carry the driver code through to the response so the UI can say *why* a tile is
+    // blank. Previously every null was reported as a generic "SOURCE_UNAVAILABLE",
+    // which read identically whether the table was empty or the SQL was invalid.
+    errorCode: failure ? "QUERY_FAILED" : null,
+    errorMessage: failure
+      ? `${failure.errorCode ?? "query failed"}: ${failure.errorMessage}`
+      : null,
+    sourceRowCount: null,
   };
 }
 
@@ -115,23 +152,33 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
 
     const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
     return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, scope.branchIds[0], scope.processIds[0]);
-  } catch {
-    return nullResult("HEADCOUNT");
+  } catch (err) {
+    return nullResult("HEADCOUNT", err);
   }
 }
 
 // ─── Onboarding ───────────────────────────────────────────────────────────────
 export async function getOnboardingMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    // ats_onboarding_bridge has no bridge_status/branch_id/process_id column — the
+    // status column is `status`, and the only route to branch/process is via the
+    // candidate's applied_for_* fields, which hold NAMES rather than FK ids.
+    // The previous query referenced all three nonexistent columns, so this metric
+    // raised ER_BAD_FIELD_ERROR on every CEO, HR and Recruiter dashboard load and
+    // was silently reported as "no data".
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
 
     const [bridgeRows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN bridge_status = 'submitted' THEN 1 ELSE 0 END) AS submitted,
-         SUM(CASE WHEN bridge_status IN ('pending','initiated') THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN bridge_status = 'stuck' THEN 1 ELSE 0 END) AS stuck
-       FROM ats_onboarding_bridge
+         SUM(CASE WHEN b.status = 'profile_submitted' THEN 1 ELSE 0 END) AS submitted,
+         SUM(CASE WHEN b.status IN ('pending','initiated') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN b.status = 'stuck' THEN 1 ELSE 0 END) AS stuck,
+         SUM(CASE WHEN b.status = 'joined' THEN 1 ELSE 0 END) AS joined
+       FROM ats_onboarding_bridge b
+       LEFT JOIN ats_candidate cand ON cand.id = b.candidate_id
+       LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
+       LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
        WHERE ${scopeSql}`,
       scopeParams
     );
@@ -144,12 +191,14 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     const submitted = Number(r?.submitted ?? 0);
     const pending = Number(r?.pending ?? 0);
     const stuck = Number(r?.stuck ?? 0);
+    const joined = Number(r?.joined ?? 0);
+    const total = Number(r?.total ?? 0);
     const otpPending = Number((otpRows[0] as any)?.otp_verified ?? 0);
 
     const status: MetricResult["status"] = stuck > 0 ? "critical" : pending > 10 ? "warn" : "ok";
-    return wrapEnriched("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck }, status, true, scope.branchIds[0], scope.processIds[0]);
-  } catch {
-    return nullResult("ONBOARDING");
+    return wrapEnriched("ONBOARDING", submitted + pending, { submitted, pending, otpPending, stuck, joined, total }, status, true, scope.branchIds[0], scope.processIds[0], total);
+  } catch (err) {
+    return nullResult("ONBOARDING", err);
   }
 }
 
@@ -228,8 +277,8 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       expectedToWork: denominator,
       attendanceRate,
     }, status, true, scope.branchIds[0], scope.processIds[0]);
-  } catch {
-    return nullResult("ATTENDANCE");
+  } catch (err) {
+    return nullResult("ATTENDANCE", err);
   }
 }
 
@@ -270,22 +319,25 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
       { total, readyCount, blockerCount, missingBank, missingPan, missingUan },
       status, true, scope.branchIds[0], scope.processIds[0]
     );
-  } catch {
-    return nullResult("PAYROLL_READINESS");
+  } catch (err) {
+    return nullResult("PAYROLL_READINESS", err);
   }
 }
 
 // ─── Incentive ────────────────────────────────────────────────────────────────
 export async function getIncentiveMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
+    // The status column is `status`, not `batch_status` — the old name raised
+    // ER_BAD_FIELD_ERROR on every payroll dashboard load. branch_id/process_id are real.
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN batch_status = 'pending' THEN 1 ELSE 0 END) AS pendingBatches,
-         SUM(CASE WHEN batch_status = 'pending' THEN total_amount ELSE 0 END) AS pendingAmount,
-         SUM(CASE WHEN batch_status = 'approved' THEN total_amount ELSE 0 END) AS approvedAmount,
-         SUM(CASE WHEN batch_status = 'rejected' THEN 1 ELSE 0 END) AS rejectedBatches
+         COUNT(*) AS source_rows,
+         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pendingBatches,
+         SUM(CASE WHEN status = 'pending' THEN total_amount ELSE 0 END) AS pendingAmount,
+         SUM(CASE WHEN status = 'approved' THEN total_amount ELSE 0 END) AS approvedAmount,
+         SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejectedBatches
        FROM incentive_upload_batch
        WHERE ${scopeSql}`,
       scopeParams
@@ -304,20 +356,24 @@ export async function getIncentiveMetrics(scope: DashboardScope): Promise<Metric
       "INCENTIVE",
       pendingBatches,
       { pendingBatches, pendingAmount, approvedAmount, rejectedBatches },
-      status, false, scope.branchIds[0], scope.processIds[0]
+      status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0)
     );
-  } catch {
-    return nullResult("INCENTIVE");
+  } catch (err) {
+    return nullResult("INCENTIVE", err);
   }
 }
 
 // ─── TAT ──────────────────────────────────────────────────────────────────────
 export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    // task_tat_instance carries branch_id but no process_id, so passing a process
+    // column raised ER_BAD_FIELD_ERROR for every process-scoped role. Branch scope is
+    // the finest granularity this source supports.
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "branch_id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
+         COUNT(*) AS source_rows,
          SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
          SUM(CASE WHEN due_at < NOW() AND status NOT IN ('closed','resolved') THEN 1 ELSE 0 END) AS overdue,
          SUM(CASE WHEN status = 'sla_breached' THEN 1 ELSE 0 END) AS breached,
@@ -337,25 +393,29 @@ export async function getTatMetrics(scope: DashboardScope): Promise<MetricResult
     const status: MetricResult["status"] =
       breached > 0 ? "critical" : overdue > 0 ? "warn" : "ok";
 
-    return wrapEnriched("TAT", open, { open, overdue, breached, avgAgeHours }, status, false, scope.branchIds[0], scope.processIds[0]);
-  } catch {
-    return nullResult("TAT");
+    return wrapEnriched("TAT", open, { open, overdue, breached, avgAgeHours }, status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0));
+  } catch (err) {
+    return nullResult("TAT", err);
   }
 }
 
 // ─── Resignation ──────────────────────────────────────────────────────────────
 export async function getResignationMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "branch_id", "process_id");
+    // exit_request has no exit_status column (it is `status`) and no branch/process
+    // columns, so the previous query raised ER_BAD_FIELD_ERROR on every dashboard that
+    // shows resignations. Scope routes through the employee instead.
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS totalActive,
-         SUM(CASE WHEN exit_status = 'pending_discussion' THEN 1 ELSE 0 END) AS pendingDiscussion,
-         SUM(CASE WHEN exit_status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
-         SUM(CASE WHEN exit_status = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn
-       FROM exit_request
-       WHERE exit_status NOT IN ('completed','cancelled') AND ${scopeSql}`,
+         SUM(CASE WHEN er.status = 'pending_discussion' THEN 1 ELSE 0 END) AS pendingDiscussion,
+         SUM(CASE WHEN er.status = 'accepted' THEN 1 ELSE 0 END) AS accepted,
+         SUM(CASE WHEN er.status = 'withdrawn' THEN 1 ELSE 0 END) AS withdrawn
+       FROM exit_request er
+       LEFT JOIN employees e ON e.id = er.employee_id
+       WHERE er.status NOT IN ('completed','cancelled') AND ${scopeSql}`,
       scopeParams
     );
 
@@ -374,8 +434,8 @@ export async function getResignationMetrics(scope: DashboardScope): Promise<Metr
       { pendingDiscussion, accepted, withdrawn, totalActive },
       status, false, scope.branchIds[0], scope.processIds[0]
     );
-  } catch {
-    return nullResult("RESIGNATION");
+  } catch (err) {
+    return nullResult("RESIGNATION", err);
   }
 }
 
@@ -419,8 +479,8 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
       scope.branchIds[0],
       scope.processIds[0],
     );
-  } catch {
-    return nullResult("DPDP_WITHDRAWAL");
+  } catch (err) {
+    return nullResult("DPDP_WITHDRAWAL", err);
   }
 }
 
@@ -467,50 +527,44 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
       scope.branchIds[0],
       scope.processIds[0],
     );
-  } catch {
-    return nullResult("APPOINTMENT_ESIGN");
+  } catch (err) {
+    return nullResult("APPOINTMENT_ESIGN", err);
   }
 }
 
 // ─── BGV ──────────────────────────────────────────────────────────────────────
 export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+    // candidate_bgv_check has no `bgv_status` column (it is `status`), and
+    // ats_onboarding_bridge carries no branch/process columns to scope by — so the
+    // previous query raised ER_BAD_FIELD_ERROR and the BGV tile was permanently blank.
+    // Scope routes via the candidate, as the other candidate-keyed metrics do.
+    //
+    // Status buckets are taken from the values actually present: verified, failed,
+    // not_started, manual_review, mismatch, queued. Anything awaiting action counts as
+    // pending — treating only the literal 'pending' as outstanding would have dropped
+    // 87 of 194 records on the floor.
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
 
-    // Try candidate_bgv_check joined to ats_onboarding_bridge for scope columns
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN bgv.bgv_status = 'pending' OR bgv.bgv_status IS NULL THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN bgv.bgv_status = 'cleared' THEN 1 ELSE 0 END) AS cleared,
-         SUM(CASE WHEN bgv.bgv_status = 'flagged' THEN 1 ELSE 0 END) AS flagged,
-         SUM(CASE WHEN bgv.bgv_status = 'breached' THEN 1 ELSE 0 END) AS breached
+         COUNT(*) AS source_rows,
+         SUM(CASE WHEN bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN bgv.status IN ('cleared','verified','passed') THEN 1 ELSE 0 END) AS cleared,
+         SUM(CASE WHEN bgv.status IN ('flagged','failed','mismatch','discrepancy') THEN 1 ELSE 0 END) AS flagged,
+         SUM(CASE WHEN bgv.status = 'breached' THEN 1 ELSE 0 END) AS breached
        FROM candidate_bgv_check bgv
-       LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = bgv.candidate_id
+       LEFT JOIN ats_candidate cand ON cand.id = bgv.candidate_id
+       LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
+       LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
        WHERE ${scopeSql}`,
       scopeParams
     );
 
-    if (!rows[0]) {
-      // Fallback: derive from ats_onboarding_bridge with scope
-      const [bridgeRows] = await db.execute<RowDataPacket[]>(
-        `SELECT
-           SUM(CASE WHEN bgv_consent_given = 0 OR bgv_consent_given IS NULL THEN 1 ELSE 0 END) AS pending,
-           SUM(CASE WHEN bgv_consent_given = 1 THEN 1 ELSE 0 END) AS cleared,
-           0 AS flagged,
-           0 AS breached
-         FROM ats_onboarding_bridge b
-         WHERE ${scopeSql}`,
-        scopeParams
-      );
-
-      const rb = bridgeRows[0] as any;
-      return wrapEnriched("BGV", Number(rb?.pending ?? 0), {
-        pending: Number(rb?.pending ?? 0),
-        cleared: Number(rb?.cleared ?? 0),
-        flagged: 0,
-        breached: 0,
-      }, "ok", false, scope.branchIds[0], scope.processIds[0]);
-    }
+    // A `!rows[0]` fallback used to sit here reading ats_onboarding_bridge.bgv_consent_given.
+    // It was unreachable (a bare aggregate always returns exactly one row) and the column
+    // it referenced does not exist, so it could only ever have thrown. Removed rather than
+    // left as a second broken path behind the first.
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
@@ -521,25 +575,32 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
     const status: MetricResult["status"] =
       breached > 0 || flagged > 0 ? "critical" : pending > 20 ? "warn" : "ok";
 
-    return wrapEnriched("BGV", pending, { pending, cleared, flagged, breached }, status, false, scope.branchIds[0], scope.processIds[0]);
-  } catch {
-    return nullResult("BGV");
+    return wrapEnriched("BGV", pending, { pending, cleared, flagged, breached }, status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0));
+  } catch (err) {
+    return nullResult("BGV", err);
   }
 }
 
 // ─── Name Mismatch ────────────────────────────────────────────────────────────
 export async function getNameMismatchMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
-    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+    // The previous query referenced nm.match_status and nm.is_blocking (neither exists —
+    // the real columns are overall_match_status and blocks_employee_code) and scoped on
+    // ats_onboarding_bridge.branch_id/process_id, which that table also lacks. Every
+    // execution raised ER_BAD_FIELD_ERROR and was reported as "no data".
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN nm.match_status = 'mismatch' THEN 1 ELSE 0 END) AS mismatch,
-         SUM(CASE WHEN nm.match_status = 'partial' THEN 1 ELSE 0 END) AS partial,
-         SUM(CASE WHEN nm.match_status = 'pending' OR nm.match_status IS NULL THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN nm.is_blocking = 1 THEN 1 ELSE 0 END) AS blocking
+         COUNT(*) AS source_rows,
+         SUM(CASE WHEN nm.overall_match_status = 'mismatch' THEN 1 ELSE 0 END) AS mismatch,
+         SUM(CASE WHEN nm.overall_match_status = 'partial' THEN 1 ELSE 0 END) AS partial,
+         SUM(CASE WHEN nm.overall_match_status = 'pending' OR nm.overall_match_status IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN nm.blocks_employee_code = 1 THEN 1 ELSE 0 END) AS blocking
        FROM candidate_name_match_summary nm
-       LEFT JOIN ats_onboarding_bridge b ON b.candidate_id = nm.candidate_id
+       LEFT JOIN ats_candidate cand ON cand.id = nm.candidate_id
+       LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
+       LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
        WHERE ${scopeSql}`,
       scopeParams
     );
@@ -553,9 +614,9 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
     const status: MetricResult["status"] =
       blocking > 0 ? "critical" : mismatch > 0 ? "warn" : "ok";
 
-    return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, scope.branchIds[0], scope.processIds[0]);
-  } catch {
-    return nullResult("NAME_MISMATCH");
+    return wrapEnriched("NAME_MISMATCH", mismatch + partial, { mismatch, partial, pending, blocking }, status, false, scope.branchIds[0], scope.processIds[0], Number(r.source_rows ?? 0));
+  } catch (err) {
+    return nullResult("NAME_MISMATCH", err);
   }
 }
 
@@ -599,7 +660,7 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
       scope.branchIds[0],
       scope.processIds[0],
     );
-  } catch {
-    return nullResult("JOINING_DOC_ESIGN");
+  } catch (err) {
+    return nullResult("JOINING_DOC_ESIGN", err);
   }
 }

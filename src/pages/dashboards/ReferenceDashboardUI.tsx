@@ -85,6 +85,12 @@ export interface ReferenceMetric {
   trend?: number | null;
   href?: string;
   valueSuffix?: string;
+  /**
+   * Why this tile has no number — "No data recorded yet" vs "Source query failed".
+   * Rendered in place of the helper text so a blank tile always explains itself
+   * instead of silently showing a dash. See metricUnavailableReason().
+   */
+  unavailableReason?: string | null;
 }
 
 export interface ReferenceAction {
@@ -192,7 +198,13 @@ export function ReferenceMetricCard({ metric, loading = false }: { metric: Refer
             <p className={cn("mt-1 text-[25px] font-extrabold leading-none tracking-[-0.02em]", tone.value)}>
               {formatValue(metric.value, metric.valueSuffix ?? "")}
             </p>
-            {metric.helper ? <p className="mt-2 truncate text-xs text-[#71809a]">{metric.helper}</p> : null}
+            {metric.unavailableReason ? (
+              <p className="mt-2 truncate text-xs font-medium text-[#b45309]" title={metric.unavailableReason}>
+                {metric.unavailableReason}
+              </p>
+            ) : metric.helper ? (
+              <p className="mt-2 truncate text-xs text-[#71809a]">{metric.helper}</p>
+            ) : null}
           </div>
         </>
       )}

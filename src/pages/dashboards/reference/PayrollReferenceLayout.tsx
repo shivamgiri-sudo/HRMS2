@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   BadgeIndianRupee,
   CalendarDays,
@@ -33,7 +34,7 @@ import {
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 
-export function PayrollReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const salaryBill = (read(data.payroll, "salaryBill") ?? {}) as Record<string, unknown>;
   const currentRun = (read(data.payroll, "currentRun") ?? {}) as Record<string, unknown>;
@@ -90,7 +91,7 @@ export function PayrollReferenceLayout({ data }: { data: ReferenceDashboardData 
   if (!selectedRunId) {
     return (
       <div className="reference-dashboard-page">
-        <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={productHeaderControls} />
+        <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={filters ?? productHeaderControls} />
         <ReferencePanel title="Run Selection">
           {runSelector}
           <p className="mt-4 text-sm text-[#71809a]">
@@ -103,7 +104,7 @@ export function PayrollReferenceLayout({ data }: { data: ReferenceDashboardData 
 
   return (
     <div className="reference-dashboard-page">
-      <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={productHeaderControls} />
+      <ReferenceHeader title="Finance / Payroll Dashboard" subtitle="Manage payroll operations and financial compliance" right={filters ?? productHeaderControls} />
       <ReferencePanel title="Run Selection">{runSelector}</ReferencePanel>
       {Object.keys(unavailableSources).length ? (
         <ReferencePanel title="Run-linked Source Availability">

@@ -94,14 +94,33 @@ export function adaptLegacyMetric(
     unknown: "unknown",
   } as const;
 
+  // Three outcomes look identical on a dashboard tile but need different responses:
+  //   QUERY_FAILED       the SQL is broken — an engineering problem
+  //   NO_DATA_IN_SOURCE  the query worked and the source holds nothing in scope, so
+  //                      the tile must say "no data recorded" rather than a confident 0
+  //   available          a real measurement, including a real zero
+  // `available` stays true for an empty source: the read succeeded, so it must not be
+  // reported in the dashboard's "sources unavailable" banner.
+  const emptySource = available && result.sourceRowCount === 0;
+  const errorCode = !available
+    ? (result.errorCode ?? "SOURCE_UNAVAILABLE")
+    : emptySource
+      ? "NO_DATA_IN_SOURCE"
+      : null;
+  const errorMessage = !available
+    ? (result.errorMessage ?? `${definition.source} did not return a usable value`)
+    : emptySource
+      ? `${definition.source} holds no records for this scope yet`
+      : null;
+
   return {
     code: definition.code,
     label: definition.label,
     value: available ? result.value : null,
     unit: definition.unit,
     available,
-    errorCode: available ? null : "SOURCE_UNAVAILABLE",
-    errorMessage: available ? null : `${definition.source} did not return a usable value`,
+    errorCode,
+    errorMessage,
     source: definition.source,
     sourceTable: definition.sourceTable,
     asOf: available ? asOf.toISOString() : null,
@@ -128,6 +147,18 @@ export function adaptLegacyMetric(
 
 export function getDashboardMetricKeys(code: DashboardCode): readonly MetricKey[] {
   return DASHBOARD_METRICS[code];
+}
+
+/**
+ * Every metric code the catalog can emit.
+ *
+ * The drilldown service switches on these, and its cases had drifted to a different
+ * naming generation (ONBOARDING_PENDING vs ONBOARDING), silently disabling most
+ * drilldowns. Exposing the canonical list lets a test and the audit script assert
+ * the two stay in step.
+ */
+export function getAllMetricCodes(): readonly string[] {
+  return Object.values(METRICS).map((definition) => definition.code);
 }
 
 export function isMetricConfiguredForDashboard(code: DashboardCode, metricCode: string): boolean {

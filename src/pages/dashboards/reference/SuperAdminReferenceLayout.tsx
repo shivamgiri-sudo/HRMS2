@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Activity,
   BellRing,
@@ -39,7 +40,7 @@ import {
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 
-export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
   const systemMetrics = (read(data.system, "metrics") ?? {}) as Record<string, unknown>;
@@ -64,7 +65,7 @@ export function SuperAdminReferenceLayout({ data }: { data: ReferenceDashboardDa
 
   return (
     <div className="reference-dashboard-page">
-      <ReferenceHeader title="Super Admin Dashboard 👋" subtitle="Monitor your entire HR ecosystem and system health" right={productHeaderControls} />
+      <ReferenceHeader title="Super Admin Dashboard 👋" subtitle="Monitor your entire HR ecosystem and system health" right={filters ?? productHeaderControls} />
 
       <ReferenceMetricGrid columns={7} loading={data.loading} metrics={[
         { label: "Total Employees", value: active, helper: "vs last month", icon: Users, tone: "blue" },

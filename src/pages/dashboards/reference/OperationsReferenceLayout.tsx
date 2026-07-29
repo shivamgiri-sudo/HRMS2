@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Activity,
   AlertOctagon,
@@ -26,7 +27,7 @@ import {
   metricValue,
 } from "../reference-dashboard-model";
 
-export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
   const opsPulse = data.opsPulse;
 
@@ -61,6 +62,7 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
         title="Operations Dashboard"
         subtitle="Live volume, login adherence, AHT and floor headcount"
         badge="Ops View"
+        right={filters}
       />
 
       <ReferenceMetricGrid
@@ -103,14 +105,14 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <ReferencePanel title={volumeTrend.length > 0 ? "Volume Trend" : "Shrinkage Breakdown"} bodyClassName="p-4">
           {volumeTrend.length > 0 ? (
-            <ReferenceLineChart data={volumeTrend} color="#3b82f6" height={160} />
+            <ReferenceLineChart data={volumeTrend} height={160} />
           ) : shrinkageRows.length > 0 ? (
             <div className="divide-y divide-[#edf1f6]">
               {shrinkageRows.map((row) => (
                 <ReferenceListRow
                   key={row.label}
-                  left={row.label}
-                  right={formatValue(row.value, "%")}
+                  title={row.label}
+                  value={formatValue(row.value, "%")}
                 />
               ))}
             </div>
@@ -136,19 +138,20 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
           bodyClassName="p-0"
         >
           <div className="divide-y divide-[#edf1f6]">
-            {interventionFlags.length > 0 ? interventionFlags.map((row, i) => (
-              <ReferenceListRow
-                key={i}
-                left={String(row.flag_type ?? row.type ?? row.label ?? "Alert")}
-                right={String(row.count ?? row.value ?? "")}
-                sub={String(row.process ?? row.team ?? "")}
-                badge={String(row.severity ?? row.priority ?? "").toUpperCase() || undefined}
-                badgeTone={
-                  String(row.severity ?? row.priority ?? "").toLowerCase() === "critical" ? "red" :
-                  String(row.severity ?? row.priority ?? "").toLowerCase() === "high" ? "amber" : "blue"
-                }
-              />
-            )) : (
+            {interventionFlags.length > 0 ? interventionFlags.map((row, i) => {
+              const severity = String(row.severity ?? row.priority ?? "").toLowerCase();
+              return (
+                <ReferenceListRow
+                  key={i}
+                  title={String(row.flag_type ?? row.type ?? row.label ?? "Alert")}
+                  value={String(row.count ?? row.value ?? "")}
+                  subtitle={[String(row.process ?? row.team ?? ""), severity.toUpperCase()]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  tone={severity === "critical" ? "red" : severity === "high" ? "amber" : "blue"}
+                />
+              );
+            }) : (
               <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">No active flags</p>
             )}
           </div>
@@ -165,11 +168,13 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
             {processRows.map((row, i) => (
               <ReferenceListRow
                 key={i}
-                left={String(row.process_name ?? row.process ?? row.lob ?? "Process")}
-                right={String(row.calls_handled ?? row.volume ?? row.headcount ?? "")}
-                sub={row.sla_pct != null ? `SLA ${Number(row.sla_pct).toFixed(1)}%` : undefined}
-                badge={row.status ? String(row.status) : undefined}
-                badgeTone={String(row.status ?? "").toLowerCase() === "critical" ? "red" : "green"}
+                title={String(row.process_name ?? row.process ?? row.lob ?? "Process")}
+                value={String(row.calls_handled ?? row.volume ?? row.headcount ?? "")}
+                subtitle={[
+                  row.sla_pct != null ? `SLA ${Number(row.sla_pct).toFixed(1)}%` : "",
+                  row.status ? String(row.status) : "",
+                ].filter(Boolean).join(" · ")}
+                tone={String(row.status ?? "").toLowerCase() === "critical" ? "red" : "green"}
               />
             ))}
           </div>
@@ -177,9 +182,9 @@ export function OperationsReferenceLayout({ data }: { data: ReferenceDashboardDa
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <ReferenceQuickLink href="/operations/live-tracker" title="Live Tracker" icon={Activity} />
-        <ReferenceQuickLink href="/operations/reports" title="Ops Reports" icon={TrendingUp} />
-        <ReferenceQuickLink href="/quality/audits" title="QA Queue" icon={AlertOctagon} />
+        <ReferenceQuickLink href="/wfm/live-tracker" title="Live Tracker" icon={Activity} />
+        <ReferenceQuickLink href="/operations-kpi" title="Operations KPI" icon={TrendingUp} />
+        <ReferenceQuickLink href="/quality/dashboard" title="QA Queue" icon={AlertOctagon} />
         <ReferenceQuickLink href="/wfm/roster" title="Roster" icon={Users} />
       </div>
     </div>

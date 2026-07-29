@@ -8,6 +8,22 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { kpiController as c } from "./kpi.controller.js";
 import { kpiService } from "./kpi.service.js";
+import { logSourceFailure } from "../../shared/apiResponse.js";
+import { buildScopeWhere, resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+
+/**
+ * Swallow a KPI query failure into an empty row set, but always log it.
+ * These reads previously discarded ER_BAD_FIELD_ERROR silently, so a query against
+ * nonexistent columns returned HTTP 200 with empty data indefinitely.
+ */
+function emptyOnError(context: string, detail: Record<string, unknown> = {}) {
+  return (err: unknown) => {
+    logSourceFailure("kpi", err, { query: context, ...detail });
+    return [[]] as any;
+  };
+}
+
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -150,53 +166,152 @@ router.put("/rating-config/:processId", requireRole("admin", "hr"), h(async (req
   res.json({ success: true });
 }));
 
-// GET /api/kpi/org-summary?period=YYYY-MM — org-wide KPI summary for CEO dashboard
+/**
+ * GET /api/kpi/org-summary?period=YYYY-MM — org KPI rollup for the CEO dashboard.
+ *
+ * Rebuilt because the previous implementation was unusable in three separate ways:
+ *
+ *  1. It selected `kda.score_pct`, `kda.process_id` and `kda.record_date`, none of
+ *     which exist on kpi_daily_actual (the real columns are `actual_value`,
+ *     `score_date`, and there is no process column). Every query raised
+ *     ER_BAD_FIELD_ERROR, which was then swallowed into an HTTP 200 with empty data —
+ *     so the panel was permanently blank with no error anywhere.
+ *  2. `kpi_score_summary` is the table this endpoint looks like it wants, but it holds
+ *     zero rows in production. The live data is in kpi_daily_actual.
+ *  3. `actual_value` mixes units in one column — percent, seconds, count and currency,
+ *     ranging 0 to 56,299. Averaging across it blends rupees with seconds.
+ *
+ * Consequently there is no single honest "org score". Rather than invent one, this
+ * reports a NAMED headline metric (the percent-unit metric with the most samples in
+ * the period) and returns the full per-metric breakdown alongside it, so the number on
+ * the tile is always attributable to a specific metric.
+ */
 router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const period = String(req.query.period ?? "").trim() || new Date().toISOString().slice(0, 7);
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       ROUND(AVG(kda.score_pct), 2) AS org_avg_score,
-       COUNT(DISTINCT kda.employee_id) AS employees_scored,
-       COUNT(DISTINCT kda.process_id) AS processes_covered,
-       MAX(kda.score_pct) AS best_score,
-       MIN(kda.score_pct) AS lowest_score,
-       SUM(CASE WHEN kda.score_pct >= 90 THEN 1 ELSE 0 END) AS high_performers,
-       SUM(CASE WHEN kda.score_pct < 60 THEN 1 ELSE 0 END) AS needs_attention
-     FROM kpi_daily_actual kda
-     WHERE DATE_FORMAT(kda.record_date, '%Y-%m') = ?`,
-    [period]
-  ).catch(() => [[{}]] as any);
 
-  const [processRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       pm.process_name AS label,
-       ROUND(AVG(kda.score_pct), 2) AS avg_score,
-       COUNT(DISTINCT kda.employee_id) AS agents
-     FROM kpi_daily_actual kda
-     JOIN process_master pm ON pm.id = kda.process_id
-     WHERE DATE_FORMAT(kda.record_date, '%Y-%m') = ?
-     GROUP BY kda.process_id, pm.process_name
-     ORDER BY avg_score DESC
-     LIMIT 10`,
-    [period]
-  ).catch(() => [[]] as any);
+  // Row scope: this endpoint allows `manager`, who must not receive org-wide KPI.
+  // kpi_daily_actual has no branch/process column (process_id_at_event exists but is
+  // unpopulated), so scope routes through the employee.
+  const roleContext = await getUserRoleContext(req.authUser!.id);
+  const scope = await resolveDashboardScope(req.authUser!.id, roleContext.primaryRole);
+  const empScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
-  const [trendRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(record_date, '%Y-%m') AS period, ROUND(AVG(score_pct), 2) AS avg_score
-     FROM kpi_daily_actual
-     WHERE record_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-     GROUP BY DATE_FORMAT(record_date, '%Y-%m')
-     ORDER BY period ASC`,
-    []
-  ).catch(() => [[]] as any);
+  const [metricRows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.metric_code, m.metric_name, m.unit, m.direction,
+            ROUND(AVG(a.actual_value), 2) AS avg_value,
+            COUNT(DISTINCT a.employee_id) AS employees,
+            COUNT(*) AS samples
+       FROM kpi_daily_actual a
+       JOIN kpi_metric_master m ON m.id = a.metric_id
+       LEFT JOIN employees e ON e.id = a.employee_id
+      WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}
+      GROUP BY m.id
+      ORDER BY samples DESC`,
+    [period, ...empScope.params],
+  ).catch(emptyOnError("kpi org-summary by_metric", { period }));
+
+  const byMetric = (metricRows as any[]) ?? [];
+
+  // ATTENDANCE_PCT has by far the widest coverage, so it would win headline selection —
+  // but the dashboard already derives attendance authoritatively from
+  // attendance_daily_record, and the two disagree materially (the KPI copy averages
+  // ~45% where the attendance table shows ~75% present for the same population).
+  // Surfacing both would put two contradictory attendance figures on one screen, so the
+  // KPI headline skips it and the disagreement is reported in `dataQuality` instead of
+  // being silently resolved in favour of one source.
+  const HEADLINE_EXCLUDED = new Set(["ATTENDANCE_PCT"]);
+
+  const headline =
+    byMetric.find((row) =>
+      String(row.unit) === "percent" &&
+      String(row.direction) === "higher_is_better" &&
+      !HEADLINE_EXCLUDED.has(String(row.metric_code))) ?? null;
+
+  const dataQuality: string[] = [];
+  const attendanceKpi = byMetric.find((row) => String(row.metric_code) === "ATTENDANCE_PCT");
+  if (attendanceKpi) {
+    dataQuality.push(
+      `Attendance appears in two sources with different values: the KPI feed averages ` +
+      `${attendanceKpi.avg_value}% for ${period}, while attendance_daily_record is the ` +
+      `system of record for the attendance tile. They are not reconciled — do not treat ` +
+      `either as authoritative until they are.`,
+    );
+  }
+
+  let summary: Record<string, unknown> = {};
+  let processRows: RowDataPacket[] = [];
+  let trendRows: RowDataPacket[] = [];
+
+  if (headline) {
+    const [summaryRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ROUND(AVG(a.actual_value), 2) AS org_avg_score,
+              COUNT(DISTINCT a.employee_id) AS employees_scored,
+              COUNT(DISTINCT e.process_id) AS processes_covered,
+              ROUND(MAX(a.actual_value), 2) AS best_score,
+              ROUND(MIN(a.actual_value), 2) AS lowest_score,
+              SUM(CASE WHEN a.actual_value >= 90 THEN 1 ELSE 0 END) AS high_performers,
+              SUM(CASE WHEN a.actual_value < 60 THEN 1 ELSE 0 END) AS needs_attention,
+              COUNT(*) AS sample_count
+         FROM kpi_daily_actual a
+         JOIN kpi_metric_master m ON m.id = a.metric_id AND m.metric_code = ?
+         LEFT JOIN employees e ON e.id = a.employee_id
+        WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}`,
+      [headline.metric_code, period, ...empScope.params],
+    ).catch(emptyOnError("kpi org-summary rollup", { period }));
+
+    summary = {
+      ...((summaryRows as any[])[0] ?? {}),
+      metric_code: headline.metric_code,
+      metric_name: headline.metric_name,
+      metric_unit: headline.unit,
+    };
+
+    // process_id_at_event is present on kpi_daily_actual but 0% populated, so the
+    // per-process split must come from the employee's current process.
+    [processRows] = await db.execute<RowDataPacket[]>(
+      `SELECT pm.process_name AS label,
+              ROUND(AVG(a.actual_value), 2) AS avg_score,
+              COUNT(DISTINCT a.employee_id) AS agents
+         FROM kpi_daily_actual a
+         JOIN kpi_metric_master m ON m.id = a.metric_id AND m.metric_code = ?
+         JOIN employees e ON e.id = a.employee_id
+         JOIN process_master pm ON pm.id = e.process_id
+        WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}
+        GROUP BY e.process_id, pm.process_name
+        ORDER BY avg_score DESC
+        LIMIT 10`,
+      [headline.metric_code, period, ...empScope.params],
+    ).catch(emptyOnError("kpi org-summary by_process", { period }));
+
+    [trendRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(a.score_date, '%Y-%m') AS period,
+              ROUND(AVG(a.actual_value), 2) AS avg_score
+         FROM kpi_daily_actual a
+         JOIN kpi_metric_master m ON m.id = a.metric_id AND m.metric_code = ?
+         LEFT JOIN employees e ON e.id = a.employee_id
+        WHERE a.score_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) AND ${empScope.sql}
+        GROUP BY DATE_FORMAT(a.score_date, '%Y-%m')
+        ORDER BY period ASC`,
+      [headline.metric_code, ...empScope.params],
+    ).catch(emptyOnError("kpi org-summary trend", { period }));
+  }
 
   return res.json({
     success: true,
     data: {
       period,
-      summary: rows[0] ?? {},
+      summary,
       by_process: processRows,
+      by_metric: byMetric,
       trend: trendRows,
+      ...(dataQuality.length ? { dataQuality } : {}),
+      ...(headline ? {} : {
+        unavailableSources: {
+          kpi: byMetric.length
+            ? `No higher-is-better percent KPI is available as a headline for ${period}`
+            : `No KPI actuals were recorded for ${period}`,
+        },
+      }),
     },
   });
 }));

@@ -23,7 +23,7 @@ export class GeminiProvider implements AiProvider {
   displayName = 'Google Gemini AI';
   supportsChat = true;
   supportsJson = true;
-  supportsStreaming = false; // Not implemented in Phase 1
+  supportsStreaming = true;
   supportsEmbeddings = false; // Not implemented in Phase 1
 
   private sdk: any = null;
@@ -112,26 +112,7 @@ export class GeminiProvider implements AiProvider {
       const modelName = request.model || process.env.GEMINI_DEFAULT_MODEL || 'gemini-1.5-flash';
       const model = sdk.getGenerativeModel({ model: modelName });
 
-      // Build system instruction + user question
-      const systemInstruction = request.systemInstruction || 'You are a helpful AI assistant.';
-      const userQuestion = request.userQuestion;
-      const contextStr = JSON.stringify(request.sanitizedContext, null, 2);
-
-      const history = (request.conversation ?? [])
-        .map((turn) => ['User: ' + turn.question, 'Mira: ' + turn.answer].join('\n'))
-        .join('\n\n');
-
-      const prompt = `${systemInstruction}
-
-Context (sanitized and PII-protected):
-${contextStr}
-${history ? `
-Earlier in this conversation:
-${history}
-` : ''}
-User question: ${userQuestion}
-
-Provide a concise, actionable response based solely on the provided context. When the question refers to something earlier in the conversation, use that context to answer it.`;
+      const prompt = this.buildPrompt(request);
 
       // Generate content
       const result = await model.generateContent({
@@ -178,6 +159,92 @@ Provide a concise, actionable response based solely on the provided context. Whe
         provider: 'rule-based',
         model: 'internal-rules-v1',
       };
+    }
+  }
+
+  /**
+   * The prompt sent to Gemini. Shared by generateText and generateTextStream so
+   * the streamed answer cannot drift from the non-streamed one.
+   */
+  private buildPrompt(request: AiGenerateRequest): string {
+    const systemInstruction = request.systemInstruction || 'You are a helpful AI assistant.';
+    const contextStr = JSON.stringify(request.sanitizedContext, null, 2);
+    const history = (request.conversation ?? [])
+      .map((turn) => ['User: ' + turn.question, 'Mira: ' + turn.answer].join('\n'))
+      .join('\n\n');
+
+    return `${systemInstruction}
+
+Context (sanitized and PII-protected):
+${contextStr}
+${history ? `
+Earlier in this conversation:
+${history}
+` : ''}
+User question: ${request.userQuestion}
+
+Provide a concise, actionable response based solely on the provided context. When the question refers to something earlier in the conversation, use that context to answer it.`;
+  }
+
+  /**
+   * Stream the answer, calling onChunk as each piece arrives.
+   *
+   * Only the provider path is slow enough to be worth streaming — self-account
+   * answers average 88ms and company-knowledge answers 1ms, while this one
+   * averages ~2.5s. Any failure falls back to the non-streaming path rather than
+   * leaving the caller with a half-finished answer.
+   */
+  async generateTextStream(
+    request: AiGenerateRequest,
+    onChunk: (text: string) => void,
+  ): Promise<AiGenerateResponse> {
+    const startTime = Date.now();
+    const apiKey = (request as any).apiKey || process.env.GEMINI_API_KEY;
+    if (!apiKey) return this.generateText(request);
+
+    this.sdk = null;
+    try {
+      const sdk = await this.initSdk(apiKey);
+      const modelName = request.model || process.env.GEMINI_DEFAULT_MODEL || 'gemini-1.5-flash';
+      const model = sdk.getGenerativeModel({ model: modelName });
+
+      const result = await model.generateContentStream({
+        contents: [{ role: 'user', parts: [{ text: this.buildPrompt(request) }] }],
+        generationConfig: {
+          temperature: request.temperature ?? 0.3,
+          maxOutputTokens: request.maxOutputTokens ?? 1024,
+          responseMimeType: request.responseFormat === 'json' ? 'application/json' : 'text/plain',
+        },
+        safetySettings: this.getSafetySettings(request.safetyLevel),
+      });
+
+      let answer = '';
+      for await (const piece of result.stream) {
+        const text = typeof piece?.text === 'function' ? piece.text() : '';
+        if (!text) continue;
+        answer += text;
+        onChunk(text);
+      }
+
+      const finaled = await result.response;
+      const usage = finaled?.usageMetadata;
+
+      return {
+        answer,
+        provider: this.key,
+        model: modelName,
+        inputTokens: usage?.promptTokenCount,
+        outputTokens: usage?.candidatesTokenCount,
+        latencyMs: Date.now() - startTime,
+        safetyBlocked: false,
+        fallbackUsed: false,
+        generatedAt: new Date().toISOString(),
+        sourceContexts: this.extractSourceContexts(request.sanitizedContext),
+        dataConfidence: request.sanitizedContext.data_confidence as Record<string, number> | undefined,
+      };
+    } catch (error: any) {
+      console.error('[Gemini] Streaming failed, retrying without streaming:', error.message);
+      return this.generateText(request);
     }
   }
 

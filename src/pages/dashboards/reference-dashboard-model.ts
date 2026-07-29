@@ -103,10 +103,41 @@ export function metricDetail(
   return asNumber(metrics[key]?.detail?.[detailKey]);
 }
 
+/**
+ * Metrics whose query actually failed. A source that simply holds no rows is NOT
+ * included — it reports `available: true` with errorCode NO_DATA_IN_SOURCE, because
+ * listing empty tables next to genuine failures is what made real breakage invisible.
+ */
 export function unavailableMetricCodes(metrics: Record<string, MetricResult>): string[] {
   return Object.entries(metrics)
     .filter(([, metric]) => metric.available === false)
     .map(([code, metric]) => metric.errorCode || code);
+}
+
+/** Metric keys whose source exists and is reachable but currently holds no records. */
+export function emptySourceMetricKeys(metrics: Record<string, MetricResult>): string[] {
+  return Object.entries(metrics)
+    .filter(([, metric]) => metric.available !== false && metric.errorCode === "NO_DATA_IN_SOURCE")
+    .map(([key]) => key);
+}
+
+/**
+ * Why a metric has nothing to show, phrased for a dashboard tile — or null when the
+ * metric carries a real measurement (including a real zero).
+ */
+export function metricUnavailableReason(
+  metrics: Record<string, MetricResult>,
+  key: string,
+): string | null {
+  const metric = metrics[key];
+  if (!metric) return null;
+  if (metric.available === false) {
+    return metric.errorCode === "QUERY_FAILED"
+      ? "Source query failed"
+      : "Source unavailable";
+  }
+  if (metric.errorCode === "NO_DATA_IN_SOURCE") return "No data recorded yet";
+  return null;
 }
 
 export function percent(part: number | null, total: number | null): number | null {

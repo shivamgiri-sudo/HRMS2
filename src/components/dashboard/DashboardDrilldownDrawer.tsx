@@ -9,6 +9,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, X } from "lucide-react";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 export interface DashboardDrilldownDrawerProps {
   open: boolean;
@@ -42,18 +43,19 @@ export function DashboardDrilldownDrawer({
     setError(null);
     setData(null);
 
-    fetch(`/api/dashboards/${dashboardCode}/metric/${metricCode}/drilldown`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        return res.json();
-      })
+    // Must go through hrmsApi: a bare fetch() sends no Authorization header, no
+    // credentials and no API base URL, so it 401s in dev (app :8080, API :5055).
+    hrmsApi
+      .get<{ data?: DrilldownData } | DrilldownData>(
+        `/api/dashboards/${dashboardCode}/metric/${metricCode}/drilldown`,
+      )
       .then((json) => {
         if (!cancelled) {
-          setData(json.data ?? json);
+          setData(((json as { data?: DrilldownData })?.data ?? json) as DrilldownData);
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message ?? "Failed to load drilldown data.");
+        if (!cancelled) setError(err?.message ?? "Failed to load drilldown data.");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

@@ -61,9 +61,19 @@ const getPrimaryRole = (roles: AppRole[]): AppRole | null => {
   const priority: AppRole[] = [
     "super_admin",
     "admin",
-    "hr",
     "ceo",
+    // HO functional heads
+    "it_head",
+    "finance_head",
+    "tq_head",
+    "accounts_head",
+    "payroll_head",
+    "payroll_admin",
+    // Branch tier
     "branch_head",
+    "branch_admin",
+    "hr",
+    "payroll_hr",
     "process_manager",
     "manager",
     "assistant_manager",
@@ -75,6 +85,10 @@ const getPrimaryRole = (roles: AppRole[]): AppRole | null => {
     "trainer",
     "team_leader",
     "tl",
+    "it",
+    "it_admin",
+    "quality_analyst",
+    "operations_manager",
     "employee",
   ];
 
@@ -172,6 +186,9 @@ export const useIsAdminOrHR = () => {
       roleKeys.includes("hr") ||
       roleKeys.includes("wfm") ||
       roleKeys.includes("payroll") ||
+      roleKeys.includes("payroll_head") ||
+      roleKeys.includes("payroll_admin") ||
+      roleKeys.includes("finance_head") ||
       roleKeys.includes("operations_manager"),
     isLoading,
     error,
@@ -186,7 +203,14 @@ export const useCanAccessPayroll = () => {
   const roleKeys = data?.roleKeys ?? [];
 
   return {
-    canAccessPayroll: roleKeys.includes("admin") || roleKeys.includes("hr") || roleKeys.includes("finance") || roleKeys.includes("payroll"),
+    canAccessPayroll:
+      roleKeys.includes("admin") ||
+      roleKeys.includes("hr") ||
+      roleKeys.includes("finance") ||
+      roleKeys.includes("finance_head") ||
+      roleKeys.includes("payroll") ||
+      roleKeys.includes("payroll_head") ||
+      roleKeys.includes("payroll_admin"),
     isLoading,
     error,
     role: data?.primaryRole ?? null,
@@ -244,7 +268,10 @@ export const useCanSearchEmployees = () => {
       roleKeys.includes("admin") ||
       roleKeys.includes("hr") ||
       roleKeys.includes("payroll_head") ||
+      roleKeys.includes("payroll_admin") ||
       roleKeys.includes("payroll") ||
+      roleKeys.includes("finance_head") ||
+      roleKeys.includes("it_head") ||
       roleKeys.includes("manager") ||
       roleKeys.includes("process_manager") ||
       roleKeys.includes("ceo") ||

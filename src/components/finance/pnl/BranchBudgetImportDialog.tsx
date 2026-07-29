@@ -53,6 +53,15 @@ const GST_TYPES: BudgetGstType[] = ["cgst_sgst", "igst", "none"];
 const ATTRIBUTION_SCOPES: BudgetAttributionScope[] = ["branch_common", "cost_centre", "process"];
 const SHARING_METHODS = ["total_manpower", "agent_headcount", "revenue_share", "equal_split", "manual", "meter_wise"];
 
+/** Drivers offered for cost-centre / process attributed lines (mirrors ALLOCATION_DRIVERS in
+ *  BranchBudgetManagementWorkspace). These lines are attributed whole rather than split, but the
+ *  workspace still requires a driver on every line, so imported ones must carry one too. */
+const DIRECT_ALLOCATION_DRIVERS = [
+  "agent_headcount", "total_manpower", "revenue_share", "seat_count", "device_count",
+  "floor_area", "usage_units", "hiring_volume", "direct_tagging",
+];
+const DEFAULT_DIRECT_DRIVER = "direct_tagging";
+
 // ── Parsing helpers ──────────────────────────────────────────────────────────
 
 async function downloadTemplate() {
@@ -171,6 +180,19 @@ export function resolveRow(
   let planningLevel: BranchBudgetLineInput["planningLevel"] = "cost_centre";
   let manualAllocations: ManualAllocationInput[] | undefined;
 
+  // Cost-centre and process attributed lines are not split across cost centres, but the workspace
+  // validates that EVERY line carries an allocation driver. Without this the import produced lines
+  // that could never be saved ("Allocation driver is mandatory") until the user set the driver by
+  // hand on each card. The Sharing Method column doubles as the driver for these scopes.
+  // Accepts a direct driver when one is supplied, otherwise falls back to direct tagging. It does
+  // NOT reject branch-common sharing methods here: the column is named "Sharing Method" and is
+  // primarily meant for branch_common rows, so a direct row carrying e.g. "equal_split" is a
+  // harmless copy from the template rather than an error worth blocking the whole import for.
+  const directDriver = (): string => {
+    const supplied = str(raw["Sharing Method"]).toLowerCase();
+    return DIRECT_ALLOCATION_DRIVERS.includes(supplied) ? supplied : DEFAULT_DIRECT_DRIVER;
+  };
+
   if (scope === "cost_centre") {
     const code = str(raw["Cost Centre Code"]);
     if (!code) return fail("Cost Centre Code is required when Attribution Scope is cost_centre");
@@ -178,6 +200,7 @@ export function resolveRow(
     if (!match) return fail(`Cost centre "${code}" was not found`);
     costCentreId = match.id;
     planningLevel = "cost_centre";
+    allocationDriver = directDriver();
   } else if (scope === "process") {
     const name = str(raw["Process Name"]);
     if (!name) return fail("Process Name is required when Attribution Scope is process");
@@ -185,6 +208,7 @@ export function resolveRow(
     if (!match) return fail(`Process "${name}" was not found`);
     processId = match.id;
     planningLevel = "cost_centre";
+    allocationDriver = directDriver();
   } else {
     planningLevel = "branch";
     const method = str(raw["Sharing Method"]).toLowerCase() || "equal_split";

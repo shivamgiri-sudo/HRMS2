@@ -12,6 +12,15 @@ export interface AiProvider {
   supportsEmbeddings?: boolean;
   testConnection(config: SafeAiProviderConfig): Promise<AiProviderTestResult>;
   generateText(request: AiGenerateRequest): Promise<AiGenerateResponse>;
+  /**
+   * Same contract as generateText, but calls onChunk with each piece of the
+   * answer as it arrives. Optional: a provider that answers instantly has
+   * nothing to stream, and callers must fall back to generateText.
+   */
+  generateTextStream?(
+    request: AiGenerateRequest,
+    onChunk: (text: string) => void,
+  ): Promise<AiGenerateResponse>;
   generateJson?<T>(request: AiGenerateRequest): Promise<T>;
 }
 
