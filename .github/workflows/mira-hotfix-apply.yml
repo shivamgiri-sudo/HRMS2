@@ -1,0 +1,266 @@
+name: Apply Mira 500 Hotfix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/mira-hotfix-apply.yml"
+  push:
+    branches:
+      - hotfix/mira-audit-500-resilience
+    paths:
+      - ".github/workflows/mira-hotfix-apply.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/mira-audit-500-resilience
+          fetch-depth: 0
+
+      - name: Apply fail-safe audit and schema hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          audit_path = Path('backend/src/modules/ai/ai-audit.service.ts')
+          text = audit_path.read_text()
+
+          text = text.replace(
+              'class AiAuditService {\n',
+              "class AiAuditService {\n  private lastAuditWarningAt = 0;\n\n  private warnAuditFailure(scope: string, error: unknown): void {\n    const now = Date.now();\n    if (now - this.lastAuditWarningAt < 30_000) return;\n    this.lastAuditWarningAt = now;\n    console.error(`[AI Audit] ${scope} failed; the user response was preserved:`, error instanceof Error ? error.message : error);\n  }\n\n",
+              1,
+          )
+
+          usage_pattern = re.compile(r"  async logUsage\([\s\S]*?\n  }\n\n  /\*\*\n   \* Log prompt audit", re.M)
+          usage_replacement = '''  async logUsage(
+    request: AiGenerateRequest,
+    response: AiGenerateResponse,
+    error?: Error
+  ): Promise<number> {
+    try {
+      const [result] = await db.execute(
+        `INSERT INTO ai_provider_usage_log (
+          provider_key, model_name, user_id, role_keys_json,
+          request_source, entity_type, entity_id,
+          input_token_count, output_token_count, latency_ms,
+          success, fallback_used, safety_blocked, error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          response.provider,
+          response.model,
+          request.userId,
+          JSON.stringify(request.roleKeys),
+          request.requestSource,
+          request.entityType || null,
+          request.entityId || null,
+          response.inputTokens || null,
+          response.outputTokens || null,
+          response.latencyMs,
+          !error,
+          response.fallbackUsed,
+          response.safetyBlocked,
+          error ? error.message : null,
+        ]
+      );
+      return (result as any).insertId || 0;
+    } catch (auditError) {
+      this.warnAuditFailure('usage log', auditError);
+      return 0;
+    }
+  }
+
+  /**
+   * Log prompt audit'''
+          text, count = usage_pattern.subn(usage_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Could not patch logUsage')
+
+          prompt_pattern = re.compile(r"  async logPromptAudit\([\s\S]*?\n  }\n\n  /\*\*\n   \* Log AI feedback", re.M)
+          prompt_replacement = '''  async logPromptAudit(
+    request: AiGenerateRequest,
+    piiRedactionApplied: boolean,
+    sensitiveFieldsRemoved: string[],
+    responseSummary?: string
+  ): Promise<void> {
+    const questionHash = this.hashString(request.userQuestion);
+    const contextHash = this.hashString(JSON.stringify(request.sanitizedContext));
+    try {
+      await db.execute(
+        `INSERT INTO ai_prompt_audit_log (
+          user_id, provider_key, model_name, request_source,
+          question_hash, sanitized_context_hash,
+          pii_redaction_applied, sensitive_fields_removed_json, response_summary
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          request.userId,
+          request.providerKey,
+          request.model || null,
+          request.requestSource,
+          questionHash,
+          contextHash,
+          piiRedactionApplied,
+          JSON.stringify(sensitiveFieldsRemoved),
+          responseSummary || null,
+        ]
+      );
+    } catch (auditError) {
+      this.warnAuditFailure('prompt audit log', auditError);
+    }
+  }
+
+  /**
+   * Log AI feedback'''
+          text, count = prompt_pattern.subn(prompt_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Could not patch logPromptAudit')
+          audit_path.write_text(text)
+
+          company_path = Path('backend/src/modules/ai/ai-company-knowledge.service.ts')
+          company = company_path.read_text()
+          marker = "export async function answerCompanyQuestion(question: string): Promise<AiGenerateResponse | null> {\n"
+          greeting = marker + "  if (/^\\s*(?:hi|hello|hey|namaste|good\\s+(?:morning|afternoon|evening))[!.\\s]*$/i.test(question)) {\n    return localResponse(\n      `Hello! I’m ${MIRA_NAME}, your private HRMS assistant. You can ask about your attendance, salary, leave, shift, documents, pending actions, or approved MAS Callnet company information.`,\n      ['mira:greeting'],\n    );\n  }\n"
+          if marker not in company:
+              raise SystemExit('Could not locate answerCompanyQuestion')
+          company_path.write_text(company.replace(marker, greeting, 1))
+
+          runner = Path('backend/src/db/runFinanceSupplementalMigrations.ts')
+          runner_text = runner.read_text()
+          runner_text = runner_text.replace(
+              '  "425_mira_openrouter_company_knowledge.sql",\n',
+              '  "425_mira_openrouter_company_knowledge.sql",\n  "426_mira_audit_resilience.sql",\n',
+              1,
+          )
+          runner.write_text(runner_text)
+
+          bootstrap = Path('backend/sql/000_ai_supplemental.sql')
+          bootstrap_text = bootstrap.read_text()
+          if '426_mira_audit_resilience.sql' not in bootstrap_text:
+              bootstrap_text += 'SOURCE sql/426_mira_audit_resilience.sql;\n'
+          bootstrap.write_text(bootstrap_text)
+
+          Path('backend/sql/426_mira_audit_resilience.sql').write_text('''-- 426_mira_audit_resilience.sql
+-- Ensures Mira audit persistence exists without allowing audit outages to block user answers.
+
+CREATE TABLE IF NOT EXISTS ai_provider_usage_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  provider_key VARCHAR(80) NOT NULL,
+  model_name VARCHAR(180) NULL,
+  user_id VARCHAR(100) NOT NULL,
+  role_keys_json JSON NULL,
+  request_source VARCHAR(100) NOT NULL,
+  entity_type VARCHAR(100) NULL,
+  entity_id VARCHAR(100) NULL,
+  input_token_count INT UNSIGNED NULL,
+  output_token_count INT UNSIGNED NULL,
+  latency_ms INT UNSIGNED NOT NULL DEFAULT 0,
+  success TINYINT(1) NOT NULL DEFAULT 1,
+  fallback_used TINYINT(1) NOT NULL DEFAULT 0,
+  safety_blocked TINYINT(1) NOT NULL DEFAULT 0,
+  error_message TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_usage_provider_created (provider_key, created_at),
+  KEY idx_ai_usage_user_created (user_id, created_at),
+  KEY idx_ai_usage_source_created (request_source, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_prompt_audit_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(100) NOT NULL,
+  provider_key VARCHAR(80) NOT NULL,
+  model_name VARCHAR(180) NULL,
+  request_source VARCHAR(100) NOT NULL,
+  question_hash CHAR(64) NOT NULL,
+  sanitized_context_hash CHAR(64) NOT NULL,
+  pii_redaction_applied TINYINT(1) NOT NULL DEFAULT 0,
+  sensitive_fields_removed_json JSON NULL,
+  response_summary VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_prompt_user_created (user_id, created_at),
+  KEY idx_ai_prompt_provider_created (provider_key, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ai_feedback (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id VARCHAR(100) NOT NULL,
+  provider_key VARCHAR(80) NOT NULL,
+  model_name VARCHAR(180) NULL,
+  request_id BIGINT UNSIGNED NULL,
+  rating ENUM('helpful', 'not_helpful', 'incorrect', 'unsafe') NOT NULL,
+  feedback_text TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_feedback_provider_created (provider_key, created_at),
+  KEY idx_ai_feedback_user_created (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+''')
+
+          Path('backend/src/modules/ai/__tests__/ai-audit-resilience.test.ts').write_text('''import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ execute: vi.fn() }));
+vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
+
+import { aiAuditService } from '../ai-audit.service.js';
+
+const request = {
+  userId: 'user-self',
+  roleKeys: ['employee'],
+  providerKey: 'mira-secure-local',
+  userQuestion: 'Show my salary',
+  sanitizedContext: { data_scope: 'self_only' },
+  requestSource: 'mira_self_account',
+};
+
+const response = {
+  answer: 'Your salary is available.',
+  provider: 'mira-secure-local',
+  model: 'hrms-self-account-v1',
+  latencyMs: 1,
+  safetyBlocked: false,
+  fallbackUsed: false,
+  generatedAt: new Date().toISOString(),
+};
+
+describe('Mira audit resilience', () => {
+  beforeEach(() => {
+    mocks.execute.mockReset();
+  });
+
+  it('preserves the user answer when the usage audit table is unavailable', async () => {
+    mocks.execute.mockRejectedValueOnce(new Error('Table ai_provider_usage_log does not exist'));
+    await expect(aiAuditService.logUsage(request, response)).resolves.toBe(0);
+  });
+
+  it('preserves the user answer when the prompt audit table is unavailable', async () => {
+    mocks.execute.mockRejectedValueOnce(new Error('Table ai_prompt_audit_log does not exist'));
+    await expect(aiAuditService.logPromptAudit(request, false, [], 'summary')).resolves.toBeUndefined();
+  });
+
+  it('still returns an audit id when persistence succeeds', async () => {
+    mocks.execute.mockResolvedValueOnce([{ insertId: 42 }]);
+    await expect(aiAuditService.logUsage(request, response)).resolves.toBe(42);
+  });
+});
+''')
+          PY
+
+          git rm .github/workflows/mira-hotfix-apply.yml
+          git add -- \
+            backend/src/modules/ai/ai-audit.service.ts \
+            backend/src/modules/ai/ai-company-knowledge.service.ts \
+            backend/src/modules/ai/__tests__/ai-audit-resilience.test.ts \
+            backend/src/db/runFinanceSupplementalMigrations.ts \
+            backend/sql/000_ai_supplemental.sql \
+            backend/sql/426_mira_audit_resilience.sql
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git diff --cached --check
+          git commit -m "fix(ai): keep Mira available when audit persistence fails"
+          git push origin HEAD:hotfix/mira-audit-500-resilience
