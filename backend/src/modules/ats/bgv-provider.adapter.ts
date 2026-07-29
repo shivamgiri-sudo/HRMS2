@@ -3,7 +3,24 @@ import axios from "axios";
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
+import {
+  sanitizeProviderPayload,
+  luckpayPostJson,
+  luckpayPostMultipart,
+  pickLuckpayField,
+  resetLuckpayTokenCache,
+  type LuckpayResolvedConfig,
+} from "../integrations/luckpay/luckpay.transport.js";
+import { resolveLuckpayConfigFrom } from "../integrations/luckpay/luckpay.config.js";
+import {
+  loadBgvDbConfig,
+  resetBgvDbConfigCache,
+  cleanSettingValue,
+  type BgvDbConfig,
+} from "./bgv-config.store.js";
+
+export { cleanSettingValue, loadBgvDbConfig };
+export type { BgvDbConfig };
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -778,7 +795,9 @@ export function getBgvProviderAdapter(): BgvProviderAdapter {
     case "befisc_luckpay":
       _adapterCache = new CompositeBgvProviderAdapter({
         bgv_provider: "befisc_luckpay",
-        luckpay_api_url:     env.LUCKPAY_BASE_URL,
+        // Honour LUCKPAY_ENV — previously this always used the staging-capable
+        // LUCKPAY_BASE_URL, so LUCKPAY_ENV=production had no effect here.
+        luckpay_api_url:     env.LUCKPAY_ENV === "production" ? env.LUCKPAY_PROD_BASE_URL : env.LUCKPAY_BASE_URL,
         luckpay_basic_token: env.LUCKPAY_BASIC_TOKEN,
         luckpay_client_id:   env.LUCKPAY_CLIENT_ID,
       } as BgvDbConfig);
@@ -792,37 +811,23 @@ export function getBgvProviderAdapter(): BgvProviderAdapter {
   return _adapterCache;
 }
 
-/** Reset adapter cache — only for tests that need to re-initialize with different env. */
+/**
+ * Reset adapter cache. Also drops the org_settings config cache and every cached
+ * Luckpay access token, so a credential change saved from the Admin UI takes
+ * effect on the very next request rather than after a TTL.
+ */
 export function resetBgvProviderAdapterCache(): void {
   _adapterCache = null;
+  resetBgvDbConfigCache();
+  resetLuckpayTokenCache();
 }
 
 // ── DB-config-aware adapter (reads org_settings at runtime) ──────────────────
 // Used when Super Admin updates provider via UI. Bypasses env defaults.
 
-export interface BgvDbConfig {
-  bgv_provider: string;
-  infinity_ai_api_url?: string;
-  infinity_ai_api_key?: string;
-  infinity_ai_client_id?: string;
-  infinity_ai_portal_url?: string;
-  digio_api_url?: string;
-  digio_client_id?: string;
-  digio_client_secret?: string;
-  digilocker_session_url?: string;
-  digilocker_api_key?: string;
-  digilocker_client_id?: string;
-  befisc_api_url?: string;
-  befisc_api_key?: string;
-  luckpay_api_url?: string;              // PAN / Bank / UAN base URL
-  luckpay_digilocker_base_url?: string;  // DigiLocker + eSign base URL (may differ from PAN URL)
-  luckpay_digilocker_basic_token?: string; // separate token for DigiLocker/eSign if different account
-  luckpay_digilocker_client_id?: string;   // separate client ID for DigiLocker/eSign if different account
-  luckpay_basic_token?: string;
-  luckpay_client_id?: string;
-  crimescan_api_url?: string;
-  crimescan_api_key?: string;
-}
+// BgvDbConfig, cleanSettingValue and loadBgvDbConfig now live in
+// ./bgv-config.store.ts (a leaf module, so the Luckpay config resolver can share
+// them without an import cycle). They are re-exported at the top of this file.
 
 export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
   const provider = cfg.bgv_provider ?? "mock";
@@ -865,38 +870,6 @@ export function buildAdapterFromDbConfig(cfg: BgvDbConfig): BgvProviderAdapter {
   return new MockBgvProviderAdapter();
 }
 
-function cleanSettingValue(value: unknown): string | undefined {
-  // Strip all whitespace including embedded newlines/carriage-returns that cause
-  // "Invalid header value char" when credential tokens are pasted via the Admin UI.
-  const str = String(value ?? "").replace(/\s+/g, "").trim();
-  if (!str || str === "••••••••") return undefined;
-  return str;
-}
-
-async function loadBgvDbConfig(): Promise<BgvDbConfig | null> {
-  const keys = [
-    "bgv_provider",
-    "infinity_ai_api_url", "infinity_ai_api_key", "infinity_ai_client_id", "infinity_ai_portal_url",
-    "digio_api_url", "digio_client_id", "digio_client_secret",
-    "befisc_api_url", "befisc_api_key",
-    "luckpay_api_url", "luckpay_basic_token", "luckpay_client_id",
-    "luckpay_digilocker_base_url", "luckpay_digilocker_basic_token", "luckpay_digilocker_client_id",
-    "crimescan_api_url", "crimescan_api_key",
-  ];
-  const placeholders = keys.map(() => "?").join(",");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT setting_key, setting_value FROM org_settings WHERE setting_key IN (${placeholders})`,
-    keys,
-  );
-  if (!rows.length) return null;
-  const cfg: Record<string, string> = {};
-  for (const row of rows as RowDataPacket[]) {
-    const value = cleanSettingValue(row.setting_value);
-    if (value !== undefined) cfg[String(row.setting_key)] = value;
-  }
-  return cfg.bgv_provider ? cfg as unknown as BgvDbConfig : null;
-}
-
 export async function getConfiguredBgvProviderAdapter(): Promise<BgvProviderAdapter> {
   const cfg = await loadBgvDbConfig();
   if (cfg?.bgv_provider && cfg.bgv_provider !== "mock") {
@@ -913,9 +886,21 @@ export async function getConfiguredBgvProviderAdapter(): Promise<BgvProviderAdap
 
 class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   readonly providerKey = "befisc_luckpay";
-  private luckpayAccessToken = "";
-  private luckpayAccessTokenExpiresAt = 0;
   constructor(private readonly cfg: BgvDbConfig) {}
+
+  /** PAN / Penny-Drop / UAN credentials. */
+  private coreCfg(): LuckpayResolvedConfig {
+    return resolveLuckpayConfigFrom(this.cfg, "core");
+  }
+
+  /**
+   * DigiLocker / eSign credentials. Falls back to the core values when the
+   * luckpay_digilocker_* overrides are unset — which is the production case,
+   * where all five endpoints share one account and one base URL.
+   */
+  private dlCfg(): LuckpayResolvedConfig {
+    return resolveLuckpayConfigFrom(this.cfg, "digilocker");
+  }
 
   private async post(baseOrUrl: string | undefined, path: string, payload: Record<string, unknown>, auth: Record<string, string> = {}) {
     if (!baseOrUrl) throw new Error(`${path} endpoint is not configured in BGV settings`);
@@ -945,91 +930,17 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
       : { "Content-Type": "application/json" };
   }
 
-  private luckpayBaseUrl(): string {
-    const baseUrl = this.cfg.luckpay_api_url?.trim();
-    if (!baseUrl) throw new Error("Luckpay API Base URL is not configured in BGV settings");
-    return baseUrl.replace(/\/$/, "");
-  }
-
-  // DigiLocker + eSign may use a different base URL (e.g. staging vs production)
-  // Falls back to luckpay_api_url if luckpay_digilocker_base_url is not set
-  private digilockerBaseUrl(): string {
-    const url = (this.cfg.luckpay_digilocker_base_url ?? this.cfg.luckpay_api_url ?? "").trim();
-    if (!url) throw new Error("Luckpay DigiLocker Base URL is not configured in BGV settings");
-    return url.replace(/\/$/, "");
-  }
-
-  // DigiLocker/eSign auth uses its own token when separate credentials are configured
-  private async getDigilockerAccessToken(): Promise<string> {
-    const basicToken = (this.cfg.luckpay_digilocker_basic_token ?? this.cfg.luckpay_basic_token ?? "").replace(/\s+/g, "").trim();
-    const clientId = (this.cfg.luckpay_digilocker_client_id ?? this.cfg.luckpay_client_id ?? "").replace(/\s+/g, "").trim();
-    if (!basicToken || !clientId) throw new Error("Luckpay DigiLocker credentials are not configured in BGV settings.");
-    // Use digilocker base URL for auth if separate
-    const authUrl = `${this.digilockerBaseUrl()}/auth/token`;
-    let res;
-    try {
-      res = await axios.post(authUrl, undefined, {
-        headers: { Authorization: `Basic ${basicToken}` },
-        timeout: env.LUCKPAY_TIMEOUT_MS,
-      });
-    } catch (error) { throw this.toLuckpayError(error); }
-    const payload = res.data?.data ?? res.data ?? {};
-    const token = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "");
-    if (!token) throw new Error("Luckpay DigiLocker auth response did not include a token.");
-    return token;
-  }
-
-  private digilockerClientId(): string {
-    return (this.cfg.luckpay_digilocker_client_id ?? this.cfg.luckpay_client_id ?? "").replace(/\s+/g, "").trim();
-  }
-
-  private async getLuckpayAccessToken(): Promise<string> {
-    if (!this.cfg.luckpay_basic_token || !this.cfg.luckpay_client_id) {
-      throw new Error("Luckpay Basic Token and Client ID are not configured in BGV settings.");
-    }
-    const now = Date.now();
-    if (this.luckpayAccessToken && this.luckpayAccessTokenExpiresAt > now + 2_000) {
-      return this.luckpayAccessToken;
-    }
-
-    const authUrl = `${this.luckpayBaseUrl()}/auth/token`;
-    const basicToken = String(this.cfg.luckpay_basic_token ?? "").replace(/\s+/g, "").trim();
-    let res;
-    try {
-      res = await axios.post(authUrl, undefined, {
-        headers: { Authorization: `Basic ${basicToken}` },
-        timeout: env.LUCKPAY_TIMEOUT_MS,
-      });
-    } catch (error) {
-      throw this.toLuckpayError(error);
-    }
-    const payload = res.data?.data ?? res.data ?? {};
-    const token = String(payload.accessToken ?? payload.access_token ?? payload.token ?? "");
-    if (!token) throw new Error("Luckpay auth token response did not include an access token.");
-    const expiresIn = Number(payload.expiresIn ?? payload.expires_in ?? env.LUCKPAY_TOKEN_CACHE_TTL_SECONDS);
-    this.luckpayAccessToken = token;
-    this.luckpayAccessTokenExpiresAt = now + Math.max(1, expiresIn) * 1000;
-    return token;
-  }
-
+  /**
+   * JSON call against the core (PAN/UAN/Penny-Drop) credentials.
+   * Returns the unwrapped `data` node, matching what every caller below expects.
+   */
   private async postLuckpay(path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const accessToken = await this.getLuckpayAccessToken();
-    let res;
     try {
-      const clientId = String(this.cfg.luckpay_client_id ?? "").replace(/\s+/g, "").trim();
-      res = await axios.post(`${this.luckpayBaseUrl()}${path}`, payload, {
-        headers: {
-          Authorization: clientId,
-          "X-Access-Token": `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        timeout: env.LUCKPAY_TIMEOUT_MS,
-      });
+      const response = await luckpayPostJson(this.coreCfg(), path, payload);
+      return response.data;
     } catch (error) {
       throw this.toLuckpayError(error);
     }
-    const data = res.data?.data ?? res.data ?? {};
-    return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : { data };
   }
 
   private async getCandidateContact(candidateId: string): Promise<{ fullName: string; mobile: string }> {
@@ -1058,6 +969,13 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   }
 
   private toLuckpayError(error: unknown): Error {
+    // The shared transport already classified and sanitized this error
+    // (including the IP-whitelist case) and stripped response.data, so there is
+    // nothing left to re-derive.
+    if ((error as { luckpayConverted?: boolean })?.luckpayConverted) {
+      return error as Error;
+    }
+
     const errorCode = (error as { code?: string })?.code;
     const status = Number((error as { response?: { status?: number } })?.response?.status ?? 502);
     const responseData = (error as { response?: { data?: unknown } })?.response?.data;
@@ -1367,75 +1285,53 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
   async startDigilocker(candidateId: string, requestedDocuments: string[]): Promise<DigilockerSession> {
     const state = randomUUID();
     const candidate = await this.getCandidateContact(candidateId);
-    // DigiLocker uses its own base URL + credentials (staging vs production may differ)
-    const accessToken = await this.getDigilockerAccessToken();
-    let dlRes;
+    let response;
     try {
-      dlRes = await axios.post(
-        `${this.digilockerBaseUrl()}/verifyDigilockerWithURL`,
-        { clientTransactionId: state, customerName: candidate.fullName, mobileNumber: candidate.mobile },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: this.digilockerClientId(),
-            "X-Access-Token": `Bearer ${accessToken}`,
-          },
-          timeout: env.LUCKPAY_TIMEOUT_MS,
-        },
-      );
+      response = await luckpayPostJson(this.dlCfg(), "/verifyDigilockerWithURL", {
+        clientTransactionId: state,
+        customerName: candidate.fullName,
+        mobileNumber: candidate.mobile,
+      });
     } catch (error) { throw this.toLuckpayError(error); }
-    const d = dlRes.data?.data ?? dlRes.data ?? {};
+    const expiresAt = pickLuckpayField(response, ["expires_at"]);
     return {
-      state: String(d.state ?? state),
-      authUrl: String(d.auth_url ?? d.redirect_url ?? d.access_link ?? d.redirectUrl ?? d.verificationUrl ?? d.verification_url ?? ""),
-      expiresAt: this.providerString(d.expires_at) ? new Date(this.providerString(d.expires_at)!) : new Date(Date.now() + 30 * 60 * 1000),
+      state: pickLuckpayField(response, ["state"]) ?? state,
+      authUrl: pickLuckpayField(response, [
+        "auth_url", "redirect_url", "access_link", "redirectUrl", "verificationUrl", "verification_url",
+      ]) ?? "",
+      expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 
   async initiateESign(input: ESignInput): Promise<ESignSession> {
     const state = randomUUID();
-    // eSign uses digilocker credentials (same staging/prod split as DigiLocker)
-    const accessToken = await this.getDigilockerAccessToken();
-
-    // Luckpay eSignWithURL uses multipart/form-data
-    const FormData = (await import("form-data")).default;
-    const formData = new FormData();
-
-    formData.append("file", input.documentBuffer, {
-      filename: input.documentName,
-      contentType: "application/pdf",
-    });
-
-    const requestMetadata = {
-      clientTransactionId: state,
-      signedBy: input.signedBy,
-      location: input.location || "India",
-      reason: input.reason || "Digital Signature for Employment Document",
-    };
-    formData.append("request", JSON.stringify(requestMetadata), {
-      contentType: "application/json",
-    });
-
-    let res;
+    let response;
     try {
-      res = await axios.post(`${this.digilockerBaseUrl()}/eSignWithURL`, formData, {
-        headers: {
-          ...formData.getHeaders(),
-          Authorization: this.digilockerClientId(),
-          "X-Access-Token": `Bearer ${accessToken}`,
+      response = await luckpayPostMultipart(this.dlCfg(), "/eSignWithURL", {
+        file: {
+          buffer: input.documentBuffer,
+          filename: input.documentName,
+          contentType: "application/pdf",
         },
-        timeout: env.LUCKPAY_TIMEOUT_MS,
+        request: {
+          clientTransactionId: state,
+          signedBy: input.signedBy,
+          location: input.location || "India",
+          reason: input.reason || "Digital Signature for Employment Document",
+        },
       });
     } catch (error) {
       throw this.toLuckpayError(error);
     }
 
-    const d = res.data?.data ?? res.data ?? {};
+    const expiresAt = pickLuckpayField(response, ["expires_at"]);
     return {
       state,
-      authUrl: String(d.sign_url ?? d.signUrl ?? d.redirect_url ?? d.redirectUrl ?? d.auth_url ?? ""),
-      expiresAt: this.providerString(d.expires_at) ? new Date(this.providerString(d.expires_at)!) : new Date(Date.now() + 30 * 60 * 1000),
-      requestId: String(d.request_id ?? d.requestId ?? state),
+      authUrl: pickLuckpayField(response, [
+        "sign_url", "signUrl", "redirect_url", "redirectUrl", "auth_url",
+      ]) ?? "",
+      expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
+      requestId: pickLuckpayField(response, ["request_id", "requestId"]) ?? state,
     };
   }
 

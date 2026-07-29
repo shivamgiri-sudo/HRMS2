@@ -1131,6 +1131,9 @@ export async function createJoiningDocumentEsignRequest(params: {
     }
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
+    // Degrading to the internal signing link is intentional, but it must be
+    // visible — otherwise a provider outage looks like a normal eSign request.
+    console.warn(`[Luckpay] eSign fell back to internal link for checklist ${checklist.id}: ${errorMessage}`);
     responsePayload = sanitizeProviderPayload({
       internalLinkIssued: true,
       publicTokenHash,

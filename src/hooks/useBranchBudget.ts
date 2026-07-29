@@ -146,9 +146,36 @@ export interface BranchBudgetApprovalRecord {
   created_at: string;
 }
 
+export interface CostCentreConsolidationLine {
+  costCentreId: string;
+  costCentreName: string | null;
+  quantity: number;
+  grossAmount: number;
+  pnlCostAmount: number;
+}
+
+export interface CostCentreConsolidationGroup {
+  head: string;
+  subHead: string | null;
+  itemName: string;
+  unit: string;
+  unitConsistent: boolean;
+  branchUnit: number;
+  branchBaseAmount: number;
+  branchTaxAmount: number;
+  branchGrossAmount: number;
+  branchPnlCostAmount: number;
+  costCentreCount: number;
+  lines: CostCentreConsolidationLine[];
+}
+
 export interface BranchBudgetDetail extends BranchBudgetSummary {
   lines: BranchBudgetLineRecord[];
   approvals: BranchBudgetApprovalRecord[];
+  /** Cost-centre-first consolidation (spec 6.2/7.2): cost-centre-planned lines sharing a
+   *  head/sub-head/item, rolled up into a branch total. See buildCostCentreConsolidation()
+   *  (branch-budget.service.ts) — computed server-side, read-only. */
+  costCentreConsolidation: CostCentreConsolidationGroup[];
 }
 
 function queryString(filters: {

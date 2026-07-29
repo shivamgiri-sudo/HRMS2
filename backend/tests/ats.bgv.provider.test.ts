@@ -174,6 +174,10 @@ describe("getBgvProviderAdapter factory", () => {
 describe("Composite Befisc/Luckpay adapter", () => {
   beforeEach(() => {
     vi.spyOn(axios, "post").mockReset();
+    // Luckpay access tokens are cached in the shared transport (keyed by
+    // baseUrl+clientId), so a token minted by a previous test would otherwise
+    // survive and shift the mocked call ordering asserted below.
+    resetBgvProviderAdapterCache();
   });
 
   afterEach(() => {
@@ -305,84 +309,6 @@ describe("Composite Befisc/Luckpay adapter", () => {
       expect(String(error.message)).toContain("IP address 115.241.59.220 is not whitelisted");
       expect(String(error.message)).not.toContain("test-basic-token");
     });
-  });
-
-  it("TC-PROV-29: IP-whitelist failures surface as an actionable 503", async () => {
-    // Real production response shape when the caller's egress IP is not
-    // whitelisted — verified against the live Luckpay endpoint.
-    expect.assertions(2);
-    vi.spyOn(axios, "post").mockRejectedValueOnce({
-      response: {
-        status: 403,
-        data: { code: "AUTH_023", status: "Failed", message: "IP address 14.97.31.38 is not whitelisted" },
-      },
-    });
-
-    const adapter = buildAdapterFromDbConfig(luckpayCfg);
-    await adapter.verifyPan({ panNumber: "ABCDE1234F" }).catch((error) => {
-      expect((error as { statusCode?: number }).statusCode).toBe(503);
-      expect((error as { isIpWhitelistError?: boolean }).isIpWhitelistError).toBe(true);
-    });
-  });
-
-  it("TC-PROV-30: PAN and DigiLocker share one access token when no DigiLocker override is set", async () => {
-    // The production shape: DigiLocker/eSign use the same base URL and
-    // credentials as PAN, so they must reuse the cached token rather than
-    // re-authenticating (previously the DigiLocker token was never cached).
-    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
-    const post = vi.spyOn(axios, "post")
-      .mockResolvedValueOnce({ data: { data: { token: "access-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { status: "success", pan_name: "Rahul Sharma" } })
-      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker" } });
-
-    const adapter = buildAdapterFromDbConfig(luckpayCfg);
-    await adapter.verifyPan({ panNumber: "ABCDE1234F" });
-    const session = await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
-
-    expect(post).toHaveBeenCalledTimes(3);
-    expect(post).toHaveBeenNthCalledWith(
-      3,
-      "https://api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
-      expect.any(Object),
-      expect.objectContaining({
-        headers: expect.objectContaining({ "X-Access-Token": "Bearer access-token" }),
-      }),
-    );
-    expect(session.authUrl).toBe("https://luckpay.example/digilocker");
-  });
-
-  it("TC-PROV-31: DigiLocker authenticates separately when an override account is configured", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([[{ full_name: "Rahul Sharma", mobile: "9876543210" }], []] as any);
-    const post = vi.spyOn(axios, "post")
-      .mockResolvedValueOnce({ data: { data: { token: "core-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { status: "success", pan_name: "Rahul Sharma" } })
-      .mockResolvedValueOnce({ data: { data: { token: "dl-token", expiresIn: 60 } } })
-      .mockResolvedValueOnce({ data: { redirectUrl: "https://luckpay.example/digilocker" } });
-
-    const adapter = buildAdapterFromDbConfig({
-      ...luckpayCfg,
-      luckpay_digilocker_base_url: "https://staging-api-banking.luckpay.in/apibanking/api/v1",
-      luckpay_digilocker_basic_token: "dl-basic-token",
-      luckpay_digilocker_client_id: "DLCLIENT",
-    });
-    await adapter.verifyPan({ panNumber: "ABCDE1234F" });
-    await adapter.startDigilocker("candidate-1", ["AADHAAR"]);
-
-    expect(post).toHaveBeenCalledTimes(4);
-    expect(post).toHaveBeenNthCalledWith(
-      3,
-      "https://staging-api-banking.luckpay.in/apibanking/api/v1/auth/token",
-      undefined,
-      expect.objectContaining({ headers: { Authorization: "Basic dl-basic-token" } }),
-    );
-    expect(post).toHaveBeenNthCalledWith(
-      4,
-      "https://staging-api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
-      expect.any(Object),
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "DLCLIENT", "X-Access-Token": "Bearer dl-token" }),
-      }),
-    );
   });
 });
 

@@ -85,7 +85,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "approval" | "master";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "approval" | "master";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -594,6 +594,7 @@ export default function BranchBudgetManagementWorkspace() {
             <TabsList className="h-auto w-full flex-wrap justify-start rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
               <TabsTrigger value="plan"><Layers3 className="mr-2 h-4 w-4" />Plan Builder</TabsTrigger>
               <TabsTrigger value="coverage"><ClipboardCheck className="mr-2 h-4 w-4" />Head/Sub-head Coverage</TabsTrigger>
+              <TabsTrigger value="rollup"><Layers3 className="mr-2 h-4 w-4" />Cost-Centre Rollup</TabsTrigger>
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
             </TabsList>
@@ -715,6 +716,53 @@ export default function BranchBudgetManagementWorkspace() {
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><Metric label="Completion" value={`${coverageQuery.data?.summary.completionPct ?? 0}%`} tone={coverageQuery.data?.summary.readyToSubmit ? "emerald" : "amber"} /><Metric label="All Sub-heads" value={String(coverageQuery.data?.summary.total ?? 0)} /><Metric label="Planned" value={String(coverageQuery.data?.summary.planned ?? 0)} tone="emerald" /><Metric label="Not planned" value={String(coverageQuery.data?.summary.notPlanned ?? 0)} tone="amber" /><Metric label="Not applicable" value={String(coverageQuery.data?.summary.notApplicable ?? 0)} /><Metric label="Incomplete" value={String(coverageQuery.data?.summary.incomplete ?? 0)} tone={(coverageQuery.data?.summary.incomplete ?? 0) ? "rose" : "emerald"} /></div>
                 <Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader className="border-b border-slate-100"><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle>Complete Expense Catalogue</CardTitle><p className="mt-1 text-xs text-slate-500">Every active Sub-head requires a valid decision.</p></div><div className="flex gap-2"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" value={coverageSearch} onChange={(event) => setCoverageSearch(event.target.value)} /></div>{capabilities?.canCreate && <Button onClick={() => void saveCoverageDecisions()} disabled={saveCoverage.isPending}><Save className="mr-2 h-4 w-4" />Save decisions</Button>}</div></div></CardHeader><CardContent className="space-y-3 p-4">{coverageGroups.map((group) => { const expanded = expandedHeads.has(group.id); const complete = group.items.every((item) => coverageDraft[item.expense_sub_head_id]?.status); return <div key={group.id} className="overflow-hidden rounded-2xl border border-slate-200"><button type="button" className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3 text-left" onClick={() => setExpandedHeads((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}><span className={`flex h-8 w-8 items-center justify-center rounded-full ${complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{complete ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</span><div className="flex-1"><p className="text-sm font-bold">{group.name}</p><p className="text-[10px] text-slate-500">{group.items.length} Sub-head(s)</p></div>{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{expanded && <div className="divide-y divide-slate-100">{group.items.map((item) => <CoverageDecision key={item.expense_sub_head_id} item={item} draft={coverageDraft[item.expense_sub_head_id] ?? { status: "", reason: "" }} editable={canEdit} onChange={(value) => setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: value }))} onAddLine={() => addFromCoverage(item)} />)}</div>}</div>; })}</CardContent></Card>
               </>}
+            </TabsContent>
+
+            <TabsContent value="rollup" className="space-y-5">
+              {!detailId ? (
+                <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><Layers3 className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Save the budget draft first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
+              ) : detailQuery.isLoading ? (
+                <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div>
+              ) : !detailQuery.data?.costCentreConsolidation.length ? (
+                <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No "Direct to cost centre" lines yet — cost-centre-first items planned separately per cost centre will roll up here automatically once added.</div>
+              ) : (
+                <Card className="rounded-3xl border-slate-200 shadow-sm">
+                  <CardHeader className="border-b border-slate-100"><CardTitle>Cost-centre-first consolidation</CardTitle><p className="mt-1 text-xs text-slate-500">Items planned independently per cost centre (Attribution scope = "Direct to cost centre"), rolled up to a branch total. Branch fields here are derived, not editable — edit the underlying lines in Plan Builder.</p></CardHeader>
+                  <CardContent className="space-y-3 p-4">
+                    {detailQuery.data.costCentreConsolidation.map((group, index) => (
+                      <div key={`${group.head}-${group.subHead}-${group.itemName}-${index}`} className="overflow-hidden rounded-2xl border border-slate-200">
+                        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 px-4 py-3">
+                          <div>
+                            <p className="text-sm font-bold">{group.itemName}</p>
+                            <p className="text-[10px] text-slate-500">{group.head}{group.subHead ? ` / ${group.subHead}` : ""} · {group.costCentreCount} cost centre(s)</p>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            {!group.unitConsistent && <Badge variant="destructive" className="text-[10px]">Mixed units — verify before relying on Branch unit</Badge>}
+                            <Metric label={`Branch unit (${group.unit})`} value={String(group.branchUnit)} />
+                            <Metric label="Branch amount" value={money(group.branchGrossAmount)} tone="emerald" />
+                            <Metric label="Branch P&L cost" value={money(group.branchPnlCostAmount)} tone="amber" />
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[520px] text-sm">
+                            <thead><tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500"><th className="px-4 py-2">Cost centre</th><th className="px-4 py-2">Unit</th><th className="px-4 py-2">With tax</th><th className="px-4 py-2">P&L cost</th></tr></thead>
+                            <tbody>
+                              {group.lines.map((ccLine) => (
+                                <tr key={ccLine.costCentreId} className="border-b border-slate-100 last:border-0">
+                                  <td className="px-4 py-2">{ccLine.costCentreName ?? ccLine.costCentreId}</td>
+                                  <td className="px-4 py-2">{ccLine.quantity}</td>
+                                  <td className="px-4 py-2">{money(ccLine.grossAmount)}</td>
+                                  <td className="px-4 py-2">{money(ccLine.pnlCostAmount)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />{budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>

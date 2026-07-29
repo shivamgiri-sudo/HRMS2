@@ -133,6 +133,12 @@ const envSchema = z.object({
   DIGIO_WEBHOOK_SECRET: z.string().optional(),
   LUCKPAY_ENV: z.enum(["staging", "production"]).default("production"),
   LUCKPAY_BASE_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1"),
+  /**
+   * @deprecated The auth URL is derived from the resolved base URL
+   * (`${baseUrl}/auth/token`). This value is ignored unless it matches that base
+   * — a staging auth URL paired with a production base minted a token for the
+   * wrong host and 401'd every call. Retained only for backwards compatibility.
+   */
   LUCKPAY_AUTH_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1/auth/token"),
   LUCKPAY_PROD_BASE_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1"),
   LUCKPAY_BASIC_TOKEN: z.string().optional(),

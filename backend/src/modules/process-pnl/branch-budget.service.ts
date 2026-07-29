@@ -309,6 +309,82 @@ async function auditInTransaction(
   );
 }
 
+export interface CostCentreConsolidationLine {
+  costCentreId: string;
+  costCentreName: string | null;
+  quantity: number;
+  grossAmount: number;
+  pnlCostAmount: number;
+}
+
+export interface CostCentreConsolidationGroup {
+  head: string;
+  subHead: string | null;
+  itemName: string;
+  unit: string;
+  unitConsistent: boolean;
+  branchUnit: number;
+  branchBaseAmount: number;
+  branchTaxAmount: number;
+  branchGrossAmount: number;
+  branchPnlCostAmount: number;
+  costCentreCount: number;
+  lines: CostCentreConsolidationLine[];
+}
+
+/**
+ * Cost-centre-first consolidation (spec 6.2/7.2): when several cost centres each plan the same
+ * conceptual budget item independently (same head/sub-head/item name), this rolls their lines up
+ * into a branch-level total for reporting — "Branch amount = Sum of cost-centre amounts". A plain
+ * additive sum of already-computed, already-DECIMAL-stored line amounts, not a pool being divided
+ * (unlike PR 1/2's allocatePoolAmount) — so there is no rounding-residual concern here. The one
+ * real risk (spec 7.2: "do not sum non-additive values... unless explicitly configured") is unit
+ * consistency, not money — surfaced via unitConsistent rather than silently assumed.
+ */
+export function buildCostCentreConsolidation(lines: RowDataPacket[]): CostCentreConsolidationGroup[] {
+  const groups = new Map<string, CostCentreConsolidationGroup>();
+  for (const line of lines) {
+    if (String(line.planning_level) !== "cost_centre" || !line.cost_centre_id) continue;
+    const head = String(line.head);
+    const subHead = line.sub_head != null ? String(line.sub_head) : null;
+    const itemName = String(line.item_name);
+    const unit = String(line.unit);
+    const key = `${head}|${subHead ?? ""}|${itemName}`;
+
+    const group = groups.get(key) ?? {
+      head,
+      subHead,
+      itemName,
+      unit,
+      unitConsistent: true,
+      branchUnit: 0,
+      branchBaseAmount: 0,
+      branchTaxAmount: 0,
+      branchGrossAmount: 0,
+      branchPnlCostAmount: 0,
+      costCentreCount: 0,
+      lines: [],
+    };
+
+    if (group.unit !== unit) group.unitConsistent = false;
+    group.branchUnit += Number(line.quantity ?? 0);
+    group.branchBaseAmount = roundMoney(group.branchBaseAmount + Number(line.base_amount ?? 0));
+    group.branchTaxAmount = roundMoney(group.branchTaxAmount + Number(line.tax_amount ?? 0));
+    group.branchGrossAmount = roundMoney(group.branchGrossAmount + Number(line.gross_amount ?? 0));
+    group.branchPnlCostAmount = roundMoney(group.branchPnlCostAmount + Number(line.pnl_cost_amount ?? 0));
+    group.costCentreCount += 1;
+    group.lines.push({
+      costCentreId: String(line.cost_centre_id),
+      costCentreName: line.cost_centre_name != null ? String(line.cost_centre_name) : null,
+      quantity: Number(line.quantity ?? 0),
+      grossAmount: Number(line.gross_amount ?? 0),
+      pnlCostAmount: Number(line.pnl_cost_amount ?? 0),
+    });
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
 export const branchBudgetService = {
   async list(filters: { period?: string; branchId?: string; status?: string }) {
     const where: string[] = [];
@@ -388,7 +464,12 @@ export const branchBudgetService = {
       })
     );
 
-    return { ...headers[0], lines: linesWithAllocations, approvals };
+    return {
+      ...headers[0],
+      lines: linesWithAllocations,
+      approvals,
+      costCentreConsolidation: buildCostCentreConsolidation(lines),
+    };
   },
 
   async saveDraft(
