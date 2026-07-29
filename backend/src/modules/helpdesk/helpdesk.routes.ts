@@ -22,6 +22,9 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
+// Roles that can manage tickets (IT agents + existing admin/HR)
+const HELPDESK_ADMIN_ROLES = ["admin", "hr", "super_admin", "it", "branch_it", "it_admin"] as const;
+
 router.use(requireAuth);
 
 // ── Support Command Center APIs ───────────────────────────────────────────────
@@ -66,7 +69,7 @@ router.get("/root-causes", requireRole("admin", "hr", "super_admin"), h(async (r
 
 router.get("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr")) {
+  if (await hasRole(userId, ...HELPDESK_ADMIN_ROLES)) {
     return res.json({ data: await helpdeskService.listTickets(req.query as any) });
   }
   const emp = await getEmployeeForUser(userId);
@@ -96,7 +99,7 @@ router.get("/tickets/:id", h(async (req: AuthenticatedRequest, res: Response) =>
   const ticket = await helpdeskService.getTicket(req.params.id) as (Record<string, unknown> & { employee_id: string; comments?: Record<string, unknown>[] }) | null;
   if (!ticket) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, "admin", "hr");
+  const isAdminHr = await hasRole(userId, ...HELPDESK_ADMIN_ROLES);
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
@@ -111,11 +114,11 @@ router.get("/tickets/:id", h(async (req: AuthenticatedRequest, res: Response) =>
   res.json({ data });
 }));
 
-router.patch("/tickets/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.patch("/tickets/:id", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   res.json({ data: await helpdeskService.updateTicket(req.params.id, req.body) });
 }));
 
-router.post("/tickets/:id/assign", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/tickets/:id/assign", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { assigned_to } = req.body;
   if (!assigned_to) return res.status(400).json({ error: "assigned_to required" });
   const data = await helpdeskService.updateTicket(req.params.id, req.body);
@@ -132,7 +135,7 @@ router.post("/tickets/:id/assign", requireRole("admin", "hr"), h(async (req: Aut
   res.json({ data });
 }));
 
-router.post("/tickets/:id/escalate", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/tickets/:id/escalate", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const ticket = await helpdeskService.getTicket(req.params.id) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
   const newLevel = Number(ticket.escalation_level ?? 0) + 1;
@@ -150,7 +153,7 @@ router.post("/tickets/:id/escalate", requireRole("admin", "hr"), h(async (req: A
   res.json({ data });
 }));
 
-router.post("/tickets/:id/resolve", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/tickets/:id/resolve", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { resolution_note, root_cause } = req.body;
   if (!resolution_note) return res.status(400).json({ error: "resolution_note required" });
   const data = await helpdeskService.updateTicket(req.params.id, { status: "resolved", resolution_note, root_cause });
@@ -203,13 +206,13 @@ router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Re
   if (!text) return res.status(400).json({ error: "text required" });
 
   const wantInternal = !!is_internal;
-  if (wantInternal && !(await hasRole(userId, "admin", "hr"))) {
-    return res.status(403).json({ success: false, message: "Only admin/hr can post internal comments" });
+  if (wantInternal && !(await hasRole(userId, ...HELPDESK_ADMIN_ROLES))) {
+    return res.status(403).json({ success: false, message: "Only admin/hr/IT can post internal comments" });
   }
 
   const ticket = await helpdeskService.getTicket(req.params.id) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
-  if (!(await hasRole(userId, "admin", "hr"))) {
+  if (!(await hasRole(userId, ...HELPDESK_ADMIN_ROLES))) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -397,6 +400,73 @@ router.post("/grievances/:id/evidence", requireRole("admin", "hr"), h(async (req
   if (!file_name) return res.status(400).json({ error: "file_name required" });
   const data = await helpdeskService.addEvidenceMetadata(req.params.id, req.authUser!.id, { file_name, file_type, description });
   res.status(201).json({ data });
+}));
+
+// ── Agents list (for assign dropdown) ─────────────────────────────────────────
+
+router.get("/agents", requireRole(...HELPDESK_ADMIN_ROLES), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const data = await helpdeskService.listAgents();
+  return res.json({ success: true, data });
+}));
+
+// ── Self-assign (Take) ────────────────────────────────────────────────────────
+
+router.post("/tickets/:id/take", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const ticket = await helpdeskService.getTicket(req.params.id) as any;
+  if (!ticket) return res.status(404).json({ error: "Not found" });
+  if (ticket.assigned_to && ticket.assigned_to !== userId) {
+    return res.status(409).json({ success: false, error: "Ticket already assigned to another agent" });
+  }
+  const data = await helpdeskService.takeTicket(req.params.id, userId);
+  await writeSensitiveAuditLog({
+    actorUserId: userId,
+    actionType: "TICKET_TAKEN",
+    moduleKey: "HELPDESK",
+    entityType: "helpdesk_ticket",
+    entityId: req.params.id,
+    changeSummary: { assigned_to: userId },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+  return res.json({ success: true, data });
+}));
+
+// ── On-hold ───────────────────────────────────────────────────────────────────
+
+router.post("/tickets/:id/hold", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { reason } = req.body;
+  if (!reason?.trim()) return res.status(400).json({ error: "reason required" });
+  const data = await helpdeskService.holdTicket(req.params.id, req.authUser!.id, reason.trim());
+  return res.json({ success: true, data });
+}));
+
+// ── Knowledge Base ────────────────────────────────────────────────────────────
+
+router.get("/kb", h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await helpdeskService.listKbArticles(req.query as any);
+  return res.json({ success: true, data });
+}));
+
+router.post("/kb", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await helpdeskService.createKbArticle({
+    ...req.body,
+    author_user_id: req.authUser!.id,
+  });
+  return res.status(201).json({ success: true, data });
+}));
+
+router.get("/kb/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await helpdeskService.getKbArticle(req.params.id);
+  if (!data) return res.status(404).json({ error: "Not found" });
+  return res.json({ success: true, data });
+}));
+
+router.post("/kb/:id/helpful", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { is_helpful } = req.body;
+  if (is_helpful == null) return res.status(400).json({ error: "is_helpful required" });
+  await helpdeskService.markKbHelpful(req.params.id, req.authUser!.id, !!is_helpful);
+  return res.json({ success: true });
 }));
 
 export { router as helpdeskRouter };

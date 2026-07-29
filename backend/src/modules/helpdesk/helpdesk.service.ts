@@ -115,9 +115,12 @@ export const helpdeskService = {
   async createTicket(data: {
     employee_id: string;
     category: string;
+    it_subcategory?: string;
     subject: string;
     description: string;
     priority?: string;
+    downtime_minutes?: number;
+    affected_seats?: number;
   }) {
     const id = randomUUID();
     const priority = data.priority ?? "medium";
@@ -125,9 +128,16 @@ export const helpdeskService = {
 
     await db.execute(
       `INSERT INTO helpdesk_ticket
-         (id, ticket_code, employee_id, category, subject, description, priority, sla_due_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, ticketCode(), data.employee_id, data.category, data.subject, data.description, priority, slaDueAt]
+         (id, ticket_code, employee_id, category, it_subcategory, subject, description,
+          priority, sla_due_at, downtime_minutes, affected_seats)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, ticketCode(), data.employee_id, data.category,
+        data.it_subcategory ?? null,
+        data.subject, data.description, priority, slaDueAt,
+        data.downtime_minutes ?? 0,
+        data.affected_seats ?? 1,
+      ]
     );
     const ticket = await this.getTicket(id);
 
@@ -163,6 +173,9 @@ export const helpdeskService = {
     employee_blocked?: boolean;
     productivity_impact?: boolean;
     payroll_impact?: boolean;
+    downtime_minutes?: number;
+    affected_seats?: number;
+    hold_reason?: string;
   }) {
     // Recalculate SLA if priority changes
     let slaDueAt: Date | null = null;
@@ -189,6 +202,12 @@ export const helpdeskService = {
          employee_blocked    = COALESCE(?, employee_blocked),
          productivity_impact = COALESCE(?, productivity_impact),
          payroll_impact      = COALESCE(?, payroll_impact),
+         downtime_minutes    = COALESCE(?, downtime_minutes),
+         affected_seats      = COALESCE(?, affected_seats),
+         hold_reason         = COALESCE(?, hold_reason),
+         held_at             = CASE WHEN ? = 'on_hold' THEN COALESCE(held_at, NOW())
+                                    WHEN ? IN ('open','in_progress') THEN NULL
+                                    ELSE held_at END,
          ${slaDueAt ? "sla_due_at = ?," : ""}
          resolved_at         = IF(? IN ('resolved','closed'), COALESCE(resolved_at, NOW()), resolved_at),
          updated_at          = NOW()
@@ -205,6 +224,11 @@ export const helpdeskService = {
         data.employee_blocked != null ? (data.employee_blocked ? 1 : 0) : null,
         data.productivity_impact != null ? (data.productivity_impact ? 1 : 0) : null,
         data.payroll_impact != null ? (data.payroll_impact ? 1 : 0) : null,
+        data.downtime_minutes ?? null,
+        data.affected_seats ?? null,
+        data.hold_reason ?? null,
+        data.status ?? "",
+        data.status ?? "",
         ...(slaDueAt ? [slaDueAt] : []),
         isClosingStatus ? (data.status ?? "") : "",
         id,
@@ -539,5 +563,151 @@ export const helpdeskService = {
       file_type: evidence.file_type ? String(evidence.file_type) : undefined,
       description: evidence.description ? String(evidence.description) : undefined,
     });
+  },
+
+  // ── Self-assign (Take) ────────────────────────────────────────────────────
+
+  async takeTicket(ticketId: string, userId: string) {
+    await db.execute(
+      `UPDATE helpdesk_ticket
+          SET assigned_to = ?,
+              status      = IF(status = 'open', 'in_progress', status),
+              updated_at  = NOW()
+        WHERE id = ?
+          AND (assigned_to IS NULL OR assigned_to = ?)`,
+      [userId, ticketId, userId]
+    );
+    return this.getTicket(ticketId);
+  },
+
+  // ── On-hold ───────────────────────────────────────────────────────────────
+
+  async holdTicket(ticketId: string, actorUserId: string, reason: string) {
+    await db.execute(
+      `UPDATE helpdesk_ticket
+          SET status     = 'on_hold',
+              hold_reason = ?,
+              held_at    = NOW(),
+              updated_at = NOW()
+        WHERE id = ?`,
+      [reason, ticketId]
+    );
+    await writeSensitiveAuditLog({
+      actorUserId,
+      actionType: "TICKET_ON_HOLD",
+      moduleKey: "HELPDESK",
+      entityType: "helpdesk_ticket",
+      entityId: ticketId,
+      changeSummary: { hold_reason: reason },
+    });
+    return this.getTicket(ticketId);
+  },
+
+  // ── Agents list (for assign dropdown) ─────────────────────────────────────
+
+  async listAgents() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT au.id, au.email,
+              COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))), au.email) AS full_name,
+              e.employee_code
+         FROM auth_user au
+         JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
+           AND ur.role_key IN ('admin','hr','super_admin','it','branch_it','it_admin')
+         LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
+        WHERE (au.is_blocked IS NULL OR au.is_blocked = 0)
+        GROUP BY au.id
+        ORDER BY COALESCE(NULLIF(e.full_name,''), au.email)
+        LIMIT 100`
+    );
+    return rows as RowDataPacket[];
+  },
+
+  // ── Knowledge Base ────────────────────────────────────────────────────────
+
+  async listKbArticles(filters: {
+    category?: string;
+    search?: string;
+    status?: string;
+  }) {
+    const conds: string[] = ["a.status = ?"];
+    const params: unknown[] = [filters.status ?? "published"];
+    if (filters.category) { conds.push("a.category = ?"); params.push(filters.category); }
+
+    const search = filters.search?.trim();
+    let searchClause = "";
+    if (search) {
+      searchClause = "AND (MATCH(a.title, a.tags) AGAINST(? IN BOOLEAN MODE) OR a.title LIKE ?)";
+      params.push(search + "*", `%${search}%`);
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.id, a.title, a.category, a.it_subcategory, a.tags, a.status,
+              a.view_count, a.helpful_count, a.not_helpful_count, a.author_user_id, a.created_at
+         FROM helpdesk_kb_article a
+        WHERE ${conds.join(" AND ")} ${searchClause}
+        ORDER BY a.helpful_count DESC, a.view_count DESC
+        LIMIT 50`,
+      params
+    );
+    return rows as RowDataPacket[];
+  },
+
+  async getKbArticle(id: string) {
+    await db.execute(
+      "UPDATE helpdesk_kb_article SET view_count = view_count + 1 WHERE id = ?",
+      [id]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.*,
+              COALESCE(NULLIF(e.full_name,''), au.email) AS author_name
+         FROM helpdesk_kb_article a
+         LEFT JOIN auth_user au ON au.id = a.author_user_id
+         LEFT JOIN employees e ON e.user_id = au.id
+        WHERE a.id = ? LIMIT 1`,
+      [id]
+    );
+    return (rows as RowDataPacket[])[0] ?? null;
+  },
+
+  async createKbArticle(data: {
+    title: string;
+    category: string;
+    it_subcategory?: string;
+    content: string;
+    tags?: string;
+    author_user_id: string;
+    status?: string;
+  }) {
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO helpdesk_kb_article
+         (id, title, category, it_subcategory, content, tags, author_user_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, data.title, data.category, data.it_subcategory ?? null,
+        data.content, data.tags ?? null, data.author_user_id,
+        data.status ?? "published",
+      ]
+    );
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM helpdesk_kb_article WHERE id = ? LIMIT 1", [id]
+    );
+    return (rows as RowDataPacket[])[0];
+  },
+
+  async markKbHelpful(articleId: string, userId: string, isHelpful: boolean) {
+    await db.execute(
+      `INSERT INTO helpdesk_kb_feedback (id, article_id, user_id, is_helpful)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE is_helpful = VALUES(is_helpful)`,
+      [randomUUID(), articleId, userId, isHelpful ? 1 : 0]
+    );
+    await db.execute(
+      `UPDATE helpdesk_kb_article SET
+         helpful_count     = (SELECT COUNT(*) FROM helpdesk_kb_feedback WHERE article_id = ? AND is_helpful = 1),
+         not_helpful_count = (SELECT COUNT(*) FROM helpdesk_kb_feedback WHERE article_id = ? AND is_helpful = 0)
+       WHERE id = ?`,
+      [articleId, articleId, articleId]
+    );
   },
 };

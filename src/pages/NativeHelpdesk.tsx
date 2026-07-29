@@ -1,28 +1,58 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowLeft, EyeOff, Loader,
-  MessageSquare, Plus, RefreshCcw, Search, X,
+  AlertTriangle, ArrowLeft, BookOpen, ChevronDown, EyeOff,
+  Loader, MessageSquare, Plus, RefreshCcw, Search, Star, ThumbsDown,
+  ThumbsUp, X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { formatISTDate, formatIST } from "@/lib/utils";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+
+// ─── BPO IT sub-categories ────────────────────────────────────────────────────
+
+const BPO_IT_SUBCATEGORIES = [
+  { value: "dialer_softphone",     label: "Dialer / Softphone Issue" },
+  { value: "network_connectivity", label: "Network / Connectivity" },
+  { value: "system_crash",         label: "System / PC Crash" },
+  { value: "crm_application",      label: "CRM Application Issue" },
+  { value: "headset_hardware",     label: "Headset / Hardware" },
+  { value: "vpn_remote_access",    label: "VPN / Remote Access" },
+  { value: "login_failure",        label: "Login Failure" },
+  { value: "browser_issue",        label: "Browser Issue" },
+  { value: "other_it",             label: "Other IT" },
+];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Ticket = {
   id: string;
   ticket_number?: string;
+  ticket_code?: string;
   category: string;
+  it_subcategory?: string;
   subject: string;
   description: string;
   priority: "low" | "medium" | "high" | "urgent";
-  status: "open" | "in_progress" | "resolved" | "closed";
+  status: "open" | "in_progress" | "on_hold" | "resolved" | "closed";
   assigned_to?: string;
   assigned_name?: string;
   created_by?: string;
   created_at: string;
   updated_at?: string;
+  sla_due_at?: string;
+  sla_breached?: boolean;
+  downtime_minutes?: number;
+  affected_seats?: number;
+  hold_reason?: string;
+  held_at?: string;
+  closure_rating?: number;
+  escalation_level?: number;
+  full_name?: string;
+  branch_name?: string;
+  process_name?: string;
+  employee_code?: string;
 };
 
 type Comment = {
@@ -43,14 +73,18 @@ type Grievance = {
   grievance_type: string;
   status: string;
   is_anonymous: boolean;
+  severity?: string;
   created_at: string;
 };
 
 type TicketForm = {
   category: string;
+  it_subcategory: string;
   subject: string;
   description: string;
   priority: string;
+  downtime_minutes: number;
+  affected_seats: number;
 };
 
 type GrievanceForm = {
@@ -61,6 +95,23 @@ type GrievanceForm = {
   is_anonymous: boolean;
 };
 
+type KbArticle = {
+  id: string;
+  title: string;
+  category: string;
+  it_subcategory?: string;
+  content?: string;
+  tags?: string;
+  status: string;
+  view_count: number;
+  helpful_count: number;
+  not_helpful_count: number;
+  author_name?: string;
+  created_at: string;
+};
+
+type Agent = { id: string; full_name: string; email?: string };
+
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -68,15 +119,6 @@ const PRIORITY_STYLES: Record<string, string> = {
   medium: "bg-blue-50 text-blue-700",
   high:   "bg-amber-50 text-amber-700",
   urgent: "bg-red-50 text-red-700",
-};
-
-const STATUS_STYLES: Record<string, string> = {
-  open:        "bg-emerald-50 text-emerald-700",
-  in_progress: "bg-amber-50 text-amber-700",
-  resolved:    "bg-blue-50 text-blue-700",
-  closed:      "bg-slate-100 text-slate-500",
-  pending:     "bg-violet-50 text-violet-700",
-  under_review:"bg-orange-50 text-orange-700",
 };
 
 function PriorityBadge({ priority }: { priority: string }) {
@@ -88,12 +130,12 @@ function StatusBadge({ status }: { status: string }) {
   const statusMap: Record<string, string> = {
     open: "in_progress",
     in_progress: "in_progress",
+    on_hold: "warning",
     resolved: "success",
     closed: "cancelled",
     pending: "pending",
     under_review: "warning",
   };
-
   return (
     <SmartHRStatusBadge
       status={normalizeStatus(statusMap[status] || status)}
@@ -102,7 +144,22 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function SlaBadge({ sla_due_at, sla_breached, status }: { sla_due_at?: string; sla_breached?: boolean; status: string }) {
+  if (!sla_due_at || ["resolved", "closed", "cancelled", "on_hold"].includes(status)) return null;
+  if (sla_breached) {
+    return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-red-50 text-red-700">SLA Breached</span>;
+  }
+  const due = new Date(sla_due_at);
+  const minsLeft = Math.floor((due.getTime() - Date.now()) / 60000);
+  if (minsLeft < 0) return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-red-50 text-red-700">Breached</span>;
+  if (minsLeft <= 60)  return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-amber-50 text-amber-700">Due &lt;1h</span>;
+  if (minsLeft <= 240) return <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-yellow-50 text-yellow-700">Due {Math.round(minsLeft / 60)}h</span>;
+  return <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-emerald-50 text-emerald-700">On Time</span>;
+}
+
 const inputCls = "w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors";
+const btnPrimary = "inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50";
+const btnSecondary = "inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -115,9 +172,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type Tab = "tickets" | "grievances";
+type Tab = "tickets" | "grievances" | "kb";
+
+const STATUS_FILTER_TABS = [
+  { key: "all",         label: "All" },
+  { key: "open",        label: "Open" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "on_hold",     label: "On Hold" },
+  { key: "resolved",    label: "Resolved" },
+  { key: "closed",      label: "Closed" },
+];
 
 export default function NativeHelpdesk() {
+  const { roleKeys } = useWorkforceAccess();
+  const isAdminMode = roleKeys.some(r =>
+    ["admin", "hr", "super_admin", "it", "branch_it", "it_admin"].includes(r)
+  );
+
   const [tab, setTab] = useState<Tab>("tickets");
   const [message, setMessage] = useState("");
 
@@ -126,26 +197,57 @@ export default function NativeHelpdesk() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketSearch, setTicketSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [selectedTicket, setSelectedTicket] = useState<TicketDetail | null>(null);
   const [ticketDetailLoading, setTicketDetailLoading] = useState(false);
 
   const [showRaiseTicket, setShowRaiseTicket] = useState(false);
-  const [ticketForm, setTicketForm] = useState<TicketForm>({ category: "IT", subject: "", description: "", priority: "medium" });
+  const [ticketForm, setTicketForm] = useState<TicketForm>({
+    category: "IT", it_subcategory: "", subject: "", description: "",
+    priority: "medium", downtime_minutes: 0, affected_seats: 1,
+  });
   const [ticketBusy, setTicketBusy] = useState(false);
 
   const [commentText, setCommentText] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  const [internalNoteTab, setInternalNoteTab] = useState<"public" | "internal">("public");
+
+  // Admin action state
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [assignToUserId, setAssignToUserId] = useState("");
+  const [adminActionBusy, setAdminActionBusy] = useState(false);
+  const [showHoldPanel, setShowHoldPanel] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
+  const [showResolvePanel, setShowResolvePanel] = useState(false);
+  const [resolveNote, setResolveNote] = useState("");
+  const [resolveRootCause, setResolveRootCause] = useState("");
+
+  // CSAT
+  const [csatRating, setCsatRating] = useState(0);
+  const [csatBusy, setCsatBusy] = useState(false);
 
   // ── Grievances state ─────────────────────────────────────────────────────────
 
   const [grievances, setGrievances] = useState<Grievance[]>([]);
   const [grievancesLoading, setGrievancesLoading] = useState(false);
-
   const [showRaiseGrievance, setShowRaiseGrievance] = useState(false);
   const [grievanceForm, setGrievanceForm] = useState<GrievanceForm>({
     subject: "", description: "", grievance_type: "workplace", severity: "medium", is_anonymous: false,
   });
   const [grievanceBusy, setGrievanceBusy] = useState(false);
+
+  // ── KB state ─────────────────────────────────────────────────────────────────
+
+  const [kbArticles, setKbArticles] = useState<KbArticle[]>([]);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbSearch, setKbSearch] = useState("");
+  const [selectedKbArticle, setSelectedKbArticle] = useState<KbArticle | null>(null);
+  const [kbVoteBusy, setKbVoteBusy] = useState(false);
+  const [showCreateKb, setShowCreateKb] = useState(false);
+  const [kbForm, setKbForm] = useState({ title: "", category: "it", it_subcategory: "", content: "", tags: "", status: "published" });
+  const [kbFormBusy, setKbFormBusy] = useState(false);
+
+  const kbSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Loaders ──────────────────────────────────────────────────────────────────
 
@@ -153,7 +255,7 @@ export default function NativeHelpdesk() {
     setTicketsLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: Ticket[] }>("/api/helpdesk/tickets");
+      const res = await hrmsApi.get<{ data: Ticket[] }>("/api/helpdesk/tickets");
       setTickets(res.data ?? []);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load tickets");
@@ -165,8 +267,9 @@ export default function NativeHelpdesk() {
   const loadTicketDetail = async (id: string) => {
     setTicketDetailLoading(true);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: TicketDetail }>(`/api/helpdesk/tickets/${id}`);
+      const res = await hrmsApi.get<{ data: TicketDetail }>(`/api/helpdesk/tickets/${id}`);
       setSelectedTicket(res.data);
+      setCsatRating(res.data?.closure_rating ?? 0);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load ticket");
     } finally {
@@ -174,11 +277,19 @@ export default function NativeHelpdesk() {
     }
   };
 
+  const loadAgents = useCallback(async () => {
+    if (!isAdminMode) return;
+    try {
+      const res = await hrmsApi.get<{ data: Agent[] }>("/api/helpdesk/agents");
+      setAgents(res.data ?? []);
+    } catch { /* non-fatal */ }
+  }, [isAdminMode]);
+
   const loadGrievances = async () => {
     setGrievancesLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: Grievance[] }>("/api/helpdesk/grievances");
+      const res = await hrmsApi.get<{ data: Grievance[] }>("/api/helpdesk/grievances");
       setGrievances(res.data ?? []);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load grievances");
@@ -187,12 +298,36 @@ export default function NativeHelpdesk() {
     }
   };
 
-  useEffect(() => {
-    if (tab === "tickets") void loadTickets();
-    else void loadGrievances();
-  }, [tab]);
+  const loadKbArticles = useCallback(async (search?: string) => {
+    setKbLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (search?.trim()) params.set("search", search.trim());
+      const res = await hrmsApi.get<{ data: KbArticle[] }>(`/api/helpdesk/kb?${params}`);
+      setKbArticles(res.data ?? []);
+    } catch { /* non-fatal */ }
+    finally { setKbLoading(false); }
+  }, []);
 
-  // ── Actions ──────────────────────────────────────────────────────────────────
+  const loadKbArticleDetail = async (id: string) => {
+    try {
+      const res = await hrmsApi.get<{ data: KbArticle }>(`/api/helpdesk/kb/${id}`);
+      setSelectedKbArticle(res.data);
+    } catch { /* non-fatal */ }
+  };
+
+  useEffect(() => {
+    if (tab === "tickets") {
+      void loadTickets();
+      if (isAdminMode) void loadAgents();
+    } else if (tab === "grievances") {
+      void loadGrievances();
+    } else if (tab === "kb") {
+      void loadKbArticles();
+    }
+  }, [tab, isAdminMode, loadAgents, loadKbArticles]);
+
+  // ── Ticket actions ────────────────────────────────────────────────────────────
 
   const submitTicket = async () => {
     if (!ticketForm.subject.trim() || !ticketForm.description.trim()) {
@@ -202,7 +337,7 @@ export default function NativeHelpdesk() {
     try {
       await hrmsApi.post("/api/helpdesk/tickets", ticketForm);
       setShowRaiseTicket(false);
-      setTicketForm({ category: "IT", subject: "", description: "", priority: "medium" });
+      setTicketForm({ category: "IT", it_subcategory: "", subject: "", description: "", priority: "medium", downtime_minutes: 0, affected_seats: 1 });
       setMessage("Ticket raised successfully.");
       await loadTickets();
     } catch (err: unknown) {
@@ -218,7 +353,7 @@ export default function NativeHelpdesk() {
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/comments`, {
         text: commentText.trim(),
-        is_internal: false,
+        is_internal: isAdminMode && internalNoteTab === "internal",
       });
       setCommentText("");
       await loadTicketDetail(selectedTicket.id);
@@ -228,6 +363,107 @@ export default function NativeHelpdesk() {
       setCommentBusy(false);
     }
   };
+
+  const doAssign = async () => {
+    if (!selectedTicket || !assignToUserId) return;
+    setAdminActionBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/assign`, { assigned_to: assignToUserId });
+      setAssignToUserId("");
+      setMessage("Ticket assigned.");
+      await loadTicketDetail(selectedTicket.id);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to assign.");
+    } finally { setAdminActionBusy(false); }
+  };
+
+  const doTake = async () => {
+    if (!selectedTicket) return;
+    setAdminActionBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/take`, {});
+      setMessage("Ticket taken.");
+      await loadTicketDetail(selectedTicket.id);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to take ticket.");
+    } finally { setAdminActionBusy(false); }
+  };
+
+  const doHold = async () => {
+    if (!selectedTicket || !holdReason.trim()) return;
+    setAdminActionBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/hold`, { reason: holdReason.trim() });
+      setHoldReason("");
+      setShowHoldPanel(false);
+      setMessage("Ticket put on hold.");
+      await loadTicketDetail(selectedTicket.id);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to hold ticket.");
+    } finally { setAdminActionBusy(false); }
+  };
+
+  const doResolveAdmin = async () => {
+    if (!selectedTicket || !resolveNote.trim()) return;
+    setAdminActionBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/resolve`, {
+        resolution_note: resolveNote.trim(),
+        root_cause: resolveRootCause.trim() || undefined,
+      });
+      setResolveNote("");
+      setResolveRootCause("");
+      setShowResolvePanel(false);
+      setMessage("Ticket resolved.");
+      await loadTicketDetail(selectedTicket.id);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to resolve ticket.");
+    } finally { setAdminActionBusy(false); }
+  };
+
+  const doEscalate = async () => {
+    if (!selectedTicket) return;
+    setAdminActionBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/escalate`, {});
+      setMessage("Ticket escalated.");
+      await loadTicketDetail(selectedTicket.id);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to escalate.");
+    } finally { setAdminActionBusy(false); }
+  };
+
+  const doChangePriority = async (priority: string) => {
+    if (!selectedTicket) return;
+    try {
+      await hrmsApi.patch(`/api/helpdesk/tickets/${selectedTicket.id}`, { priority });
+      await loadTicketDetail(selectedTicket.id);
+    } catch { /* non-fatal */ }
+  };
+
+  const doReopen = async () => {
+    if (!selectedTicket) return;
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/reopen`, {});
+      setMessage("Ticket reopened.");
+      await loadTicketDetail(selectedTicket.id);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to reopen.");
+    }
+  };
+
+  const doRateCsat = async (rating: number) => {
+    if (!selectedTicket || selectedTicket.closure_rating) return;
+    setCsatBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${selectedTicket.id}/rating`, { rating });
+      setCsatRating(rating);
+      await loadTicketDetail(selectedTicket.id);
+    } catch { /* non-fatal */ }
+    finally { setCsatBusy(false); }
+  };
+
+  // ── Grievance actions ─────────────────────────────────────────────────────────
 
   const submitGrievance = async () => {
     if (!grievanceForm.subject.trim() || !grievanceForm.description.trim()) {
@@ -247,13 +483,50 @@ export default function NativeHelpdesk() {
     }
   };
 
+  // ── KB actions ───────────────────────────────────────────────────────────────
+
+  const handleKbSearch = (val: string) => {
+    setKbSearch(val);
+    if (kbSearchTimer.current) clearTimeout(kbSearchTimer.current);
+    kbSearchTimer.current = setTimeout(() => void loadKbArticles(val), 350);
+  };
+
+  const voteKb = async (id: string, helpful: boolean) => {
+    setKbVoteBusy(true);
+    try {
+      await hrmsApi.post(`/api/helpdesk/kb/${id}/helpful`, { is_helpful: helpful });
+      if (selectedKbArticle?.id === id) await loadKbArticleDetail(id);
+      else void loadKbArticles(kbSearch);
+    } catch { /* non-fatal */ }
+    finally { setKbVoteBusy(false); }
+  };
+
+  const submitKbArticle = async () => {
+    if (!kbForm.title.trim() || !kbForm.content.trim()) {
+      return setMessage("Title and content are required.");
+    }
+    setKbFormBusy(true);
+    try {
+      await hrmsApi.post("/api/helpdesk/kb", kbForm);
+      setShowCreateKb(false);
+      setKbForm({ title: "", category: "it", it_subcategory: "", content: "", tags: "", status: "published" });
+      setMessage("Article published.");
+      void loadKbArticles(kbSearch);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to publish article.");
+    } finally { setKbFormBusy(false); }
+  };
+
   // ── Filtered ─────────────────────────────────────────────────────────────────
 
   const filteredTickets = tickets.filter((t) => {
     const q = ticketSearch.trim().toLowerCase();
-    const text = [t.subject, t.category, t.status, t.priority, t.ticket_number].join(" ").toLowerCase();
-    return !q || text.includes(q);
+    const statusMatch = statusFilter === "all" || t.status === statusFilter;
+    const text = [t.subject, t.category, t.status, t.priority, t.ticket_number, t.ticket_code].join(" ").toLowerCase();
+    return statusMatch && (!q || text.includes(q));
   });
+
+  const subLabel = BPO_IT_SUBCATEGORIES.find(s => s.value === selectedTicket?.it_subcategory)?.label;
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -267,32 +540,30 @@ export default function NativeHelpdesk() {
             <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Support</p>
             <h1 className="mt-2 text-3xl font-black text-slate-950">Helpdesk</h1>
             <p className="mt-2 max-w-4xl text-slate-600">
-              Raise and track support tickets, and submit grievances.
+              Raise and track support tickets, submit grievances, or browse the knowledge base.
             </p>
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => void (tab === "tickets" ? loadTickets() : loadGrievances())}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer"
+              onClick={() => void (tab === "tickets" ? loadTickets() : tab === "grievances" ? loadGrievances() : loadKbArticles(kbSearch))}
+              className={btnSecondary}
             >
               <RefreshCcw className="h-4 w-4" />
               Refresh
             </button>
-            {tab === "tickets" ? (
-              <button
-                onClick={() => { setShowRaiseTicket(true); setMessage(""); }}
-                className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                Raise Ticket
+            {tab === "tickets" && (
+              <button onClick={() => { setShowRaiseTicket(true); setMessage(""); }} className={btnPrimary}>
+                <Plus className="h-4 w-4" /> Raise Ticket
               </button>
-            ) : (
-              <button
-                onClick={() => { setShowRaiseGrievance(true); setMessage(""); }}
-                className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                Raise Grievance
+            )}
+            {tab === "grievances" && (
+              <button onClick={() => { setShowRaiseGrievance(true); setMessage(""); }} className={btnPrimary}>
+                <Plus className="h-4 w-4" /> Raise Grievance
+              </button>
+            )}
+            {tab === "kb" && isAdminMode && (
+              <button onClick={() => { setShowCreateKb(true); setMessage(""); }} className={btnPrimary}>
+                <Plus className="h-4 w-4" /> New Article
               </button>
             )}
           </div>
@@ -303,31 +574,30 @@ export default function NativeHelpdesk() {
           <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
             {message}
+            <button onClick={() => setMessage("")} className="ml-auto cursor-pointer"><X className="h-4 w-4" /></button>
           </div>
         )}
 
         {/* Tab switcher */}
         <div className="flex gap-1 rounded-2xl border bg-slate-50 p-1 w-fit">
-          {(["tickets", "grievances"] as Tab[]).map((t) => (
+          {(["tickets", "grievances", "kb"] as Tab[]).map((t) => (
             <button
               key={t}
-              onClick={() => { setTab(t); setSelectedTicket(null); setMessage(""); }}
-              className={`rounded-xl px-5 py-2 text-sm font-bold capitalize cursor-pointer transition-colors ${tab === t ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+              onClick={() => { setTab(t); setSelectedTicket(null); setSelectedKbArticle(null); setMessage(""); }}
+              className={`rounded-xl px-5 py-2 text-sm font-bold cursor-pointer transition-colors ${tab === t ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
             >
-              {t}
+              {t === "kb" ? "Knowledge Base" : t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </div>
 
-        {/* ── Ticket Detail View ──────────────────────────────────────────────── */}
+        {/* ═══════════════════════════════════════════════════════════════════════
+            TICKET DETAIL VIEW
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === "tickets" && selectedTicket ? (
           <div className="space-y-4">
-            <button
-              onClick={() => setSelectedTicket(null)}
-              className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900 cursor-pointer transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Tickets
+            <button onClick={() => setSelectedTicket(null)} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900 cursor-pointer transition-colors">
+              <ArrowLeft className="h-4 w-4" /> Back to Tickets
             </button>
 
             {ticketDetailLoading ? (
@@ -335,81 +605,300 @@ export default function NativeHelpdesk() {
                 <Loader className="h-8 w-8 animate-spin text-slate-400" />
               </div>
             ) : (
-              <div className="rounded-3xl border bg-white shadow-sm">
-                {/* Ticket header */}
-                <div className="border-b p-6">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        {selectedTicket.ticket_number && (
-                          <span className="font-mono text-xs font-bold text-slate-400">#{selectedTicket.ticket_number}</span>
-                        )}
-                        <PriorityBadge priority={selectedTicket.priority} />
-                        <StatusBadge status={selectedTicket.status} />
-                      </div>
-                      <h2 className="text-xl font-black text-slate-950">{selectedTicket.subject}</h2>
-                      <p className="text-sm text-slate-500 mt-1">
-                        {selectedTicket.category} · {formatISTDate(selectedTicket.created_at)}
-                        {selectedTicket.assigned_name && ` · Assigned to: ${selectedTicket.assigned_name}`}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="mt-4 text-sm text-slate-700 leading-relaxed">{selectedTicket.description}</p>
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-                {/* Comments */}
-                <div className="p-6 space-y-4">
-                  <h3 className="font-black text-slate-950">Comments ({selectedTicket.comments?.length ?? 0})</h3>
-                  {(selectedTicket.comments ?? []).length === 0 ? (
-                    <p className="text-sm text-slate-400">No comments yet.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {(selectedTicket.comments ?? []).map((c) => (
-                        <div key={c.id} className={`rounded-2xl p-4 text-sm ${c.is_internal ? "bg-amber-50 border border-amber-100" : "bg-slate-50"}`}>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-bold text-slate-800">{c.author_name ?? "Agent"}</span>
-                            <div className="flex items-center gap-2">
-                              {c.is_internal && (
-                                <span className="text-xs font-semibold text-amber-600 flex items-center gap-1">
-                                  <EyeOff className="h-3 w-3" /> Internal
-                                </span>
-                              )}
-                              <span className="text-xs text-slate-400 font-mono">{formatIST(c.created_at)}</span>
-                            </div>
-                          </div>
-                          <p className="text-slate-700">{c.text}</p>
+                {/* Main ticket card */}
+                <div className="lg:col-span-2 rounded-3xl border bg-white shadow-sm">
+                  {/* Header */}
+                  <div className="border-b p-6">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          {(selectedTicket.ticket_number || selectedTicket.ticket_code) && (
+                            <span className="font-mono text-xs font-bold text-slate-400">
+                              #{selectedTicket.ticket_number ?? selectedTicket.ticket_code}
+                            </span>
+                          )}
+                          <PriorityBadge priority={selectedTicket.priority} />
+                          <StatusBadge status={selectedTicket.status} />
+                          <SlaBadge sla_due_at={selectedTicket.sla_due_at} sla_breached={!!selectedTicket.sla_breached} status={selectedTicket.status} />
+                          {selectedTicket.escalation_level ? (
+                            <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-orange-50 text-orange-700">
+                              Escalated L{selectedTicket.escalation_level}
+                            </span>
+                          ) : null}
                         </div>
-                      ))}
+                        <h2 className="text-xl font-black text-slate-950">{selectedTicket.subject}</h2>
+                        <p className="text-sm text-slate-500 mt-1">
+                          {selectedTicket.category}
+                          {subLabel ? ` · ${subLabel}` : ""}
+                          {" · "}{formatISTDate(selectedTicket.created_at)}
+                          {selectedTicket.assigned_name ? ` · Assigned to: ${selectedTicket.assigned_name}` : " · Unassigned"}
+                        </p>
+                        {selectedTicket.branch_name && (
+                          <p className="text-xs text-slate-400 mt-0.5">{selectedTicket.full_name} · {selectedTicket.branch_name}</p>
+                        )}
+                        {selectedTicket.status === "on_hold" && selectedTicket.hold_reason && (
+                          <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 font-semibold">
+                            On Hold: {selectedTicket.hold_reason}
+                          </div>
+                        )}
+                        {(selectedTicket.downtime_minutes ?? 0) > 0 && (
+                          <div className="mt-2 flex gap-3 text-xs text-slate-500">
+                            <span>Downtime: <strong>{selectedTicket.downtime_minutes} min</strong></span>
+                            <span>Affected seats: <strong>{selectedTicket.affected_seats ?? 1}</strong></span>
+                          </div>
+                        )}
+                      </div>
+                      {["resolved", "closed"].includes(selectedTicket.status) && (
+                        <button onClick={() => void doReopen()} className={btnSecondary}>
+                          <RefreshCcw className="h-4 w-4" /> Reopen
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-4 text-sm text-slate-700 leading-relaxed">{selectedTicket.description}</p>
+                  </div>
+
+                  {/* CSAT rating — employee view only, resolved tickets */}
+                  {selectedTicket.status === "resolved" && !isAdminMode && (
+                    <div className="border-b px-6 py-4 bg-slate-50">
+                      <p className="text-sm font-bold text-slate-700 mb-2">Rate this resolution</p>
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4, 5].map(star => (
+                          <button
+                            key={star}
+                            onClick={() => void doRateCsat(star)}
+                            disabled={csatBusy || !!selectedTicket.closure_rating}
+                            className="cursor-pointer text-2xl transition-colors disabled:cursor-default"
+                          >
+                            <Star
+                              className={`h-6 w-6 ${(csatRating || (selectedTicket.closure_rating ?? 0)) >= star ? "fill-amber-400 text-amber-400" : "text-slate-300"}`}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                      {selectedTicket.closure_rating && (
+                        <p className="text-xs text-slate-400 mt-1">You rated this {selectedTicket.closure_rating}/5</p>
+                      )}
                     </div>
                   )}
 
-                  {/* Add comment */}
-                  <div className="rounded-2xl border p-4 space-y-3">
-                    <h4 className="font-bold text-slate-800 text-sm">Add Comment</h4>
-                    <textarea
-                      value={commentText}
-                      onChange={(e) => setCommentText(e.target.value)}
-                      rows={3}
-                      placeholder="Write your comment…"
-                      className={`${inputCls} resize-none`}
-                    />
-                    <button
-                      onClick={() => void submitComment()}
-                      disabled={commentBusy || !commentText.trim()}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                      {commentBusy ? "Posting…" : "Post Comment"}
-                    </button>
+                  {/* Comments */}
+                  <div className="p-6 space-y-4">
+                    <h3 className="font-black text-slate-950">Comments ({selectedTicket.comments?.length ?? 0})</h3>
+                    {(selectedTicket.comments ?? []).length === 0 ? (
+                      <p className="text-sm text-slate-400">No comments yet.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {(selectedTicket.comments ?? []).map((c) => (
+                          <div key={c.id} className={`rounded-2xl p-4 text-sm ${c.is_internal ? "bg-amber-50 border border-amber-100" : "bg-slate-50"}`}>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="font-bold text-slate-800">{c.author_name ?? "Agent"}</span>
+                              <div className="flex items-center gap-2">
+                                {c.is_internal && (
+                                  <span className="text-xs font-semibold text-amber-600 flex items-center gap-1">
+                                    <EyeOff className="h-3 w-3" /> Internal
+                                  </span>
+                                )}
+                                <span className="text-xs text-slate-400 font-mono">{formatIST(c.created_at)}</span>
+                              </div>
+                            </div>
+                            <p className="text-slate-700">{c.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Add comment / internal note */}
+                    <div className="rounded-2xl border p-4 space-y-3">
+                      {isAdminMode && (
+                        <div className="flex gap-1 rounded-xl border bg-slate-50 p-1 w-fit">
+                          {(["public", "internal"] as const).map(t => (
+                            <button
+                              key={t}
+                              onClick={() => setInternalNoteTab(t)}
+                              className={`rounded-lg px-4 py-1.5 text-xs font-bold cursor-pointer transition-colors ${internalNoteTab === t ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                            >
+                              {t === "internal" ? "Internal Note" : "Public Comment"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <h4 className="font-bold text-slate-800 text-sm">
+                        {isAdminMode && internalNoteTab === "internal" ? "Add Internal Note" : "Add Comment"}
+                      </h4>
+                      <textarea
+                        value={commentText}
+                        onChange={(e) => setCommentText(e.target.value)}
+                        rows={3}
+                        placeholder={isAdminMode && internalNoteTab === "internal" ? "Internal note (not visible to employee)…" : "Write your comment…"}
+                        className={`${inputCls} resize-none`}
+                      />
+                      <button
+                        onClick={() => void submitComment()}
+                        disabled={commentBusy || !commentText.trim()}
+                        className={btnPrimary}
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        {commentBusy ? "Posting…" : "Post"}
+                      </button>
+                    </div>
                   </div>
                 </div>
+
+                {/* Admin action panel */}
+                {isAdminMode && (
+                  <div className="space-y-4">
+                    <div className="rounded-3xl border bg-white shadow-sm p-5 space-y-4">
+                      <h3 className="font-black text-slate-950 text-sm">Admin Actions</h3>
+
+                      {/* Assign + Take */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Assign To</label>
+                        <select
+                          value={assignToUserId}
+                          onChange={e => setAssignToUserId(e.target.value)}
+                          className={inputCls}
+                        >
+                          <option value="">— Select agent —</option>
+                          {agents.map(a => (
+                            <option key={a.id} value={a.id}>{a.full_name}</option>
+                          ))}
+                        </select>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => void doAssign()}
+                            disabled={!assignToUserId || adminActionBusy}
+                            className={`${btnPrimary} flex-1 justify-center`}
+                          >
+                            Assign
+                          </button>
+                          <button
+                            onClick={() => void doTake()}
+                            disabled={adminActionBusy}
+                            className={`${btnSecondary} flex-1 justify-center`}
+                          >
+                            Take
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Priority */}
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Priority</label>
+                        <select
+                          value={selectedTicket.priority}
+                          onChange={e => void doChangePriority(e.target.value)}
+                          className={inputCls}
+                        >
+                          {["low", "medium", "high", "urgent"].map(p => (
+                            <option key={p} value={p} className="capitalize">{p}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</label>
+
+                        {/* Escalate */}
+                        {!["resolved", "closed", "cancelled"].includes(selectedTicket.status) && (
+                          <button
+                            onClick={() => void doEscalate()}
+                            disabled={adminActionBusy}
+                            className="w-full rounded-2xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-bold text-orange-700 hover:bg-orange-100 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            Escalate (L{(selectedTicket.escalation_level ?? 0) + 1})
+                          </button>
+                        )}
+
+                        {/* On Hold toggle */}
+                        {!["resolved", "closed", "cancelled", "on_hold"].includes(selectedTicket.status) && (
+                          <button
+                            onClick={() => { setShowHoldPanel(p => !p); setShowResolvePanel(false); }}
+                            className="w-full rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-bold text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                          >
+                            Put On Hold <ChevronDown className="inline h-3 w-3 ml-1" />
+                          </button>
+                        )}
+                        {showHoldPanel && (
+                          <div className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                            <textarea
+                              value={holdReason}
+                              onChange={e => setHoldReason(e.target.value)}
+                              rows={2}
+                              placeholder="Reason (vendor pending, awaiting parts…)"
+                              className={`${inputCls} resize-none bg-white`}
+                            />
+                            <button
+                              onClick={() => void doHold()}
+                              disabled={!holdReason.trim() || adminActionBusy}
+                              className="rounded-2xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-700 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              Confirm Hold
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Resolve toggle */}
+                        {!["resolved", "closed", "cancelled"].includes(selectedTicket.status) && (
+                          <button
+                            onClick={() => { setShowResolvePanel(p => !p); setShowHoldPanel(false); }}
+                            className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                          >
+                            Resolve <ChevronDown className="inline h-3 w-3 ml-1" />
+                          </button>
+                        )}
+                        {showResolvePanel && (
+                          <div className="space-y-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                            <input
+                              value={resolveNote}
+                              onChange={e => setResolveNote(e.target.value)}
+                              placeholder="Resolution note *"
+                              className={`${inputCls} bg-white`}
+                            />
+                            <input
+                              value={resolveRootCause}
+                              onChange={e => setResolveRootCause(e.target.value)}
+                              placeholder="Root cause (optional)"
+                              className={`${inputCls} bg-white`}
+                            />
+                            <button
+                              onClick={() => void doResolveAdmin()}
+                              disabled={!resolveNote.trim() || adminActionBusy}
+                              className="rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              Mark Resolved
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
         ) : tab === "tickets" ? (
-          /* ── Tickets List ─────────────────────────────────────────────────── */
+          /* ═════════════════════════════════════════════════════════════════════
+              TICKET LIST
+          ═════════════════════════════════════════════════════════════════════ */
           <div className="space-y-4">
+            {/* Status filter pills */}
+            <div className="flex flex-wrap gap-1.5">
+              {STATUS_FILTER_TABS.map(s => (
+                <button
+                  key={s.key}
+                  onClick={() => setStatusFilter(s.key)}
+                  className={`rounded-xl px-4 py-1.5 text-xs font-bold cursor-pointer transition-colors ${statusFilter === s.key ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Search */}
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -419,6 +908,7 @@ export default function NativeHelpdesk() {
                 className="h-11 w-full rounded-2xl border bg-white pl-10 pr-4 text-sm outline-none focus:border-blue-400 transition-colors shadow-sm"
               />
             </div>
+
             <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
               <div className="border-b p-5">
                 <h2 className="font-black text-slate-950">Support Tickets</h2>
@@ -435,10 +925,10 @@ export default function NativeHelpdesk() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[700px] text-sm">
+                  <table className="w-full min-w-[800px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                       <tr>
-                        {["Ticket", "Category", "Priority", "Status", "Assigned To", "Raised On", ""].map((h) => (
+                        {["Ticket", "Category", "Priority", "Status", "SLA", "Assigned To", "Raised On", ""].map((h) => (
                           <th key={h} className="p-4 font-semibold">{h}</th>
                         ))}
                       </tr>
@@ -452,11 +942,23 @@ export default function NativeHelpdesk() {
                         >
                           <td className="p-4">
                             <div className="font-semibold text-slate-900">{t.subject}</div>
-                            {t.ticket_number && <div className="font-mono text-xs text-slate-400">#{t.ticket_number}</div>}
+                            {(t.ticket_number || t.ticket_code) && (
+                              <div className="font-mono text-xs text-slate-400">#{t.ticket_number ?? t.ticket_code}</div>
+                            )}
                           </td>
-                          <td className="p-4 text-slate-600">{t.category}</td>
+                          <td className="p-4 text-slate-600">
+                            <div>{t.category}</div>
+                            {t.it_subcategory && (
+                              <div className="text-xs text-slate-400">
+                                {BPO_IT_SUBCATEGORIES.find(s => s.value === t.it_subcategory)?.label ?? t.it_subcategory}
+                              </div>
+                            )}
+                          </td>
                           <td className="p-4"><PriorityBadge priority={t.priority} /></td>
                           <td className="p-4"><StatusBadge status={t.status} /></td>
+                          <td className="p-4">
+                            <SlaBadge sla_due_at={t.sla_due_at} sla_breached={!!t.sla_breached} status={t.status} />
+                          </td>
                           <td className="p-4 text-slate-500">{t.assigned_name ?? "–"}</td>
                           <td className="p-4 font-mono text-xs text-slate-400">{formatISTDate(t.created_at)}</td>
                           <td className="p-4 text-blue-600 text-xs font-bold">View →</td>
@@ -469,8 +971,10 @@ export default function NativeHelpdesk() {
             </div>
           </div>
 
-        ) : (
-          /* ── Grievances List ──────────────────────────────────────────────── */
+        ) : tab === "grievances" ? (
+          /* ═════════════════════════════════════════════════════════════════════
+              GRIEVANCES LIST
+          ═════════════════════════════════════════════════════════════════════ */
           <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
             <div className="border-b p-5">
               <h2 className="font-black text-slate-950">Grievances</h2>
@@ -490,7 +994,7 @@ export default function NativeHelpdesk() {
                 <table className="w-full min-w-[700px] text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      {["Subject", "Type", "Status", "Anonymous", "Submitted On"].map((h) => (
+                      {["Subject", "Type", "Severity", "Status", "Anonymous", "Submitted On"].map((h) => (
                         <th key={h} className="p-4 font-semibold">{h}</th>
                       ))}
                     </tr>
@@ -503,6 +1007,9 @@ export default function NativeHelpdesk() {
                           <div className="text-xs text-slate-400 mt-0.5 line-clamp-1">{g.description}</div>
                         </td>
                         <td className="p-4 text-slate-600 capitalize">{g.grievance_type.replace(/_/g, " ")}</td>
+                        <td className="p-4">
+                          {g.severity && <span className="capitalize text-xs text-slate-600">{g.severity}</span>}
+                        </td>
                         <td className="p-4"><StatusBadge status={g.status} /></td>
                         <td className="p-4">
                           {g.is_anonymous ? (
@@ -521,24 +1028,143 @@ export default function NativeHelpdesk() {
               </div>
             )}
           </div>
+
+        ) : (
+          /* ═════════════════════════════════════════════════════════════════════
+              KNOWLEDGE BASE
+          ═════════════════════════════════════════════════════════════════════ */
+          <div className="space-y-4">
+            {selectedKbArticle ? (
+              /* Article detail */
+              <div className="space-y-4">
+                <button onClick={() => setSelectedKbArticle(null)} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-900 cursor-pointer">
+                  <ArrowLeft className="h-4 w-4" /> Back to Articles
+                </button>
+                <div className="rounded-3xl border bg-white shadow-sm p-6 space-y-4">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 capitalize">{selectedKbArticle.category}</span>
+                    {selectedKbArticle.it_subcategory && (
+                      <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-slate-100 text-slate-600">
+                        {BPO_IT_SUBCATEGORIES.find(s => s.value === selectedKbArticle.it_subcategory)?.label ?? selectedKbArticle.it_subcategory}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-2xl font-black text-slate-950">{selectedKbArticle.title}</h2>
+                  <div className="flex items-center gap-4 text-xs text-slate-400">
+                    <span>{selectedKbArticle.view_count} views</span>
+                    <span>{selectedKbArticle.helpful_count} found helpful</span>
+                    {selectedKbArticle.author_name && <span>by {selectedKbArticle.author_name}</span>}
+                  </div>
+                  <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap leading-relaxed border-t pt-4">
+                    {selectedKbArticle.content}
+                  </div>
+                  {selectedKbArticle.tags && (
+                    <div className="flex flex-wrap gap-1.5 pt-2">
+                      {selectedKbArticle.tags.split(",").map(tag => tag.trim()).filter(Boolean).map(tag => (
+                        <span key={tag} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">{tag}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="border-t pt-4">
+                    <p className="text-sm font-semibold text-slate-700 mb-2">Was this helpful?</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => void voteKb(selectedKbArticle.id, true)}
+                        disabled={kbVoteBusy}
+                        className="inline-flex items-center gap-1.5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 cursor-pointer transition-colors disabled:opacity-50"
+                      >
+                        <ThumbsUp className="h-4 w-4" /> Yes ({selectedKbArticle.helpful_count})
+                      </button>
+                      <button
+                        onClick={() => void voteKb(selectedKbArticle.id, false)}
+                        disabled={kbVoteBusy}
+                        className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer transition-colors disabled:opacity-50"
+                      >
+                        <ThumbsDown className="h-4 w-4" /> No ({selectedKbArticle.not_helpful_count})
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Article list */
+              <>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={kbSearch}
+                    onChange={(e) => handleKbSearch(e.target.value)}
+                    placeholder="Search knowledge base…"
+                    className="h-11 w-full rounded-2xl border bg-white pl-10 pr-4 text-sm outline-none focus:border-blue-400 transition-colors shadow-sm"
+                  />
+                </div>
+                {kbLoading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader className="h-8 w-8 animate-spin text-slate-400" />
+                  </div>
+                ) : kbArticles.length === 0 ? (
+                  <div className="py-16 text-center text-slate-400">
+                    <BookOpen className="mx-auto mb-3 h-10 w-10 opacity-30" />
+                    <p className="font-semibold">No articles found.</p>
+                    {isAdminMode && (
+                      <button onClick={() => setShowCreateKb(true)} className={`${btnPrimary} mt-4 mx-auto`}>
+                        <Plus className="h-4 w-4" /> Create First Article
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {kbArticles.map(a => (
+                      <div
+                        key={a.id}
+                        onClick={() => void loadKbArticleDetail(a.id)}
+                        className="rounded-3xl border bg-white p-5 cursor-pointer hover:shadow-md transition-shadow space-y-2"
+                      >
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 capitalize">{a.category}</span>
+                          {a.it_subcategory && (
+                            <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-slate-100 text-slate-600">
+                              {BPO_IT_SUBCATEGORIES.find(s => s.value === a.it_subcategory)?.label ?? a.it_subcategory}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="font-black text-slate-950 text-sm leading-snug line-clamp-2">{a.title}</h3>
+                        {a.tags && (
+                          <p className="text-xs text-slate-400 line-clamp-1">{a.tags}</p>
+                        )}
+                        <div className="flex items-center gap-3 text-xs text-slate-400 pt-1">
+                          <span>{a.view_count} views</span>
+                          <span className="flex items-center gap-0.5"><ThumbsUp className="h-3 w-3" /> {a.helpful_count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
       </div>
 
       {/* ── Raise Ticket Modal ────────────────────────────────────────────────── */}
       {showRaiseTicket && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b p-6">
               <h2 className="text-lg font-black text-slate-950">Raise Support Ticket</h2>
-              <button onClick={() => setShowRaiseTicket(false)} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
+              <button onClick={() => setShowRaiseTicket(false)} className="cursor-pointer text-slate-400 hover:text-slate-700">
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Category">
-                  <select value={ticketForm.category} onChange={(e) => setTicketForm({ ...ticketForm, category: e.target.value })} className={inputCls}>
-                    {["IT", "HR", "Payroll", "Admin", "Other"].map((c) => (
+                  <select
+                    value={ticketForm.category}
+                    onChange={(e) => setTicketForm({ ...ticketForm, category: e.target.value, it_subcategory: "" })}
+                    className={inputCls}
+                  >
+                    {["IT", "HR", "Payroll", "Admin", "Asset", "Leave", "Attendance", "Other"].map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
                   </select>
@@ -552,6 +1178,44 @@ export default function NativeHelpdesk() {
                   </select>
                 </Field>
               </div>
+
+              {ticketForm.category.toLowerCase() === "it" && (
+                <>
+                  <Field label="IT Sub-Category">
+                    <select
+                      value={ticketForm.it_subcategory}
+                      onChange={(e) => setTicketForm({ ...ticketForm, it_subcategory: e.target.value })}
+                      className={inputCls}
+                    >
+                      <option value="">— Select sub-category —</option>
+                      {BPO_IT_SUBCATEGORIES.map(s => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Agent Downtime (min)">
+                      <input
+                        type="number"
+                        min={0}
+                        value={ticketForm.downtime_minutes}
+                        onChange={(e) => setTicketForm({ ...ticketForm, downtime_minutes: Math.max(0, Number(e.target.value)) })}
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Affected Seats">
+                      <input
+                        type="number"
+                        min={1}
+                        value={ticketForm.affected_seats}
+                        onChange={(e) => setTicketForm({ ...ticketForm, affected_seats: Math.max(1, Number(e.target.value)) })}
+                        className={inputCls}
+                      />
+                    </Field>
+                  </div>
+                </>
+              )}
+
               <Field label="Subject *">
                 <input value={ticketForm.subject} onChange={(e) => setTicketForm({ ...ticketForm, subject: e.target.value })} placeholder="Brief summary of the issue" className={inputCls} />
               </Field>
@@ -560,10 +1224,10 @@ export default function NativeHelpdesk() {
               </Field>
             </div>
             <div className="flex gap-3 border-t p-6">
-              <button onClick={() => setShowRaiseTicket(false)} className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+              <button onClick={() => setShowRaiseTicket(false)} className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                 Cancel
               </button>
-              <button onClick={() => void submitTicket()} disabled={ticketBusy} className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50">
+              <button onClick={() => void submitTicket()} disabled={ticketBusy} className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
                 {ticketBusy ? "Submitting…" : "Submit Ticket"}
               </button>
             </div>
@@ -577,7 +1241,7 @@ export default function NativeHelpdesk() {
           <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b p-6">
               <h2 className="text-lg font-black text-slate-950">Submit Grievance</h2>
-              <button onClick={() => setShowRaiseGrievance(false)} className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors">
+              <button onClick={() => setShowRaiseGrievance(false)} className="cursor-pointer text-slate-400 hover:text-slate-700">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -599,17 +1263,15 @@ export default function NativeHelpdesk() {
                   </select>
                 </Field>
               </div>
-              <div className="flex items-center gap-3 py-1">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={grievanceForm.is_anonymous}
-                    onChange={(e) => setGrievanceForm({ ...grievanceForm, is_anonymous: e.target.checked })}
-                    className="h-4 w-4 rounded"
-                  />
-                  <span className="text-sm text-slate-700 font-semibold">Submit anonymously (your identity will not be revealed to management)</span>
-                </label>
-              </div>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={grievanceForm.is_anonymous}
+                  onChange={(e) => setGrievanceForm({ ...grievanceForm, is_anonymous: e.target.checked })}
+                  className="h-4 w-4 rounded"
+                />
+                <span className="text-sm text-slate-700 font-semibold">Submit anonymously</span>
+              </label>
               <Field label="Subject *">
                 <input value={grievanceForm.subject} onChange={(e) => setGrievanceForm({ ...grievanceForm, subject: e.target.value })} placeholder="Brief subject" className={inputCls} />
               </Field>
@@ -618,11 +1280,65 @@ export default function NativeHelpdesk() {
               </Field>
             </div>
             <div className="flex gap-3 border-t p-6">
-              <button onClick={() => setShowRaiseGrievance(false)} className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+              <button onClick={() => setShowRaiseGrievance(false)} className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                 Cancel
               </button>
-              <button onClick={() => void submitGrievance()} disabled={grievanceBusy} className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50">
+              <button onClick={() => void submitGrievance()} disabled={grievanceBusy} className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
                 {grievanceBusy ? "Submitting…" : "Submit Grievance"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Create KB Article Modal ───────────────────────────────────────────── */}
+      {showCreateKb && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b p-6">
+              <h2 className="text-lg font-black text-slate-950">New KB Article</h2>
+              <button onClick={() => setShowCreateKb(false)} className="cursor-pointer text-slate-400 hover:text-slate-700">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <Field label="Title *">
+                <input value={kbForm.title} onChange={e => setKbForm({ ...kbForm, title: e.target.value })} placeholder="Article title" className={inputCls} />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Category">
+                  <select value={kbForm.category} onChange={e => setKbForm({ ...kbForm, category: e.target.value, it_subcategory: "" })} className={inputCls}>
+                    {["it", "hr", "payroll", "admin", "general"].map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
+                  </select>
+                </Field>
+                {kbForm.category === "it" && (
+                  <Field label="IT Sub-Category">
+                    <select value={kbForm.it_subcategory} onChange={e => setKbForm({ ...kbForm, it_subcategory: e.target.value })} className={inputCls}>
+                      <option value="">— None —</option>
+                      {BPO_IT_SUBCATEGORIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </Field>
+                )}
+              </div>
+              <Field label="Tags (comma-separated)">
+                <input value={kbForm.tags} onChange={e => setKbForm({ ...kbForm, tags: e.target.value })} placeholder="dialer, softphone, cisco" className={inputCls} />
+              </Field>
+              <Field label="Content *">
+                <textarea value={kbForm.content} onChange={e => setKbForm({ ...kbForm, content: e.target.value })} rows={8} placeholder="Step-by-step solution or guidance…" className={`${inputCls} resize-none font-mono text-xs`} />
+              </Field>
+              <Field label="Status">
+                <select value={kbForm.status} onChange={e => setKbForm({ ...kbForm, status: e.target.value })} className={inputCls}>
+                  <option value="published">Published</option>
+                  <option value="draft">Draft</option>
+                </select>
+              </Field>
+            </div>
+            <div className="flex gap-3 border-t p-6">
+              <button onClick={() => setShowCreateKb(false)} className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={() => void submitKbArticle()} disabled={kbFormBusy} className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
+                {kbFormBusy ? "Publishing…" : "Publish Article"}
               </button>
             </div>
           </div>

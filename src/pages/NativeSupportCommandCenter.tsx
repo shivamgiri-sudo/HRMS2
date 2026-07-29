@@ -67,6 +67,22 @@ type SupportCommandCenterData = {
   root_causes: RootCauseRow[];
 };
 
+type QueueTicket = {
+  id: string;
+  ticket_number?: string;
+  ticket_code?: string;
+  subject: string;
+  category: string;
+  priority: string;
+  status: string;
+  assigned_name?: string;
+  sla_due_at?: string;
+  sla_breached?: boolean;
+  created_at: string;
+};
+
+type QueueAgent = { id: string; full_name: string };
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatMinutes(mins: number | null): string {
@@ -95,6 +111,12 @@ export default function NativeSupportCommandCenter() {
   const [aging, setAging]         = useState<AgingBuckets | null>(null);
   const [rootCauses, setRootCauses] = useState<RootCauseRow[]>([]);
   const [lastRefresh, setLastRefresh] = useState<string>("");
+
+  // Ticket queue
+  const [queueTickets, setQueueTickets]     = useState<QueueTicket[]>([]);
+  const [queueLoading, setQueueLoading]     = useState(false);
+  const [queueActionBusy, setQueueActionBusy] = useState<string | null>(null);
+  const [queueAgents, setQueueAgents]       = useState<QueueAgent[]>([]);
 
   // Filters
   const [from, setFrom]     = useState(() => {
@@ -135,6 +157,49 @@ export default function NativeSupportCommandCenter() {
   }, [from, to, category, priority, status]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadQueue = useCallback(async () => {
+    setQueueLoading(true);
+    try {
+      const [ticketRes, agentRes] = await Promise.all([
+        hrmsApi.get<{ data: QueueTicket[] }>("/api/helpdesk/tickets?status=open"),
+        hrmsApi.get<{ success: boolean; data: QueueAgent[] }>("/api/helpdesk/agents"),
+      ]);
+      setQueueTickets(ticketRes.data ?? []);
+      setQueueAgents(agentRes.data ?? []);
+    } catch { /* non-fatal */ }
+    finally { setQueueLoading(false); }
+  }, []);
+
+  useEffect(() => { void loadQueue(); }, [loadQueue]);
+
+  const doQueueAssign = async (ticketId: string, userId: string) => {
+    if (!userId) return;
+    setQueueActionBusy(ticketId);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/assign`, { assigned_to: userId });
+      await loadQueue();
+    } catch { /* non-fatal */ }
+    finally { setQueueActionBusy(null); }
+  };
+
+  const doQueueTake = async (ticketId: string) => {
+    setQueueActionBusy(ticketId);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/take`, {});
+      await loadQueue();
+    } catch { /* non-fatal */ }
+    finally { setQueueActionBusy(null); }
+  };
+
+  const doQueueEscalate = async (ticketId: string) => {
+    setQueueActionBusy(ticketId);
+    try {
+      await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/escalate`, {});
+      await loadQueue();
+    } catch { /* non-fatal */ }
+    finally { setQueueActionBusy(null); }
+  };
 
   return (
     <DashboardLayout>
@@ -337,6 +402,122 @@ export default function NativeSupportCommandCenter() {
             </div>
           </>
         )}
+
+        {/* ── Open Ticket Queue ─────────────────────────────────────────────── */}
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Ticket size={16} className="text-indigo-500" /> Open Ticket Queue
+              {queueTickets.length > 0 && (
+                <span className="ml-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5">
+                  {queueTickets.length}
+                </span>
+              )}
+            </h2>
+            <button
+              onClick={() => void loadQueue()}
+              disabled={queueLoading}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
+            >
+              <RefreshCcw size={12} className={queueLoading ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          </div>
+
+          {queueLoading ? (
+            <div className="py-8 text-center text-gray-400 text-xs">Loading queue…</div>
+          ) : queueTickets.length === 0 ? (
+            <div className="py-8 text-center text-gray-400 text-sm flex flex-col items-center gap-2">
+              <CheckCircle2 size={24} className="text-emerald-400" />
+              No open tickets — queue is clear!
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[750px] text-sm">
+                <thead className="text-xs text-gray-400 uppercase border-b">
+                  <tr>
+                    <th className="pb-2 text-left font-semibold">Ticket</th>
+                    <th className="pb-2 text-left font-semibold">Category</th>
+                    <th className="pb-2 text-left font-semibold">Priority</th>
+                    <th className="pb-2 text-left font-semibold">SLA</th>
+                    <th className="pb-2 text-left font-semibold">Agent</th>
+                    <th className="pb-2 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {queueTickets.slice(0, 25).map(t => {
+                    const isBusy = queueActionBusy === t.id;
+                    const slaBadge = (() => {
+                      if (t.sla_breached) return <span className="text-xs font-bold text-red-600">Breached</span>;
+                      if (!t.sla_due_at) return <span className="text-xs text-gray-300">—</span>;
+                      const minsLeft = Math.floor((new Date(t.sla_due_at).getTime() - Date.now()) / 60000);
+                      if (minsLeft < 0)   return <span className="text-xs font-bold text-red-600">Breached</span>;
+                      if (minsLeft <= 60) return <span className="text-xs font-semibold text-amber-600">&lt;1h</span>;
+                      if (minsLeft <= 240) return <span className="text-xs text-yellow-600">{Math.round(minsLeft / 60)}h</span>;
+                      return <span className="text-xs text-emerald-600">On Time</span>;
+                    })();
+                    return (
+                      <tr key={t.id} className="hover:bg-gray-50/60 transition-colors">
+                        <td className="py-2.5 pr-3">
+                          <div className="font-medium text-gray-800 text-sm leading-tight line-clamp-1">{t.subject}</div>
+                          <div className="text-gray-400 text-xs font-mono">
+                            #{t.ticket_number ?? t.ticket_code ?? t.id.slice(0, 8)}
+                          </div>
+                        </td>
+                        <td className="py-2.5 pr-3 text-xs text-gray-500 capitalize">{t.category}</td>
+                        <td className="py-2.5 pr-3">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded border capitalize ${PRIORITY_COLOR[t.priority] ?? ""}`}>
+                            {t.priority}
+                          </span>
+                        </td>
+                        <td className="py-2.5 pr-3">{slaBadge}</td>
+                        <td className="py-2.5 pr-3 text-xs">
+                          {t.assigned_name
+                            ? <span className="text-gray-600">{t.assigned_name}</span>
+                            : <span className="text-amber-600 font-semibold">Unassigned</span>
+                          }
+                        </td>
+                        <td className="py-2.5">
+                          <div className="flex items-center justify-end gap-2">
+                            <select
+                              defaultValue=""
+                              onChange={e => void doQueueAssign(t.id, e.target.value)}
+                              disabled={isBusy}
+                              className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600 bg-white cursor-pointer disabled:opacity-50"
+                            >
+                              <option value="">Assign…</option>
+                              {queueAgents.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                            </select>
+                            <button
+                              onClick={() => void doQueueTake(t.id)}
+                              disabled={isBusy}
+                              className="text-xs bg-indigo-50 text-indigo-700 rounded-lg px-2.5 py-1 font-semibold hover:bg-indigo-100 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              Take
+                            </button>
+                            <button
+                              onClick={() => void doQueueEscalate(t.id)}
+                              disabled={isBusy}
+                              className="text-xs bg-red-50 text-red-600 rounded-lg px-2.5 py-1 font-semibold hover:bg-red-100 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              Escalate
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {queueTickets.length > 25 && (
+                <p className="text-xs text-gray-400 text-center pt-3">
+                  Showing 25 of {queueTickets.length} open tickets. Visit /helpdesk for full list.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
       </div>
     </DashboardLayout>
   );

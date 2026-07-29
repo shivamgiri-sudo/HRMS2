@@ -303,7 +303,7 @@ export async function refreshSlaBreachFlags() {
         SET sla_breached = 1
       WHERE sla_due_at IS NOT NULL
         AND sla_due_at < NOW()
-        AND status NOT IN ('resolved','closed','cancelled')
+        AND status NOT IN ('resolved','closed','cancelled','on_hold')
         AND sla_breached = 0`
   );
 }
