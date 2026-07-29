@@ -24,6 +24,12 @@ export interface AiGenerateRequest {
   systemInstruction?: string;
   userQuestion: string;
   sanitizedContext: Record<string, unknown>;
+  /**
+   * Earlier turns of this conversation, oldest first. Only turns that were
+   * themselves eligible to reach an external provider belong here — see
+   * providerHistory() in ai-conversation.service.
+   */
+  conversation?: Array<{ question: string; answer: string }>;
   temperature?: number;
   maxOutputTokens?: number;
   responseFormat?: 'text' | 'json';

@@ -24,6 +24,7 @@ import {
   MIRA_TAGLINE,
   MiraDataUnavailableError,
 } from './ai-account.service.js';
+import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory } from './ai-conversation.service.js';
 import {
   answerCompanyQuestion,
   companyKnowledgeMissResponse,
@@ -314,9 +315,32 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
   const safeContextType = contextCheck.sanitizedContextType ?? 'generic';
   const safeQuestion = questionCheck.sanitizedQuestion!;
 
+  /**
+   * Remember the exchange and return it. `externalSafe` decides whether this
+   * turn may ever be replayed to a provider: self-account answers carry the
+   * employee's own salary and attendance, so they stay in process.
+   */
+  const respond = (
+    response: { answer: string },
+    options: { externalSafe: boolean; intent?: string },
+  ) => {
+    recordTurn(userId, {
+      question: safeQuestion,
+      answer: response.answer,
+      intent: options.intent,
+      externalSafe: options.externalSafe,
+    });
+    return res.json(apiSuccess(response));
+  };
+
+  // "and last month?" only means something against the previous turn. Rewrite it
+  // into a question the intent router can serve; leave anything self-contained be.
+  const carried = resolveFollowUp(safeQuestion, lastIntentTurn(userId));
+  const routedQuestion = carried ?? safeQuestion;
+
   let local;
   try {
-    local = await answerSelfAccountQuestion(safeQuestion, userId, roleKeys);
+    local = await answerSelfAccountQuestion(routedQuestion, userId, roleKeys);
   } catch (error) {
     if (error instanceof MiraDataUnavailableError) {
       return res.status(503).json(apiError(
@@ -339,7 +363,7 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     };
     await aiAuditService.logUsage(request, local.response);
     await aiAuditService.logPromptAudit(request, false, [], local.response.answer.slice(0, 200));
-    return res.json(apiSuccess(local.response));
+    return respond(local.response, { externalSafe: false, intent: local.intent });
   }
 
   const companyAnswer = await answerCompanyQuestion(safeQuestion);
@@ -355,7 +379,7 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     };
     await aiAuditService.logUsage(request, companyAnswer);
     await aiAuditService.logPromptAudit(request, false, [], companyAnswer.answer.slice(0, 200));
-    return res.json(apiSuccess(companyAnswer));
+    return respond(companyAnswer, { externalSafe: true });
   }
 
   const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
@@ -406,7 +430,7 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
       sanitizationResult.sensitiveFieldsRemoved,
       response.answer.slice(0, 200),
     );
-    return res.json(apiSuccess(response));
+    return respond(response, { externalSafe: true });
   }
 
   if (provider.key === 'rule-based') {
@@ -417,7 +441,7 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     };
     await aiAuditService.logUsage(request, response);
     await aiAuditService.logPromptAudit(request, false, [], response.answer.slice(0, 200));
-    return res.json(apiSuccess(response));
+    return respond(response, { externalSafe: true });
   }
 
   const request: AiGenerateRequest = {
@@ -429,6 +453,9 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     systemInstruction: COMPANY_SYSTEM_INSTRUCTION,
     userQuestion: safeQuestion,
     sanitizedContext: sanitizationResult.sanitizedContext,
+    // Only turns that were themselves external-safe; self-account answers stay
+    // in process, so a salary reply from an earlier turn cannot ride along here.
+    conversation: providerHistory(userId),
     temperature: 0.2,
     maxOutputTokens: 800,
     requestSource: 'copilot',
@@ -456,7 +483,7 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     response.answer.slice(0, 200)
   );
 
-  return res.json(apiSuccess(response));
+  return respond(response, { externalSafe: true });
 }));
 
 /**

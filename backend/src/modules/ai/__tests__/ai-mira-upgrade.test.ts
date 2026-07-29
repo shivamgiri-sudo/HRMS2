@@ -122,7 +122,9 @@ describe('Mira live grounding and OpenRouter upgrade', () => {
 
   it('keeps live self-service before any external AI rate limit', () => {
     const routes = source('../ai-insights.routes.ts');
-    const localIndex = routes.indexOf('answerSelfAccountQuestion(safeQuestion');
+    // The argument is `routedQuestion` since follow-up resolution landed; what
+    // this guards is the call order, not the variable name.
+    const localIndex = routes.indexOf('answerSelfAccountQuestion(');
     const companyIndex = routes.indexOf('answerCompanyQuestion(safeQuestion');
     const rateIndex = routes.indexOf('checkAndIncrement(userId');
     expect(localIndex).toBeGreaterThan(-1);

@@ -117,14 +117,21 @@ export class GeminiProvider implements AiProvider {
       const userQuestion = request.userQuestion;
       const contextStr = JSON.stringify(request.sanitizedContext, null, 2);
 
+      const history = (request.conversation ?? [])
+        .map((turn) => ['User: ' + turn.question, 'Mira: ' + turn.answer].join('\n'))
+        .join('\n\n');
+
       const prompt = `${systemInstruction}
 
 Context (sanitized and PII-protected):
 ${contextStr}
-
+${history ? `
+Earlier in this conversation:
+${history}
+` : ''}
 User question: ${userQuestion}
 
-Provide a concise, actionable response based solely on the provided context.`;
+Provide a concise, actionable response based solely on the provided context. When the question refers to something earlier in the conversation, use that context to answer it.`;
 
       // Generate content
       const result = await model.generateContent({
