@@ -195,6 +195,49 @@ describe('sendBulkReminders', () => {
   });
 });
 
+/**
+ * The tracker was widened to `active_status IN (0, 1)` to surface pre-joiners,
+ * on the assumption that 0 meant "not yet joined". On live data it overwhelmingly
+ * means "left": 57,310 resigned/terminated/inactive records against 9 employees
+ * who genuinely have a joining checklist. The tracker returned 58,652 rows
+ * instead of 1,344, and the bulk actions inherited the same scope — so selecting
+ * from that list could generate joining paperwork for resigned staff.
+ *
+ * These tests pin the predicates rather than the row counts, because the ids
+ * arrive from the client and the guard has to live in the SQL.
+ */
+describe('leaver scoping', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const employeeSelectSql = () =>
+    vi.mocked(db.query).mock.calls.map((call) => String(call[0])).find((sql) => /FROM employees/i.test(sql)) ?? '';
+
+  it('bulkGenerateChecklists refuses resigned and terminated employees', async () => {
+    // Employee selection, then the existing-checklist lookup.
+    vi.mocked(db.query).mockResolvedValueOnce([[], []] as never);
+    vi.mocked(db.query).mockResolvedValueOnce([[], []] as never);
+    await bulkGenerateChecklists(['emp-1'], 'actor-user-1');
+
+    const sql = employeeSelectSql();
+    expect(sql, 'employee selection query was not issued').not.toBe('');
+    expect(sql, 'a leaver could still be given a joining-document pack')
+      .toMatch(/employment_status[\s\S]*NOT IN[\s\S]*resigned[\s\S]*terminated/i);
+    // The predicate that caused the regression must be gone.
+    expect(sql).not.toMatch(/active_status\s+IN\s*\(\s*0\s*,\s*1\s*\)/i);
+  });
+
+  it('sendBulkReminders refuses resigned and terminated employees', async () => {
+    vi.mocked(db.query).mockResolvedValueOnce([[], []] as never);
+    await sendBulkReminders(['emp-1'], null, 'actor-user-1');
+
+    const sql = employeeSelectSql();
+    expect(sql, 'employee selection query was not issued').not.toBe('');
+    expect(sql, 'a leaver could still be chased for joining paperwork')
+      .toMatch(/employment_status[\s\S]*NOT IN[\s\S]*resigned[\s\S]*terminated/i);
+    expect(sql).not.toMatch(/active_status\s+IN\s*\(\s*0\s*,\s*1\s*\)/i);
+  });
+});
+
 describe('bulkGenerateChecklists', () => {
   beforeEach(() => {
     vi.clearAllMocks();

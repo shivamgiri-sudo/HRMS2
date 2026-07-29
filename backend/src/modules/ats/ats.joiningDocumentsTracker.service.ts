@@ -169,10 +169,25 @@ export async function getJoiningDocumentsTracker(
   const isBranchHead = roleKeys.includes('branch_head');
 
   // Build WHERE clause filters
-  // Include pre-joiners: employees are created with active_status = 0 and are
-  // only activated on their joining date, so filtering on 1 hid precisely the
-  // population whose documents must be signed before day one.
-  const whereClauses: string[] = ["e.active_status IN (0, 1)", 'e.employee_code IS NOT NULL'];
+  //
+  // Scope: anyone who actually has joining documents, plus current staff.
+  //
+  // Pre-joiners sit at active_status = 0 until their joining date, so filtering
+  // on 1 alone hid precisely the population whose documents must be signed
+  // before day one. But active_status = 0 is overwhelmingly *left the company*,
+  // not *not yet joined* — on live data it covers 57,310 resigned, terminated
+  // and inactive records against 9 employees who genuinely have a checklist.
+  // Widening to IN (0, 1) therefore buried the tracker under ex-employees.
+  //
+  // Presence of a checklist is the honest test: it is created when a joiner
+  // needs documents, so it admits pre-joiners without admitting leavers, and it
+  // needs no interpretation of employment_status.
+  const whereClauses: string[] = [
+    `(e.active_status = 1 OR EXISTS (
+        SELECT 1 FROM employee_joining_document_checklist k WHERE k.employee_id = e.id))`,
+    `LOWER(COALESCE(e.employment_status, '')) NOT IN ('resigned', 'terminated')`,
+    'e.employee_code IS NOT NULL',
+  ];
   const params: (string | number)[] = [];
 
   // Branch Head scoping
@@ -338,9 +353,12 @@ export async function sendBulkReminders(
   };
 
   const [employees] = await db.query<RowDataPacket[]>(
+    // A leaver must never be chased for joining paperwork, whatever the caller
+    // selected — the ids arrive from the client, so the guard belongs here.
     `SELECT id, employee_code, full_name, official_email, personal_email, mobile
      FROM employees
-     WHERE id IN (?) AND active_status IN (0, 1)`,
+     WHERE id IN (?)
+       AND LOWER(COALESCE(employment_status, '')) NOT IN ('resigned', 'terminated')`,
     [employeeIds]
   );
 
@@ -648,9 +666,13 @@ export async function bulkGenerateChecklists(
   };
 
   const [employees] = await db.query<RowDataPacket[]>(
+    // Generating a joining-document pack for someone who has already left is
+    // the worst outcome here: it creates paperwork, emails and audit rows for a
+    // person no longer employed. Refuse regardless of what was selected.
     `SELECT id, employee_code, full_name
      FROM employees
-     WHERE id IN (?) AND active_status IN (0, 1)`,
+     WHERE id IN (?)
+       AND LOWER(COALESCE(employment_status, '')) NOT IN ('resigned', 'terminated')`,
     [employeeIds]
   );
 
