@@ -50,6 +50,7 @@ import { employeeGovernanceRouter } from "./modules/employees/employee-governanc
 import { employeePhotoCompatRouter } from "./modules/employees/employee.photo.compat.routes.js";
 import { rmChangeRouter } from "./modules/employees/rm-change.routes.js";
 import { employeeJoiningDocumentsRouter, hrDocumentTemplatesRouter, payrollEpfComplianceRouter, publicEmployeeDocumentRouter } from "./modules/employees/employee.compliance.routes.js";
+import companySealRouter from "./modules/employees/companySeal.routes.js";
 import { employeeBgvRouter } from "./modules/employees/employee-bgv.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
@@ -393,6 +394,7 @@ app.use("/api/lifecycle", lifecycleRouter);
 app.use("/api/assets-mgmt", assetsRouter);
 app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/hr", hrDocumentTemplatesRouter);
+app.use("/api/company-seal", companySealRouter);
 app.use("/api/payroll", payrollEpfComplianceRouter);
 app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 app.use("/api/helpdesk", helpdeskRouter);

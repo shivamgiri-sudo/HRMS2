@@ -26,7 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion, FlaskConical } from "lucide-react";
+import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion, FlaskConical, Stamp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useDepartments";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -37,6 +37,7 @@ import { UserRolesManager } from "@/components/settings/UserRolesManager";
 import { EmployeeCodeSettings } from "@/components/settings/EmployeeCodeSettings";
 import DomainWhitelistSettings from "@/components/settings/DomainWhitelistSettings";
 import OfficeLocationSettings from "@/components/settings/OfficeLocationSettings";
+import CompanySealSettings from "@/components/settings/CompanySealSettings";
 
 // Fetch leave types from MySQL backend
 const useLeaveTypes = () => {
@@ -749,6 +750,13 @@ const Settings = () => {
               </TabsTrigger>
             )}
             {isAdmin && (
+              <TabsTrigger value="company-seal" className="w-full justify-center gap-2 sm:w-auto">
+                <Stamp className="h-4 w-4" />
+                <span className="hidden sm:inline">Signature &amp; Stamp</span>
+                <span className="sm:hidden">Seal</span>
+              </TabsTrigger>
+            )}
+            {isAdmin && (
               <TabsTrigger value="office-location" className="w-full justify-center gap-2 sm:w-auto">
                 <MapPin className="h-4 w-4" />
                 <span className="hidden sm:inline">Office Location</span>
@@ -1031,6 +1039,13 @@ const Settings = () => {
           {isAdmin && (
             <TabsContent value="domain-whitelist" className="mt-6">
               <DomainWhitelistSettings />
+            </TabsContent>
+          )}
+
+          {/* Company signature & stamp - Admin Only */}
+          {isAdmin && (
+            <TabsContent value="company-seal" className="mt-6">
+              <CompanySealSettings />
             </TabsContent>
           )}
 

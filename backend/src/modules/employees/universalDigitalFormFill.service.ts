@@ -5,10 +5,12 @@ import PDFDocumentKit from "pdfkit";
 import pdfLib from "pdf-lib";
 const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
+import { epfNominationFieldMaps } from "./epfNominationForm.js";
 import type { RowDataPacket } from "mysql2";
 
 import { db } from "../../db/mysql.js";
 import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.service.js";
+import { applyCompanySeal } from "./companySeal.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 
@@ -349,9 +351,31 @@ function epfAcroformFieldMaps(): FieldMapInput[] {
   ];
 }
 
-function defaultMapsForTemplate(documentCode: string, fileName?: string | null, fileBuffer?: Buffer | null): FieldMapInput[] {
-  if (String(documentCode || "").trim().toUpperCase() === "EPF_DECLARATION" && String(fileName || "").toLowerCase().endsWith(".pdf")) {
+export function defaultMapsForTemplate(documentCode: string, fileName?: string | null, fileBuffer?: Buffer | null): FieldMapInput[] {
+  const code = String(documentCode || "").trim().toUpperCase();
+  const isPdf = String(fileName || "").toLowerCase().endsWith(".pdf");
+  // The two statutory EPF forms are authored AcroForms with fixed field names,
+  // so their maps come from the form definition rather than being derived.
+  if (code === "EPF_DECLARATION" && isPdf) {
     return epfAcroformFieldMaps();
+  }
+  if (code === "EPF_NOMINATION_FORM2" && isPdf) {
+    return epfNominationFieldMaps().map((map) => ({
+      field_key: map.field_key,
+      field_label: map.field_label,
+      source_path: map.source_path ?? null,
+      page_no: 1,
+      x: null, y: null, width: null, height: null,
+      font_size: 9, font_weight: null, alignment: null,
+      field_type: map.field_type ?? "text",
+      required: false,
+      masking_rule: null,
+      mapping_mode: "acroform",
+      placeholder_token: null,
+      pdf_field_name: map.pdf_field_name,
+      transform_rule: map.transform_rule ?? null,
+      checked_when: map.checked_when ?? null,
+    })) as FieldMapInput[];
   }
 
   const placeholders = extractDocxPlaceholders(fileBuffer);
@@ -1535,6 +1559,12 @@ export async function generateChecklistDraft(
           values: values.map((value) => ({ field_key: String(value.field_key), value_text: String(value.value_text ?? "") })),
           flatten: false,
         });
+        // Both EPF forms carry an employer block the form itself requires to be
+        // sealed. Stamping it here means HR no longer prints, signs, scans and
+        // re-uploads every statutory form.
+        content = Buffer.from(
+          await applyCompanySeal(content, String(checklist.document_code ?? "")),
+        );
       } else if (fillMode === "fillable_pdf") {
         content = await renderFillablePdf(checklist.template_storage_path, fieldMaps, values);
       } else if (
