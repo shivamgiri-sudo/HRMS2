@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pingDb } from "../db/mysql.js";
+import { pingDb, getCircuitBreakerStatus, resetCircuitBreaker } from "../db/mysql.js";
 import { getMigrationHealth, verifySchemaVersion } from "../db/runPendingMigrations.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import { requireRole } from "../middleware/requireRole.js";
@@ -117,6 +117,49 @@ healthRouter.get("/ready", async (_req, res) => {
 });
 
 /**
+ * GET /health/db-circuit - Circuit breaker status (admin only)
+ */
+healthRouter.get("/db-circuit", requireAuth, requireRole("admin", "super_admin"), (_req, res) => {
+  const cb = getCircuitBreakerStatus();
+  const retryAfterMs = cb.status === "open" ? Math.max(0, cb.nextProbeTime - Date.now()) : 0;
+  return res.json({
+    success: true,
+    circuitBreaker: {
+      ...cb,
+      lastFailure: cb.lastFailure ? new Date(cb.lastFailure).toISOString() : null,
+      nextProbeTime: cb.nextProbeTime ? new Date(cb.nextProbeTime).toISOString() : null,
+      retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
+    },
+  });
+});
+
+/**
+ * POST /health/db-circuit/reset - Manually close the circuit breaker (admin only)
+ * Use when DB is confirmed healthy but the in-memory breaker is still open after a
+ * transient failure. This does NOT restart the process — it only resets the breaker.
+ */
+healthRouter.post("/db-circuit/reset", requireAuth, requireRole("admin", "super_admin"), async (_req, res) => {
+  const before = getCircuitBreakerStatus();
+  resetCircuitBreaker();
+  // Probe the DB to confirm it's actually reachable before declaring success
+  try {
+    await pingDb();
+    return res.json({
+      success: true,
+      message: "Circuit breaker reset and DB connectivity confirmed.",
+      before: before.status,
+      after: "closed",
+    });
+  } catch (err: any) {
+    return res.status(503).json({
+      success: false,
+      message: "Circuit breaker reset, but DB ping failed — DB may still be unreachable.",
+      error: err?.message ?? String(err),
+    });
+  }
+});
+
+/**
  * GET /health/readiness - Detailed readiness check (protected)
  *
  * Full diagnostic information for administrators.
@@ -129,12 +172,19 @@ healthRouter.get("/readiness", requireAuth, requireRole("admin", "super_admin"),
   const checks = buildReadinessChecks(dbStatus, schemaStatus);
   const hasError = checks.some((check) => check.status === "error");
   const hasWarning = checks.some((check) => check.status === "warning");
+  const cb = getCircuitBreakerStatus();
 
   return res.status(hasError ? 503 : 200).json({
     success: !hasError,
     service: "MCN HRMS Backend API",
     status: hasError ? "not_ready" : hasWarning ? "ready_with_warnings" : "ready",
     checks,
+    circuitBreaker: {
+      status: cb.status,
+      failures: cb.failures,
+      lastFailure: cb.lastFailure ? new Date(cb.lastFailure).toISOString() : null,
+      nextProbeTime: cb.nextProbeTime ? new Date(cb.nextProbeTime).toISOString() : null,
+    },
     summary: {
       errors: checks.filter((check) => check.status === "error").length,
       warnings: checks.filter((check) => check.status === "warning").length,

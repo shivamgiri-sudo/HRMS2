@@ -172,18 +172,27 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
     } catch (error) {
       lastError = error;
 
-      // Non-retryable errors should fail immediately
+      // Non-retryable connection errors (pool exhaustion) trip the breaker immediately
       if (isNonRetryableDbError(error)) {
         recordFailure(error);
         throw error;
       }
 
-      if (!isTransientDbError(error) || attempt === MAX_DB_RETRIES - 1) {
-        recordFailure(error);
+      // Transient connection errors: retry with backoff, trip breaker only on exhaustion
+      if (isTransientDbError(error)) {
+        if (attempt === MAX_DB_RETRIES - 1) {
+          recordFailure(error);
+        }
+        if (attempt < MAX_DB_RETRIES - 1) {
+          await sleep(250 * (attempt + 1));
+          continue;
+        }
         throw error;
       }
 
-      await sleep(250 * (attempt + 1));
+      // Application/SQL errors (bad query, wrong arguments, missing column, etc.)
+      // do NOT count against the circuit breaker — they are code bugs, not DB failures.
+      throw error;
     }
   }
 
@@ -242,6 +251,14 @@ export function getCircuitBreakerStatus(): {
   nextProbeTime: number;
 } {
   return { ...circuitBreaker };
+}
+
+/**
+ * RELIABILITY: Admin-only manual reset of the circuit breaker.
+ * Use when DB is confirmed healthy but the in-memory breaker is still open.
+ */
+export function resetCircuitBreaker(): void {
+  circuitBreaker = { status: "closed", failures: 0, lastFailure: 0, nextProbeTime: 0 };
 }
 
 /**
