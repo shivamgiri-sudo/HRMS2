@@ -1,5 +1,13 @@
 import mysql, { type RowDataPacket, type FieldPacket, type QueryResult, type Pool, type PoolConnection } from "mysql2/promise";
 import { env } from "../config/env.js";
+import {
+  DEFAULT_CIRCUIT_BREAKER_CONFIG,
+  checkCircuitBreakerState,
+  initialCircuitBreakerState,
+  recordCircuitBreakerFailure,
+  recordCircuitBreakerSuccess,
+  type CircuitBreakerState,
+} from "./circuitBreaker.js";
 
 /**
  * RELIABILITY: Connection pool with bounded queue and circuit breaker.
@@ -7,8 +15,6 @@ import { env } from "../config/env.js";
  * - queueLimit: 100 prevents unbounded queue growth under load
  * - connectTimeout: prevents hung connections from blocking forever
  * - enableKeepAlive: detects stale connections
- * - maxIdle/idleTimeout: releases connections the server would otherwise hold
- *   for wait_timeout (8h here), which is what starves max_connections
  * - Circuit breaker: fast-fails when DB is overwhelmed
  */
 const _pool: Pool = mysql.createPool({
@@ -26,8 +32,6 @@ const _pool: Pool = mysql.createPool({
   decimalNumbers:     true,
   enableKeepAlive:    true,
   keepAliveInitialDelay: 30000, // 30s keep-alive
-  maxIdle:            env.DB_POOL_MAX_IDLE,
-  idleTimeout:        env.DB_POOL_IDLE_TIMEOUT_MS,
 });
 
 /**
@@ -40,16 +44,19 @@ const TRANSIENT_DB_ERROR_CODES = new Set([
   "ETIMEDOUT",
   "ECONNREFUSED",
   "EHOSTUNREACH",
+  "EPIPE",
   "PROTOCOL_CONNECTION_LOST",
   "ECONNRESET",
 ]);
 
 /**
- * Non-retryable errors -- return 503 immediately.
+ * Connection pressure errors -- do not retry the same request, but also do
+ * not open the process-wide breaker on the first spike.
  */
-const NON_RETRYABLE_DB_ERROR_CODES = new Set([
+const CONNECTION_PRESSURE_DB_ERROR_CODES = new Set([
   "ER_CON_COUNT_ERROR",  // Connection exhaustion -- retry makes it worse
   "ER_TOO_MANY_USER_CONNECTIONS",
+  "POOL_ENQUEUELIMIT",
 ]);
 
 const MAX_DB_RETRIES = 3;
@@ -58,25 +65,9 @@ const MAX_DB_RETRIES = 3;
  * RELIABILITY: Circuit breaker state.
  * Prevents cascading failures when DB is overwhelmed.
  */
-interface CircuitBreakerState {
-  status: "closed" | "open" | "half-open";
-  failures: number;
-  lastFailure: number;
-  nextProbeTime: number;
-}
+const CIRCUIT_BREAKER_CONFIG = DEFAULT_CIRCUIT_BREAKER_CONFIG;
 
-const CIRCUIT_BREAKER_CONFIG = {
-  failureThreshold: 5, // Open after N consecutive failures
-  recoveryTimeMs: 30000, // Wait 30s before probing
-  halfOpenSuccessThreshold: 2, // Close after N successes in half-open
-};
-
-let circuitBreaker: CircuitBreakerState = {
-  status: "closed",
-  failures: 0,
-  lastFailure: 0,
-  nextProbeTime: 0,
-};
+let circuitBreaker: CircuitBreakerState = initialCircuitBreakerState();
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,8 +83,11 @@ function isTransientDbError(error: unknown): boolean {
   return TRANSIENT_DB_ERROR_CODES.has(getErrorCode(error));
 }
 
-function isNonRetryableDbError(error: unknown): boolean {
-  return NON_RETRYABLE_DB_ERROR_CODES.has(getErrorCode(error));
+function isConnectionPressureDbError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  if (CONNECTION_PRESSURE_DB_ERROR_CODES.has(code)) return true;
+  const message = error instanceof Error ? error.message : "";
+  return /queue limit reached|too many connections|too many user connections/i.test(message);
 }
 
 /**
@@ -104,11 +98,8 @@ function checkCircuitBreaker(): void {
   const now = Date.now();
 
   if (circuitBreaker.status === "open") {
-    if (now >= circuitBreaker.nextProbeTime) {
-      // Transition to half-open, allow probe
-      circuitBreaker.status = "half-open";
-      circuitBreaker.failures = 0;
-    } else {
+    circuitBreaker = checkCircuitBreakerState(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now);
+    if (circuitBreaker.status === "open") {
       const retryAfter = Math.ceil((circuitBreaker.nextProbeTime - now) / 1000);
       const error = new Error(`Database circuit breaker open. Retry after ${retryAfter}s`);
       (error as any).code = "CIRCUIT_BREAKER_OPEN";
@@ -122,44 +113,15 @@ function checkCircuitBreaker(): void {
  * RELIABILITY: Record operation success for circuit breaker.
  */
 function recordSuccess(): void {
-  if (circuitBreaker.status === "half-open") {
-    circuitBreaker.failures++;
-    if (circuitBreaker.failures >= CIRCUIT_BREAKER_CONFIG.halfOpenSuccessThreshold) {
-      // Close circuit after successful probes
-      circuitBreaker = { status: "closed", failures: 0, lastFailure: 0, nextProbeTime: 0 };
-    }
-  } else if (circuitBreaker.status === "closed" && circuitBreaker.failures > 0) {
-    // Reset failure count on success
-    circuitBreaker.failures = 0;
-  }
+  circuitBreaker = recordCircuitBreakerSuccess(circuitBreaker, CIRCUIT_BREAKER_CONFIG);
 }
 
 /**
  * RELIABILITY: Record operation failure for circuit breaker.
  */
-function recordFailure(error: unknown): void {
+function recordFailure(): void {
   const now = Date.now();
-  circuitBreaker.lastFailure = now;
-
-  if (isNonRetryableDbError(error)) {
-    // Non-retryable errors (connection exhaustion) trip circuit immediately
-    circuitBreaker.status = "open";
-    circuitBreaker.nextProbeTime = now + CIRCUIT_BREAKER_CONFIG.recoveryTimeMs;
-    return;
-  }
-
-  if (circuitBreaker.status === "half-open") {
-    // Failure during probe -- re-open circuit
-    circuitBreaker.status = "open";
-    circuitBreaker.nextProbeTime = now + CIRCUIT_BREAKER_CONFIG.recoveryTimeMs;
-    return;
-  }
-
-  circuitBreaker.failures++;
-  if (circuitBreaker.failures >= CIRCUIT_BREAKER_CONFIG.failureThreshold) {
-    circuitBreaker.status = "open";
-    circuitBreaker.nextProbeTime = now + CIRCUIT_BREAKER_CONFIG.recoveryTimeMs;
-  }
+  circuitBreaker = recordCircuitBreakerFailure(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now);
 }
 
 async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
@@ -176,16 +138,17 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
     } catch (error) {
       lastError = error;
 
-      // Non-retryable connection errors (pool exhaustion) trip the breaker immediately
-      if (isNonRetryableDbError(error)) {
-        recordFailure(error);
+      // Connection pressure should fail fast for this request. Retrying would
+      // add load, but one short deployment spike should not freeze all logins.
+      if (isConnectionPressureDbError(error)) {
+        recordFailure();
         throw error;
       }
 
       // Transient connection errors: retry with backoff, trip breaker only on exhaustion
       if (isTransientDbError(error)) {
         if (attempt === MAX_DB_RETRIES - 1) {
-          recordFailure(error);
+          recordFailure();
         }
         if (attempt < MAX_DB_RETRIES - 1) {
           await sleep(250 * (attempt + 1));
@@ -262,7 +225,7 @@ export function getCircuitBreakerStatus(): {
  * Use when DB is confirmed healthy but the in-memory breaker is still open.
  */
 export function resetCircuitBreaker(): void {
-  circuitBreaker = { status: "closed", failures: 0, lastFailure: 0, nextProbeTime: 0 };
+  circuitBreaker = initialCircuitBreakerState();
 }
 
 /**

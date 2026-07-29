@@ -1181,47 +1181,6 @@ publicEmployeeDocumentRouter.post("/esign/:token/start", h(async (req, res) => {
   });
 }));
 
-/**
- * Statutory KYC for the EPF declaration, supplied by the member at signing time.
- *
- * EPFO requires the real bank account + IFSC (mandatory on the form), Aadhaar
- * and PAN. Those are masked at the point of save everywhere else in this system,
- * so the stored values cannot complete the filing. The numbers submitted here
- * are validated, written into the regenerated PDF, and then discarded — only the
- * masked form and a hash are recorded.
- */
-publicEmployeeDocumentRouter.post("/esign/:token/epf-kyc", h(async (req, res) => {
-  const session = await getPublicJoiningDocumentEsignSession(req.params.token);
-  if (String(session.document_code) !== "EPF_DECLARATION") {
-    return res.status(400).json({ success: false, message: "This document does not require statutory KYC details." });
-  }
-  if (String(session.token_status) !== "active") {
-    return res.status(410).json({ success: false, message: "This link has expired. Ask HR to issue a new one." });
-  }
-
-  const { applyEpfKycAndRegenerate } = await import("./epfKycCapture.service.js");
-  const result = await applyEpfKycAndRegenerate({
-    checklistId: String(session.checklist_id),
-    employeeId: String(session.employee_id),
-    input: {
-      panNumber: req.body?.pan_number ?? null,
-      panNameAsPerKyc: req.body?.pan_name ?? null,
-      aadhaarNumber: req.body?.aadhaar_number ?? null,
-      aadhaarNameAsPerKyc: req.body?.aadhaar_name ?? null,
-      uanNumber: req.body?.uan_number ?? null,
-      bankAccountNumber: req.body?.bank_account_number ?? null,
-      bankIfsc: req.body?.bank_ifsc ?? null,
-      bankAccountName: req.body?.bank_account_name ?? null,
-    },
-  });
-
-  if (!result.regenerated) {
-    return res.status(400).json({ success: false, message: "Please correct the highlighted details.", errors: result.errors });
-  }
-  // Deliberately echoes nothing back — the values must not survive this request.
-  return res.json({ success: true, data: { regenerated: true } });
-}));
-
 export const payrollEpfComplianceRouter = Router();
 payrollEpfComplianceRouter.use(requireAuth, requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr", "manager"));
 

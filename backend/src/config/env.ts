@@ -36,11 +36,8 @@ const envSchema = z.object({
   DB_PASSWORD: z.string().default(""),
   DB_NAME:     z.string().default("mas_hrms"),
   DB_POOL_MAX: z.coerce.number().default(25),
-  // Idle connections the pool may keep. mysql2 defaults maxIdle to connectionLimit,
-  // so every pool parks its full quota on the server until wait_timeout (8h) —
-  // across four pools and two processes that is what exhausts max_connections.
-  DB_POOL_MAX_IDLE: z.coerce.number().default(2),
-  DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().default(30_000),
+  DB_POOL_MAX_IDLE: z.coerce.number().default(5),
+  DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().default(60000),
 
   // Independent MCN LMS MySQL DB. Use dedicated LMS_DB_* credentials in production.
   LMS_DB_HOST:     z.string().default("192.168.11.225"),
