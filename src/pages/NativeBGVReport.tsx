@@ -58,6 +58,8 @@ interface BGVReport {
   address_remarks: string;
   criminal_status: VerifStatus;
   criminal_remarks: string;
+  digilocker_status: VerifStatus;
+  digilocker_remarks: string;
   esignature_status: 'not_done' | 'validated' | 'invalid';
   esignature_remarks: string;
   overall_status: OverallStatus;
@@ -132,6 +134,7 @@ function emptyReport(candidateId: string): BGVReport {
     employment_status: 'not_run', employment_remarks: '',
     address_status: 'not_run', address_remarks: '',
     criminal_status: 'not_run', criminal_remarks: '',
+    digilocker_status: 'not_run', digilocker_remarks: '',
     esignature_status: 'not_done', esignature_remarks: '',
     overall_status: 'pending', bgv_score: 0, hr_remarks: '',
     locked: false,

@@ -363,6 +363,7 @@ SOURCE sql/999_create_missing_engagement_tables.sql;
 SOURCE sql/999_fix_missing_ceo_metrics_tables.sql;
 SOURCE sql/999_password_expiry_policy.sql;
 SOURCE sql/1015_luckpay_production_same_url_consolidation.sql;
+SOURCE sql/1016_bgv_report_digilocker_esign.sql;
 
 SELECT CONCAT('mas_hrms schema bootstrap complete — ', NOW()) AS status;
 SHOW TABLES;

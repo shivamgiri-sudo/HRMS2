@@ -54,6 +54,51 @@ async function persistDocument(doc: LuckpayDocumentResult, fallbackExt: string):
   return filePath;
 }
 
+/**
+ * Mirror the DigiLocker outcome into candidate_bgv_check so it reaches the BGV
+ * report. Without this the report's digilocker column stays 'not_run' forever,
+ * because syncBgvChecksToReport reads exclusively from that table.
+ */
+async function upsertDigilockerCheck(params: {
+  candidateId: string;
+  state: LuckpayStatusResult["state"];
+  providerRequestId: string;
+  providerReferenceId: string;
+  summary: string | null;
+  raw: unknown;
+}) {
+  const status =
+    params.state === "completed" ? "verified"
+    : params.state === "failed" ? "failed"
+    : params.state === "expired" ? "failed"
+    : "pending";
+
+  await db.execute(
+    `INSERT INTO candidate_bgv_check
+       (id, candidate_id, check_type, provider_key, provider_request_id, provider_reference_id,
+        status, result_summary, result_json, verified_at)
+     VALUES (?, ?, 'digilocker', 'luckpay', ?, ?, ?, ?, CAST(? AS JSON), ?)
+     ON DUPLICATE KEY UPDATE
+       provider_request_id   = VALUES(provider_request_id),
+       provider_reference_id = VALUES(provider_reference_id),
+       status                = VALUES(status),
+       result_summary        = VALUES(result_summary),
+       result_json           = VALUES(result_json),
+       verified_at           = VALUES(verified_at),
+       updated_at            = NOW()`,
+    [
+      randomUUID(),
+      params.candidateId,
+      params.providerRequestId,
+      params.providerReferenceId,
+      status,
+      params.summary,
+      JSON.stringify(sanitizeProviderPayload(params.raw)),
+      status === "verified" ? new Date() : null,
+    ],
+  ).catch(() => undefined);
+}
+
 async function updateProviderLog(params: {
   clientTransactionId: string;
   status: string;
@@ -116,6 +161,14 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
       responsePayload: status.sanitized,
       errorMessage: status.state === "failed" ? status.message : null,
     });
+    await upsertDigilockerCheck({
+      candidateId,
+      state: status.state,
+      providerRequestId: clientTransactionId,
+      providerReferenceId: status.transactionId,
+      summary: status.message ?? `DigiLocker: ${status.providerStatus ?? status.state}`,
+      raw: status.sanitized,
+    });
     return { state: status.state, providerStatus: status.providerStatus, clientTransactionId, transactionId, message: status.message, changed: true };
   }
 
@@ -148,6 +201,26 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
     providerReferenceId: status.transactionId,
     responsePayload: { ...status.sanitized, ...documentMeta },
   });
+
+  await upsertDigilockerCheck({
+    candidateId,
+    state: "completed",
+    providerRequestId: clientTransactionId,
+    providerReferenceId: status.transactionId,
+    summary: status.message ?? "DigiLocker KYC completed",
+    raw: { ...status.sanitized, ...documentMeta },
+  });
+
+  // Mirror onto the BGV report immediately so HR sees it without a manual sync.
+  await db.execute(
+    `UPDATE candidate_bgv_report
+        SET digilocker_status = IF(locked = 1, digilocker_status, 'passed'),
+            digilocker_documents_json = IF(locked = 1, digilocker_documents_json, CAST(? AS JSON)),
+            digilocker_completed_at = IF(locked = 1, digilocker_completed_at, NOW()),
+            updated_at = NOW()
+      WHERE candidate_id = ?`,
+    [JSON.stringify({ count: storedFiles.length, ...documentMeta }), candidateId],
+  ).catch(() => undefined);
 
   return {
     state: "completed",
@@ -249,6 +322,21 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
       WHERE id = ?`,
     [row.checklist_id],
   ).catch(() => undefined);
+
+  // candidate_bgv_report.esignature_status has existed since the original BGV
+  // schema but was never written by anything. Populate it now that a real
+  // signature outcome exists. Its enum is not_done/validated/invalid — distinct
+  // from the not_run/passed/failed vocabulary used by the other columns.
+  if (row.candidate_id) {
+    await db.execute(
+      `UPDATE candidate_bgv_report
+          SET esignature_status = IF(locked = 1, esignature_status, 'validated'),
+              esignature_remarks = IF(locked = 1, esignature_remarks, ?),
+              updated_at = NOW()
+        WHERE candidate_id = ?`,
+      [`Aadhaar eSign completed via Luckpay (${row.document_code})`, row.candidate_id],
+    ).catch(() => undefined);
+  }
 
   return {
     state: "completed",

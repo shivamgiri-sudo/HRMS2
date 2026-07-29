@@ -971,10 +971,17 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
     pan:        "pan_status",
     bank:       "bank_status",
     aadhaar:    "aadhaar_status",
+    // aadhaar_offline is the Befisc XML path — it proves the same identity, so
+    // it feeds the same column rather than being dropped.
+    aadhaar_offline: "aadhaar_status",
     court:      "criminal_status",
+    criminal:   "criminal_status",
     education:  "education_status",
+    education_doc: "education_status",
     employment: "employment_status",
     address:    "address_status",
+    address_doc: "address_status",
+    digilocker: "digilocker_status",
   };
 
   const statusMap: Record<string, string> = {
@@ -986,12 +993,25 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
     initiated:     "pending",
   };
 
-  const setClauses: string[] = [];
-  const updateParams: unknown[] = [];
+  // Several check types can feed one report column (e.g. aadhaar and
+  // aadhaar_offline both prove identity). Collapse them per column instead of
+  // emitting duplicate SET clauses, where evaluation order would silently decide
+  // the winner and could let a 'pending' overwrite a 'passed'.
+  const precedence: Record<string, number> = { passed: 4, discrepancy: 3, failed: 2, pending: 1 };
+  const bestByColumn = new Map<string, string>();
   for (const row of checks as RowDataPacket[]) {
     const col = columnMap[String(row.check_type)];
     if (!col) continue;
     const mapped = statusMap[String(row.status)] ?? "pending";
+    const current = bestByColumn.get(col);
+    if (!current || (precedence[mapped] ?? 0) > (precedence[current] ?? 0)) {
+      bestByColumn.set(col, mapped);
+    }
+  }
+
+  const setClauses: string[] = [];
+  const updateParams: unknown[] = [];
+  for (const [col, mapped] of bestByColumn) {
     setClauses.push(`${col} = IF(locked = 1, ${col}, ?)`);
     updateParams.push(mapped);
   }
