@@ -323,6 +323,27 @@ assessmentProtectedRouter.get("/assessment-admin/dashboard", readRoles, h(async 
   }
 }));
 
+// Candidate search — powers the autocomplete in the Assign Assessment panel
+assessmentProtectedRouter.get("/assessment-admin/candidates/search", readRoles, h(async (req, res) => {
+  try {
+    const q = z.string().trim().min(1).max(100).parse(req.query.q ?? "");
+    const { db } = await import("../../db/mysql.js");
+    const like = `%${q}%`;
+    const [rows] = await db.execute(
+      `SELECT id, full_name, candidate_code, mobile
+         FROM ats_candidate
+        WHERE active_status = 1
+          AND (full_name LIKE ? OR candidate_code LIKE ? OR mobile LIKE ?)
+        ORDER BY created_at DESC
+        LIMIT 15`,
+      [like, like, like]
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}));
+
 assessmentProtectedRouter.get("/assessment-admin/candidates/:candidateId/summary", candidateSummaryRoles, h(async (req, res) => {
   try {
     const candidateId = uuidSchema.parse(req.params.candidateId);
