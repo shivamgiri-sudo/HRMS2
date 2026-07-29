@@ -555,9 +555,14 @@ export async function calculatePayrollRunScoped(
     const finalHolidays = reversalResult.reversed ? eligibleHolidayCount : eligibleHolidayCount;
 
     // Step 6: Payable days with cap
+    // active_calendar_days: the employee's actual employment window this month
+    // (mid-month joiners and leavers). This used to be computed only for
+    // display (active_calendar_days) while finalPayableDays capped at the full
+    // daysInMonth instead — so a mid-month joiner/leaver could be paid against
+    // a longer window than they were actually active for. The running-salary
+    // estimate always capped at active days; this aligns the locked run to
+    // the same rule (Finance decision: align locked run to active-days cap).
     const calculatedPayable = effectivePaidBase + finalWeekoffs + finalHolidays;
-    const finalPayableDays = Math.min(calculatedPayable, daysInMonth);
-    // active_calendar_days: cap to actual employment window (mid-month joiners and leavers)
     const activeCals = (() => {
       const effectiveStart = emp.salary_start_date && emp.salary_start_date > monthStart
         ? emp.salary_start_date : monthStart;
@@ -568,6 +573,7 @@ export async function calculatePayrollRunScoped(
       ) + 1;
       return Math.max(1, Math.min(days, daysInMonth));
     })();
+    const finalPayableDays = Math.min(calculatedPayable, activeCals);
 
     // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
     // fall back to salary_structure_component via structure_id.

@@ -38,6 +38,60 @@ async function getEmployeeTarget(employeeId: string): Promise<EmployeeAccessTarg
   return (rows as EmployeeAccessTarget[])[0] ?? null;
 }
 
+type FixedSalaryComponents = {
+  hasFixed: boolean;
+  basic: number;
+  hra: number;
+  special: number;
+};
+
+/**
+ * Fixed salary-structure amounts for an employee, mirroring the exact
+ * "prefer salary_component_assignments, else salary_structure_component"
+ * lookup already used by payrollCalculate.service.ts and
+ * running-salary.service.ts (calc_type IN ('fixed','pct_of_ctc')).
+ *
+ * Employee-facing endpoints (the CTC breakdown, the stat-card salary block)
+ * used to derive "monthly basic"/"monthly hra" purely as a percentage of
+ * CTC/12 — a third, independent figure that could silently disagree with
+ * whatever the payroll engines actually paid out. Finance decision: the
+ * fixed amount is the single source of truth once configured; CTC% is an
+ * estimate only, used when no fixed components exist yet.
+ */
+async function getFixedSalaryComponents(employeeId: string, structureId: string | null): Promise<FixedSalaryComponents> {
+  const [scaRows] = await db.execute<RowDataPacket[]>(
+    `SELECT basic, hra, special_allowance
+       FROM salary_component_assignments
+      WHERE employee_id = ? AND status = 'active'
+      ORDER BY effective_date DESC LIMIT 1`,
+    [employeeId],
+  );
+  const sca = (scaRows as any[])[0];
+  if (sca && Number(sca.basic) > 0) {
+    return { hasFixed: true, basic: Number(sca.basic) || 0, hra: Number(sca.hra) || 0, special: Number(sca.special_allowance) || 0 };
+  }
+
+  if (!structureId) return { hasFixed: false, basic: 0, hra: 0, special: 0 };
+
+  const [compRows] = await db.execute<RowDataPacket[]>(
+    `SELECT scm.component_code, ssc.value
+       FROM salary_structure_component ssc
+       JOIN salary_component_master scm ON scm.id = ssc.component_id
+      WHERE ssc.structure_id = ? AND ssc.calc_type IN ('fixed', 'pct_of_ctc')`,
+    [structureId],
+  );
+  const amounts: Record<string, number> = {};
+  for (const c of compRows as any[]) amounts[c.component_code] = Number(c.value) || 0;
+  if (!(amounts.BASIC > 0)) return { hasFixed: false, basic: 0, hra: 0, special: 0 };
+
+  return {
+    hasFixed: true,
+    basic: amounts.BASIC,
+    hra: amounts.HRA || 0,
+    special: amounts.SPECIAL || amounts.OTHER_ALLOW || 0,
+  };
+}
+
 async function canAccessEmployee(userId: string, target: EmployeeAccessTarget, scopedRoles: string[]): Promise<boolean> {
   if (await hasAnyRole(userId, "admin", "ceo")) return true;
 
@@ -339,7 +393,22 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
     listComprehensiveJourney(targetId, { includeCompensation: canSeeCompensation }).catch(() => []),
   ]);
 
-  const salary: RowDataPacket | null = canSeeCompensation ? ((salaryResult[0] as RowDataPacket[])[0] ?? null) : null;
+  let salary: RowDataPacket | null = canSeeCompensation ? ((salaryResult[0] as RowDataPacket[])[0] ?? null) : null;
+  if (salary) {
+    // Same fixed-vs-CTC% preference as the /ctc endpoint — see getFixedSalaryComponents.
+    const fixed = await getFixedSalaryComponents(targetId, (salary as any).structure_id ?? null);
+    if (fixed.hasFixed) {
+      salary = {
+        ...salary,
+        basic: fixed.basic,
+        hra: fixed.hra,
+        other_allowances: fixed.special,
+        compensation_source: "fixed_structure",
+      } as RowDataPacket;
+    } else {
+      salary = { ...salary, compensation_source: "ctc_percentage_estimate" } as RowDataPacket;
+    }
+  }
   const clDocRow = (clDocResult as any)[0]?.[0];
   const docRow = (docResult as any)[0]?.[0];
   const journey = journeyResult as unknown as RowDataPacket[];
@@ -422,7 +491,7 @@ router.get(`${UUID_ROUTE}/ctc`, h(async (req: any, res: any) => {
   await assertEmployeeAccess(userId, targetId, PEOPLE_SCOPE_ROLES);
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT esa.ctc_annual,
+    `SELECT esa.structure_id, esa.ctc_annual,
             ssm.basic_pct,
             ssm.hra_pct,
             ROUND(esa.ctc_annual / 12, 2)                                     AS monthly_ctc,
@@ -443,16 +512,22 @@ router.get(`${UUID_ROUTE}/ctc`, h(async (req: any, res: any) => {
   );
   if (!rows[0]) return res.json({ success: true, data: { ctc: null } });
   const r = rows[0] as any;
+
+  // Prefer the fixed salary-structure amount both payroll engines actually pay
+  // out; the CTC% figures above become a labeled fallback estimate only.
+  const fixed = await getFixedSalaryComponents(targetId, r.structure_id ?? null);
+
   return res.json({
     success: true,
     data: {
-      ctc:             Number(r.ctc_annual),
-      monthly_ctc:     Number(r.monthly_ctc),
-      monthly_basic:   Number(r.monthly_basic),
-      monthly_hra:     Number(r.monthly_hra),
-      monthly_special: Number(r.monthly_special),
-      basic_pct:       Number(r.basic_pct),
-      hra_pct:         Number(r.hra_pct),
+      ctc:                 Number(r.ctc_annual),
+      monthly_ctc:         Number(r.monthly_ctc),
+      monthly_basic:       fixed.hasFixed ? fixed.basic   : Number(r.monthly_basic),
+      monthly_hra:         fixed.hasFixed ? fixed.hra     : Number(r.monthly_hra),
+      monthly_special:     fixed.hasFixed ? fixed.special : Number(r.monthly_special),
+      basic_pct:           Number(r.basic_pct),
+      hra_pct:             Number(r.hra_pct),
+      compensation_source: fixed.hasFixed ? "fixed_structure" : "ctc_percentage_estimate",
     },
   });
 }));

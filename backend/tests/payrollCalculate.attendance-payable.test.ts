@@ -293,4 +293,64 @@ describe("calculatePayrollRun ADR payable-day batch logic", () => {
     expect(prepParams[29]).toBe(1);
     expect(prepParams[30]).toBe(2);
   });
+
+  it("caps final payable days at the employee's active window, not the full month, for a mid-month joiner", async () => {
+    // Finance decision: the locked payroll run should cap payable days at
+    // active_calendar_days (the employee's actual employment window this
+    // month), matching what the running-salary estimate already did —
+    // previously it capped at the full daysInMonth instead, so a mid-month
+    // joiner could be paid against a longer window than they were active for.
+    const midMonthEmployeeRow = { ...employeeRow, salary_start_date: "2026-07-25" };
+    // July 25 -> July 31 inclusive = 7 active days, well short of July's 31.
+    const expectedActiveDays = 7;
+
+    dbExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("FROM employees e") && sql.includes("employee_salary_assignment")) {
+        return [[midMonthEmployeeRow], []];
+      }
+      if (sql.includes("SELECT * FROM salary_prep_run")) return [[runRow], []];
+      if (sql.includes("SELECT config_key, config_value FROM statutory_config")) {
+        return [[
+          { config_key: "pf_employee_pct", config_value: 12 },
+          { config_key: "esic_employee_pct", config_value: 0.75 },
+          { config_key: "esic_employer_pct", config_value: 3.25 },
+          { config_key: "esic_wage_limit", config_value: 21000 },
+          { config_key: "pf_wage_limit", config_value: 15000 },
+          { config_key: "professional_tax", config_value: 200 },
+        ], []];
+      }
+      if (sql.includes("FROM attendance_feature_config")) return [[{ config_value: "0" }], []];
+      if (sql.includes("COUNT(*) AS cnt FROM attendance_daily_record")) return [[{ cnt: 3 }], []];
+      if (sql.includes("COUNT(CASE WHEN adr.attendance_status = 'present'")) {
+        return [[{
+          employee_id: "emp-1", working_days: 10, present_days: 10, leave_days: 0,
+          lwp_days: 0, late_marks: 0, dialer_hours: 5,
+        }], []];
+      }
+      // Deliberately larger than the 7-day active window, but still <= daysInMonth(31),
+      // so only the active-days cap (not the old full-month cap) can catch this.
+      if (sql.includes("SUM(") && sql.includes("AS paid_base")) return [[{ paid_base: 10 }], []];
+      if (sql.includes("FROM employee_loans")) return [[{ loan_emi: 0 }], []];
+      if (sql.includes("FROM employee_deduction_entries")) return [[], []];
+      if (sql.includes("FROM attendance_billing_config")) return [[], []];
+      if (sql.includes("FROM salary_run_manual_tds")) return [[], []];
+      if (sql.includes("UPDATE salary_prep_run SET status = 'draft'")) return [{ affectedRows: 1 }, []];
+      if (sql.includes("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1") && params?.[0] === "run-1") {
+        return [[{ ...runRow, status: "processing" }], []];
+      }
+      return [[], []];
+    });
+
+    calculateWeekoffEligibility.mockResolvedValue(0);
+    resolveHolidaysForEmployeeV2.mockResolvedValue({ eligibleHolidayCount: 0, holidayWorkExtraPayout: 0 });
+    checkAndReverseLeave.mockResolvedValue({ newPaidBase: 10, reversed: false, daysReversed: 0 });
+
+    await calculatePayrollRun("run-1", "user-1");
+
+    const prepInsert = connExecute.mock.calls.find(([sql]: [string]) => sql.includes("INSERT INTO salary_prep_line"));
+    const prepParams = prepInsert?.[1] as unknown[];
+    expect(prepParams[27]).toBe(10);              // paid base, uncapped
+    expect(prepParams[30]).toBe(expectedActiveDays); // finalPayableDays: capped at active days, NOT 10 and NOT 31
+    expect(prepParams[31]).toBe(expectedActiveDays); // activeCals column matches
+  });
 });
