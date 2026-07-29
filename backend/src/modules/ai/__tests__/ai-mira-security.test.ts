@@ -240,7 +240,8 @@ describe('Mira secure assistant release contract', () => {
     const voiceSource = source('../../../../../src/hooks/useMiraVoice.ts');
     expect(voiceSource).toContain("localStorage.getItem('mira_auto_speak') === 'true'");
     expect(voiceSource).toContain('recognition.start()');
-    expect(voiceSource).toContain("recognition.lang = 'en-IN'");
-    expect(voiceSource).toContain("utterance.lang = 'en-IN'");
+    expect(voiceSource).toContain('recognition.lang = language');
+    expect(voiceSource).toContain('utterance.lang = language');
+    expect(voiceSource).toContain("'hi-IN'");
   });
 });

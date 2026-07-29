@@ -367,6 +367,8 @@ const MIGRATION_MANIFEST: string[] = [
   "424_employee_reimbursement_claim.sql",
   "425_branch_budget_cost_centre_allocation.sql",
   "426_pnl_component_master.sql",
+  "425_mira_openrouter_company_knowledge.sql", // Mira OpenRouter provider + approved company knowledge
+  "426_mira_audit_resilience.sql",              // Mira audit tables so logging never blocks an answer
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
   "502_designation_bgv_requirements.sql",

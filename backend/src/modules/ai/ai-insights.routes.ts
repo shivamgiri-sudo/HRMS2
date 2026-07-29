@@ -22,7 +22,16 @@ import {
   getMiraSuggestedPrompts,
   MIRA_NAME,
   MIRA_TAGLINE,
+  MiraDataUnavailableError,
 } from './ai-account.service.js';
+import {
+  answerCompanyQuestion,
+  companyKnowledgeMissResponse,
+  companyKnowledgeStatus,
+  COMPANY_SYSTEM_INSTRUCTION,
+  getPublicCompanyContext,
+  refreshOfficialCompanyKnowledge,
+} from './ai-company-knowledge.service.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
 export const aiInsightsRouter = Router();
@@ -89,33 +98,72 @@ aiInsightsRouter.get('/session', h(async (req, res) => {
     assistant: {
       name: MIRA_NAME,
       tagline: MIRA_TAGLINE,
-      description: 'Fast answers from your own HRMS account with strict privacy controls.',
+      description: 'Live answers from your own HRMS account and approved MAS Callnet company sources.',
     },
     roleKeys,
     prompts: getMiraSuggestedPrompts(),
     capabilities: {
       selfAccount: true,
+      proactiveBriefing: true,
+      companyKnowledge: true,
+      openRouterReady: true,
       voiceInput: true,
       spokenReplies: true,
       crossEmployeePersonalData: false,
       executesActions: false,
+      externalPersonalDataSharing: false,
     },
   }));
+}));
+
+/**
+ * GET /api/ai/briefing - Proactive, self-only live HRMS briefing.
+ */
+aiInsightsRouter.get('/briefing', h(async (req, res) => {
+  try {
+    const local = await answerSelfAccountQuestion('Give me my account summary', req.authUser!.id, getRoleKeys(req));
+    if (!local.response) return res.status(503).json(apiError('DATA_UNAVAILABLE', 'Your HRMS briefing is not available right now.', 503));
+    return res.json(apiSuccess(local.response));
+  } catch (error) {
+    if (error instanceof MiraDataUnavailableError) {
+      return res.status(503).json(apiError('DATA_UNAVAILABLE', 'I could not read your live HRMS data right now. Please try again shortly.', 503));
+    }
+    throw error;
+  }
+}));
+
+/**
+ * GET /api/ai/company-knowledge/status - Approved company knowledge status.
+ */
+aiInsightsRouter.get('/company-knowledge/status', h(async (_req, res) => {
+  return res.json(apiSuccess(await companyKnowledgeStatus()));
+}));
+
+/**
+ * POST /api/ai/company-knowledge/refresh - Refresh allowlisted official MAS pages.
+ */
+aiInsightsRouter.post('/company-knowledge/refresh', requireRole('super_admin', 'admin'), h(async (_req, res) => {
+  return res.json(apiSuccess(await refreshOfficialCompanyKnowledge()));
 }));
 
 /**
  * POST /api/ai/providers - Create provider config
  */
 aiInsightsRouter.post('/providers', requireRole('super_admin', 'admin'), h(async (req, res) => {
-  const { providerKey, providerName, apiKey, modelName, baseUrl, timeout, dailyRequestLimit, monthlyRequestLimit, dailyTokenLimit, monthlyTokenLimit } = req.body;
+  const { providerKey, providerName, activeStatus, isDefault, apiKey, modelName, baseUrl, timeout, dailyRequestLimit, monthlyRequestLimit, dailyTokenLimit, monthlyTokenLimit } = req.body;
 
   if (!providerKey || !providerName) {
     return res.status(400).json(apiError('VALIDATION_ERROR', 'providerKey and providerName are required', 400));
+  }
+  if (!aiProviderRegistry.get(String(providerKey))) {
+    return res.status(400).json(apiError('VALIDATION_ERROR', 'Provider is not supported by this HRMS build', 400));
   }
 
   const created = await aiProviderConfigService.create({
     providerKey,
     providerName,
+    activeStatus,
+    isDefault,
     apiKey,
     modelName,
     baseUrl,
@@ -263,30 +311,29 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     ));
   }
 
-  const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
-  const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
-  if (!rateResult.allowed) {
-    res.setHeader('X-RateLimit-Remaining', '0');
-    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toISOString());
-    return res.status(429).json(apiError('RATE_LIMIT_EXCEEDED', 'Daily AI request limit reached. Try again tomorrow.', 429));
-  }
-  res.setHeader('X-RateLimit-Remaining', String(rateResult.remaining));
-
   const safeContextType = contextCheck.sanitizedContextType ?? 'generic';
   const safeQuestion = questionCheck.sanitizedQuestion!;
 
-  const local = await answerSelfAccountQuestion(safeQuestion, userId, roleKeys);
+  let local;
+  try {
+    local = await answerSelfAccountQuestion(safeQuestion, userId, roleKeys);
+  } catch (error) {
+    if (error instanceof MiraDataUnavailableError) {
+      return res.status(503).json(apiError(
+        'DATA_UNAVAILABLE',
+        'I could not read your live HRMS data right now. Please try again shortly or open the relevant HRMS page.',
+        503,
+      ));
+    }
+    throw error;
+  }
   if (local.handled && local.response) {
     const request: AiGenerateRequest = {
       userId,
       roleKeys,
       providerKey: local.response.provider,
       userQuestion: safeQuestion,
-      sanitizedContext: {
-        intent: local.intent,
-        data_scope: 'authenticated_user_self_only',
-        safe_mode: true,
-      },
+      sanitizedContext: { intent: local.intent, data_scope: 'authenticated_user_self_only', safe_mode: true },
       requestSource: 'mira_self_account',
       entityType: 'self_account',
     };
@@ -295,14 +342,41 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     return res.json(apiSuccess(local.response));
   }
 
+  const companyAnswer = await answerCompanyQuestion(safeQuestion);
+  if (companyAnswer) {
+    const request: AiGenerateRequest = {
+      userId,
+      roleKeys,
+      providerKey: companyAnswer.provider,
+      userQuestion: safeQuestion,
+      sanitizedContext: { data_scope: 'approved_company_public_information', safe_mode: true },
+      requestSource: 'mira_company_knowledge',
+      entityType: 'company_public',
+    };
+    await aiAuditService.logUsage(request, companyAnswer);
+    await aiAuditService.logPromptAudit(request, false, [], companyAnswer.answer.slice(0, 200));
+    return res.json(apiSuccess(companyAnswer));
+  }
+
+  const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
+  const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
+  if (!rateResult.allowed) {
+    res.setHeader('X-RateLimit-Remaining', '0');
+    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toISOString());
+    return res.status(429).json(apiError('RATE_LIMIT_EXCEEDED', 'Daily external AI request limit reached. Your live HRMS self-service answers remain available.', 429));
+  }
+  res.setHeader('X-RateLimit-Remaining', String(rateResult.remaining));
+
   const provider = await aiProviderRegistry.getDefault();
   const config = await aiProviderConfigService.getByKey(provider.key, true);
 
+  const companyContext = await getPublicCompanyContext(safeQuestion);
   const rawContext: Record<string, unknown> = {
+    ...companyContext,
     actor_role: roleKeys[0],
     context_type: safeContextType,
     timestamp: new Date().toISOString(),
-    privacy_scope: 'no_other_employee_personal_data',
+    privacy_scope: 'approved_company_public_information_only; no employee personal data',
   };
 
   const sanitizationResult = await aiSafetyService.sanitizeContext(rawContext, roleKeys);
@@ -321,10 +395,10 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
       sanitizedContext: sanitizationResult.sanitizedContext,
       requestSource: 'copilot',
       entityType: safeContextType,
-      systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, safeContextType),
+      systemInstruction: COMPANY_SYSTEM_INSTRUCTION,
     };
 
-    const response = await ruleBasedProvider.generateText(request);
+    const response = companyKnowledgeMissResponse();
     await aiAuditService.logUsage(request, response);
     await aiAuditService.logPromptAudit(
       request,
@@ -335,22 +409,37 @@ aiInsightsRouter.post('/ask', h(async (req, res) => {
     return res.json(apiSuccess(response));
   }
 
+  if (provider.key === 'rule-based') {
+    const response = companyKnowledgeMissResponse();
+    const request: AiGenerateRequest = {
+      userId, roleKeys, providerKey: response.provider, userQuestion: safeQuestion,
+      sanitizedContext: sanitizationResult.sanitizedContext, requestSource: 'mira_company_knowledge', entityType: 'company_public',
+    };
+    await aiAuditService.logUsage(request, response);
+    await aiAuditService.logPromptAudit(request, false, [], response.answer.slice(0, 200));
+    return res.json(apiSuccess(response));
+  }
+
   const request: AiGenerateRequest = {
     userId,
     roleKeys,
     providerKey: provider.key,
     model: config?.modelName,
     apiKey: config?.apiKey,
-    systemInstruction: aiSafetyService.buildSystemInstruction(roleKeys, safeContextType),
+    systemInstruction: COMPANY_SYSTEM_INSTRUCTION,
     userQuestion: safeQuestion,
     sanitizedContext: sanitizationResult.sanitizedContext,
-    temperature: 0.3,
-    maxOutputTokens: 1024,
+    temperature: 0.2,
+    maxOutputTokens: 800,
     requestSource: 'copilot',
     entityType: safeContextType,
   };
 
-  const response = await provider.generateText(request);
+  let response = await provider.generateText(request);
+  const modelDisclaimer = /\b(knowledge cutoff|training data|my memory|as an ai|i (?:do not|don't) have access to (?:live|real[- ]?time)|i cannot access (?:live|real[- ]?time))\b/i;
+  if ((response.fallbackUsed && response.provider === 'rule-based') || modelDisclaimer.test(response.answer)) {
+    response = companyKnowledgeMissResponse();
+  }
   const responseValidation = aiSafetyService.validateResponse(response.answer);
   if (!responseValidation.safe) {
     console.warn('[AI] Response validation failed:', responseValidation.reason);
@@ -403,14 +492,6 @@ aiInsightsRouter.get('/role-insights', h(async (req, res) => {
   const userId = req.authUser!.id;
   const roleKeys = getRoleKeys(req);
   const role = roleKeys[0] ?? 'employee';
-
-  const providerConfig = await aiProviderConfigService.getDefaultProvider(false);
-  const rateResult = checkAndIncrement(userId, providerConfig?.dailyRequestLimit ?? 0);
-  if (!rateResult.allowed) {
-    res.setHeader('X-RateLimit-Remaining', '0');
-    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toISOString());
-    return res.status(429).json(apiError('RATE_LIMIT_EXCEEDED', 'Daily AI request limit reached.', 429));
-  }
 
   const local = await answerSelfAccountQuestion('What actions are pending from my side?', userId, roleKeys);
   if (local.response) {

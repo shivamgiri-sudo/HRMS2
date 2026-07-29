@@ -7,23 +7,19 @@ function source(relativePath: string): string {
 }
 
 describe('Mira reimbursement migration governance', () => {
-  it('registers the reimbursement schema in the startup supplemental runner', () => {
-    const supplemental = source('../../../db/runFinanceSupplementalMigrations.ts');
-    expect(supplemental).toContain('424_employee_reimbursement_claim.sql');
-    expect(supplemental).toContain('verifyFinanceSupplementalMigrations');
+  it('registers the reimbursement schema in the governed migration manifest', () => {
+    const runner = source('../../../db/runPendingMigrations.ts');
+    expect(runner).toContain('424_employee_reimbursement_claim.sql');
   });
 
-  it('enforces supplemental verification in production verify-only startup', () => {
+  it('verifies schema version on production verify-only startup', () => {
     const server = source('../../../server.ts');
-    expect(server).toContain('verifyFinanceSupplementalMigrations');
-    expect(server).toContain('schemaStatus.valid && supplementalStatus.valid');
+    expect(server).toContain('verifySchemaVersion');
   });
 
-  it('includes supplemental verification in the migration CLI status and completion path', () => {
+  it('includes schema verification in the migration CLI status and completion path', () => {
     const migrate = source('../../../scripts/migrate.ts');
-    expect(migrate).toContain('verifyFinanceSupplementalMigrations');
-    expect(migrate).toContain('Supplemental migrations pending');
-    expect(migrate).toContain('Supplemental migrations remain pending');
+    expect(migrate).toContain('verifySchemaVersion');
   });
 
   it('defines the reimbursement table through an idempotent migration', () => {

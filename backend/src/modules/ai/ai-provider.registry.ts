@@ -8,6 +8,7 @@ import type { AiProvider } from './ai-provider.types.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 import { geminiProvider } from './providers/gemini.provider.js';
 import { ollamaProvider } from './providers/ollama.provider.js';
+import { openRouterProvider } from './providers/openrouter.provider.js';
 import { aiProviderConfigService } from './ai-provider-config.service.js';
 import { env } from '../../config/env.js';
 
@@ -19,6 +20,7 @@ class AiProviderRegistry {
     this.register(ruleBasedProvider);
     this.register(geminiProvider);
     this.register(ollamaProvider);
+    this.register(openRouterProvider);
   }
 
   /**
@@ -42,8 +44,12 @@ class AiProviderRegistry {
   async getDefault(): Promise<AiProvider> {
     const config = await aiProviderConfigService.getDefaultProvider(false);
 
-    if (!config) {
-      // If no DB config but GEMINI_API_KEY is set in environment, use Gemini directly
+    if (!config || (config.providerKey === 'rule-based' && (process.env.OPENROUTER_API_KEY || env.GEMINI_API_KEY))) {
+      // Prefer OpenRouter env configuration, then Gemini, before the deterministic fallback.
+      if (process.env.OPENROUTER_API_KEY) {
+        console.info('[AI Registry] Using OpenRouter from OPENROUTER_API_KEY env var');
+        return this.get('openrouter') ?? ruleBasedProvider;
+      }
       if (env.GEMINI_API_KEY) {
         console.info('[AI Registry] Using Gemini from GEMINI_API_KEY env var');
         return this.get('gemini') ?? ruleBasedProvider;

@@ -89,6 +89,7 @@ export default function PeopleOSCopilot() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [briefingLoaded, setBriefingLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const voice = useMiraVoice();
@@ -102,6 +103,14 @@ export default function PeopleOSCopilot() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, loading]);
+
+  useEffect(() => {
+    if (briefingLoaded || messages.length > 0) return;
+    setBriefingLoaded(true);
+    void hrmsApi.get<{ success: boolean; data: AIResponse }>('/api/ai/briefing')
+      .then((response) => setMessages([{ id: `${Date.now()}-briefing`, role: 'assistant', content: response.data.answer, timestamp: new Date(), response: response.data }]))
+      .catch(() => undefined);
+  }, [briefingLoaded, messages.length]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const question = (text ?? input).trim();
@@ -161,6 +170,7 @@ export default function PeopleOSCopilot() {
     voice.stopListening();
     voice.stopSpeaking();
     setMessages([]);
+    setBriefingLoaded(false);
     setInput('');
     setError(null);
     inputRef.current?.focus();
@@ -198,13 +208,21 @@ export default function PeopleOSCopilot() {
                 <p className="mt-1 text-sm text-blue-100 sm:text-base">{session?.assistant.tagline ?? 'Your private HR assistant'}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300">
                   <span className="inline-flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /> RBAC enforced</span>
-                  <span className="inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Fast local account answers</span>
+                  <span className="inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Live HRMS + approved company knowledge</span>
                   <span>Other employee personal data blocked</span>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start sm:self-auto">
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <select value={voice.language} onChange={(event) => voice.setLanguage(event.target.value as 'en-IN' | 'hi-IN')} className="h-10 rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none">
+                <option className="text-slate-900" value="en-IN">Indian English</option>
+                <option className="text-slate-900" value="hi-IN">Hindi</option>
+              </select>
+              <select value={voice.selectedVoiceURI} onChange={(event) => voice.setSelectedVoiceURI(event.target.value)} className="h-10 max-w-48 rounded-md border border-white/20 bg-white/10 px-2 text-xs text-white outline-none" title="Indian voice">
+                <option className="text-slate-900" value="">Best Indian voice</option>
+                {voice.voices.map((item) => <option className="text-slate-900" key={item.voiceURI} value={item.voiceURI}>{item.name}</option>)}
+              </select>
               <Button
                 type="button"
                 variant="outline"
@@ -386,7 +404,7 @@ export default function PeopleOSCopilot() {
                         void sendMessage();
                       }
                     }}
-                    placeholder="Ask Mira about your salary, leave, attendance, shift, documents…"
+                    placeholder="Ask Mira about your HRMS data or MAS Callnet…"
                     rows={1}
                     maxLength={1000}
                     disabled={loading}

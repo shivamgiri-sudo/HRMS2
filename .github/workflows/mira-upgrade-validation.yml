@@ -1,0 +1,80 @@
+name: Mira Live Grounding Validation
+
+# Permanent read-only release gate for Mira grounding, OpenRouter, voice and response resilience.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/src/modules/ai/**"
+      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/sql/425_mira_openrouter_company_knowledge.sql"
+      - "backend/sql/426_mira_audit_resilience.sql"
+      - "backend/sql/000_ai_supplemental.sql"
+      - "src/components/ai/**"
+      - "src/hooks/useMiraVoice.ts"
+      - "src/pages/AIProviderSettings.tsx"
+      - "src/pages/PeopleOSCopilot.tsx"
+      - ".github/workflows/mira-upgrade-validation.yml"
+  push:
+    branches:
+      - agent/mira-openrouter-company-voice
+      - hotfix/mira-audit-500-resilience
+    paths:
+      - "backend/src/modules/ai/**"
+      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/sql/425_mira_openrouter_company_knowledge.sql"
+      - "backend/sql/426_mira_audit_resilience.sql"
+      - "backend/sql/000_ai_supplemental.sql"
+      - "src/components/ai/**"
+      - "src/hooks/useMiraVoice.ts"
+      - "src/pages/AIProviderSettings.tsx"
+      - "src/pages/PeopleOSCopilot.tsx"
+      - ".github/workflows/mira-upgrade-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mira-live-grounding-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Grounding, provider, voice, resilience, type and build checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+      - name: Run Mira contract tests
+        working-directory: backend
+        run: >-
+          npx vitest run
+          src/modules/ai/__tests__/ai-mira-security.test.ts
+          src/modules/ai/__tests__/ai-mira-migration.test.ts
+          src/modules/ai/__tests__/ai-mira-upgrade.test.ts
+          src/modules/ai/__tests__/ai-mira-upgrade-migration.test.ts
+          src/modules/ai/__tests__/ai-audit-resilience.test.ts
+      - name: Frontend typecheck
+        run: npm run typecheck
+      - name: Backend typecheck
+        run: npm --prefix backend run typecheck
+      - name: Build frontend
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-key-for-build
+      - name: Build backend
+        run: npm --prefix backend run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096

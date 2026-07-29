@@ -122,6 +122,46 @@ jobs:
           fi
           echo "Frontend artifact validated"
 
+      # Migration SQL is NOT part of the compiled artifact ("npm run build" is
+      # plain tsc), and the startup runners resolve it from
+      # /var/www/HRMS2/backend/sql.  Without this step that directory only ever
+      # changes when somebody runs "git pull" on the server by hand, so a fresh
+      # dist can start against stale SQL — and runFinanceSupplementalMigrations()
+      # throws outright when a manifest file is absent, which fails the health
+      # check and rolls the deploy back.
+      - name: Sync backend migration SQL atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOY_ROOT="/var/www/HRMS2"
+          ARTIFACT="backend/sql"
+          LIVE_DIR="$DEPLOY_ROOT/backend/sql"
+          STAGE_PARENT="$DEPLOY_ROOT/backend/.deploy-staging"
+          BACKUP_PARENT="$DEPLOY_ROOT/backend/.deploy-backups"
+          STAMP="$(date +%Y%m%d%H%M%S)-$$"
+          STAGE_DIR="$STAGE_PARENT/backend-sql-$STAMP"
+          BACKUP_DIR="$BACKUP_PARENT/backend-sql-$STAMP"
+          mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
+            echo "Backend SQL staging and live directories must be on the same filesystem"
+            exit 1
+          fi
+
+          test -f "$ARTIFACT/000_run_all.sql"
+
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          cp -a "$ARTIFACT"/. "$STAGE_DIR"/
+
+          if [[ -d "$LIVE_DIR" ]]; then
+            mv "$LIVE_DIR" "$BACKUP_DIR"
+          else
+            mkdir -p "$BACKUP_DIR"
+          fi
+
+          mv "$STAGE_DIR" "$LIVE_DIR"
+          echo "Backend SQL synced: $(find "$LIVE_DIR" -type f -name '*.sql' | wc -l) files"
+
       - name: Deploy backend dist atomically
         shell: bash
         run: |
