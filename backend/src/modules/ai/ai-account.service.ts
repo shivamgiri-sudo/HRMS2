@@ -382,30 +382,28 @@ async function teamSignals(userId: string, roleKeys: string[]): Promise<{ member
   const where = buildScopeWhereEmployees(scope, 'e');
   if (where.sql === '1=0') return { members: [], total: 0, orgWide: false };
 
+  // No ORDER BY: the display lists are re-sorted by severity in TypeScript, so
+  // sorting 1,300+ grouped rows by name here bought a filesort and nothing else.
+  // COUNT(*) OVER () carries the true scope size, which previously cost a second
+  // round trip of its own.
   const found = await rows('coach_team', `SELECT e.id AS employee_id, e.full_name,
       SUM(CASE WHEN a.late_mark = 1 THEN 1 ELSE 0 END) AS late_marks,
       SUM(COALESCE(a.lwp_value, 0)) AS lwp_days,
       SUM(a.attendance_status = 'present') AS present_days,
-      COUNT(CASE WHEN a.attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days
+      COUNT(CASE WHEN a.attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days,
+      COUNT(*) OVER () AS scope_total
     FROM employees e
     JOIN attendance_daily_record a ON a.employee_id = e.id
       AND a.record_date > DATE_SUB(CURDATE(), INTERVAL 30 DAY)
     WHERE e.active_status = 1 AND ${where.sql}
     GROUP BY e.id, e.full_name
-    ORDER BY e.full_name
     LIMIT 500`, where.params);
-
-  // The list is capped, so the headline count has to come from its own query —
-  // otherwise the cap silently becomes the reported team size.
-  const totalRow = await one('coach_team_total', `SELECT COUNT(DISTINCT e.id) AS total
-    FROM employees e
-    JOIN attendance_daily_record a ON a.employee_id = e.id
-      AND a.record_date > DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-    WHERE e.active_status = 1 AND ${where.sql}`, where.params);
 
   return {
     orgWide: scope.level === 'ORG_ALL',
-    total: Number(totalRow.total ?? found.length),
+    // The list is capped, so the headline count must not come from its length —
+    // otherwise the cap silently becomes the reported team size.
+    total: Number(found[0]?.scope_total ?? found.length),
     members: found.map((row) => ({
       employeeId: String(row.employee_id),
       name: String(row.full_name ?? 'Unnamed'),
@@ -544,7 +542,7 @@ export async function answerSelfAccountQuestion(
     ]);
     const [kpis, team] = await Promise.all([
       coachKpis(employeeId, quarter.workingDays || null),
-      teamSignals(userId, roleKeys).catch(() => null),
+      cached(userId, 'coach_team', () => teamSignals(userId, roleKeys)).catch(() => null),
     ]);
 
     const leaveSnapshots = leaveRows.rows.map((row) => {
