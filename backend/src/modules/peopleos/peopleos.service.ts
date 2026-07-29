@@ -109,7 +109,7 @@ export async function getCeoCommandCenter(actor: Actor, filters: QueryFilters) {
       queryOne(
         `SELECT
            COUNT(*) AS total_headcount,
-           SUM(CASE WHEN LOWER(e.employment_status) = 'active' THEN 1 ELSE 0 END) AS active_headcount,
+           SUM(CASE WHEN e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' THEN 1 ELSE 0 END) AS active_headcount,
            SUM(CASE WHEN LOWER(e.employment_type) LIKE '%bill%' THEN 1 ELSE 0 END) AS billable_headcount,
            SUM(CASE WHEN LOWER(e.employment_type) NOT LIKE '%bill%' THEN 1 ELSE 0 END) AS non_billable_headcount
          FROM employees e
@@ -149,7 +149,7 @@ export async function getCeoCommandCenter(actor: Actor, filters: QueryFilters) {
       ),
       queryRows(
         `SELECT b.branch_name, COUNT(*) AS headcount,
-                SUM(CASE WHEN e.employment_status = 'Active' THEN 1 ELSE 0 END) AS active_headcount
+                SUM(CASE WHEN e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' THEN 1 ELSE 0 END) AS active_headcount
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          WHERE ${scoped.sql}
@@ -160,7 +160,7 @@ export async function getCeoCommandCenter(actor: Actor, filters: QueryFilters) {
       ),
       queryRows(
         `SELECT p.process_name, COUNT(*) AS headcount,
-                SUM(CASE WHEN e.employment_status = 'Active' THEN 1 ELSE 0 END) AS active_headcount
+                SUM(CASE WHEN e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' THEN 1 ELSE 0 END) AS active_headcount
          FROM employees e
          LEFT JOIN process_master p ON p.id = e.process_id
          WHERE ${scoped.sql}
@@ -681,7 +681,7 @@ export async function getWorkforcePlanning(actor: Actor, filters: QueryFilters) 
      FROM employees e
      LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN process_master p ON p.id = e.process_id
-     WHERE ${scoped.sql}
+     WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' AND ${scoped.sql}
      GROUP BY e.branch_id, e.process_id, b.branch_name, p.process_name
      ORDER BY active_headcount DESC
      LIMIT 50`,

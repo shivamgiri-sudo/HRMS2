@@ -74,7 +74,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS active FROM employees e WHERE e.employment_status = 'active' AND ${scopeSql}`,
+      `SELECT COUNT(*) AS active FROM employees e WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' AND ${scopeSql}`,
       scopeParams
     );
     const active = Number((rows[0] as any)?.active ?? 0);
@@ -249,7 +249,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
                (pan_number IS NOT NULL AND pan_number != '')
              THEN 1 ELSE 0 END) AS readyCount
        FROM employees e
-       WHERE e.employment_status = 'active' AND ${scopeSql}`,
+       WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' AND ${scopeSql}`,
       scopeParams
     );
 

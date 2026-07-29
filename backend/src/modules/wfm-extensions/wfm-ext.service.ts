@@ -232,7 +232,7 @@ export const attritionService = {
     const total = rows.reduce((sum: number, row: any) => sum + Number(row.count ?? 0), 0);
     const voluntary = rows.filter((row: any) => row.exit_type === "voluntary").reduce((sum: number, row: any) => sum + Number(row.count ?? 0), 0);
     const involuntary = total - voluntary;
-    const empConds = ["e.active_status = 1"];
+    const empConds = ["e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'"];
     const empParams: unknown[] = [];
     if (filters.process_id) { empConds.push("e.process_id = ?"); empParams.push(filters.process_id); }
     if (filters.sql) { empConds.push(`(${filters.sql})`); empParams.push(...(filters.params ?? [])); }

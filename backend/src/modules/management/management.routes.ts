@@ -221,7 +221,7 @@ router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head"
   const [headcountRows, attendanceRows, kpiRows, salaryRows] = await Promise.all([
     // Fast headcount — simple COUNT with index on active_status
     db.execute<any[]>(
-      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 ${empClause}`,
+      `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' ${empClause}`,
       empParams
     ),
     // Attendance rate for today (or latest record date)

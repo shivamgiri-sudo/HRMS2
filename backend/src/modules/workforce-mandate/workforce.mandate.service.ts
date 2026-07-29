@@ -197,7 +197,7 @@ export const workforceMandateService = {
     // active_eligible_hc
     const [activeRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM employees e
-       WHERE e.process_id = ?${branchCond} AND LOWER(e.employment_status) = 'active'`,
+       WHERE e.process_id = ?${branchCond} AND e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'`,
       [processId, ...branchParams]
     );
     const activeEligibleHc = toNum((activeRows as RowDataPacket[])[0]?.cnt);
@@ -264,7 +264,7 @@ export const workforceMandateService = {
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM employees e
          WHERE e.process_id = ?${branchCond}
-           AND LOWER(e.employment_status) = 'active'
+           AND e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
            AND e.designation_name = ?`,
         [processId, ...branchParams, role]
       );
