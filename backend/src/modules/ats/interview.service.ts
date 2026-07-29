@@ -5,6 +5,7 @@ import { sendSelectionCongratulationsEmail } from './ats.email.service.js';
 import { sendOnboardingToken } from './ats.onboarding.service.js';
 import { env } from '../../config/env.js';
 import { inboxService } from '../inbox/inbox.service.js';
+import { getUserRoleKeys } from '../../shared/roleResolver.js';
 
 /**
  * Interview Service
@@ -101,6 +102,12 @@ export async function getAssignedCandidates(recruiterId: string): Promise<Assign
 /**
  * Get candidate details for interview
  */
+/**
+ * `recruiterId` is the caller's user id. ats_candidate.recruiter_id stores an
+ * ats_recruiter_roster id, so comparing the two directly never matched and this
+ * returned "not assigned to you" for every candidate. Resolve the roster id
+ * first, exactly as getAssignedCandidates does.
+ */
 export async function getCandidateForInterview(candidateId: string, recruiterId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -113,7 +120,12 @@ export async function getCandidateForInterview(candidateId: string, recruiterId:
     FROM ats_candidate c
     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id
     LEFT JOIN branch_master b ON b.branch_name = c.applied_for_branch
-    WHERE c.id = ? AND c.recruiter_id = ?`,
+    WHERE c.id = ?
+      AND c.recruiter_id = (
+        SELECT r.id FROM ats_recruiter_roster r
+         INNER JOIN employees e ON e.id = r.employee_id
+         WHERE e.user_id = ? LIMIT 1
+      )`,
     [candidateId, recruiterId]
   );
 
@@ -125,9 +137,49 @@ export async function getCandidateForInterview(candidateId: string, recruiterId:
 }
 
 /**
- * Submit interview result
+ * Confirms the caller may record an outcome for this candidate.
+ *
+ * Recording a result is consequential — a 'selected' fires the onboarding
+ * token, the portal login and the congratulations email — yet this path had no
+ * ownership check at all, so any holder of a write role could select or reject
+ * any candidate in any branch.
+ *
+ * ats_candidate.recruiter_id holds an ats_recruiter_roster id, not a user id
+ * (verified: all 1,035 non-null values resolve against the roster). Comparing
+ * it to req.authUser.id, as the sibling read path does, can never match — so
+ * the roster id is resolved first.
  */
+async function assertCandidateAssignedToCaller(candidateId: string, userId: string): Promise<void> {
+  const [[candidate]] = await db.execute<RowDataPacket[]>(
+    `SELECT recruiter_id FROM ats_candidate WHERE id = ? LIMIT 1`,
+    [candidateId]
+  );
+  if (!candidate) {
+    throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+  }
+
+  const [[roster]] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id AS roster_id
+       FROM ats_recruiter_roster r
+       INNER JOIN employees e ON e.id = r.employee_id
+      WHERE e.user_id = ? LIMIT 1`,
+    [userId]
+  );
+  if (roster?.roster_id && String(roster.roster_id) === String(candidate.recruiter_id)) return;
+
+  // HR and admins legitimately act across candidates they were never assigned.
+  const roleKeys = await getUserRoleKeys(userId);
+  if (roleKeys.some((role) => ['admin', 'super_admin', 'hr'].includes(role))) return;
+
+  throw Object.assign(
+    new Error('This candidate is not assigned to you.'),
+    { statusCode: 403 }
+  );
+}
+
 export async function submitInterviewResult(input: InterviewResultInput) {
+  await assertCandidateAssignedToCaller(input.candidate_id, input.recruiter_id);
+
   const connection = await db.getConnection();
 
   try {
@@ -165,13 +217,17 @@ export async function submitInterviewResult(input: InterviewResultInput) {
       ]
     );
 
-    // Update candidate status
-    const newStatus = input.interview_status === 'selected' ? 'selected' : 'rejected';
+    // Record the outcome that was actually given. The route accepts selected,
+    // rejected, hold, callback, no_show and walkout, but this collapsed
+    // everything except 'selected' into 'rejected' — so a candidate asked to
+    // come back tomorrow, or one who simply did not turn up, was permanently
+    // marked rejected and the rejection mail keys off exactly this value.
+    // candidate_status is VARCHAR(50) and holds the outcome verbatim.
     await connection.execute(
       `UPDATE ats_candidate
        SET candidate_status = ?
        WHERE id = ?`,
-      [newStatus, input.candidate_id]
+      [input.interview_status, input.candidate_id]
     );
 
     // Update queue status
@@ -185,6 +241,27 @@ export async function submitInterviewResult(input: InterviewResultInput) {
            interview_completed_at = NOW()
        WHERE candidate_id = ?`,
       [queueStatus, input.candidate_id]
+    );
+
+    // Deciding a candidate's outcome left no trace at all: no stage log, no
+    // sensitive-action row. Write one inside the transaction so the decision and
+    // its record cannot diverge.
+    await connection.execute(
+      `INSERT INTO ats_sensitive_action_log
+         (id, actor_user_id, action_type, target_entity, target_id, action_details, created_at)
+       VALUES (?, ?, 'interview_result', 'ats_candidate', ?, CAST(? AS JSON), NOW())`,
+      [
+        randomUUID(),
+        input.recruiter_id,
+        input.candidate_id,
+        JSON.stringify({
+          action: 'SUBMIT_INTERVIEW_RESULT',
+          interview_status: input.interview_status,
+          result_id: resultId,
+          rejection_reason: input.rejection_reason ?? null,
+          next_step: input.next_step ?? null,
+        }),
+      ]
     );
 
     await connection.commit();
