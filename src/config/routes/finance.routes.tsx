@@ -12,6 +12,7 @@ const NativeProcurementPage        = lazy(() => import("@/pages/NativeProcuremen
 const NativeVendorPaymentTracking  = lazy(() => import("@/pages/NativeVendorPaymentTracking"));
 const NativeGRNManagement          = lazy(() => import("@/pages/NativeGRNManagement"));
 const BranchBudgetManagementPage   = lazy(() => import("@/pages/finance/BranchBudgetManagementPage"));
+const BudgetConsolidationPage      = lazy(() => import("@/pages/finance/BudgetConsolidationPage"));
 const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
 const ProcessPnlDetailPage         = lazy(() => import("@/pages/finance/ProcessPnlDetailPage"));
 const ProcessPnlConfigurationPage  = lazy(() => import("@/pages/finance/ProcessPnlConfigurationPage"));
@@ -25,6 +26,7 @@ const ExpenseReports               = lazy(() => import("@/pages/expenses/Expense
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 const pnlRoles     = ['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head'] as const;
+const budgetConsolidationRoles = ['super_admin','admin','ceo','coo','finance_head','accounts_head'] as const;
 
 export const financeRouteElements = (
   <>
@@ -37,6 +39,7 @@ export const financeRouteElements = (
       <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><NativeVendorPaymentTracking /></ProtectedRoute>} />
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={financeRoles}><NativeGRNManagement /></ProtectedRoute>} />
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><BranchBudgetManagementPage /></ProtectedRoute>} />
+      <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><BudgetConsolidationPage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><ProcessPnlPage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
       <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><ProcessLobManagementPage /></ProtectedRoute>} />

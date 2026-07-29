@@ -13,7 +13,7 @@ import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
 import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
-import { branchBudgetService } from "./branch-budget.service.js";
+import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
@@ -59,6 +59,9 @@ const BUDGET_READ_ROLES = [
 ] as const;
 const BUDGET_CREATE_ROLES = ["super_admin", "admin", "branch_admin"] as const;
 const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "super_admin"] as const;
+// Company-wide, all-branches budget consolidation (PR 11) — deliberately excludes
+// branch_admin/branch_head/finance (branch-scoped roles that shouldn't see all-branch data).
+const BUDGET_CONSOLIDATION_ROLES = ["super_admin", "admin", "ceo", "coo", "finance_head", "accounts_head"] as const;
 
 function actor(req: AuthenticatedRequest) {
   return {
@@ -99,6 +102,20 @@ router.get(
       status: req.query.status ? String(req.query.status) : undefined,
     });
     res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/budgets/consolidation",
+  requireRole(...BUDGET_CONSOLIDATION_ROLES),
+  h(async (req, res) => {
+    const periodCode = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid period (YYYY-MM) is required");
+    const [branchSummaries, headBreakdown] = await Promise.all([
+      branchBudgetService.list({ period: periodCode }),
+      getCompanyBudgetConsolidation(periodCode),
+    ]);
+    res.json({ success: true, data: { branchSummaries, headBreakdown } });
   })
 );
 

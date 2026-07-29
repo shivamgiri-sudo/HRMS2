@@ -385,6 +385,117 @@ export function buildCostCentreConsolidation(lines: RowDataPacket[]): CostCentre
   return [...groups.values()];
 }
 
+// Structurally identical to the Executor interfaces used across this session's other
+// process-pnl services — same dependency-injection pattern for testability.
+interface ConsolidationExecutor {
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+}
+
+export interface CompanyConsolidationBranchAmount {
+  branchId: string;
+  branchName: string | null;
+  budgetStatus: string;
+  quantity: number;
+  grossAmount: number;
+  pnlCostAmount: number;
+}
+
+export interface CompanyConsolidationGroup {
+  head: string;
+  subHead: string | null;
+  itemName: string;
+  unit: string;
+  unitConsistent: boolean;
+  companyUnit: number;
+  companyGrossAmount: number;
+  companyPnlCostAmount: number;
+  branchCount: number;
+  branches: CompanyConsolidationBranchAmount[];
+}
+
+/**
+ * PR 11: company-wide (all-branches) budget consolidation — the same head/sub-head/item grouping
+ * shape as buildCostCentreConsolidation (PR 6), but across every branch's budget for a period
+ * instead of one branch's cost-centre lines. Every budget status is included (not just approved) —
+ * a CEO needs to see which branches haven't finalized their budget yet, not have them silently
+ * excluded from the rollup ("do not silently drop" — established precedent this session).
+ */
+export async function getCompanyBudgetConsolidation(
+  periodCode: string,
+  executor: ConsolidationExecutor = db
+): Promise<CompanyConsolidationGroup[]> {
+  const [rows] = await executor.execute<RowDataPacket[]>(
+    `SELECT h.branch_id, bm.branch_name, h.status AS budget_status,
+            l.head, l.sub_head, l.item_name, l.unit, l.quantity, l.gross_amount, l.pnl_cost_amount
+       FROM finance_budget_header h
+       LEFT JOIN branch_master bm ON bm.id = h.branch_id
+       JOIN finance_budget_line l ON l.budget_id = h.id
+      WHERE h.period_code = ?`,
+    [periodCode]
+  );
+
+  const groups = new Map<
+    string,
+    { group: CompanyConsolidationGroup; branchByBranchId: Map<string, CompanyConsolidationBranchAmount> }
+  >();
+
+  for (const row of rows) {
+    const head = String(row.head);
+    const subHead = row.sub_head != null ? String(row.sub_head) : null;
+    const itemName = String(row.item_name);
+    const unit = String(row.unit);
+    const branchId = String(row.branch_id);
+    const key = `${head}|${subHead ?? ""}|${itemName}`;
+
+    let entry = groups.get(key);
+    if (!entry) {
+      entry = {
+        group: {
+          head,
+          subHead,
+          itemName,
+          unit,
+          unitConsistent: true,
+          companyUnit: 0,
+          companyGrossAmount: 0,
+          companyPnlCostAmount: 0,
+          branchCount: 0,
+          branches: [],
+        },
+        branchByBranchId: new Map(),
+      };
+      groups.set(key, entry);
+    }
+
+    if (entry.group.unit !== unit) entry.group.unitConsistent = false;
+    entry.group.companyUnit += Number(row.quantity ?? 0);
+    entry.group.companyGrossAmount = roundMoney(entry.group.companyGrossAmount + Number(row.gross_amount ?? 0));
+    entry.group.companyPnlCostAmount = roundMoney(entry.group.companyPnlCostAmount + Number(row.pnl_cost_amount ?? 0));
+
+    const existingBranch = entry.branchByBranchId.get(branchId);
+    if (existingBranch) {
+      existingBranch.quantity += Number(row.quantity ?? 0);
+      existingBranch.grossAmount = roundMoney(existingBranch.grossAmount + Number(row.gross_amount ?? 0));
+      existingBranch.pnlCostAmount = roundMoney(existingBranch.pnlCostAmount + Number(row.pnl_cost_amount ?? 0));
+    } else {
+      entry.branchByBranchId.set(branchId, {
+        branchId,
+        branchName: row.branch_name != null ? String(row.branch_name) : null,
+        budgetStatus: String(row.budget_status),
+        quantity: Number(row.quantity ?? 0),
+        grossAmount: Number(row.gross_amount ?? 0),
+        pnlCostAmount: Number(row.pnl_cost_amount ?? 0),
+      });
+    }
+  }
+
+  return [...groups.values()].map(({ group, branchByBranchId }) => ({
+    ...group,
+    branchCount: branchByBranchId.size,
+    branches: [...branchByBranchId.values()],
+  }));
+}
+
 export const branchBudgetService = {
   async list(filters: { period?: string; branchId?: string; status?: string }) {
     const where: string[] = [];
