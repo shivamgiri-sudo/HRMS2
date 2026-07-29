@@ -14,7 +14,7 @@ describe("smart GRN validation override control", () => {
   it("registers migration 419 after allocation P&L migration 418", () => {
     const sql418 = read("sql/418_grn_allocation_pnl_attribution.sql");
     const sql419 = read("sql/419_grn_validation_override_control.sql");
-    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    const runner = read("src/db/runPendingMigrations.ts");
     const manual = read("sql/000_finance_supplemental.sql");
     expect(sql418).toContain("vw_process_pnl_grn_allocation");
     expect(sql419).toContain("CREATE TABLE IF NOT EXISTS grn_validation_override");

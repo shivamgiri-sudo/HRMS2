@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, type BpoPnlRow } from "./bpo-pnl.service.js";
-import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.js";
+import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -125,12 +125,13 @@ function findPolicy(
   );
 }
 
-function allocateBranchPool(
+export function allocateBranchPool(
   rows: BpoPnlRow[],
   branchId: string,
   poolType: string,
   amount: number,
-  policies: AllocationPolicyRow[]
+  policies: AllocationPolicyRow[],
+  warnings?: ManualAllocationWarning[]
 ) {
   const branchRows = rows.filter((row) => row.branchId === branchId);
   const result = new Map<string, number>();
@@ -149,6 +150,7 @@ function allocateBranchPool(
         `[bpo-pnl-allocation-overlay] manual allocation for branch ${branchId} / pool ${poolType} sums to ` +
         `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`
       );
+      warnings?.push({ branchId, poolType, percentTotal: outcome.percentTotal ?? 0 });
     }
     for (const [processId, allocated] of outcome.amounts) result.set(processId, allocated);
     return result;
@@ -266,6 +268,7 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   const branchBucketPools = new Map<string, number>();
   const legacyBranchPools = new Map<string, number>();
   let latestFreshness: string | null = null;
+  const warnings: ManualAllocationWarning[] = [];
 
   for (const allocation of allocations) {
     const amount = n(allocation.pnl_cost_amount);
@@ -300,7 +303,7 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
     const branchId = key.slice(0, separator);
     const bucket = key.slice(separator + 1);
     const poolType = bucket === "bmc_non_people" ? "bmc_non_people" : "shared_service";
-    for (const [processId, allocated] of allocateBranchPool(rows, branchId, poolType, amount, policies)) {
+    for (const [processId, allocated] of allocateBranchPool(rows, branchId, poolType, amount, policies, warnings)) {
       const current = bucketsByProcess.get(processId) ?? emptyBuckets();
       addBucket(current, bucket, allocated);
       bucketsByProcess.set(processId, current);
@@ -308,14 +311,14 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   }
 
   for (const [branchId, amount] of legacyBranchPools.entries()) {
-    for (const [processId, allocated] of allocateBranchPool(rows, branchId, "bmc_non_people", amount, policies)) {
+    for (const [processId, allocated] of allocateBranchPool(rows, branchId, "bmc_non_people", amount, policies, warnings)) {
       const current = legacyByProcess.get(processId) ?? emptyLegacy();
       current.bmc += allocated;
       legacyByProcess.set(processId, current);
     }
   }
 
-  return { bucketsByProcess, legacyByProcess, latestFreshness, allocationCount: allocations.length };
+  return { bucketsByProcess, legacyByProcess, latestFreshness, allocationCount: allocations.length, warnings };
 }
 
 function adjustedRow(
@@ -440,19 +443,47 @@ function applySummaryTotals(summary: BpoPnlSummary, rows: BpoPnlRow[]): BpoPnlSu
   };
 }
 
+/** Adds one deduped MANUAL_ALLOCATION_NOT_BALANCED alert per branch/poolType found in this
+ *  pass's own allocation warnings. Not cross-deduped against the inner bpoPnlService.getSummary
+ *  call's alerts (that pass reads different pool sources — GRN-allocation-view/legacy-vendor
+ *  pools here vs people/cost-component/budget pools there) — in the rare case both flag the same
+ *  branch+poolType, the alert appears twice rather than being silently dropped. */
+function withAllocationWarnings<T extends { alerts: BpoPnlSummary["alerts"] }>(
+  summary: T,
+  warnings: ManualAllocationWarning[]
+): T {
+  if (warnings.length === 0) return summary;
+  const seen = new Set<string>();
+  const extra: BpoPnlSummary["alerts"] = [];
+  for (const warning of warnings) {
+    const key = `${warning.branchId}|${warning.poolType}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    extra.push({
+      type: "critical",
+      code: "MANUAL_ALLOCATION_NOT_BALANCED",
+      title: "Manual allocation not balanced",
+      detail: `Branch ${warning.branchId} manual allocation policy for ${warning.poolType} sums to ` +
+        `${warning.percentTotal.toFixed(2)}% (expected 100%). Amounts are applied as configured, not rebalanced.`,
+    });
+  }
+  return { ...summary, alerts: [...summary.alerts, ...extra] };
+}
+
 export const bpoPnlAllocationOverlayService = {
   async getSummary(filters: Partial<PnlQueryFilters>) {
     const summary = await bpoPnlService.getSummary(filters);
     if (!(await tableExists("grn_cost_allocation"))) return summary;
     const maps = await buildAllocationMaps(summary.rows, summary.period);
-    if (maps.allocationCount === 0) return summary;
-    const rows = summary.rows.map((row) => adjustedRow(
+    if (maps.allocationCount === 0) return withAllocationWarnings(summary, maps.warnings);
+    const withWarnings = withAllocationWarnings(summary, maps.warnings);
+    const rows = withWarnings.rows.map((row) => adjustedRow(
       row,
       maps.bucketsByProcess.get(row.processId) ?? emptyBuckets(),
       maps.legacyByProcess.get(row.processId) ?? emptyLegacy(),
       maps.latestFreshness
     ));
-    return applySummaryTotals(summary, rows);
+    return applySummaryTotals(withWarnings, rows);
   },
 
   async getProcessDetail(processId: string, filters: Partial<PnlQueryFilters>) {

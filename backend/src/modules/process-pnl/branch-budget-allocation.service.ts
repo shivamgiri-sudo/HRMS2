@@ -87,10 +87,16 @@ export async function listActiveCostCentres(
   branchId: string,
   executor: Executor = db
 ): Promise<CostCentreOption[]> {
+  // active_status alone is not reliable on the live table — confirmed by direct query that at
+  // least one cost centre has active_status = 1 but a close_date years in the past (the flag was
+  // never updated when it closed). Excluding closed/not-yet-live rows here prevents a stale or
+  // future cost centre from silently appearing as an allocation/statement column.
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT id, cost_centre_code, cost_centre_name
        FROM cost_centre_master
       WHERE branch_id = ? AND active_status = 1
+        AND (close_date IS NULL OR close_date > CURDATE())
+        AND (go_live_date IS NULL OR go_live_date <= CURDATE())
       ORDER BY cost_centre_name`,
     [branchId]
   );
@@ -297,6 +303,16 @@ export async function computeLineAllocations(
   const tax = allocatePoolAmount(amounts.taxAmount, shares, mode);
   const gross = allocatePoolAmount(amounts.grossAmount, shares, mode);
   const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode);
+
+  // Backend-authoritative block for manual splits (the frontend already validates this
+  // pre-save, but the API must not silently persist an unbalanced split reached by any other
+  // caller). balanced/percentTotal are identical across all four calls above since they share
+  // the same `shares` — checking one is sufficient.
+  if (mode === "manual_percentage" && !gross.balanced) {
+    throw new Error(
+      `Manual cost-centre split must total 100% (currently ${(gross.percentTotal ?? 0).toFixed(2)}%)`
+    );
+  }
 
   return costCentres.map((cc) => {
     const grossShare = gross.amounts.get(cc.id) ?? 0;

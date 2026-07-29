@@ -936,6 +936,7 @@ export default function NativeReportsCenterV2() {
   async function handleDownloadXlsx() {
     if (!selectedReport) return;
     setDownloadState("loading");
+    setDownloadError("");
     try {
       const params = new URLSearchParams();
       Object.entries(filterValues).forEach(([k, v]) => { if (v) params.set(k, v); });
@@ -943,8 +944,9 @@ export default function NativeReportsCenterV2() {
       const token = localStorage.getItem("hrms_access_token") ?? sessionStorage.getItem("hrms_access_token") ?? "";
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!resp.ok) {
-        const body = await resp.json().catch(() => ({})) as { error?: string; reason?: string; message?: string };
-        throw new Error(body.message ?? body.reason ?? body.error ?? `Server error ${resp.status}`);
+        const body = await resp.json().catch(() => ({})) as { error?: string; reason?: string; message?: string; rowCount?: number; limit?: number };
+        const rowHint = body.rowCount ? ` (${body.rowCount.toLocaleString()} rows, limit ${body.limit?.toLocaleString() ?? 5000})` : "";
+        throw new Error((body.message ?? body.reason ?? body.error ?? `Server error ${resp.status}`) + rowHint);
       }
       const blob = await resp.blob();
       const a = document.createElement("a");
@@ -959,7 +961,6 @@ export default function NativeReportsCenterV2() {
       const msg = err instanceof Error ? err.message : "Download failed";
       setDownloadError(msg);
       setDownloadState("error");
-      window.setTimeout(() => { setDownloadState("idle"); setDownloadError(""); }, 6000);
       console.error("XLSX download failed:", err);
     }
   }
@@ -1216,7 +1217,12 @@ export default function NativeReportsCenterV2() {
                         </button>
                       </div>
                       {downloadState === "error" && (
-                        <p className="text-xs text-red-600 max-w-xs text-right">{downloadError || "Download failed. Try Request by Email."}</p>
+                        <div className="flex items-start gap-2 max-w-xs text-right">
+                          <p className="text-xs text-red-600 flex-1">{downloadError || "Download failed. Try Request by Email."}</p>
+                          <button type="button" onClick={() => { setDownloadState("idle"); setDownloadError(""); }} className="text-red-400 hover:text-red-600 flex-shrink-0">
+                            <X size={12} />
+                          </button>
+                        </div>
                       )}
                       {requestMessage && (
                         <p className="text-xs text-blue-700 max-w-xs text-right">{requestMessage}</p>

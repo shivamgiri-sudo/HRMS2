@@ -120,6 +120,20 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).rejects.toThrow(/Missing: Collections, Customer Support|Missing:.*Collections/);
   });
 
+  it("rejects a manual split covering every cost centre but not summing to 100% (backend-authoritative block)", async () => {
+    await expect(
+      computeLineAllocations(
+        "branch-1", "2026-08", "manual", AMOUNTS,
+        [
+          { costCentreId: "cc1", percentage: 40 },
+          { costCentreId: "cc2", percentage: 30 },
+          { costCentreId: "cc3", percentage: 20 },
+        ],
+        fakeExecutor(THREE_COST_CENTRES)
+      )
+    ).rejects.toThrow(/must total 100%.*90\.00%/);
+  });
+
   it("rejects total_manpower/revenue_share when a cost centre has no monthly driver row", async () => {
     const drivers: FakeDriver[] = [
       { cost_centre_id: "cc1", planned_headcount: 10, revenue_rate_per_head: 0, remarks: null, status: "draft", updated_by: null, updated_at: null },

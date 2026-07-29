@@ -9,6 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
+import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
 import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
@@ -50,7 +52,8 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "matrix" | "alerts">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "matrix" | "statement" | "alerts">("overview");
+  const [statementViewBy, setStatementViewBy] = useState<PnlStatementViewBy>("process");
   const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
   const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
   const [issueFilter, setIssueFilter] = useState<ProcessPnlIssueFilter>("all");
@@ -96,6 +99,7 @@ export default function ProcessPnlPage() {
     search: search || undefined,
   };
   const bpoQuery = useBpoProcessPnl(filters);
+  const statementQuery = usePnlStatement(filters, statementViewBy);
   const summary = bpoQuery.data;
   const rows = summary?.rows ?? [];
   const branches = Array.from(
@@ -236,6 +240,7 @@ export default function ProcessPnlPage() {
           <TabsList className="mx-4 mt-3 w-fit shrink-0">
             <TabsTrigger value="overview">CEO Overview</TabsTrigger>
             <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
+            <TabsTrigger value="statement">P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
           </TabsList>
 
@@ -282,6 +287,15 @@ export default function ProcessPnlPage() {
                 alerts={summary?.alerts}
               />
             )}
+          </TabsContent>
+
+          <TabsContent value="statement" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <PnlStatementView
+              statement={statementQuery.data}
+              isLoading={statementQuery.isLoading}
+              viewBy={statementViewBy}
+              onViewByChange={setStatementViewBy}
+            />
           </TabsContent>
 
           <TabsContent value="alerts" className="flex-1 overflow-auto px-4 py-3 m-0">
