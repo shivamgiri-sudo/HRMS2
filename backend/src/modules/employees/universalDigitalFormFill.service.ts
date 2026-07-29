@@ -165,6 +165,9 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   { field_key: "pi_signature_date", field_label: "Personal Information Consent - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["pi_signature_date"] },
   { field_key: "zero_tolerance_employee_name", field_label: "Zero Tolerance - Employee Name", source_path: "employee.full_name", required: true, aliases: ["zero_tolerance_employee_name"] },
   { field_key: "zero_tolerance_signature_date", field_label: "Zero Tolerance - Signature Date", source_path: "system.current_date", required: true, field_type: "date", aliases: ["zero_tolerance_signature_date"] },
+  // The employment agreement names the second party as "r/o <address>" and
+  // repeats it as the notice address, so a blank here is a defective contract.
+  { field_key: "employee_address", field_label: "Residential Address", source_path: "employee.permanent_address", required: false, aliases: ["employee_address", "address", "permanent_address"] },
 ];
 
 const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
@@ -174,6 +177,8 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
     "date_of_joining",
     "branch",
     "process",
+    "designation",
+    "department",
     "current_date",
     "nda_employee_name",
     "nda_signature_date",
@@ -195,7 +200,7 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
   PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "mobile", "email", "current_date"],
   ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
-  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date"],
+  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "employee_address"],
 };
 
 function normalizeToken(value: string) {
@@ -469,6 +474,14 @@ async function checklistContext(checklistId: string): Promise<ChecklistContextRo
   return row;
 }
 
+/** Single-line postal address, permanent first, skipping the parts that are blank. */
+function joinAddress(employee: RowDataPacket | undefined) {
+  const pick = (...keys: string[]) => keys.map((key) => safeTrim(employee?.[key])).filter(Boolean);
+  const permanent = pick("permanent_address1", "permanent_address2", "permanent_city", "permanent_state", "permanent_pincode");
+  const current = pick("address1", "address2", "city", "state", "pincode");
+  return (permanent.length ? permanent : current).join(", ");
+}
+
 async function buildSourceContext(employeeId: string, candidateId?: string | null) {
   const [[employee]] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -480,6 +493,9 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
         e.date_of_birth,
         e.date_of_joining,
         e.gender,
+        e.address1, e.address2, e.city, e.state, e.pincode,
+        e.permanent_address1, e.permanent_address2, e.permanent_city,
+        e.permanent_state, e.permanent_pincode,
         e.mobile,
         COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
         d.designation_name,
@@ -588,6 +604,9 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
       mobile: employee?.mobile ?? onboarding?.mobile_number ?? epf?.mobile_number ?? null,
       email: employee?.email ?? onboarding?.personal_email_id ?? epf?.personal_email ?? null,
       father_name: epf?.father_or_spouse_name ?? onboarding?.father_husband_name ?? null,
+      // "r/o" on the employment agreement means place of residence, so prefer
+      // the permanent address and fall back to the current one.
+      permanent_address: joinAddress(employee) || null,
     },
     epf: {
       employee_name: epf?.employee_name ?? employee?.full_name ?? null,

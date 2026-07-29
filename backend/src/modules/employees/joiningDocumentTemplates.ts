@@ -101,15 +101,17 @@ const NDA: Block[] = [
   li("2. Analysts must not download, install, or attempt to install any unauthorized software on Mas Callnet or client-provided assets, including malware that could capture screen contents and/or keystrokes."),
   sp(),
   h("Agreement"),
-  p("I, {{nda_employee_name}}, hereby undertake that except with the prior written consent of Mas Callnet India Pvt. Ltd., I shall not disclose to any third party any information that I may acquire in relation to any contract, whether in writing or orally, including but not limited to documents, material, specifications, drawings, reports, trade secrets, and client and internal data (known collectively as “Confidential Information”)."),
+  p("I, {{nda_employee_name}}, {{designation}} (designation), do hereby undertake that except with the prior written consent of Mas Callnet India Pvt. Ltd., I shall not disclose to any third party any information that I may acquire in relation to any contract, whether in writing or orally, including but not limited to documents, material, specifications, drawings, reports, trade secrets, and client and internal data (known collectively as “Confidential Information”)."),
   p("I also agree to ensure compliance with the company's information security and asset ownership requirements and would be responsible for any damage or loss, leading to disciplinary action under the code of conduct policy."),
   p("I understand that a breach of confidentiality or misuse of information could result in disciplinary action and can result in termination of employment."),
   p("I further certify that I have gone through the company policies and would abide by the same. I hereby acknowledge updating myself on the company processes, policies and procedures."),
   sp(),
-  p("Name of the Analyst: {{nda_employee_name}}"),
-  p("Employee Code: {{employee_code}}          Date of Joining: {{date_of_joining}}"),
-  p("Branch: {{branch}}          Process: {{process}}"),
+  // Signature block reproduced from the approved form, which asks for
+  // department as well as branch and process.
   p("Signature: ______________________          Date: {{nda_signature_date}}"),
+  p("Name of the Employee: {{nda_employee_name}}          Branch: {{branch}}"),
+  p("Department: {{department}}          Process: {{process}}"),
+  p("Employee Code: {{employee_code}}          Date of Joining: {{date_of_joining}}"),
   sp(),
   t("Mas Callnet India Pvt. Ltd. – An Equal Opportunity Employer"),
   p("At Mas Callnet we don't just stop at accepting difference — we celebrate it, support it, and thrive on it for the benefit of our employees. We do not discriminate in employment on the basis of race, colour, religion, sex, marital status, disability, genetic information or any other protected characteristic."),
@@ -248,7 +250,136 @@ const ZERO: Block[] = [
   p("Signature: ______________________          Date: {{zero_tolerance_signature_date}}"),
 ];
 
+/**
+ * Employment agreement, transcribed from "Employment Contract-Mas (CF).pdf".
+ *
+ * The clause text is reproduced as approved; only the blanks the original left
+ * for handwriting carry placeholders. The remuneration figure in the Appendix
+ * is deliberately NOT auto-filled: this document is emailed to the joiner, and
+ * pulling a salary into it would put pay data into an outbound attachment. HR
+ * confirms the amount, the same way surveillance_hr_name is handled.
+ */
+const CONTRACT: Block[] = [
+  t("AGREEMENT"),
+  p("This Agreement is made and entered into at New Delhi on {{current_date}} by and between:"),
+  p("Mas Callnet India (P) Ltd, a company registered under the Companies Act, 1956 and having its registered office at B-24, Okhla Phase-II, New Delhi-110020 (hereinafter called the Company / First Party which expression unless repugnant to the context shall mean and include its subsidiaries, its successors and assigns)"),
+  p("AND"),
+  p("{{employee_name}} s/o {{father_name}} r/o {{employee_address}} (hereinafter referred to as the Second Party which expression unless repugnant to the context shall mean and include its successors in interest and permitted assigns)"),
+  p("WHEREAS the first party is engaged in the business of software development, customisation, Business Process Outsourcing and other Information Technology Enabled and Related Services;"),
+  p("AND WHEREAS the second party has represented that it is qualified and trained in the field of {{designation}} and is, therefore, capable of carrying out the activities required of it by the Company including {{process}} etc.;"),
+  p("AND WHEREAS the second party has offered its services to the Company and the Company proposes to employ the services of the second party based on the assurances given by the second party."),
+  p("NOW THEREFORE, IN CONSIDERATION OF THE MUTUAL COVENANTS HEREIN CONTAINED, THE PARTIES AGREE AS FOLLOWS:"),
+
+  h("1. DEFINITIONS"),
+  li("1.1 Product means the product designed, developed, manufactured or otherwise dealt in by the first party or its constituents/ customers."),
+  li("1.2 Intellectual Property means existing and future intellectual property held and owned by the first party or its constituents/ customers in the nature of customer database, patents, unregistered or registered, rights to any and all COPYRIGHTS, TRADEMARKS, DESIGNS and other confidential and/ or proprietary information limited to that forming part of the subject matter of the agreement, and inclusive of all intellectual property that is the subject of ownership by the first party and/ or its assigns or nominees having an interest in the first party's business and title."),
+  li("1.3 Trademarks means the trademarks as may be specified by the first party in respect of products designed, developed, manufactured and/ or dealt in by the first party or its constituents/ customers."),
+  li("1.4 Copyrights means works of design/ authorship, either artistic or literary with reference to the PRODUCT fixed in a tangible medium of expression (including corresponding rights under international agreements and conventions, inclusive of the non-registration and/ or registrations, renewal and extensions of any of the foregoing) whether or not containing a copyright notice, which work(s) was/ were created before or after the execution of this manufacturing agreement. This definition shall include artistic works to be used as TRADEMARKS of the first party or its constituents/ customers and also the packaging materials specifically designed by or for the first party or its constituents/ customers."),
+  li("1.5 Know-How means without limitation, the process/ processes and know how for the Product of the first party or its constituents/ customers and also inclusive of any improvements/ modifications effected or caused to be effected to the said process(s) by the first party or its constituents/ customers and/ or the second party while in the employment of the first party."),
+  li("1.6 Database: Details consisting of any personal information including but not limited to name, address, number etc., of customers of company or end customers of customers."),
+  li("1.7 “Effective Date” shall mean the date on and from which this Agreement comes into force, i.e. {{date_of_joining}}."),
+
+  h("2. JOB REQUIREMENTS"),
+  li("2.1 The Second Party shall render services to the first party in respect of {{designation}} including, but not limited to, {{process}}, whether in the existing premises and/ or elsewhere."),
+
+  h("3. REMUNERATION"),
+  li("3.1 In respect of various services rendered by the Second Party to the First Party, it shall be paid remuneration as described in the Appendix hereto."),
+
+  h("4. TERM"),
+  li("4.1 This Agreement shall become effective from the EFFECTIVE DATE and shall be valid for a period of 36 months."),
+  li("4.2 The parties may mutually agree to renew this agreement for any further period upon expiry of the period mentioned in clause 4.1 above upon mutually agreeable terms and conditions. At least one month before expiry of the term of this agreement, either party may inform the other party of its intention to renew or not to renew this agreement. If not renewed, this Agreement shall stand terminated on expiry of the term mentioned above."),
+
+  h("5. TERMINATION OF AGREEMENT"),
+  li("5.1 The first party may terminate this agreement forthwith at any time before the expiry of the said period of 36 months by giving the second party a notice in writing upon happening of any of the following events:"),
+  li("(a) If the performance/ conduct of the second party is not consistent with the applicable laws and regulations or that the same in any manner whatsoever adversely affects the image and goodwill of the first party. Such acts shall include but not be limited to any deviation from the acceptable standards of quality/ performance/ conduct as well as misuse of the TRADEMARK. The first party shall be the sole determining authority in this respect;"),
+  li("(b) In the event the second party commits a breach of any part of this agreement;"),
+  li("(c) Upon bankruptcy, insolvency, general assignment for benefit of creditors of the second party; or"),
+  li("(d) This Agreement or any material provision thereof is held to be invalid, illegal/ or unenforceable by any final judgment, decree or decision of a court of Competent Jurisdiction;"),
+  li("(e) The second party is rendered incapable of carrying out the activities by operation of any law."),
+  li("(f) The First Party discontinues or decides to discontinue its activity or business for which the Second Party has been engaged."),
+  li("5.2 Upon either party communicating to the other Party of its intention to terminate this agreement by giving a notice of 30 days."),
+  li("5.3 The Parties to this Agreement may terminate this agreement by mutual consent."),
+  li("5.4 Upon termination or earlier determination/ expiry of this Agreement for reasons as stated above or for any other reason whatsoever, the Second Party shall forthwith cease to represent the first party in any manner whatsoever, shall return all the documents, properties and correspondence, whatsoever."),
+  li("5.5 Upon termination or earlier determination/ expiry of this Agreement for reasons as stated above or for any other reason whatsoever, the Second Party shall neither claim nor be entitled to any compensation or any other charges, whatsoever."),
+
+  h("6. NOTICES"),
+  li("6.1 All notices, requests, demands or other communications required or permitted to be given or made under this agreement shall only be in writing and delivered personally, or sent by registered post with A/D or a courier of repute to the intended recipient thereof at the address set forth below. The addresses of the parties for the purposes of this agreement are as follow:"),
+  p("To First Party: M/s Mas Callnet India (P) Ltd, B-24, Okhla Phase-II, New Delhi-110020"),
+  p("To Second Party: {{employee_name}}, {{employee_address}}"),
+  li("6.2 Any Party hereto may change its address for the purpose of this Agreement by giving written notice to the other parties at the address and in the manner provided above."),
+
+  h("7. INDEMNITY"),
+  li("7.1 The second party shall discharge its duties in utmost good faith. In respect of any act of the second party in contravention of the good faith provisions, the second party shall be fully responsible for its acts, actions and conduct and indemnify and hold the first party harmless from and indemnified against any and all claims and liabilities for damages, losses and other costs including lawyers' fees arising out of any action instituted against the first party by a third party including Government authorities under any law or laws and rules made thereunder for the time being in force."),
+
+  h("8. NON-EXCLUSIVITY"),
+  li("8.1 The First Party shall be entitled to enter into similar agreement(s) with other parties."),
+
+  h("9. NON-COMPETE"),
+  li("9.1 During the term of this Agreement, the Second Party shall devote its whole time, attention and abilities to the activities assigned to it by the first party and shall not carry out any other activity, whether or not related to the first party's area of activity."),
+  li("9.2 During the term of this Agreement, the second party shall not directly or indirectly, individually or collectively, own, manage, operate, consult or be involved in the similar business including developing, or manufacturing, or marketing any product using the KNOW HOW, Trade Secrets or other proprietary information of the First Party or any variant thereof."),
+  li("9.3 The Second Party acknowledges that any breach of this Clause shall cause irreparable injury to the First Party and the First Party shall be entitled to equitable remedy from a competent court/ authority in addition to any other remedy available to it under the law."),
+
+  h("10. CONFIDENTIALITY"),
+  li("10.1 This Agreement is strictly confidential and the Second Party undertakes not to disclose its content to third Parties without the previous written consent of the First Party, except where required by law."),
+  li("10.2 The Parties recognise that pursuant to and under this Agreement, the Second Party has received and shall receive non-public proprietary and confidential information related to the first party as well as to its constituents/ customers. The Second Party acknowledges that such information is the First Party's property and the Second Party shall receive and hold such information in confidence and shall not disclose such confidential information to others."),
+  li("10.3 It is further agreed between the Parties that any and all information, including that herein provided concerning the first party's business and products or to those of the first party's constituents/ customers, which may be disclosed or provided to the Second Party at anytime, whether or not owned or developed by the First Party or whether or not COPYRIGHTED or patented, shall be treated by the Second Party as confidential or proprietary information and shall not be disclosed to any third party without prior written consent of the First Party."),
+  li("10.4 The confidentiality obligation of the Second Party shall apply beyond the period of the present contract."),
+
+  h("11. SEVERABILITY"),
+  li("11.1 If any term of this Agreement not essential to the commercial purpose of this Agreement shall be held to be illegal, invalid or unenforceable by a court of competent jurisdiction, it is the intention of the Parties that the remaining terms hereof shall constitute their agreement with respect to the subject matter hereof and all such remaining terms shall remain in full force and effect."),
+
+  h("12. WAIVER"),
+  li("12.1 No failure on the part of any Party hereto to exercise, and no delay in exercising any right, power or remedy hereunder shall operate as a waiver thereof, nor shall any single or partial exercise of any right, power or remedy by any such Party preclude any other or further exercise thereof or the exercise of any other right, power or remedy."),
+  li("12.2 No express waiver or assent by any Party hereto to any breach of or default in any term or condition of this Agreement shall constitute a waiver of or an assent to any succeeding breach of or default in the same or any other term or condition hereof."),
+
+  h("13. ASSIGNMENT"),
+  li("13.1 Neither this Agreement nor any interest herein may be assigned or otherwise transferred by the Second Party without prior written consent of the First Party."),
+
+  h("14. ENTIRE AGREEMENT"),
+  li("14.1 This Agreement supersedes all prior discussions and agreements between the Parties with respect to the subject matter hereof, and this Agreement contains the sole and entire agreement between the Parties with respect to the matters covered hereby. This Agreement may not be modified or amended except by an instrument in writing signed by or on behalf of all the Parties hereto."),
+
+  h("15. MODIFICATIONS TO THE CONTRACT"),
+  li("15.1 No modification or amendment of this Agreement and no waiver of any of the terms and conditions shall be valid or binding unless made in writing and duly executed by both Parties."),
+
+  h("16. RELATIONSHIP BETWEEN PARTIES"),
+  li("16.1 This Agreement is executed on an Employer-Employee basis and is purely contractual. None of the provisions of the Agreement shall be deemed to constitute a partnership, agency or any other relationship. The second Party shall have any authority to bind the first Party otherwise than under this Agreement or shall be deemed to be the agent of the other party in any way."),
+  li("16.2 It is understood and agreed by and between the Parties that the Second Party would have sole and exclusive responsibility, statutory and contractual, in respect of all his legal obligations and the First Party shall in no way be responsible for the same."),
+
+  h("17. FORCE MAJEURE"),
+  li("17.1 Any delays in or failure of performance by any party under this Agreement shall not constitute default hereunder or give rise to any claims for damages if, and to the extent, caused by the following occurrences beyond the control of either party affected - fire, floods, explosions, acts of God, accidents, epidemic, riots, embargoes, outbreak of hostilities, enemy action, any legislative prohibitions or restrictions imposed by any Government or Authority."),
+
+  h("18. JURISDICTION"),
+  li("18.1 Any dispute/ difference arising from this Agreement shall be subject to the exclusive jurisdiction of the courts in Delhi."),
+
+  sp(),
+  p("IN WITNESS WHEREOF, the Parties have caused this Agreement to be executed under seal as of the day, month and year first above written."),
+  sp(),
+  p("For and on behalf of Mas Callnet India (P) Ltd (First Party): ______________________"),
+  sp(),
+  p("Second Party: {{employee_name}}"),
+  p("Employee Code: {{employee_code}}          Date of Joining: {{date_of_joining}}"),
+  p("Designation: {{designation}}          Department: {{department}}"),
+  p("Branch: {{branch}}          Process: {{process}}"),
+  p("Signature: ______________________          Date: {{current_date}}"),
+  sp(),
+  p("Witness 1: ______________________"),
+  p("Witness 2: ______________________"),
+
+  sp(),
+  t("APPENDIX FORMING PART OF THE AGREEMENT"),
+  p("Dated {{current_date}}, between Mas Callnet India (P) Ltd and {{employee_name}}."),
+  h("Remuneration"),
+  p("1. The remuneration payable by the first party to the second party for the services rendered under this Agreement shall be as laid down below:"),
+  p("Description: All {{designation}} work of the first party's area of activity including, but not limited to, {{process}}, whether in the existing premises and/ or elsewhere."),
+  p("Remuneration Payable: Rs. ______________ (Rupees ______________________ only) per month. The remuneration is inclusive of all expenses."),
+  p("2. The second party shall neither claim nor be entitled to any other remuneration or any other amount, by whatever name called, whether fixed or variable or as a percentage of either profits or any part of the sales, including sales in respect of orders introduced and/ or canvassed by the second party, in any form whatsoever."),
+  p("3. In addition to the remuneration as stated above, the second party may be paid an incentive, at the sole discretion of the first party, reimbursed reasonable travelling, boarding and lodging expenses as per actuals provided prior approval thereof has been obtained from the first party."),
+  p("4. All payments to be made by the first party to the second party shall be subject to deduction of applicable taxes at source at the rates in force. Payments shall also be subject to any future taxes that may be levied by any Government, whether Central or State or by any other Authority in future under any provisions of law. Thus, all taxes, present and future, shall be borne by the second party and the first party shall not be liable or be called upon to pay such taxes on behalf of the second party."),
+  p("5. The second party shall be solely responsible for payment of the taxes on its incomes and the first party shall neither be liable nor be called upon to bear any part of these taxes, whether such taxes are applicable at present or are levied by any Government, whether Central or State or by any other Authority in future under any provisions of law."),
+];
+
 const TEMPLATES: Array<{ code: string; blocks: Block[] }> = [
+  { code: "EMPLOYMENT_CONTRACT", blocks: CONTRACT },
   { code: "NDA_CONFIDENTIALITY", blocks: NDA },
   { code: "IT_COMPLIANCE", blocks: IT },
   { code: "BAMS_DECLARATION", blocks: BAMS },
