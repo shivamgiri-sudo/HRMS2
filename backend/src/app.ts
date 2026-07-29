@@ -1,4 +1,5 @@
 import compression from "compression";
+import { runWithRequestContext } from "./shared/requestContext.js";
 import cors from "cors";
 import express from "express";
 import fs from "fs";
@@ -232,6 +233,12 @@ app.use(compression({
     return compression.filter(req, res);
   },
 }));
+// Bind a per-request memoisation store before anything else runs, so
+// authorization lookups (hasRole / getEmployeeForUser) are resolved once per
+// request instead of re-querying on every call. The store is discarded when the
+// request ends, so permission changes take effect on the very next request.
+app.use((_req, _res, next) => runWithRequestContext(next));
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({
   origin: (origin, callback) => {

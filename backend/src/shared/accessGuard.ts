@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import type { Response, NextFunction } from "express";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
+import { memoizeForRequest } from "./requestContext.js";
 
 /**
  * Resolve user_id → MySQL employee record.
@@ -9,6 +10,12 @@ import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
  * Returns null if no employee mapped to this user or grace period expired.
  */
 export async function getEmployeeForUser(userId: string): Promise<{ id: string; employee_code: string } | null> {
+  // Memoised per request — several routes resolve the caller's employee record
+  // more than once while serving a single call.
+  return memoizeForRequest(`emp:${userId}`, () => resolveEmployeeForUser(userId));
+}
+
+async function resolveEmployeeForUser(userId: string): Promise<{ id: string; employee_code: string } | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code
@@ -57,6 +64,16 @@ export async function hasRole(userId: string, ...roles: string[]): Promise<boole
   const normalizedRequested = new Set(roles.map((role) => String(role).trim().toLowerCase()));
   if (normalizedRequested.size === 0) return false;
 
+  // Memoise the ROLE SET, not the boolean answer: a single request asks about
+  // different role combinations, and they can all be served from one query.
+  const userRoles = await memoizeForRequest(`roles:${userId}`, () => fetchUserRoles(userId));
+
+  if (userRoles.includes("super_admin") || userRoles.includes("admin")) return true;
+  return userRoles.some((role) => normalizedRequested.has(role));
+}
+
+/** All active role keys for a user, from user_roles plus scoped assignments. */
+async function fetchUserRoles(userId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
      UNION
@@ -66,14 +83,11 @@ export async function hasRole(userId: string, ...roles: string[]): Promise<boole
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
     [userId],
   ));
-
-  const userRoles = (rows as { role_key: string }[])
+  return (rows as { role_key: string }[])
     .map((row) => String(row.role_key ?? "").trim().toLowerCase())
     .filter(Boolean);
-
-  if (userRoles.includes("super_admin") || userRoles.includes("admin")) return true;
-  return userRoles.some((role) => normalizedRequested.has(role));
 }
+
 
 /**
  * MySQL-authoritative scope check for process-owned workflows.

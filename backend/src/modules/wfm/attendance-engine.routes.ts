@@ -589,9 +589,19 @@ router.get('/ncosec-monthly', h(async (req: AuthenticatedRequest, res: Response)
   }
 
   const mappings = await getBulkCosecMappings(employees.map((employee) => employee.id));
+  // Chunks were fetched strictly one after another, so a wide scope paid the
+  // full upstream latency per 200 employees. Run them with bounded concurrency:
+  // fast for large scopes, while still capping simultaneous load on the COSEC
+  // MSSQL box (unbounded Promise.all over every chunk could swamp it).
+  const chunks = chunkArray(mappings, 200);
   const records: NcosecMonthlyRecord[] = [];
-  for (const chunk of chunkArray(mappings, 200)) {
-    records.push(...await getMonthlyAttendanceFromNcosec(chunk, fromDate, toDate));
+  const NCOSEC_CONCURRENCY = 4;
+  for (let i = 0; i < chunks.length; i += NCOSEC_CONCURRENCY) {
+    const batch = chunks.slice(i, i + NCOSEC_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((chunk) => getMonthlyAttendanceFromNcosec(chunk, fromDate, toDate)),
+    );
+    for (const result of results) records.push(...result);
   }
 
   const attendanceStatus = String(req.query.attendanceStatus ?? '').trim().toLowerCase();
