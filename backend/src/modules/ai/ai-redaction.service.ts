@@ -15,6 +15,13 @@ const BANK_ACCOUNT_PATTERN = /\b\d{9,18}\b/g;
 const IFSC_PATTERN = /\b[A-Z]{4}0[A-Z0-9]{6}\b/g;
 const UAN_PATTERN = /\b\d{12}\b/g;
 
+// RegExp.test() on a /g pattern advances lastIndex and resumes from there on the
+// next call, so detection flip-flops when the same pattern is reused. Detection
+// uses these stateless copies; the /g originals stay for replace().
+function detects(pattern: RegExp, value: string): boolean {
+  return new RegExp(pattern.source, pattern.flags.replace('g', '')).test(value);
+}
+
 class AiRedactionService {
   /**
    * Mask Aadhaar number (show last 4 digits only)
@@ -115,31 +122,31 @@ class AiRedactionService {
     const categories: PiiCategory[] = [];
     const sensitiveFields: string[] = [];
 
-    if (AADHAAR_PATTERN.test(value)) {
+    if (detects(AADHAAR_PATTERN, value)) {
       categories.push('statutory_sensitive');
       sensitiveFields.push('aadhaar');
     }
-    if (PAN_PATTERN.test(value)) {
+    if (detects(PAN_PATTERN, value)) {
       categories.push('statutory_sensitive');
       sensitiveFields.push('pan');
     }
-    if (MOBILE_PATTERN.test(value)) {
+    if (detects(MOBILE_PATTERN, value)) {
       categories.push('personal_identity');
       sensitiveFields.push('mobile');
     }
-    if (EMAIL_PATTERN.test(value)) {
+    if (detects(EMAIL_PATTERN, value)) {
       categories.push('personal_identity');
       sensitiveFields.push('email');
     }
-    if (BANK_ACCOUNT_PATTERN.test(value)) {
+    if (detects(BANK_ACCOUNT_PATTERN, value)) {
       categories.push('bank_sensitive');
       sensitiveFields.push('bank_account');
     }
-    if (IFSC_PATTERN.test(value)) {
+    if (detects(IFSC_PATTERN, value)) {
       categories.push('bank_sensitive');
       sensitiveFields.push('ifsc');
     }
-    if (UAN_PATTERN.test(value)) {
+    if (detects(UAN_PATTERN, value)) {
       categories.push('statutory_sensitive');
       sensitiveFields.push('uan');
     }
@@ -184,22 +191,25 @@ class AiRedactionService {
     const redacted: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(obj)) {
-      if (value === null || value === undefined) {
-        redacted[key] = value;
-      } else if (typeof value === 'string') {
-        redacted[key] = this.redactAll(value);
-      } else if (Array.isArray(value)) {
-        redacted[key] = value.map((item) =>
-          typeof item === 'string' ? this.redactAll(item) : item
-        );
-      } else if (typeof value === 'object') {
-        redacted[key] = this.redactObject(value as Record<string, unknown>);
-      } else {
-        redacted[key] = value;
-      }
+      redacted[key] = this.redactValue(value);
     }
 
     return redacted;
+  }
+
+  /**
+   * Redact any value, whatever its nesting. Objects nested inside arrays used to
+   * be passed through untouched, so context built as a list of records (company
+   * facts, employee rows) reached the provider with raw PII in it.
+   */
+  private redactValue(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') return this.redactAll(value);
+    if (Array.isArray(value)) return value.map((item) => this.redactValue(item));
+    if (typeof value === 'object') {
+      return this.redactObject(value as Record<string, unknown>);
+    }
+    return value;
   }
 
   /**
