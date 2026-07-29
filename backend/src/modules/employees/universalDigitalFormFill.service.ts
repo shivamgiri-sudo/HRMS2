@@ -511,7 +511,8 @@ function joinAddress(employee: RowDataPacket | undefined, which: "permanent" | "
   return (permanent.length ? permanent : current).join(", ");
 }
 
-async function buildSourceContext(employeeId: string, candidateId?: string | null) {
+/** Exported so diagnostics can resolve exactly what a document would be filled with. */
+export async function buildSourceContext(employeeId: string, candidateId?: string | null) {
   const [[employee]] = await db.execute<RowDataPacket[]>(
     `SELECT
         e.id,
@@ -752,7 +753,8 @@ async function fieldMapsForTemplate(templateId: string | null, documentCode: str
   return rows as RowDataPacket[];
 }
 
-function deriveFieldValue(map: RowDataPacket, sourceContext: Record<string, unknown>) {
+/** Exported alongside buildSourceContext for the same reason. */
+export function deriveFieldValue(map: RowDataPacket, sourceContext: Record<string, unknown>) {
   const sourceValue = nestedValue(sourceContext, String(map.source_path ?? ""));
   const fieldType = String(map.field_type ?? "text");
   const maskingRule = safeTrim(map.masking_rule);
