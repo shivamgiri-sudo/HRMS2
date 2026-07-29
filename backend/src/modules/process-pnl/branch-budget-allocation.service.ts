@@ -87,10 +87,16 @@ export async function listActiveCostCentres(
   branchId: string,
   executor: Executor = db
 ): Promise<CostCentreOption[]> {
+  // active_status alone is not reliable on the live table — confirmed by direct query that at
+  // least one cost centre has active_status = 1 but a close_date years in the past (the flag was
+  // never updated when it closed). Excluding closed/not-yet-live rows here prevents a stale or
+  // future cost centre from silently appearing as an allocation/statement column.
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT id, cost_centre_code, cost_centre_name
        FROM cost_centre_master
       WHERE branch_id = ? AND active_status = 1
+        AND (close_date IS NULL OR close_date > CURDATE())
+        AND (go_live_date IS NULL OR go_live_date <= CURDATE())
       ORDER BY cost_centre_name`,
     [branchId]
   );
