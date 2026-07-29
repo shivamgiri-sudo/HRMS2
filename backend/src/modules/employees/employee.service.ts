@@ -259,6 +259,7 @@ export const employeeService = {
     if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
     if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
     if (input.processId         !== undefined) { sets.push("process_id = ?");           params.push(input.processId ?? null); }
+    if ((input as any).costCentreId !== undefined) { sets.push("cost_centre_id = ?");   params.push((input as any).costCentreId ?? null); }
     if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
     if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
     if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }

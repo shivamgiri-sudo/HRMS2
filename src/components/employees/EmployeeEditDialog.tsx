@@ -82,6 +82,9 @@ interface EditFormData {
   gender: string;
   designation_id: string;
   department_id: string;
+  branch_id: string;
+  process_id: string;
+  cost_centre_id: string;
   manager_id: string;
   hire_date: string;
   salary_start_date: string | null;
@@ -130,6 +133,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     gender: "",
     designation_id: "",
     department_id: "",
+    branch_id: "",
+    process_id: "",
+    cost_centre_id: "",
     manager_id: "",
     hire_date: "",
     salary_start_date: null,
@@ -292,6 +298,37 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     staleTime: 120_000,
   });
 
+  // Fetch branches
+  const { data: branches = [] } = useQuery({
+    queryKey: ["branches"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{data: any[]}>("/api/org/branches");
+      return res.data ?? [];
+    },
+    staleTime: 120_000,
+  });
+
+  // Fetch processes
+  const { data: processes = [] } = useQuery({
+    queryKey: ["processes"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{data: any[]}>("/api/org/processes");
+      return res.data ?? [];
+    },
+    staleTime: 120_000,
+  });
+
+  // Fetch cost centres — filter by selected branch when set
+  const { data: costCentres = [] } = useQuery({
+    queryKey: ["cost-centres", formData.branch_id],
+    queryFn: async () => {
+      const params = formData.branch_id ? `?branch_id=${formData.branch_id}` : "";
+      const res = await hrmsApi.get<{data: any[]}>(`/api/org/cost-centres${params}`);
+      return res.data ?? [];
+    },
+    staleTime: 60_000,
+  });
+
   // Initialize isDepartmentManager state based on whether employee is a department head
   useEffect(() => {
     const isHead = departments.some((dept) => dept.manager_id === employee?.id);
@@ -323,6 +360,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         gender: employeeDetails.gender || "",
         designation_id: employeeDetails.designation_id || "",
         department_id: employeeDetails.department_id || "",
+        branch_id: employeeDetails.branch_id || "",
+        process_id: employeeDetails.process_id || "",
+        cost_centre_id: employeeDetails.cost_centre_id || "",
         manager_id: employeeDetails.reporting_manager_id || employeeDetails.manager_id || "",
         hire_date: employeeDetails.date_of_joining?.slice?.(0, 10) || employeeDetails.hire_date?.slice?.(0, 10) || "",
         salary_start_date: employeeDetails.salary_start_date?.slice?.(0, 10) || null,
@@ -351,6 +391,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
         gender: data.gender || undefined,
         designationId: data.designation_id || null,
         departmentId: data.department_id || null,
+        branchId: data.branch_id || null,
+        processId: data.process_id || null,
+        costCentreId: data.cost_centre_id || null,
         reportingManagerId: data.manager_id || null,
         dateOfJoining: data.hire_date,
         salaryStartDate: data.salary_start_date || null,
@@ -715,6 +758,65 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       required
                     />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="branch">Branch</Label>
+                    <Select
+                      value={formData.branch_id}
+                      onValueChange={(value) => setFormData({ ...formData, branch_id: value, cost_centre_id: "" })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select branch" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {branches.map((b: any) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.branch_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="process">Process / LOB</Label>
+                    <Select
+                      value={formData.process_id}
+                      onValueChange={(value) => setFormData({ ...formData, process_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select process" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {processes.map((p: any) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.process_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="cost_centre">Cost Centre</Label>
+                  <Select
+                    value={formData.cost_centre_id}
+                    onValueChange={(value) => setFormData({ ...formData, cost_centre_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={formData.branch_id ? "Select cost centre" : "Select a branch first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {costCentres.map((cc: any) => (
+                        <SelectItem key={cc.id} value={cc.id}>
+                          {cc.cost_centre_name}
+                          {cc.cost_centre_code ? ` (${cc.cost_centre_code})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 {/* Salary Start Date - HR/Admin only */}
