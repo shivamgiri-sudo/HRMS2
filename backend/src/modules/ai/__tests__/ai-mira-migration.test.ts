@@ -6,24 +6,30 @@ function source(relativePath: string): string {
   return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), 'utf8');
 }
 
+// NOTE: this used to check a separate, ungoverned runFinanceSupplementalMigrations.ts /
+// verifyFinanceSupplementalMigrations() pair. That runner (and its schema-hardening sibling)
+// was retired once its coverage was confirmed fully redundant with the single governed
+// MIGRATION_MANIFEST in runPendingMigrations.ts — see the finance stabilization work. Same
+// intent (the reimbursement migration is registered and verified at startup/CLI), now checked
+// against the one remaining source of truth.
 describe('Mira reimbursement migration governance', () => {
-  it('registers the reimbursement schema in the startup supplemental runner', () => {
-    const supplemental = source('../../../db/runFinanceSupplementalMigrations.ts');
-    expect(supplemental).toContain('424_employee_reimbursement_claim.sql');
-    expect(supplemental).toContain('verifyFinanceSupplementalMigrations');
+  it('registers the reimbursement schema in the governed migration manifest', () => {
+    const manifest = source('../../../db/runPendingMigrations.ts');
+    expect(manifest).toContain('424_employee_reimbursement_claim.sql');
+    expect(manifest).toContain('verifySchemaVersion');
   });
 
-  it('enforces supplemental verification in production verify-only startup', () => {
+  it('enforces schema verification in production verify-only startup', () => {
     const server = source('../../../server.ts');
-    expect(server).toContain('verifyFinanceSupplementalMigrations');
-    expect(server).toContain('schemaStatus.valid && supplementalStatus.valid');
+    expect(server).toContain('verifySchemaVersion');
+    expect(server).toContain('schemaStatus.valid');
   });
 
-  it('includes supplemental verification in the migration CLI status and completion path', () => {
+  it('includes schema verification in the migration CLI status and completion path', () => {
     const migrate = source('../../../scripts/migrate.ts');
-    expect(migrate).toContain('verifyFinanceSupplementalMigrations');
-    expect(migrate).toContain('Supplemental migrations pending');
-    expect(migrate).toContain('Supplemental migrations remain pending');
+    expect(migrate).toContain('verifySchemaVersion');
+    expect(migrate).toContain('Migrations pending');
+    expect(migrate).toContain('Migration failed');
   });
 
   it('defines the reimbursement table through an idempotent migration', () => {

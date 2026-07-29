@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "backend/src/modules/ai/**"
-      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/src/scripts/migrate.ts"
       - "backend/src/server.ts"
       - "backend/sql/424_employee_reimbursement_claim.sql"
@@ -18,7 +18,7 @@ on:
       - "agent/mira-secure-voice-assistant"
     paths:
       - "backend/src/modules/ai/**"
-      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/src/scripts/migrate.ts"
       - "backend/src/server.ts"
       - "backend/sql/424_employee_reimbursement_claim.sql"

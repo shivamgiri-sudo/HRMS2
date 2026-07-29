@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - "backend/src/modules/ai/**"
-      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/sql/425_mira_openrouter_company_knowledge.sql"
       - "backend/sql/426_mira_audit_resilience.sql"
       - "backend/sql/000_ai_supplemental.sql"
@@ -21,7 +21,7 @@ on:
       - hotfix/mira-audit-500-resilience
     paths:
       - "backend/src/modules/ai/**"
-      - "backend/src/db/runFinanceSupplementalMigrations.ts"
+      - "backend/src/db/runPendingMigrations.ts"
       - "backend/sql/425_mira_openrouter_company_knowledge.sql"
       - "backend/sql/426_mira_audit_resilience.sql"
       - "backend/sql/000_ai_supplemental.sql"

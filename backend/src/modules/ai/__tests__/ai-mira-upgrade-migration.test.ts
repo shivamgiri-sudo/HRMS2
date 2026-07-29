@@ -19,10 +19,12 @@ describe('Mira upgrade migration governance', () => {
   });
 
   it('runs and verifies the AI migration in startup and CLI flows', () => {
-    const runner = source('../../../db/runFinanceSupplementalMigrations.ts');
+    // See ai-mira-migration.test.ts — the separate supplemental runner this used to check was
+    // retired in favor of the single governed MIGRATION_MANIFEST.
+    const manifest = source('../../../db/runPendingMigrations.ts');
     const manual = source('../../../../sql/000_ai_supplemental.sql');
-    expect(runner).toContain('425_mira_openrouter_company_knowledge.sql');
-    expect(runner).toContain('schema_migrations');
+    expect(manifest).toContain('425_mira_openrouter_company_knowledge.sql');
+    expect(manifest).toContain('schema_migrations');
     expect(manual).toContain('SOURCE sql/425_mira_openrouter_company_knowledge.sql;');
   });
 });

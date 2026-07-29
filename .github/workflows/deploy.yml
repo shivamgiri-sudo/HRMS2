@@ -126,9 +126,9 @@ jobs:
       # plain tsc), and the startup runners resolve it from
       # /var/www/HRMS2/backend/sql.  Without this step that directory only ever
       # changes when somebody runs "git pull" on the server by hand, so a fresh
-      # dist can start against stale SQL — and runFinanceSupplementalMigrations()
-      # throws outright when a manifest file is absent, which fails the health
-      # check and rolls the deploy back.
+      # dist can start against stale SQL — and runPendingMigrations() throws
+      # outright when a manifest file is absent, which fails the health check
+      # and rolls the deploy back.
       - name: Sync backend migration SQL atomically
         shell: bash
         run: |
