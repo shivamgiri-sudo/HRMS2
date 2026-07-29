@@ -168,3 +168,25 @@ describe('wiring', () => {
     expect(gemini).toContain('Earlier in this conversation');
   });
 });
+
+describe('persona', () => {
+  it('separates grounded facts from ordinary conversation', async () => {
+    const { COMPANY_SYSTEM_INSTRUCTION } = await import('../ai-company-knowledge.service.js');
+
+    // Facts stay strictly grounded.
+    expect(COMPANY_SYSTEM_INSTRUCTION).toContain('Never invent');
+    expect(COMPANY_SYSTEM_INSTRUCTION).toContain("I couldn't find that in HRMS or the approved MAS Callnet sources.");
+    expect(COMPANY_SYSTEM_INSTRUCTION).toContain('Never mention a training-data date');
+    expect(COMPANY_SYSTEM_INSTRUCTION).toContain('Never request or reveal another employee');
+
+    // Conversation is explicitly exempt, and the failure mode is named.
+    expect(COMPANY_SYSTEM_INSTRUCTION).toMatch(/greetings/i);
+    expect(COMPANY_SYSTEM_INSTRUCTION).toMatch(/need no approved source/i);
+    expect(COMPANY_SYSTEM_INSTRUCTION).toMatch(/never answer a greeting with the not-found line/i);
+  });
+
+  it('tells the provider to use earlier turns', async () => {
+    const { COMPANY_SYSTEM_INSTRUCTION } = await import('../ai-company-knowledge.service.js');
+    expect(COMPANY_SYSTEM_INSTRUCTION).toMatch(/earlier turns/i);
+  });
+});
