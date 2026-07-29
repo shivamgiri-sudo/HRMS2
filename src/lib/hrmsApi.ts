@@ -183,6 +183,77 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
   return payload as T;
 }
 
+export interface SseHandlers {
+  onChunk?: (text: string) => void;
+  /** The authoritative payload. Render this over anything the chunks built. */
+  onDone?: (payload: unknown) => void;
+  onError?: (payload: unknown) => void;
+}
+
+/**
+ * POST that reads a Server-Sent Events response.
+ *
+ * EventSource only speaks GET and cannot carry an Authorization header, so this
+ * reads the body stream directly. It lives here rather than beside its caller so
+ * it inherits the same auth header and one-shot 401 refresh as every other call.
+ */
+async function requestStream(
+  path: string,
+  body: unknown,
+  handlers: SseHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const normalizedPath = normalizeRequestPath(path);
+
+  const send = () => fetch(`${HRMS_API_URL}${normalizedPath}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...getAuthHeader() },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  });
+
+  let res = await send();
+  if (res.status === 401 && await refreshAccessToken()) {
+    res = await send();
+  }
+  if (!res.ok || !res.body) {
+    throw buildApiError(res.status, await parseResponse(res), `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+
+  const dispatch = (frame: string) => {
+    const eventLine = frame.split("\n").find((line) => line.startsWith("event:"));
+    const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
+    if (!eventLine || !dataLine) return;
+
+    const event = eventLine.slice(6).trim();
+    let data: unknown;
+    try {
+      data = JSON.parse(dataLine.slice(5).trim());
+    } catch {
+      return;
+    }
+
+    if (event === "chunk") handlers.onChunk?.(String((data as { text?: string })?.text ?? ""));
+    else if (event === "done") handlers.onDone?.(data);
+    else if (event === "error") handlers.onError?.(data);
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+    // Frames are separated by a blank line; the tail may be a partial frame.
+    const frames = buffered.split("\n\n");
+    buffered = frames.pop() ?? "";
+    frames.forEach(dispatch);
+  }
+  if (buffered.trim()) dispatch(buffered);
+}
+
 async function requestRaw(method: string, path: string): Promise<string> {
   const headers = getAuthHeader();
 
@@ -261,6 +332,8 @@ export const hrmsApi = {
     const qs = opts?.params ? "?" + new URLSearchParams(opts.params).toString() : "";
     return request<T>("DELETE", path + qs, opts?.data);
   },
+  postStream: (path: string, body: unknown, handlers: SseHandlers, signal?: AbortSignal) =>
+    requestStream(path, body, handlers, signal),
   getRaw: (path: string) => requestRaw("GET", path),
   postForm: <T>(path: string, body: FormData) => requestForm<T>(path, body),
   getBlob: (path: string) => requestBlob(path),

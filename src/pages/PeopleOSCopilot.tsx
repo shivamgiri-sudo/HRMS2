@@ -126,19 +126,57 @@ export default function PeopleOSCopilot() {
     setError(null);
     setLoading(true);
 
+    const assistantId = `${Date.now()}-assistant`;
     try {
-      const response = await hrmsApi.post<{ success: boolean; data: AIResponse }>('/api/ai/ask', {
-        question,
-        context_type: 'generic',
+      // Stream the answer in. Locally answered questions arrive as one chunk;
+      // only the provider path actually paints progressively.
+      let streamed = '';
+      let settled: AIResponse | null = null;
+
+      await hrmsApi.postStream('/api/ai/ask/stream', { question, context_type: 'generic' }, {
+        onChunk: (text) => {
+          streamed += text;
+          setMessages((previous) => {
+            const existing = previous.find((message) => message.id === assistantId);
+            if (!existing) {
+              return [...previous, {
+                id: assistantId,
+                role: 'assistant',
+                content: streamed,
+                timestamp: new Date(),
+              }];
+            }
+            return previous.map((message) =>
+              message.id === assistantId ? { ...message, content: streamed } : message);
+          });
+        },
+        // `done` is authoritative, not the sum of the chunks: the server can
+        // replace a streamed answer wholesale after the fact. Overwrite, never append.
+        onDone: (payload) => {
+          settled = (payload as { data: AIResponse })?.data ?? null;
+        },
+        onError: (payload) => {
+          throw new Error((payload as { error?: { message?: string } })?.error?.message
+            ?? 'Mira could not answer right now.');
+        },
       });
-      const result = response.data;
-      setMessages((previous) => [...previous, {
-        id: `${Date.now()}-assistant`,
-        role: 'assistant',
-        content: result.answer,
-        timestamp: new Date(),
-        response: result,
-      }]);
+
+      const result = settled;
+      if (!result) throw new Error('Mira did not return an answer.');
+
+      setMessages((previous) => {
+        const rendered = previous.some((message) => message.id === assistantId);
+        const settledMessage = {
+          id: assistantId,
+          role: 'assistant' as const,
+          content: result.answer,
+          timestamp: new Date(),
+          response: result,
+        };
+        return rendered
+          ? previous.map((message) => (message.id === assistantId ? settledMessage : message))
+          : [...previous, settledMessage];
+      });
       if (voice.autoSpeak) voice.speak(result.answer);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : 'Mira could not answer right now.';

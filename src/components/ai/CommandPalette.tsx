@@ -139,19 +139,51 @@ export function CommandPalette({
     setError(null);
     setLoading(true);
 
+    const assistantId = `${Date.now()}-assistant`;
     try {
-      const response = await hrmsApi.post<{ success: boolean; data: AIResponse }>('/api/ai/ask', {
+      // Locally answered questions arrive as a single chunk; only the provider
+      // path paints progressively.
+      let streamed = '';
+      let settled: AIResponse | null = null;
+
+      await hrmsApi.postStream('/api/ai/ask/stream', {
         question,
         context_type: contextType || 'generic',
+      }, {
+        onChunk: (text) => {
+          streamed += text;
+          setMessages((previous) => {
+            const partial: ChatMessage = { id: assistantId, role: 'assistant', content: streamed };
+            return previous.some((message) => message.id === assistantId)
+              ? previous.map((message) => (message.id === assistantId ? partial : message))
+              : [...previous, partial];
+          });
+        },
+        // The server may replace a streamed answer after the fact, so `done`
+        // overwrites what the chunks built rather than appending to it.
+        onDone: (payload) => {
+          settled = (payload as { data: AIResponse })?.data ?? null;
+        },
+        onError: (payload) => {
+          throw new Error((payload as { error?: { message?: string } })?.error?.message
+            ?? 'Mira could not answer right now.');
+        },
       });
-      const result = response.data;
+
+      const result = settled;
+      if (!result) throw new Error('Mira did not return an answer.');
+
       const assistantMessage: ChatMessage = {
-        id: `${Date.now()}-assistant`,
+        id: assistantId,
         role: 'assistant',
         content: result.answer,
         response: result,
       };
-      setMessages((previous) => [...previous, assistantMessage]);
+      setMessages((previous) => (
+        previous.some((message) => message.id === assistantId)
+          ? previous.map((message) => (message.id === assistantId ? assistantMessage : message))
+          : [...previous, assistantMessage]
+      ));
       if (voice.autoSpeak) voice.speak(result.answer);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : 'Mira could not answer right now.';
