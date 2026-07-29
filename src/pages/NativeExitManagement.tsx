@@ -13,7 +13,6 @@ import {
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
@@ -136,7 +135,7 @@ function ageDays(date?: string) {
 }
 
 export default function NativeExitManagement() {
-  const { roleKeys } = useWorkforceAccess();
+  useWorkforceAccess();
   const [requests, setRequests] = useState<ExitRequest[]>([]);
   const [stats, setStats] = useState<Stats>({ total: 0, pending: 0, accepted: 0, completed: 0, active_notice: 0 });
   const [loading, setLoading] = useState(false);
@@ -232,7 +231,7 @@ export default function NativeExitManagement() {
           </div>
         </div>
 
-        <RoleInsightsPanel roles={roleKeys} title="Exit control insights" />
+        
 
         {message && <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800"><AlertTriangle className="h-4 w-4 flex-shrink-0" />{message}</div>}
 

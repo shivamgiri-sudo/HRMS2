@@ -1,5 +1,4 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,7 +37,7 @@ function employeeDisplayName(employee: any): string {
 
 const Performance = () => {
   const { user } = useAuth();
-  const { roleKeys } = useWorkforceAccess();
+  useWorkforceAccess();
 
   // Fetch employee record
   const { data: employeeData, isLoading: empLoading } = useQuery({
@@ -125,7 +124,7 @@ const Performance = () => {
           </div>
         </section>
 
-        <RoleInsightsPanel roles={roleKeys} title="Performance control insights" />
+        
 
         <Tabs defaultValue="live-performance" className="space-y-4">
           <TabsList className="flex-wrap h-auto gap-1">

@@ -6,7 +6,6 @@ import {
   TrendingUp, TrendingDown, ArrowRight, Lightbulb, AlertCircle
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { AIInsightPanel } from "@/components/ai";
 import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -269,7 +268,7 @@ export default function NativeManagementDashboard() {
           <div className="absolute -bottom-20 -left-20 h-64 w-64 rounded-full bg-[#3BAD49]/20 blur-3xl" />
         </div>
 
-        <RoleInsightsPanel roles={roleKeys} title="Management command insights" />
+        
 
         {/* AI Management Intelligence */}
         <AIInsightPanel

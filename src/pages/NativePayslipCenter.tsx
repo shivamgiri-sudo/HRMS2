@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Eye, FileText, Loader, RefreshCcw, Users, X, BookOpen, Search, ShieldAlert, Upload } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useDebounce } from "@/hooks/useAttendanceHub";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -96,7 +95,7 @@ function PayslipModal({ payslip, runId, onClose }: { payslip: Payslip; runId: st
 }
 
 export default function NativePayslipCenter() {
-  const { roleKeys } = useWorkforceAccess();
+  useWorkforceAccess();
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [lines, setLines] = useState<PayrollLine[]>([]);
@@ -184,7 +183,7 @@ export default function NativePayslipCenter() {
 
   const fmt = (n: number | null | undefined) => Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  return <DashboardLayout><div className="space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Payroll</p><h1 className="mt-2 text-3xl font-black text-slate-950">Payslip Center</h1><p className="mt-2 max-w-4xl text-slate-600">Generate, validate, view and distribute payslips with payroll risk checks.</p></div><button onClick={() => { void loadRuns(); if (selectedRunId) void loadLines(selectedRunId); }} disabled={loadingRuns} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"><RefreshCcw className="h-4 w-4" />Refresh</button></div><RoleInsightsPanel roles={roleKeys} title="Payslip control insights" />{message && <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm font-bold ${message.includes("Failed") || message.includes("Error") ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}><div className="flex items-center gap-3"><AlertTriangle className="h-4 w-4 flex-shrink-0" />{message}</div></div>}
+  return <DashboardLayout><div className="space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Payroll</p><h1 className="mt-2 text-3xl font-black text-slate-950">Payslip Center</h1><p className="mt-2 max-w-4xl text-slate-600">Generate, validate, view and distribute payslips with payroll risk checks.</p></div><button onClick={() => { void loadRuns(); if (selectedRunId) void loadLines(selectedRunId); }} disabled={loadingRuns} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"><RefreshCcw className="h-4 w-4" />Refresh</button></div>{message && <div className={`flex items-center justify-between gap-3 rounded-2xl border p-4 text-sm font-bold ${message.includes("Failed") || message.includes("Error") ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}><div className="flex items-center gap-3"><AlertTriangle className="h-4 w-4 flex-shrink-0" />{message}</div></div>}
     <div className="flex flex-wrap items-center gap-4 rounded-3xl border bg-white p-5 shadow-sm"><label className="whitespace-nowrap text-sm font-black text-slate-700">Payroll Run</label>{loadingRuns ? <Loader className="h-5 w-5 animate-spin text-slate-400" /> : <select value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)} className="max-w-sm flex-1 rounded-2xl border bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 outline-none transition-colors focus:border-blue-400">{runs.length === 0 && <option value="">No runs available</option>}{runs.map((r) => <option key={r.id} value={r.id}>{MONTH_NAMES[runMonth(r)]} {runYear(r)} — {r.status}</option>)}</select>}{selectedRun && <Badge label={selectedRun.status} cls={selectedRun.status === "disbursed" ? "bg-emerald-50 text-emerald-700" : selectedRun.status === "locked" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"} />}<div className="ml-auto"><button onClick={() => { setShowDisbursalModal(true); setDisbursalResult(null); setDisbursalFile(null); }} disabled={!selectedRunId} className="inline-flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-800 hover:bg-blue-100 disabled:opacity-40"><Upload className="h-4 w-4" />Upload Disbursal Data</button></div></div>
     {showDisbursalModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4" onClick={() => setShowDisbursalModal(false)}>

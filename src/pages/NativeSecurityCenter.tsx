@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Download, Eye, KeyRound, Loader, Lock, RefreshCcw, ShieldAlert, ShieldCheck, UserCog, Users } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatIST } from "@/lib/utils";
@@ -70,7 +69,7 @@ function scoreTone(score: number) {
 }
 
 export default function NativeSecurityCenter() {
-  const { roleKeys } = useWorkforceAccess();
+  useWorkforceAccess();
   const [summary, setSummary] = useState<SecuritySummary | null>(null);
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -138,7 +137,7 @@ export default function NativeSecurityCenter() {
           </div>
         </div>
 
-        <RoleInsightsPanel roles={roleKeys} title="Security and data governance insights" />
+        
 
         {message && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{message}</div>}
 

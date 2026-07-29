@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatIST,formatISTTime } from "@/lib/utils";
@@ -28,7 +27,7 @@ function Empty({ text }: { text: string }) {
 }
 
 export default function NativeControlTower() {
-  const { roleKeys } = useWorkforceAccess();
+  useWorkforceAccess();
   const [tab, setTab] = useState<TabKey>("inbox");
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
@@ -112,7 +111,7 @@ export default function NativeControlTower() {
           </div>
         </div>
 
-        <RoleInsightsPanel roles={roleKeys} title="Control tower insights" />
+        
 
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
 

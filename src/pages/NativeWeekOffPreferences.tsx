@@ -4,7 +4,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -272,7 +271,7 @@ export default function NativeWeekOffPreferences() {
           </div>
         </div>
 
-        <RoleInsightsPanel roles={roleKeys} title="Week-off planning insights" />
+        
 
         {/* Latest Preference Card with Status Stepper */}
         {latest && (

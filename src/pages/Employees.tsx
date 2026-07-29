@@ -25,7 +25,6 @@ import { format, isWithinInterval, parse } from "date-fns";
 import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { RoleInsightsPanel } from "@/components/insights/RoleInsightsPanel";
 import { EmployeeTable, type Employee } from "@/components/employees/EmployeeTable";
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
 import { EmployeeViewDialog } from "@/components/employees/EmployeeViewDialog";
@@ -549,7 +548,7 @@ const Employees = () => {
           </div>
         </section>
 
-        <RoleInsightsPanel roles={roleKeys} title="Employee control insights" />
+        
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
