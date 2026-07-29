@@ -71,9 +71,45 @@ const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   { intent: 'help', patterns: [/^help$/i, /\bwhat can you do\b/i, /\bhow can you help\b/i, /\bshow capabilities\b/i] },
 ];
 
+/**
+ * Words that can follow "attendance for …" without naming another person: the
+ * asker themselves, or a point in time. Everything else after of/for is treated
+ * as a person reference and refused.
+ */
+const SELF_OR_TIME_WORDS = [
+  'me', 'my', 'mine', 'myself', 'our',
+  'today', 'yesterday', 'tomorrow', 'this', 'these', 'last', 'previous',
+  'current', 'present', 'next', 'coming', 'date', 'dates',
+  'year', 'years', 'month', 'months', 'week', 'weeks', 'day', 'days',
+  'quarter', 'period',
+  'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+  'january', 'february', 'march', 'april', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december',
+  'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
+  'q[1-4]', 'fy', 'ytd', '\\d+',
+].join('|');
+
+const DETERMINERS = 'the|a|an|any|each|every|per';
+
+/**
+ * "<subject> of/for <someone>" — refused unless what follows is the asker or a
+ * date.
+ *
+ * The determiner is matched as two explicit branches rather than one optional
+ * group: with `(?:DET\s+)?` the engine backtracks out of the determiner and then
+ * judges the determiner itself, which refused "leave for the month" while
+ * letting "payslip for the other employee" through.
+ */
+const CROSS_EMPLOYEE_SUBJECT_REFERENCE = new RegExp(
+  `\\b(salary|attendance|leave|profile|details|documents|payslip)\\s+(?:of|for)\\s+` +
+  `(?:(?:${DETERMINERS})\\s+(?!(?:${SELF_OR_TIME_WORDS})\\b)` +
+  `|(?!(?:${DETERMINERS})\\b)(?!(?:${SELF_OR_TIME_WORDS})\\b))`,
+  'i',
+);
+
 const CROSS_EMPLOYEE_PATTERNS = [
   /\b(other|another|someone else(?:'s)?|his|her|their)\s+(employee\s+)?(salary|attendance|leave|profile|details|documents|payslip)\b/i,
-  /\b(salary|attendance|leave|profile|details|documents|payslip)\s+(?:of|for)\s+(?!me\b|my\b)/i,
+  CROSS_EMPLOYEE_SUBJECT_REFERENCE,
   /\bwhich employees?\b/i,
   /\bwhose\s+(?:salary|attendance|leave|profile|details|documents?|payslip|shift|loan|reimbursement)\b/i,
   /\bwho (?:has|is|was|needs|did)\b[^?.]{0,120}\b(?:salary|attendance|leave|profile|documents?|payslip|absent|late|lwp|shift|week[ -]?off|pending|approval|loan|reimbursement)\b/i,
