@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  FileSpreadsheet,
   Gauge,
   Grid3x3,
   Layers3,
@@ -58,6 +59,7 @@ import {
 } from "@/hooks/useFinanceExpenseMasters";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
+import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
 
 const UNITS = [
   "Nos",
@@ -269,6 +271,7 @@ export default function BranchBudgetManagementWorkspace() {
   const [coverageSearch, setCoverageSearch] = useState("");
   const [expandedHeads, setExpandedHeads] = useState<Set<string>>(new Set());
   const [reviewRemarks, setReviewRemarks] = useState("");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const capabilitiesQuery = useQuery({
     queryKey: ["branch-budget-capabilities"],
@@ -716,7 +719,12 @@ export default function BranchBudgetManagementWorkspace() {
                   </Card>
                 );
               })}
-              {capabilities?.canCreate && <Button variant="outline" className="w-full rounded-2xl border-dashed py-6" disabled={locked} onClick={() => setLines((current) => [...current, blankLine()])}><Plus className="mr-2 h-4 w-4" />Add budget line</Button>}
+              {capabilities?.canCreate && (
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Button variant="outline" className="flex-1 rounded-2xl border-dashed py-6" disabled={locked} onClick={() => setLines((current) => [...current, blankLine()])}><Plus className="mr-2 h-4 w-4" />Add budget line</Button>
+                  <Button variant="outline" className="flex-1 rounded-2xl border-dashed py-6" disabled={locked} onClick={() => setImportDialogOpen(true)}><FileSpreadsheet className="mr-2 h-4 w-4" />Import from Excel</Button>
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="coverage" className="space-y-5">
@@ -797,6 +805,17 @@ export default function BranchBudgetManagementWorkspace() {
           </Tabs>
         </div>
       </div>
+      <BranchBudgetImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        costCentres={costCentres.map((item: any) => ({ id: item.id, code: item.cost_centre_code, name: item.cost_centre_name ?? item.name }))}
+        processes={processes.map((item: any) => ({ id: item.id, code: item.process_code, name: item.process_name ?? item.name }))}
+        vendors={vendors.map((item: any) => ({ id: item.id, code: item.vendor_code, name: item.vendor_name ?? item.name }))}
+        onImport={(newLines) => {
+          setLines((current) => [...current, ...newLines]);
+          setTab("plan");
+        }}
+      />
     </DashboardLayout>
   );
 }
