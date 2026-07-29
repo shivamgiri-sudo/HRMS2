@@ -1,6 +1,6 @@
 name: Mira Live Grounding Validation
 
-# Permanent read-only release gate for Mira grounding, OpenRouter and Indian voice support.
+# Permanent read-only release gate for Mira grounding, OpenRouter, voice and response resilience.
 on:
   pull_request:
     branches: [main]
@@ -8,6 +8,7 @@ on:
       - "backend/src/modules/ai/**"
       - "backend/src/db/runFinanceSupplementalMigrations.ts"
       - "backend/sql/425_mira_openrouter_company_knowledge.sql"
+      - "backend/sql/426_mira_audit_resilience.sql"
       - "backend/sql/000_ai_supplemental.sql"
       - "src/components/ai/**"
       - "src/hooks/useMiraVoice.ts"
@@ -17,10 +18,12 @@ on:
   push:
     branches:
       - agent/mira-openrouter-company-voice
+      - hotfix/mira-audit-500-resilience
     paths:
       - "backend/src/modules/ai/**"
       - "backend/src/db/runFinanceSupplementalMigrations.ts"
       - "backend/sql/425_mira_openrouter_company_knowledge.sql"
+      - "backend/sql/426_mira_audit_resilience.sql"
       - "backend/sql/000_ai_supplemental.sql"
       - "src/components/ai/**"
       - "src/hooks/useMiraVoice.ts"
@@ -37,7 +40,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Grounding, provider, voice, type and build checks
+    name: Grounding, provider, voice, resilience, type and build checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,7 +55,7 @@ jobs:
         run: npm ci
       - name: Install backend dependencies
         run: npm --prefix backend ci
-      - name: Run Mira upgrade contract tests
+      - name: Run Mira contract tests
         working-directory: backend
         run: >-
           npx vitest run
@@ -60,6 +63,7 @@ jobs:
           src/modules/ai/__tests__/ai-mira-migration.test.ts
           src/modules/ai/__tests__/ai-mira-upgrade.test.ts
           src/modules/ai/__tests__/ai-mira-upgrade-migration.test.ts
+          src/modules/ai/__tests__/ai-audit-resilience.test.ts
       - name: Frontend typecheck
         run: npm run typecheck
       - name: Backend typecheck
