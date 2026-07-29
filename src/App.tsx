@@ -10,6 +10,7 @@ import ScrollToTop from "@/components/layout/ScrollToTop";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ViewAsProvider } from "@/contexts/ViewAsContext";
 import { useLocationHeartbeat } from "@/hooks/useLocationHeartbeat";
 
 function LocationHeartbeatRunner() {
@@ -43,6 +44,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <ViewAsProvider>
           <LocationHeartbeatRunner />
           <ScrollToTop />
           <ErrorBoundary>
@@ -56,6 +58,7 @@ const App = () => (
           <CookieConsent />
           <OfflineFallback />
           <AICommandBar />
+          </ViewAsProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

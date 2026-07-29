@@ -4,16 +4,18 @@
  *
  * Does NOT touch auth flow, WorkforcePageGate, or any hooks.
  */
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Bell,
   ChevronRight,
+  Eye,
   LogOut,
   Menu,
   Search,
   Settings,
   User,
+  X,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -26,9 +28,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { useAuth } from "@/contexts/AuthContext";
+import { useViewAs } from "@/contexts/ViewAsContext";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
+import { useEmployeeSearchOptions } from "@/hooks/useEmployees";
+import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { navGroups } from "./navConfig";
@@ -85,8 +91,18 @@ export function TopBar({
   const navigate = useNavigate();
   const { user, signOut, isSigningOut } = useAuth();
   const { data: myProfile } = useEmployeeProfile();
+  const { data: roleData } = useUserRole();
   const breadcrumbs = useBreadcrumbs();
   const userInitials = (user?.email ?? "MC").slice(0, 2).toUpperCase();
+
+  const { isViewAsEnabled, activeEmployee, isLoading: viewAsLoading, setActiveEmployee, clearViewAs } = useViewAs();
+  const isSuperAdmin = roleData?.roles?.includes("super_admin") ?? false;
+  const showViewAsPicker = isViewAsEnabled && isSuperAdmin;
+
+  const [viewAsOpen, setViewAsOpen] = useState(false);
+  const [viewAsQuery, setViewAsQuery] = useState("");
+  const { data: viewAsResults } = useEmployeeSearchOptions(viewAsQuery);
+  const viewAsInputRef = useRef<HTMLInputElement>(null);
 
   const handleSignOut = async () => {
     await signOut();
@@ -174,6 +190,94 @@ export function TopBar({
 
         {/* Right actions */}
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* View As Employee picker — super_admin only, when feature is enabled */}
+          {showViewAsPicker && (
+            <Popover open={viewAsOpen} onOpenChange={(open) => {
+              setViewAsOpen(open);
+              if (open) setTimeout(() => viewAsInputRef.current?.focus(), 50);
+              if (!open) setViewAsQuery("");
+            }}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "h-9 gap-1.5 rounded-xl px-2.5 text-xs font-semibold transition-colors",
+                    activeEmployee
+                      ? "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                      : "text-slate-500 hover:bg-slate-100"
+                  )}
+                  title="View As Employee"
+                >
+                  <Eye className="h-4 w-4 shrink-0" />
+                  {activeEmployee ? (
+                    <span className="max-w-[100px] truncate">{activeEmployee.full_name}</span>
+                  ) : (
+                    <span className="hidden sm:inline">View As</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-3">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                  View Dashboard As Employee
+                </p>
+                <Input
+                  ref={viewAsInputRef}
+                  placeholder="Search by name or code…"
+                  value={viewAsQuery}
+                  onChange={(e) => setViewAsQuery(e.target.value)}
+                  className="mb-2 h-8 text-sm"
+                />
+                {viewAsLoading && (
+                  <p className="py-2 text-center text-xs text-slate-400">Loading…</p>
+                )}
+                {!viewAsLoading && viewAsQuery.length >= 1 && (viewAsResults ?? []).length === 0 && (
+                  <p className="py-2 text-center text-xs text-slate-400">No employees found</p>
+                )}
+                <div className="max-h-52 overflow-y-auto space-y-0.5">
+                  {(viewAsResults ?? []).map((emp) => (
+                    <button
+                      key={emp.id}
+                      type="button"
+                      className="flex w-full flex-col rounded-lg px-2.5 py-2 text-left text-sm hover:bg-slate-50 transition-colors"
+                      onClick={async () => {
+                        await setActiveEmployee({
+                          id: String(emp.id),
+                          employee_code: emp.employee_code ?? "",
+                          full_name: emp.full_name ?? emp.name ?? "",
+                          designation_name: emp.designation_name,
+                          branch_name: emp.branch_name,
+                        });
+                        setViewAsOpen(false);
+                        setViewAsQuery("");
+                      }}
+                    >
+                      <span className="font-medium text-slate-800">{emp.full_name ?? emp.name}</span>
+                      <span className="text-xs text-slate-400">
+                        {emp.employee_code}
+                        {emp.designation_name && ` · ${emp.designation_name}`}
+                        {emp.branch_name && ` · ${emp.branch_name}`}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {activeEmployee && (
+                  <div className="mt-2 border-t pt-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-center gap-1.5 text-xs text-amber-700 hover:bg-amber-50"
+                      onClick={() => { clearViewAs(); setViewAsOpen(false); }}
+                    >
+                      <X className="h-3 w-3" />
+                      Exit View As Mode
+                    </Button>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
+
           <NotificationBell />
 
           <DropdownMenu>

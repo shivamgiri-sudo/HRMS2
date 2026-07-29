@@ -26,12 +26,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion, FlaskConical } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useDepartments";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useIsAdminOrHR, useUserRole } from "@/hooks/useUserRole";
+import { useViewAs } from "@/contexts/ViewAsContext";
 import { UserRolesManager } from "@/components/settings/UserRolesManager";
 import { EmployeeCodeSettings } from "@/components/settings/EmployeeCodeSettings";
 import DomainWhitelistSettings from "@/components/settings/DomainWhitelistSettings";
@@ -497,6 +498,8 @@ const Settings = () => {
   const queryClient = useQueryClient();
   const { isAdminOrHR, isLoading: roleLoading, role } = useIsAdminOrHR();
   const isAdmin = role === 'admin' || role === 'super_admin';
+  const isSuperAdmin = role === 'super_admin';
+  const { isViewAsEnabled, toggleFeatureEnabled } = useViewAs();
 
   // Compute first visible tab based on role — always-visible tabs: departments, leave-types
   const getDefaultTab = () => {
@@ -764,6 +767,13 @@ const Settings = () => {
                 <ShieldQuestion className="h-4 w-4" />
                 <span className="hidden sm:inline">BGV Config</span>
                 <span className="sm:hidden">BGV</span>
+              </TabsTrigger>
+            )}
+            {isSuperAdmin && (
+              <TabsTrigger value="dev-tools" className="w-full justify-center gap-2 sm:w-auto">
+                <FlaskConical className="h-4 w-4" />
+                <span className="hidden sm:inline">Dev Tools</span>
+                <span className="sm:hidden">Dev</span>
               </TabsTrigger>
             )}
           </TabsList>
@@ -1042,6 +1052,45 @@ const Settings = () => {
           {isAdmin && (
             <TabsContent value="bgv-config" className="mt-6">
               <BgvProviderSettings />
+            </TabsContent>
+          )}
+
+          {/* Developer Tools Tab - Super Admin Only */}
+          {isSuperAdmin && (
+            <TabsContent value="dev-tools" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FlaskConical className="h-5 w-5 text-amber-600" />
+                    Developer Tools
+                  </CardTitle>
+                  <CardDescription>
+                    Testing utilities for Super Admin. Disable all tools when testing is complete.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between rounded-xl border p-5">
+                    <div className="space-y-1">
+                      <p className="font-semibold text-slate-900">View As Employee (Testing Mode)</p>
+                      <p className="text-sm text-slate-500">
+                        Allows you to select any employee and see exactly the dashboard and role view they would see when they log in.
+                        Use the <strong>Eye</strong> icon in the top bar to switch employees.
+                      </p>
+                      <p className={`text-xs font-bold mt-1 ${isViewAsEnabled ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {isViewAsEnabled
+                          ? '● Enabled — Eye picker is visible in the top bar'
+                          : '● Disabled — no picker visible to anyone'}
+                      </p>
+                    </div>
+                    <div className="ml-6 flex-shrink-0">
+                      <Switch
+                        checked={isViewAsEnabled}
+                        onCheckedChange={toggleFeatureEnabled}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </TabsContent>
           )}
         </Tabs>
