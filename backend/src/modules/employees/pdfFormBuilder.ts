@@ -113,6 +113,52 @@ export function dateBoxes(
   combField(ctx, names.year, x + 4 * 13.5 + 12, y, 4, 13.5);
 }
 
+/** The grey section band the EPFO forms use for "A. PREVIOUS EMPLOYMENT DETAILS" etc. */
+export function sectionBand(ctx: Ctx, text: string, x: number, y: number, width: number, height = 13) {
+  ctx.page.drawRectangle({ x, y, width, height, color: rgb(0.85, 0.85, 0.85) });
+  ctx.page.drawText(text, { x: x + 6, y: y + 3.5, size: 7.5, font: ctx.bold, color: INK });
+}
+
+/**
+ * A labelled tick table: one bordered header cell per option with an empty cell
+ * beneath it holding the checkbox, exactly how Form 11 sets gender, marital
+ * status and educational qualification.
+ */
+export function tickTable(
+  ctx: Ctx,
+  x: number,
+  top: number,
+  columns: Array<{ label: string; field: string }>,
+  colWidth: number,
+  headerHeight = 16,
+  cellHeight = 15,
+) {
+  columns.forEach((column, index) => {
+    const cx = x + index * colWidth;
+    ctx.page.drawRectangle({ x: cx, y: top - headerHeight, width: colWidth, height: headerHeight, borderColor: BOX, borderWidth: 0.6 });
+    // Long headings are split so they stay inside the cell.
+    const words = column.label.split(" ");
+    const lines = words.length > 1 && column.label.length > 11
+      ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")]
+      : [column.label];
+    lines.forEach((line, li) => {
+      const size = 5.8;
+      const w = ctx.font.widthOfTextAtSize(line, size);
+      ctx.page.drawText(line, {
+        x: cx + Math.max(1, (colWidth - w) / 2),
+        y: top - headerHeight + (lines.length === 1 ? 5.5 : 9.5 - li * 5.5),
+        size, font: ctx.font, color: INK,
+      });
+    });
+    const cellY = top - headerHeight - cellHeight;
+    ctx.page.drawRectangle({ x: cx, y: cellY, width: colWidth, height: cellHeight, borderColor: BOX, borderWidth: 0.6 });
+    ctx.form.createCheckBox(column.field).addToPage(ctx.page, {
+      x: cx + colWidth / 2 - 6, y: cellY + 2, width: 11, height: 11, borderWidth: 0,
+    });
+  });
+  return top - headerHeight - cellHeight;
+}
+
 /** Draws a table grid and returns the x offset of each column. */
 export function tableGrid(
   ctx: Ctx,

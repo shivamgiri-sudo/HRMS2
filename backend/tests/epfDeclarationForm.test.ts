@@ -18,7 +18,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { PDFDocument } from "pdf-lib";
-import { buildEpfDeclarationPdf, EPF_FORM_FIELD_NAMES } from "../src/modules/employees/epfDeclarationForm.js";
+import { buildEpfDeclarationPdf, EPF_FORM_FIELD_NAMES, EPF_FORM_EMPLOYER_ONLY_FIELDS } from "../src/modules/employees/epfDeclarationForm.js";
 import { fillAcroFormPdf } from "../src/modules/employees/pdfAcroFormFill.service.js";
 
 /**
@@ -44,12 +44,19 @@ async function buildToDisk(dir: string) {
 }
 
 describe("EPF declaration form (Form 11)", () => {
-  it("TC-EPF-01: exposes every field name the maps reference", async () => {
+  it("TC-EPF-01: exposes every field name the maps reference, and nothing stray", async () => {
     const form = (await PDFDocument.load(await buildEpfDeclarationPdf())).getForm();
     const inPdf = form.getFields().map((f) => f.getName());
+
     const missing = EPF_FORM_FIELD_NAMES.filter((n) => !inPdf.includes(n));
     expect(missing, `maps would point at nothing: ${missing.join(", ")}`).toEqual([]);
-    expect(inPdf).toHaveLength(EPF_FORM_FIELD_NAMES.length);
+
+    // The form also carries the employer-declaration boxes Payroll HR completes
+    // after EPFO allots the member ID. Anything outside both lists is a mistake.
+    const known = new Set<string>([...EPF_FORM_FIELD_NAMES, ...EPF_FORM_EMPLOYER_ONLY_FIELDS]);
+    const stray = inPdf.filter((n) => !known.has(n));
+    expect(stray, `fields nothing fills and nobody declared: ${stray.join(", ")}`).toEqual([]);
+    expect(inPdf).toHaveLength(known.size);
     // No duplicates — a repeated name silently overwrites the earlier field.
     expect(new Set(inPdf).size).toBe(inPdf.length);
   });
@@ -57,11 +64,16 @@ describe("EPF declaration form (Form 11)", () => {
   it("TC-EPF-02: character boxes are comb fields, so a space occupies its own box", async () => {
     const form = (await PDFDocument.load(await buildEpfDeclarationPdf())).getForm();
     const combed = form.getFields().filter((f) => (f as { isCombed?: () => boolean }).isCombed?.());
-    // Name, father's name, dates, mobile, UAN and the date-of-joining boxes.
-    expect(combed.length).toBeGreaterThanOrEqual(20);
+    // Name, father's name, the date rows, mobile and UAN.
+    expect(combed.length).toBeGreaterThanOrEqual(25);
     const name = form.getTextField("employee_name");
     expect(name.isCombed()).toBe(true);
-    expect(name.getMaxLength()).toBeGreaterThanOrEqual(30);
+    // The issued form runs the name grid to the right margin, then prints a
+    // second row beneath it for a longer name.
+    expect(name.getMaxLength()).toBeGreaterThanOrEqual(25);
+    expect(form.getTextField("father_or_spouse_name").isCombed()).toBe(true);
+    expect(form.getTextField("uan").getMaxLength()).toBe(12);
+    expect(form.getTextField("mobile_number").getMaxLength()).toBe(10);
   });
 
   it("TC-EPF-03: a real signing payload lands in the right boxes", async () => {
