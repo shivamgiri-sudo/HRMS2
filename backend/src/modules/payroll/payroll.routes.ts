@@ -49,7 +49,13 @@ router.put("/structures/:id", requireRole("admin", "super_admin", "finance", "pa
 router.delete("/structures/:id", requireRole("admin", "super_admin"), h(c.deleteStructure));
 
 // ─── Employee Salaries (per-employee assignment with full CTC breakup from components) ─
-router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"],
+    { branchId: "e.branch_id", processId: "e.process_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true }
+  );
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        esa.id,
@@ -70,7 +76,9 @@ router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "fina
      JOIN employees e               ON e.id  = esa.employee_id
      WHERE esa.active_status = 1
        AND e.employment_status = 'active'
-     ORDER BY e.employee_code`
+       AND (${scoped.sql})
+     ORDER BY e.employee_code`,
+    scoped.params
   );
 
   // Fetch all components for these structures in one query
@@ -158,56 +166,33 @@ router.get("/salary-assignments/:employeeId/history", requireRole("admin", "hr",
 
 // ─── Payroll Runs — static paths before :id ───────────────────────────────────
 
-async function isHeadOfficeMember(userId: string): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT bm.branch_name
-       FROM employees e
-       JOIN branch_master bm ON bm.id = e.branch_id
-      WHERE e.user_id = ? AND e.active_status = 1
-      LIMIT 1`,
-    [userId]
-  );
-  const name = (rows[0] as any)?.branch_name ?? "";
-  return /head\s*office/i.test(name);
-}
+const PAYROLL_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"] as const;
 
-router.get("/runs", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
+router.get("/runs", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
-    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
-    if (isSuperAdmin || await isHeadOfficeMember(req.authUser!.id)) {
-      scoped = { sql: "1=1", params: [] };
-    } else {
-      scoped = await buildScopeWhereClause(
-        req.authUser!.id,
-        ["admin", "hr", "finance", "payroll"],
-        { branchId: "spr.branch_id", processId: "spr.process_id" },
-        { allowCeoAllRead: true }
-      );
-    }
+    scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      [...PAYROLL_SCOPE_ROLES],
+      { branchId: "spr.branch_id", processId: "spr.process_id" },
+      { allowAdminBypass: true, allowCeoAllRead: true }
+    );
   } catch (_err) {
-    // deny-all on scope error — never open-access on exception
     scoped = { sql: "1=0", params: [] };
   }
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
 }));
-router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req, res) => {
+router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
-    const isSuperAdmin = await hasRole(req.authUser!.id, "super_admin");
-    if (isSuperAdmin || await isHeadOfficeMember(req.authUser!.id)) {
-      scoped = { sql: "1=1", params: [] };
-    } else {
-      scoped = await buildScopeWhereClause(
-        req.authUser!.id,
-        ["admin", "hr", "finance", "payroll"],
-        { branchId: "e.branch_id", processId: "e.process_id" },
-        { allowCeoAllRead: true }
-      );
-    }
+    scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      [...PAYROLL_SCOPE_ROLES],
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      { allowAdminBypass: true, allowCeoAllRead: true }
+    );
   } catch (_err) {
-    // deny-all on scope error — never open-access on exception
     scoped = { sql: "1=0", params: [] };
   }
   (req as any).scopeFilter = scoped;
@@ -303,24 +288,33 @@ router.post(
 );
 
 // ─── Cascading filter options for payroll workspace dropdowns ──
-router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
+
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    [...PAYROLL_SCOPE_ROLES],
+    { branchId: "e.branch_id", processId: "e.process_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true }
+  );
+  const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
 
   const [branches] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT bm.id, bm.branch_name
        FROM branch_master bm
        JOIN employees e ON e.branch_id = bm.id
        JOIN salary_prep_line spl ON spl.employee_id = e.id
-      WHERE bm.active_status = 1
-      ORDER BY bm.branch_name`
+      WHERE bm.active_status = 1${scopeSql}
+      ORDER BY bm.branch_name`,
+    scoped.params
   );
 
+  const processParams: unknown[] = [...scoped.params];
   let processQuery = `SELECT DISTINCT pm.id, pm.process_name
        FROM process_master pm
        JOIN employees e ON e.process_id = pm.id
        JOIN salary_prep_line spl ON spl.employee_id = e.id
-      WHERE pm.active_status = 1`;
-  const processParams: string[] = [];
+      WHERE pm.active_status = 1${scopeSql}`;
   if (branchId) {
     processQuery += ` AND e.branch_id = ?`;
     processParams.push(branchId);
@@ -328,12 +322,12 @@ router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance
   processQuery += ` ORDER BY pm.process_name`;
   const [processes] = await db.execute<RowDataPacket[]>(processQuery, processParams);
 
+  const deptParams: unknown[] = [...scoped.params];
   let deptQuery = `SELECT DISTINCT dm.id, dm.dept_name
        FROM department_master dm
        JOIN employees e ON e.department_id = dm.id
        JOIN salary_prep_line spl ON spl.employee_id = e.id
-      WHERE dm.active_status = 1`;
-  const deptParams: string[] = [];
+      WHERE dm.active_status = 1${scopeSql}`;
   if (branchId) {
     deptQuery += ` AND e.branch_id = ?`;
     deptParams.push(branchId);

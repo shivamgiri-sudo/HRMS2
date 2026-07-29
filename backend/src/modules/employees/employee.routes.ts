@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { employeeController as c } from "./employee.controller.js";
 import { employeeService } from "./employee.service.js";
@@ -577,14 +577,22 @@ router.get("/org-tree", requireAuth, h(async (req: any, res: any) => {
 }));
 
 // GET /api/employees/stats — aggregate counts (must be before /:id to avoid route collision)
-router.get("/stats", requireRole("admin", "hr", "manager", "ceo"), h(async (_req: any, res: any) => {
+router.get("/stats", requireRole("admin", "hr", "manager", "ceo", "branch_head", "finance_head", "it_head"), h(async (req: any, res: any) => {
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["hr", "manager", "branch_head"],
+    { branchId: "e.branch_id", processId: "e.process_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true }
+  );
+  const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total_employees,
-       COUNT(CASE WHEN active_status = 1 AND LOWER(COALESCE(employment_status, 'active')) NOT IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS active_employees,
-       COUNT(CASE WHEN LOWER(COALESCE(employment_status, '')) IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS inactive_employees,
-       COUNT(CASE WHEN DATEDIFF(NOW(), date_of_joining) <= 90 THEN 1 END) AS new_joiners_90d
-     FROM employees WHERE active_status = 1`
+       COUNT(CASE WHEN LOWER(COALESCE(e.employment_status, 'active')) NOT IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS active_employees,
+       COUNT(CASE WHEN LOWER(COALESCE(e.employment_status, '')) IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS inactive_employees,
+       COUNT(CASE WHEN DATEDIFF(NOW(), e.date_of_joining) <= 90 THEN 1 END) AS new_joiners_90d
+     FROM employees e WHERE e.active_status = 1${scopeSql}`,
+    scoped.params
   );
   res.json({ data: rows[0] });
 }));
@@ -597,7 +605,7 @@ router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "
   const { branchId, processId, designationId } = parsed.data;
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager", "payroll_head", "payroll_admin"],
+    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head"],
     {
       branchId: "e.branch_id",
       processId: "e.process_id",
@@ -686,10 +694,17 @@ router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "
   });
 }));
 
-router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
+router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm", "branch_head"), h(async (req: any, res: any) => {
   // IST today: UTC+5:30
   const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   const today = nowIST.toISOString().slice(0, 10);
+  const scoped = await buildScopeWhereClause(
+    req.authUser!.id,
+    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head"],
+    { branchId: "e.branch_id", processId: "e.process_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true }
+  );
+  const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total_with_record,
@@ -703,11 +718,12 @@ router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "p
      FROM employees e
      LEFT JOIN attendance_daily_record adr
        ON adr.employee_id = e.id AND adr.record_date = ?
-     WHERE e.active_status = 1 AND e.employment_status = 'Active'`,
-    [today]
+     WHERE e.active_status = 1 AND e.employment_status = 'Active'${scopeSql}`,
+    [today, ...scoped.params]
   );
   const [totalRow] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND employment_status = 'Active'`
+    `SELECT COUNT(*) AS total FROM employees e WHERE e.active_status = 1 AND e.employment_status = 'Active'${scopeSql}`,
+    scoped.params
   );
   const total_active = Number((totalRow[0] as any)?.total ?? 0);
   const r = rows[0] as any;
@@ -747,7 +763,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
 
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager", "payroll_head", "payroll_admin"],
+    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head"],
     { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id" },
     { allowAdminBypass: true, allowCeoAllRead: true }
   );
@@ -895,10 +911,10 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
   return res.json(result);
 }));
 
-router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo"), h(async (req, res) => {
+router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "finance_head", "it_head", "tq_head"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager"],
+    ["hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "finance_head", "it_head", "tq_head"],
     {
       branchId: "e.branch_id",
       processId: "e.process_id",
@@ -920,7 +936,25 @@ router.post("/",
   })),
   h(c.createEmployee)
 );
-router.get("/:id", requireRole("super_admin", "admin", "hr", "manager"), h(c.getEmployee));
+router.get("/:id", requireRole("super_admin", "admin", "hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "finance_head", "it_head"), h(async (req: any, res: any) => {
+  // Fetch employee to check scope before exposing profile
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
+    [req.params.id]
+  );
+  const emp = (empRows as any[])[0];
+  if (!emp) return res.status(404).json({ success: false, message: "Employee not found" });
+
+  const ok = await hasScopedAccess(
+    req.authUser!.id,
+    ["hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "finance_head", "it_head"],
+    { branchId: emp.branch_id, processId: emp.process_id },
+    { allowAdminBypass: true }
+  );
+  if (!ok) return res.status(403).json({ success: false, message: "Forbidden: outside your assigned scope" });
+
+  return c.getEmployee(req, res);
+}));
 router.patch("/:id",
   requireRole("super_admin", "admin", "hr"),
   requireScopedRole(["hr"], async (req) => {

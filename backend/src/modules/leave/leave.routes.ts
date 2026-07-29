@@ -115,25 +115,13 @@ leaveRouter.get("/requests", h(async (req: AuthenticatedRequest, res: Response) 
     // super_admin sees all; head-office admin/hr see all; others scoped to their branch
     const isSuperAdmin = await hasRole(userId, "super_admin");
     if (!isSuperAdmin) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        `SELECT bm.branch_name
-           FROM employees e
-           JOIN branch_master bm ON bm.id = e.branch_id
-          WHERE e.user_id = ? AND e.active_status = 1
-          LIMIT 1`,
-        [userId]
+      const scoped = await buildScopeWhereClause(
+        userId,
+        ["admin", "hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin"],
+        { branchId: "e.branch_id", processId: "e.process_id" },
+        { allowAdminBypass: true, allowCeoAllRead: true }
       );
-      const empBranch = (empRows[0] as any)?.branch_name ?? "";
-      const isHO = /head\s*office/i.test(empBranch);
-      if (!isHO) {
-        const scoped = await buildScopeWhereClause(
-          userId,
-          ["admin", "hr", "manager"],
-          { branchId: "e.branch_id" },
-          { allowCeoAllRead: true }
-        );
-        (req as any).scopeFilter = scoped;
-      }
+      (req as any).scopeFilter = scoped;
     }
   }
   return leaveController.listRequests(req, res);
