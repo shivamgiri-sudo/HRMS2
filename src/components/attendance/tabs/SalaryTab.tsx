@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRunningSalary, usePayslipHistory, usePayslipDetail } from "@/hooks/useAttendanceHub";
 import type { PayslipSummary } from "@/hooks/useAttendanceHub";
+import { formatLastSynced } from "@/lib/utils";
 
 const INR = (v: number | null | undefined) =>
   `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -20,7 +21,7 @@ const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
 
 function RunningMonthCard({ employeeId }: { employeeId: string }) {
   const currentMonth = getTodayMonth();
-  const { data: rs, isLoading } = useRunningSalary(employeeId, currentMonth);
+  const { data: rs, isLoading, dataUpdatedAt } = useRunningSalary(employeeId, currentMonth);
 
   if (isLoading) return <Skeleton className="h-40 rounded-2xl" />;
   if (!rs) return <div className="rounded-2xl border border-slate-200 p-6 text-center text-sm text-slate-500">No running salary data for current month.</div>;
@@ -32,6 +33,11 @@ function RunningMonthCard({ employeeId }: { employeeId: string }) {
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">Running Month Earned</p>
           <p className="mt-1 text-2xl font-bold text-slate-950">{INR(rs.earned_salary_till_date)}</p>
           <p className="text-xs text-slate-500 mt-0.5">Net (after deductions): <span className="font-semibold text-slate-800">{INR(rs.earned_net_till_date)}</span></p>
+          {dataUpdatedAt > 0 && (
+            <p className="text-[10px] text-slate-400 mt-1">
+              Live estimate · {formatLastSynced(dataUpdatedAt)}
+            </p>
+          )}
         </div>
         <div className="rounded-xl bg-[#e8f2fc] px-3 py-1.5 text-xs font-semibold text-[#1B6AB5]">
           {getTodayMonth()}

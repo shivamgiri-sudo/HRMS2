@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatClockTime } from "@/lib/utils";
+import { formatClockTime, formatLastSynced } from "@/lib/utils";
 import {
   Sheet,
   SheetContent,
@@ -290,6 +290,11 @@ function DayDetailSheet({
       return res.data;
     },
     enabled: open && !!date && !!employeeId,
+    // Overrides the app-wide default (false) for this query only: a
+    // regularization or the hourly APR sync can change this day's record
+    // while the sheet is closed, so re-opening it (or returning to the tab
+    // with it open) should re-check rather than show a stale drawer.
+    refetchOnWindowFocus: true,
   });
 
   const adr = data?.attendance_record;
@@ -972,7 +977,11 @@ export function AttendanceCalendar({
   // Which system drives this employee's attendance — APR (dialler) or COSEC
   // (biometric). Previously the calendar always read biometric, so dialler
   // employees saw COSEC data that did not belong to them.
-  const { data: sourceInfo } = useQuery<{ attendance_source: AttendanceSource; source_label: string }>({
+  const { data: sourceInfo } = useQuery<{
+    attendance_source: AttendanceSource;
+    source_label: string;
+    sync_interval_note?: string;
+  }>({
     queryKey: ["attendance-source", employeeId],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any }>(
@@ -986,7 +995,7 @@ export function AttendanceCalendar({
   const source: AttendanceSource = sourceInfo?.attendance_source ?? "biometric";
 
   // Fetch monthly attendance data for calendar colouring
-  const { data: attendanceData = [], isLoading, isError, refetch } = useQuery<AttendanceDay[]>({
+  const { data: attendanceData = [], isLoading, isError, refetch, dataUpdatedAt } = useQuery<AttendanceDay[]>({
     queryKey: ["attendance-calendar", employeeId, currentYear, currentMonth, source],
     queryFn: async () => {
       const startDate = fmtDate(currentYear, currentMonth, 1);
@@ -1026,6 +1035,10 @@ export function AttendanceCalendar({
       }));
     },
     enabled: !!employeeId && !!sourceInfo,
+    // Overrides the app-wide default (false): coming back to this tab should
+    // re-check against COSEC/APR rather than show whatever was last fetched,
+    // since the underlying sync runs independently on its own schedule.
+    refetchOnWindowFocus: true,
   });
 
   const attendanceMap = new Map<string, AttendanceDay>(
@@ -1095,6 +1108,17 @@ export function AttendanceCalendar({
               >
                 {sourceInfo?.source_label ?? (source === "dialler" ? "APR / Dialler" : "Direct COSEC")}
               </Badge>
+              {/* The underlying sync (5 min COSEC / hourly APR) lags real time
+                  regardless of how fresh the browser's own fetch is — surface
+                  both so "why does this look old" has a visible answer instead
+                  of appearing to be a bug. */}
+              {(sourceInfo?.sync_interval_note || dataUpdatedAt) && (
+                <span className="text-[11px] text-slate-400" title={sourceInfo?.sync_interval_note}>
+                  {sourceInfo?.sync_interval_note}
+                  {sourceInfo?.sync_interval_note && dataUpdatedAt ? " · " : ""}
+                  {dataUpdatedAt ? formatLastSynced(dataUpdatedAt) : ""}
+                </span>
+              )}
             </div>
             {!hideNavigator && (
             <div className="flex gap-1.5">

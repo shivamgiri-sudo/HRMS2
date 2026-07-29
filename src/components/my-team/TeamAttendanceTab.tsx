@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { formatTime24 } from "@/lib/utils";
+import { formatTime24, formatLastSynced } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -100,10 +100,14 @@ function SummaryBar({ rows }: { rows: AttendanceRow[] }) {
 export default function TeamAttendanceTab() {
   const [date, setDate] = useState(todayStr());
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, dataUpdatedAt } = useQuery({
     queryKey: ["team-attendance-daily", date],
     queryFn: () => hrmsApi.get<any>(`/api/wfm/attendance/daily?date=${date}&limit=500`),
     staleTime: 30_000,
+    // Overrides the app-wide default (false): a manager checking their team's
+    // attendance wants what's actually happened, not a snapshot from whenever
+    // they last loaded the tab.
+    refetchOnWindowFocus: true,
   });
 
   const rows: AttendanceRow[] = (data as any)?.data ?? [];
@@ -122,6 +126,9 @@ export default function TeamAttendanceTab() {
           />
         </div>
         {rows.length > 0 && <SummaryBar rows={rows} />}
+        {dataUpdatedAt > 0 && (
+          <span className="text-[11px] text-slate-400">{formatLastSynced(dataUpdatedAt)}</span>
+        )}
         <Button
           variant="outline"
           size="sm"

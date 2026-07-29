@@ -200,6 +200,13 @@ export function useHubEmployees(filters: HubFilters, month: string) {
     },
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -214,6 +221,13 @@ export function useAttendanceDailyRecords(employeeId: string | null, fromDate: s
       return (res?.data ?? res ?? []) as DailyRecord[];
     },
     staleTime: 0,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -226,6 +240,13 @@ export function useAttendanceSummary(employeeId: string | null, month: string) {
       return (res?.data ?? res) as AttendanceSummary;
     },
     staleTime: 0,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -240,6 +261,13 @@ export function useRunningSalary(employeeId: string | null, month: string) {
       return (res?.data ?? res?.summary ?? res) as RunningSalary;
     },
     staleTime: 0,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -252,6 +280,13 @@ export function usePayslipHistory(employeeId: string | null) {
       return (res?.data ?? res ?? []) as PayslipSummary[];
     },
     staleTime: 120_000,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -278,6 +313,13 @@ export function useRegularizationHistory(employeeId: string | null) {
       return (res?.data ?? res ?? []) as RegularizationRecord[];
     },
     staleTime: 60_000,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -292,6 +334,13 @@ export function useLeaveBalance(employeeId: string | null, year: number) {
       return (res?.data ?? res ?? []) as LeaveBalance[];
     },
     staleTime: 120_000,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -304,6 +353,13 @@ export function useTodaySummary() {
     },
     staleTime: 60_000,
     refetchInterval: 60_000,
+  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
+  // this operational query only — the underlying data changes (a new punch,
+  // a leave approval, a salary run) independently of anything the user does
+  // here, so returning to the tab should re-check rather than show what was
+  // last fetched. Scoped per-query rather than flipping the global default,
+  // which would touch every one of the ~170 other useQuery call sites.
+    refetchOnWindowFocus: true,
   });
 }
 

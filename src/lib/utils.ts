@@ -167,6 +167,20 @@ export function formatISTTime(
   }
 }
 
+/**
+ * "Last synced" text from a react-query `dataUpdatedAt` timestamp (ms epoch).
+ *
+ * The attendance/salary data itself lags the real world — COSEC syncs every
+ * 5 minutes, APR hourly — and `refetchOnWindowFocus` only closes the gap
+ * between "the browser has the latest the server can offer" and "the server's
+ * own background sync ran." Showing when the client last actually fetched
+ * makes that second, unavoidable lag visible instead of silent.
+ */
+export function formatLastSynced(dataUpdatedAt: number | undefined | null): string {
+  if (!dataUpdatedAt) return "";
+  return `Synced ${formatISTTime(new Date(dataUpdatedAt))}`;
+}
+
 /** Format date only in IST (MMM d, yyyy) */
 export function formatISTDate(
   date: Date | string | null | undefined

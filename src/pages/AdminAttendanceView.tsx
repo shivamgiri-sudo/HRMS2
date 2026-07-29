@@ -6,6 +6,7 @@ import { AttendanceHubFilters } from "@/components/attendance/AttendanceHubFilte
 import { AttendanceHubTable } from "@/components/attendance/AttendanceHubTable";
 import { AttendanceHubDrawer } from "@/components/attendance/AttendanceHubDrawer";
 import { useHubEmployees, useDebounce, useTodaySummary } from "@/hooks/useAttendanceHub";
+import { formatLastSynced } from "@/lib/utils";
 import type { HubEmployee, HubFilters } from "@/hooks/useAttendanceHub";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
@@ -46,7 +47,7 @@ export default function AdminAttendanceView() {
     [filters, debouncedSearch]
   );
 
-  const { data: result, isLoading } = useHubEmployees(debouncedFilters, month);
+  const { data: result, isLoading, dataUpdatedAt } = useHubEmployees(debouncedFilters, month);
   const { data: todaySummary } = useTodaySummary();
   const employees = result?.data ?? [];
   const total = result?.total ?? 0;
@@ -117,6 +118,9 @@ export default function AdminAttendanceView() {
             </div>
           )}
         </div>
+        {dataUpdatedAt > 0 && (
+          <p className="text-[11px] text-slate-400 -mt-3">{formatLastSynced(dataUpdatedAt)}</p>
+        )}
 
         {/* Filters */}
         <AttendanceHubFilters

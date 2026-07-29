@@ -337,6 +337,10 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
       }));
     },
     enabled: !!employeeId,
+    // Overrides the app-wide default (false): the underlying COSEC/APR sync
+    // runs on its own schedule independent of anything the employee does here,
+    // so returning to this tab should re-check rather than show a stale month.
+    refetchOnWindowFocus: true,
   });
 
   const adrMap = new Map<string, ADRDay>(adrData.map(d => [d.date, d]));
