@@ -777,10 +777,29 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
       conds.push("e.employee_code LIKE ?");
       params.push(`${search.trim().toUpperCase()}%`);
     } else {
-      // Name/email searches: MATCH...AGAINST uses FULLTEXT index (ft_emp_search)
-      // Fallback to LIKE if FULLTEXT not available (handled by MySQL gracefully)
-      conds.push("(MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE) OR e.employee_code LIKE ?)");
-      params.push(`${search.trim()}*`, `%${search.trim()}%`);
+      const term = search.trim();
+      // Names are matched two ways because FULLTEXT alone has real blind spots:
+      //  1. innodb_ft_min_token_size defaults to 3, so a 1-2 character search
+      //     matches NOTHING via MATCH...AGAINST — typing "Jo" found no "John".
+      //  2. only full_name is in ft_emp_search, so an employee whose full_name
+      //     is blank (first_name/last_name populated instead) was unfindable.
+      // The derived-name LIKE covers both. It sits inside the existing OR, so
+      // the query plan class is unchanged; for terms >= 3 chars FULLTEXT still
+      // does the heavy lifting.
+      const derivedName =
+        "COALESCE(NULLIF(e.full_name, ''), CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))";
+      if (term.length < 3) {
+        // Below the FULLTEXT token floor — LIKE is the only thing that can match.
+        conds.push(`(${derivedName} LIKE ? OR e.employee_code LIKE ?)`);
+        params.push(`%${term}%`, `%${term}%`);
+      } else {
+        conds.push(
+          `(MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)
+            OR e.employee_code LIKE ?
+            OR ${derivedName} LIKE ?)`
+        );
+        params.push(`${term}*`, `%${term}%`, `%${term}%`);
+      }
     }
   }
   if (scoped.sql && scoped.sql !== "1=1") {

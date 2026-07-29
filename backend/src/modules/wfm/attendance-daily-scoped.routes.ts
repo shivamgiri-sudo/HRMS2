@@ -4,6 +4,28 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { toIST } from "../../shared/timezone.js";
+import { composeIstDateTime } from "./apr-attendance.service.js";
+
+/**
+ * Whether mas_hrms.apr exists. The day-detail route already tolerates its
+ * absence, so this list endpoint must too — without the check, an environment
+ * without the table would 500 on every attendance query instead of simply
+ * showing no APR login/logout. Probed once and cached.
+ */
+let aprTableExists: boolean | null = null;
+async function hasAprTable(): Promise<boolean> {
+  if (aprTableExists !== null) return aprTableExists;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'apr'`
+    );
+    aprTableExists = Number((rows[0] as any)?.c ?? 0) > 0;
+  } catch {
+    aprTableExists = false;
+  }
+  return aprTableExists;
+}
 
 export const attendanceDailyScopedRouter = Router();
 attendanceDailyScopedRouter.use(requireAuth);
@@ -77,12 +99,40 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
     params,
   );
 
+  // Dialler/APR days carry no punch times in attendance_daily_record, so
+  // Login/Logout rendered empty for APR employees. Pull the real times from
+  // mas_hrms.apr. Correlated subqueries (not a JOIN) because apr has one row per
+  // campaign per day and a JOIN would fan the result out. Gated on
+  // attendance_source so biometric rows skip the lookup entirely.
+  const aprSelect = (await hasAprTable())
+    ? `CASE WHEN adr.attendance_source = 'dialler' THEN (
+              SELECT MIN(NULLIF(a.Login_Time, '00:00:00')) FROM apr a
+               WHERE a.ReportDate = adr.record_date
+                 AND a.UserID IN (e.call_centre_code, e.employee_code, e.biometric_code)
+            ) END AS apr_login_time,
+            CASE WHEN adr.attendance_source = 'dialler' THEN (
+              SELECT MAX(NULLIF(a.Logout_Time, '00:00:00')) FROM apr a
+               WHERE a.ReportDate = adr.record_date
+                 AND a.UserID IN (e.call_centre_code, e.employee_code, e.biometric_code)
+            ) END AS apr_logout_time,`
+    : `NULL AS apr_login_time, NULL AS apr_logout_time,`;
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT adr.*,
             DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
             DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
             adr.clock_in_time AS clock_in,
             adr.clock_out_time AS clock_out,
+            -- The UI reads the source field to label rows and drive the
+            -- All / Biometric / APR filter. Without this alias every row
+            -- defaulted to biometric and APR days were indistinguishable.
+            adr.attendance_source AS source,
+            -- Dialler/APR days carry no punch times in attendance_daily_record,
+            -- so Login/Logout rendered empty for APR employees. Pull the real
+            -- times from mas_hrms.apr. Correlated subqueries (not a JOIN) because
+            -- apr has one row per campaign per day and a JOIN would fan out.
+            -- Gated on attendance_source so biometric rows skip the lookup.
+            ${aprSelect}
             ROUND(COALESCE(adr.raw_minutes, adr.biometric_minutes, adr.dialler_minutes, 0) / 60, 2) AS total_hours,
             adr.attendance_status,
             adr.attendance_status AS status,
@@ -109,8 +159,12 @@ attendanceDailyScopedRouter.get("/daily", h(async (req, res) => {
     ...r,
     clock_in_time:  toIST(r.clock_in_time),
     clock_out_time: toIST(r.clock_out_time),
-    clock_in:       toIST(r.clock_in),
-    clock_out:      toIST(r.clock_out),
+    // For dialler rows fall back to the APR login/logout. Those are MySQL TIME
+    // values, so they are composed onto the record date and tagged IST — the
+    // client must never receive a bare TIME where it expects a datetime.
+    clock_in:       toIST(r.clock_in)  ?? composeIstDateTime(r.record_date, r.apr_login_time),
+    clock_out:      toIST(r.clock_out) ?? composeIstDateTime(r.record_date, r.apr_logout_time),
+    source:         r.source ?? r.attendance_source ?? "biometric",
     employee: {
       first_name: r.first_name ?? "",
       last_name: r.last_name ?? "",
