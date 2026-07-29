@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVerificationInput } from "./bgv-provider.adapter.js";
+import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
 
 const hashValue = (value: unknown) => {
@@ -332,12 +333,15 @@ export async function verifyPanForCandidate(candidateId: string, input: { panNum
   if (!pan) throw Object.assign(new Error("PAN number is required — please save your PAN in the Personal details step first"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
-  const result = await adapter.verifyPan({
+  const result = await withProviderFailureLogged(
+    { candidateId, endpointKey: "PAN_VERIFY", providerKey: adapter.providerKey },
+    () => adapter.verifyPan({
     candidateName: candidate.employee_name ?? candidate.full_name,
     dateOfBirth: candidate.date_of_birth,
     mobileNumber: candidate.mobile,
     panNumber: pan,
-  });
+  }),
+  );
   const checkId = await createOrUpdateCheck(candidateId, "pan", result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,
@@ -508,7 +512,12 @@ export async function verifyUanForCandidate(candidateId: string, input: { uanNum
   if (!adapter.verifyUan) throw Object.assign(new Error("UAN verification is not configured for the active BGV provider"), { statusCode: 503 });
 
   const started = Date.now();
-  const result = await adapter.verifyUan({ candidateName: candidate.employee_name ?? candidate.full_name, uanNumber });
+  const result = await withProviderFailureLogged(
+    { candidateId, endpointKey: "UAN_VERIFY", providerKey: adapter.providerKey },
+    // verifyUan is optional on the interface; the guard above proves it exists
+    // but that narrowing does not survive into the callback.
+    () => adapter.verifyUan!({ candidateName: candidate.employee_name ?? candidate.full_name, uanNumber }),
+  );
   const checkId = await createOrUpdateCheck(candidateId, "employment", result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,
@@ -547,7 +556,10 @@ export async function verifyAadhaarOfflineForCandidate(candidateId: string, inpu
   }
   const candidate = await getCandidateIdentity(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
-  const result = await adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4: input.aadhaarLast4, documentId: input.documentId });
+  const result = await withProviderFailureLogged(
+    { candidateId, endpointKey: "AADHAAR_OFFLINE_VERIFY", providerKey: adapter.providerKey },
+    () => adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4: input.aadhaarLast4, documentId: input.documentId }),
+  );
   const checkId = await createOrUpdateCheck(candidateId, "aadhaar", result.status, {
     sourceDocumentId: input.documentId ?? null,
     providerKey: result.providerKey,
@@ -683,12 +695,15 @@ export async function verifyAddressDocByToken(
   const candidate = await getCandidateIdentity(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
-  const result = await adapter.verifyAddressDoc({
+  const result = await withProviderFailureLogged(
+    { candidateId, endpointKey: "ADDRESS_DOC_VERIFY", providerKey: adapter.providerKey },
+    () => adapter.verifyAddressDoc({
     docType: input.docType,
     documentNumber: input.documentNumber,
     candidateName: candidate.employee_name ?? candidate.full_name,
     dateOfBirth: candidate.date_of_birth ?? null,
-  });
+  }),
+  );
   const checkId = await createOrUpdateCheck(candidateId, 'address_doc', result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,
@@ -725,14 +740,17 @@ export async function verifyEducationByToken(
   const candidate = await getCandidateIdentity(candidateId);
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
-  const result = await adapter.verifyEducation({
+  const result = await withProviderFailureLogged(
+    { candidateId, endpointKey: "EDUCATION_VERIFY", providerKey: adapter.providerKey },
+    () => adapter.verifyEducation({
     boardType: input.boardType,
     rollNumber: input.rollNumber ?? null,
     certificateNumber: input.certificateNumber ?? null,
     yearOfPassing: input.yearOfPassing,
     candidateName: candidate.employee_name ?? candidate.full_name,
     institutionName: input.institutionName ?? null,
-  });
+  }),
+  );
   const checkId = await createOrUpdateCheck(candidateId, 'education_doc', result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,
@@ -777,14 +795,17 @@ export async function verifyCourtByToken(
   if (!dob) throw Object.assign(new Error("Date of birth required for court check"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
-  const result = await adapter.verifyCourt({
+  const result = await withProviderFailureLogged(
+    { candidateId, endpointKey: "COURT_VERIFY", providerKey: adapter.providerKey },
+    () => adapter.verifyCourt({
     candidateName,
     dateOfBirth: dob,
     fatherName: profile?.father_husband_name ?? null,
     address: profile?.permanent_address ?? null,
     state: profile?.permanent_state ?? null,
     pincode: profile?.permanent_pincode ?? null,
-  });
+  }),
+  );
   const checkId = await createOrUpdateCheck(candidateId, 'court', result.status, {
     providerKey: result.providerKey,
     providerRequestId: result.providerRequestId,

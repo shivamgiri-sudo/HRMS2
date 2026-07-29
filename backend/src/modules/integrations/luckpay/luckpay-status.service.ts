@@ -17,6 +17,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import { luckpayClient, type LuckpayStatusResult, type LuckpayDocumentResult } from "./luckpay.client.js";
 import { sanitizeProviderPayload } from "./luckpay.transport.js";
+import { withProviderFailureLogged, writeBgvApiLog } from "../../ats/bgv-api-log.service.js";
 
 /** Same private (never web-served) location the onboarding uploader writes to. */
 const STORAGE_DIR = path.resolve(process.cwd(), "private-storage/onboarding-documents");
@@ -151,7 +152,23 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
     return { state: "completed", clientTransactionId, transactionId, changed: false };
   }
 
-  const status = await luckpayClient.checkKycStatus({ clientTransactionId, transactionId });
+  // Logged into the same table the BGV API monitor and cost panel read, so
+  // DigiLocker stops being invisible there — it previously only ever reached
+  // ats_provider_transaction_log.
+  const status = await withProviderFailureLogged(
+    { candidateId, endpointKey: "DIGILOCKER_STATUS", providerKey: "luckpay" },
+    () => luckpayClient.checkKycStatus({ clientTransactionId, transactionId }),
+  );
+  await writeBgvApiLog({
+    candidateId,
+    endpointKey: "DIGILOCKER_STATUS",
+    providerKey: "luckpay",
+    requestRef: transactionId,
+    httpStatus: 200,
+    outcome: status.state === "completed" ? "success" : status.state === "pending" ? "manual_review" : "provider_error",
+    errorMessage: status.state === "failed" || status.state === "expired" ? status.message : null,
+    responsePayload: status.sanitized,
+  });
 
   if (status.state !== "completed") {
     await updateProviderLog({
@@ -175,7 +192,10 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
   const storedFiles: string[] = [];
   let documentMeta: Record<string, unknown> = {};
   try {
-    const doc = await luckpayClient.downloadKycDocument({ clientTransactionId, transactionId });
+    const doc = await withProviderFailureLogged(
+      { candidateId, endpointKey: "DIGILOCKER_DOWNLOAD", providerKey: "luckpay" },
+      () => luckpayClient.downloadKycDocument({ clientTransactionId, transactionId }),
+    );
     const stored = await persistDocument(doc, ".pdf");
     if (stored) storedFiles.push(stored);
     documentMeta = { documentUrl: doc.url, fileName: doc.fileName, contentType: doc.contentType, stored: Boolean(stored) };
