@@ -33,6 +33,8 @@ async function refreshAccessToken(): Promise<boolean> {
       const newToken = data?.data?.accessToken;
       if (!newToken) return false;
       localStorage.setItem("hrms_access_token", newToken);
+      // Notify AuthContext that a new token was issued so it reschedules its refresh timer
+      window.dispatchEvent(new CustomEvent("hrms:token-refreshed"));
       return true;
     } catch {
       return false;

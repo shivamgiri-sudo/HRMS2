@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getDemoCred, buildDemoSession } from "@/lib/demoCreds";
 import { apiUrl } from "@/lib/apiBase";
@@ -87,28 +87,61 @@ function decodeJwtUser(token: string): HrmsUser | null {
   }
 }
 
-async function tryRefresh(): Promise<HrmsUser | null> {
+// Codes that mean the server has deliberately revoked the session.
+// On these we must clear local auth state. Anything else (network error,
+// server restart, 5xx) is transient — we leave the session alive and retry.
+const DEFINITIVE_LOGOUT_CODES = new Set([
+  'TOKEN_REUSED', 'PASSWORD_CHANGED', 'USER_BLOCKED', 'EMPLOYEE_INACTIVE',
+  'TOKEN_INVALID',
+]);
+
+// Returns the decoded user on success, null on transient failure,
+// and throws a special sentinel on definitive server rejection.
+const DEFINITIVE_LOGOUT = Symbol('DEFINITIVE_LOGOUT');
+
+async function tryRefresh(): Promise<HrmsUser | null | typeof DEFINITIVE_LOGOUT> {
   try {
-    const { ok, payload } = await fetchJson('/api/auth/refresh', {
+    const { ok, status, payload } = await fetchJson('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
     if (!ok) {
-      // Check for security-related errors that require logout
-      if (payload?.logoutRequired || payload?.code === 'TOKEN_REUSED' || payload?.code === 'PASSWORD_CHANGED') {
+      const code: string | undefined = payload?.code;
+      const isDefinitive =
+        payload?.logoutRequired === true ||
+        (code != null && DEFINITIVE_LOGOUT_CODES.has(code)) ||
+        status === 401;
+      if (isDefinitive) {
         localStorage.removeItem('hrms_access_token');
         localStorage.removeItem('hrms_refresh_token');
         localStorage.removeItem('hrms_must_change_password');
         localStorage.removeItem('hrms_2fa_required');
         localStorage.removeItem('hrms_2fa_verified');
+        return DEFINITIVE_LOGOUT;
       }
+      // Transient (5xx, network, timeout) — keep the session alive
       return null;
     }
     const { data } = payload ?? {};
     localStorage.setItem('hrms_access_token', data.accessToken);
     return decodeJwtUser(data.accessToken);
   } catch {
+    // Network or parse error — treat as transient, do not logout
     return null;
+  }
+}
+
+// Returns how many ms until the stored access token expires.
+// Returns 0 if the token is missing or already expired.
+function msUntilTokenExpiry(): number {
+  try {
+    const token = localStorage.getItem('hrms_access_token');
+    if (!token) return 0;
+    const [, b64] = token.split('.');
+    const { exp } = JSON.parse(atob(b64.replace(/-/g, '+').replace(/_/g, '/')));
+    return Math.max(0, exp * 1000 - Date.now());
+  } catch {
+    return 0;
   }
 }
 
@@ -141,22 +174,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem('hrms_2fa_verified') === 'true';
   });
   const queryClient = useQueryClient();
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const scheduleRefresh = () => {
-    if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-    // Refresh every 13 minutes (token expires at 15)
-    refreshTimerRef.current = setInterval(async () => {
-      const refreshed = await tryRefresh();
-      if (!refreshed) {
-        localStorage.removeItem('hrms_access_token');
-        localStorage.removeItem('hrms_refresh_token');
-        setUser(null);
-        queryClient.clear();
-        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+  // Clears auth state and stops the refresh timer.
+  const clearAuthState = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    setUser(null);
+    queryClient.clear();
+  }, [queryClient]);
+
+  // Schedules a single proactive refresh to fire 5 minutes before the token expires.
+  // If the token already has <6 minutes left, fires in 30 seconds.
+  // On definitive server rejection, clears auth state (user logged out server-side).
+  // On transient failure, schedules a retry in 60 seconds without touching the session.
+  const scheduleRefresh = useCallback((delayOverrideMs?: number) => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    const EARLY_MS = 5 * 60 * 1000; // fire 5 min before expiry
+    const delay = delayOverrideMs ?? Math.max(30_000, msUntilTokenExpiry() - EARLY_MS);
+
+    refreshTimerRef.current = setTimeout(async () => {
+      refreshTimerRef.current = null;
+      const result = await tryRefresh();
+      if (result === DEFINITIVE_LOGOUT) {
+        clearAuthState();
+        return;
       }
-    }, 13 * 60 * 1000);
-  };
+      if (result === null) {
+        // Transient failure — retry in 60 seconds without logging the user out
+        scheduleRefresh(60_000);
+        return;
+      }
+      // Success — decoded user from new token; reschedule for next expiry
+      setUser(result);
+      scheduleRefresh();
+    }, delay);
+  }, [clearAuthState]);
 
   useEffect(() => {
     const init = async () => {
@@ -172,15 +230,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           scheduleRefresh();
           return;
         }
+        // Token exists but is expired — attempt silent refresh
         localStorage.removeItem('hrms_access_token');
-        const refreshed = await tryRefresh();
-        if (refreshed) {
-          setUser(refreshed);
+        const result = await tryRefresh();
+        if (result !== null && result !== DEFINITIVE_LOGOUT) {
+          setUser(result);
           setIsLoading(false);
           scheduleRefresh();
           return;
         }
-        localStorage.removeItem('hrms_refresh_token');
+        if (result !== DEFINITIVE_LOGOUT) {
+          // Transient failure on boot — still clear the stale token but do not
+          // destroy the refresh cookie; the user will be prompted to log in
+          localStorage.removeItem('hrms_refresh_token');
+        }
       }
 
       // Demo sessions are only checked if no real JWT token exists and local demo mode is explicit.
@@ -208,10 +271,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     init();
 
-    return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    // Re-check token when the tab regains focus after being idle (e.g. overnight).
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const token = localStorage.getItem('hrms_access_token');
+      if (!token) return;
+      const ttl = msUntilTokenExpiry();
+      // If token expires within the next 6 minutes, trigger a proactive refresh now
+      if (ttl < 6 * 60 * 1000) {
+        scheduleRefresh(0);
+      }
     };
-  }, []);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // hrmsApi rotated the token inline (on a 401 retry) — reschedule our timer
+    // so both code paths stay in sync on the same expiry clock.
+    const handleTokenRefreshed = () => scheduleRefresh();
+    window.addEventListener('hrms:token-refreshed', handleTokenRefreshed);
+
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('hrms:token-refreshed', handleTokenRefreshed);
+    };
+  }, [scheduleRefresh]);
 
   // Auto-logout disabled — inactivity timeout hardcoded to 0 (no-op)
   useInactivityTimeout(0, async () => { /* disabled */ });
@@ -305,9 +388,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMustChangePassword(false);
       setTwoFactorRequired(false);
       setTwoFactorVerified(false);
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-      setUser(null);
-      queryClient.clear();
+      clearAuthState();
       setIsSigningOut(false);
     }
   };
