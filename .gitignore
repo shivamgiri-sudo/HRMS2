@@ -58,3 +58,19 @@ tools/schema-auditor/snapshots/*
 !tools/schema-auditor/snapshots/.gitkeep
 tools/schema-auditor/.env.schema-auditor
 tools/schema-auditor/.env.schema-auditor.local
+
+# Stray Windows artifacts — `cmd ... 2>nul` in a POSIX shell creates a literal
+# file called "nul" instead of discarding output.
+nul
+**/nul
+
+# Runtime upload storage — user-generated files, never source
+uploads/
+
+# Local dev logs (narrow: backend/backend.err and .codex-tmp assets are tracked,
+# so do NOT use a blanket *.err or .codex-tmp/ rule — it would shadow them)
+backend/backend-dev-restart.err
+
+# Agent/tool scratch worktrees
+.claude/worktrees/
+.codex-tmp/finance-pr58-worktree/
