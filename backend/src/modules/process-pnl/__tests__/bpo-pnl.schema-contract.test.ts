@@ -74,10 +74,9 @@ describe("BPO Process P&L schema and API contract", () => {
     expect(migration).toContain("bmc_non_people");
   });
 
-  it("registers the complete 415 to 419 finance sequence in automated and manual runners", () => {
-    const runner = backendFile("src/db/runFinanceSupplementalMigrations.ts");
+  it("registers the complete 415 to 419 finance sequence in the governed manifest and manual runner", () => {
+    const runner = backendFile("src/db/runPendingMigrations.ts");
     const manualRunners = [
-      backendFile("sql/000_run_finance_supplemental.sql"),
       backendFile("sql/000_finance_supplemental.sql"),
     ];
     for (const filename of [

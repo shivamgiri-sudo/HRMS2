@@ -13,7 +13,7 @@ function read(relativePath: string) {
 describe("mandatory branch-budget Head/Sub-head coverage", () => {
   it("registers an additive monthly coverage ledger", () => {
     const sql = read("sql/417_budget_subhead_coverage_control.sql");
-    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    const runner = read("src/db/runPendingMigrations.ts");
     const manual = read("sql/000_finance_supplemental.sql");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS finance_budget_subhead_status");
     expect(sql).toContain("planned");

@@ -63,7 +63,7 @@ describe("finance database and API contract", () => {
 
   it("preserves every payment installment in an additive transaction ledger", () => {
     const sql413 = read("sql/413_vendor_payment_transaction_ledger.sql");
-    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    const runner = read("src/db/runPendingMigrations.ts");
     expect(sql413).toContain("CREATE TABLE IF NOT EXISTS vendor_payment_transaction");
     expect(sql413).toContain("vendor_payment_id");
     expect(sql413).toContain("sequence_no");
@@ -77,7 +77,7 @@ describe("finance database and API contract", () => {
     const sql414 = read("sql/414_finance_grn_sequence.sql");
     const allocator = read("src/modules/finance/grn-number.service.ts");
     const grnService = read("src/modules/finance/grn.service.ts");
-    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    const runner = read("src/db/runPendingMigrations.ts");
     expect(sql414).toContain("CREATE TABLE IF NOT EXISTS finance_grn_sequence");
     expect(sql414).toContain("PRIMARY KEY (branch_id, financial_year)");
     expect(sql414).toContain("uq_grn_number");
@@ -90,7 +90,7 @@ describe("finance database and API contract", () => {
 
   it("adds allocation-aware GRNs without replacing the legacy parent record", () => {
     const sql416 = read("sql/416_smart_grn_allocation_document_intelligence.sql");
-    const runner = read("src/db/runFinanceSupplementalMigrations.ts");
+    const runner = read("src/db/runPendingMigrations.ts");
     const manual = read("sql/000_finance_supplemental.sql");
 
     expect(sql416).toContain("CREATE TABLE IF NOT EXISTS grn_cost_allocation");

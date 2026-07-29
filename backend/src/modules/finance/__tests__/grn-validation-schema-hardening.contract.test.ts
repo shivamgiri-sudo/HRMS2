@@ -22,19 +22,22 @@ describe("smart GRN validation schema hardening", () => {
     expect(sql).not.toMatch(/TRUNCATE\s+TABLE/i);
   });
 
-  it("runs hardening after all Finance supplemental migrations and before runtime", () => {
-    const runner = read("src/db/runFinanceSchemaHardeningMigrations.ts");
+  it("runs hardening after the base finance migrations, via the single governed manifest, before runtime", () => {
+    // The two ungoverned supplemental/hardening runners this test used to check (and their
+    // "hardening runs after supplemental" call-order assertion) were retired once their coverage
+    // was confirmed fully redundant with MIGRATION_MANIFEST — see PR 5 of the finance
+    // stabilization work. Same intent (420 must run after the 415-419 migrations it hardens),
+    // now expressed as manifest ordering instead of two removed function-call sites.
+    const runner = read("src/db/runPendingMigrations.ts");
     const server = read("src/server.ts");
-    const manual = read("sql/000_finance_hardening.sql");
-    const supplementalCall = server.indexOf("await runFinanceSupplementalMigrations()");
-    const hardeningCall = server.indexOf("await runFinanceSchemaHardeningMigrations()");
+    const manual = read("sql/000_finance_supplemental.sql");
     const migrationStart = server.lastIndexOf("handleMigrations()");
     const runtimeStart = server.indexOf(".then(initializeRuntime)");
+    const index419 = runner.indexOf('"419_grn_validation_override_control.sql"');
+    const index420 = runner.indexOf('"420_grn_validation_schema_hardening.sql"');
 
-    expect(runner).toContain('"420_grn_validation_schema_hardening.sql"');
-    expect(runner).toContain("schema_migrations");
-    expect(supplementalCall).toBeGreaterThan(-1);
-    expect(hardeningCall).toBeGreaterThan(supplementalCall);
+    expect(index419).toBeGreaterThan(-1);
+    expect(index420).toBeGreaterThan(index419);
     expect(migrationStart).toBeGreaterThan(-1);
     expect(runtimeStart).toBeGreaterThan(migrationStart);
     expect(manual).toContain("SOURCE sql/420_grn_validation_schema_hardening.sql;");

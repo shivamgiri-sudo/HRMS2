@@ -2,11 +2,6 @@ import type { Server } from "http";
 import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { db } from "./db/mysql.js";
-import { runFinanceSchemaHardeningMigrations } from "./db/runFinanceSchemaHardeningMigrations.js";
-import {
-  runFinanceSupplementalMigrations,
-  verifyFinanceSupplementalMigrations,
-} from "./db/runFinanceSupplementalMigrations.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
 
 // MIGRATION GOVERNANCE: When enabled, API startup only verifies schema version
@@ -217,23 +212,15 @@ async function initializeRuntime() {
 
 async function handleMigrations(): Promise<void> {
   if (MIGRATIONS_VERIFY_ONLY) {
-    // GOVERNANCE: Verify every startup-managed migration set without modifying schema.
+    // GOVERNANCE: Verify the startup-managed migration set without modifying schema.
     console.log("[startup] MIGRATIONS_VERIFY_ONLY=true - verifying schema version...");
-    const [schemaStatus, supplementalStatus] = await Promise.all([
-      verifySchemaVersion(),
-      verifyFinanceSupplementalMigrations(),
-    ]);
-    const pendingFiles = Array.from(new Set([
-      ...schemaStatus.pendingFiles,
-      ...supplementalStatus.pendingFiles,
-    ]));
-    const valid = schemaStatus.valid && supplementalStatus.valid;
+    const schemaStatus = await verifySchemaVersion();
 
-    if (!valid) {
+    if (!schemaStatus.valid) {
       const message =
-        `Schema validation failed: ${pendingFiles.length} pending migrations. ` +
+        `Schema validation failed: ${schemaStatus.pendingCount} pending migrations. ` +
         `Run 'npm run migrate' before starting the API. ` +
-        `Pending: ${pendingFiles.join(", ")}${pendingFiles.length > 10 ? "..." : ""}`;
+        `Pending: ${schemaStatus.pendingFiles.join(", ")}${schemaStatus.pendingFiles.length > 10 ? "..." : ""}`;
 
       if (env.NODE_ENV === "production") {
         throw new Error(message);
@@ -241,18 +228,16 @@ async function handleMigrations(): Promise<void> {
       console.warn(`[startup] ${message}`);
       console.warn("[startup] development mode: continuing with incomplete schema.");
     } else {
-      console.log(
-        `[startup] schema verified: ${schemaStatus.appliedCount} main and ` +
-        `${supplementalStatus.appliedCount} supplemental migrations applied`
-      );
+      console.log(`[startup] schema verified: ${schemaStatus.appliedCount} migrations applied`);
     }
     return;
   }
 
-  // Default behavior: run migrations at startup
+  // Default behavior: run migrations at startup. One governed runner (advisory-locked,
+  // checksummed, ~470-file manifest) covers everything, including the finance range
+  // (411-424) — the two ungoverned supplemental/hardening runners that used to also run here
+  // were retired once their coverage was confirmed fully redundant with this manifest.
   await runPendingMigrations();
-  await runFinanceSupplementalMigrations();
-  await runFinanceSchemaHardeningMigrations();
 }
 
 handleMigrations()

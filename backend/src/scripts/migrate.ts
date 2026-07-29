@@ -16,11 +16,6 @@
  */
 
 import { runPendingMigrations, getMigrationHealth, verifySchemaVersion } from "../db/runPendingMigrations.js";
-import {
-  runFinanceSupplementalMigrations,
-  verifyFinanceSupplementalMigrations,
-} from "../db/runFinanceSupplementalMigrations.js";
-import { runFinanceSchemaHardeningMigrations } from "../db/runFinanceSchemaHardeningMigrations.js";
 
 const args = process.argv.slice(2);
 const showStatus = args.includes("--status");
@@ -33,26 +28,16 @@ async function main() {
 
   if (showStatus) {
     console.log("\nChecking migration status...\n");
-    const [status, supplemental] = await Promise.all([
-      verifySchemaVersion(),
-      verifyFinanceSupplementalMigrations(),
-    ]);
-    const pendingFiles = Array.from(new Set([
-      ...status.pendingFiles,
-      ...supplemental.pendingFiles,
-    ]));
-    const valid = status.valid && supplemental.valid;
+    const status = await verifySchemaVersion();
 
-    console.log(`Main migrations applied: ${status.appliedCount}`);
-    console.log(`Main migrations pending: ${status.pendingCount}`);
-    console.log(`Supplemental migrations applied: ${supplemental.appliedCount}`);
-    console.log(`Supplemental migrations pending: ${supplemental.pendingCount}`);
-    if (pendingFiles.length > 0) {
+    console.log(`Migrations applied: ${status.appliedCount}`);
+    console.log(`Migrations pending: ${status.pendingCount}`);
+    if (status.pendingFiles.length > 0) {
       console.log("\nPending files:");
-      pendingFiles.forEach((file, index) => console.log(`  ${index + 1}. ${file}`));
+      status.pendingFiles.forEach((file, index) => console.log(`  ${index + 1}. ${file}`));
     }
-    console.log(`\nSchema valid: ${valid ? "YES" : "NO"}`);
-    process.exit(valid ? 0 : 1);
+    console.log(`\nSchema valid: ${status.valid ? "YES" : "NO"}`);
+    process.exit(status.valid ? 0 : 1);
   }
 
   if (forceRun) {
@@ -63,8 +48,6 @@ async function main() {
 
   try {
     await runPendingMigrations();
-    await runFinanceSupplementalMigrations();
-    await runFinanceSchemaHardeningMigrations();
 
     const finalHealth = getMigrationHealth();
 
@@ -87,11 +70,6 @@ async function main() {
       console.log("\nFailed migrations:");
       finalHealth.failed.forEach((failure) => console.log(`  X ${failure.filename}: ${failure.error}`));
       process.exit(1);
-    }
-
-    const supplemental = await verifyFinanceSupplementalMigrations();
-    if (!supplemental.valid) {
-      throw new Error(`Supplemental migrations remain pending: ${supplemental.pendingFiles.join(", ")}`);
     }
 
     console.log("\nMigrations completed successfully.");
