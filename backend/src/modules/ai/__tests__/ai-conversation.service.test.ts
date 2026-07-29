@@ -142,7 +142,8 @@ describe('wiring', () => {
 
   it('records every exit of the ask handler', () => {
     const routes = source('../ai-insights.routes.ts');
-    const start = routes.indexOf("aiInsightsRouter.post('/ask'");
+    // The pipeline lives in askHandler; /ask and /ask/stream are thin registrations.
+    const start = routes.indexOf('async function askHandler');
     // Bound the slice to this handler — later routes answer with res.json legitimately.
     const next = routes.indexOf('aiInsightsRouter.', start + 1);
     const asked = routes.slice(start, next === -1 ? undefined : next);
@@ -188,5 +189,48 @@ describe('persona', () => {
   it('tells the provider to use earlier turns', async () => {
     const { COMPANY_SYSTEM_INSTRUCTION } = await import('../ai-company-knowledge.service.js');
     expect(COMPANY_SYSTEM_INSTRUCTION).toMatch(/earlier turns/i);
+  });
+});
+
+describe('streaming', () => {
+  const source = (rel: string) =>
+    readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+  it('serves both /ask and /ask/stream from one pipeline', () => {
+    const routes = source('../ai-insights.routes.ts');
+    expect(routes).toContain("askHandler(req, res, 'json')");
+    expect(routes).toContain("askHandler(req, res, 'sse')");
+    // One handler, so guards and scope checks cannot drift between the two.
+    expect(routes.match(/async function askHandler/g) ?? []).toHaveLength(1);
+  });
+
+  it('streams only when the caller asked and the provider can', () => {
+    const routes = source('../ai-insights.routes.ts');
+    expect(routes).toContain("mode === 'sse' && typeof provider.generateTextStream === 'function'");
+  });
+
+  it('reports a post-stream rejection as an event, not a status code', () => {
+    const routes = source('../ai-insights.routes.ts');
+    const validation = routes.slice(routes.indexOf('const responseValidation'));
+    // Headers are already sent by then; res.status would throw.
+    expect(validation).toContain("sseSend('error', failure)");
+  });
+
+  it('disables proxy buffering, which otherwise defeats SSE', () => {
+    const routes = source('../ai-insights.routes.ts');
+    expect(routes).toContain("'X-Accel-Buffering': 'no'");
+  });
+
+  it('shares one prompt builder between streamed and non-streamed answers', () => {
+    const gemini = source('../providers/gemini.provider.ts');
+    expect(gemini.match(/this\.buildPrompt\(request\)/g) ?? []).toHaveLength(2);
+    expect(gemini).toContain('generateContentStream');
+    expect(gemini).toContain('supportsStreaming = true');
+  });
+
+  it('falls back to a whole answer rather than leaving a stream half-finished', () => {
+    const gemini = source('../providers/gemini.provider.ts');
+    const streaming = gemini.slice(gemini.indexOf('async generateTextStream'));
+    expect(streaming).toContain('return this.generateText(request)');
   });
 });
