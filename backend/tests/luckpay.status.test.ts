@@ -169,6 +169,90 @@ describe("initiate calls expose gatewayId for later polling", () => {
   });
 });
 
+describe("live production payloads (captured 2026-07-29, account LPM14)", () => {
+  // These bodies are copies of real responses from api-banking.luckpay.in.
+  // They differ from the published Postman samples in two ways that broke the
+  // first implementation: the DigiLocker link lives at
+  // data.details.authorizationUrl (absent from the docs entirely), and `status`
+  // carries the lifecycle ("PENDING") while `responseMessage` carries the API
+  // outcome ("SUCCESS") — the reverse of the documented samples.
+
+  it("TC-LPS-14: DigiLocker initiate returns details.authorizationUrl as the candidate link", async () => {
+    vi.spyOn(axios, "post")
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce({
+        data: {
+          code: "200", status: "Success", message: "Verification completed successfully",
+          data: {
+            clientTransactionId: "4164564",
+            gatewayId: "APIB1785307893997014",
+            status: "PENDING",
+            responseMessage: "SUCCESS",
+            details: {
+              status: "PENDING",
+              customerIdentifier: "8934071154",
+              authorizationUrl: "https://digilocker-prod.digitap.work?token=eyJhbGciOiJSUzI1NiJ9.abc",
+              accessToken: { validTill: "2026-07-29T12:31:34", createdAt: "2026-07-29T12:21:34" },
+            },
+          },
+        },
+      });
+
+    const r = await luckpayClient.initiateDigilockerWithUrl({
+      clientTransactionId: "4164564", customerName: "Aman Jaiswal", mobileNumber: "8934071154",
+    });
+
+    expect(r.verificationUrl).toBe("https://digilocker-prod.digitap.work?token=eyJhbGciOiJSUzI1NiJ9.abc");
+    expect(r.providerReferenceId).toBe("APIB1785307893997014");
+    // responseMessage "SUCCESS" must not be mistaken for a completed session.
+    expect(r.status).toBe("PENDING");
+  });
+
+  it("TC-LPS-15: eSign initiate returns data.redirect_url and gatewayId", async () => {
+    vi.spyOn(axios, "post")
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce({
+        data: {
+          code: "200", status: "Success", message: "eSign request initiated successfully",
+          data: {
+            clientTransactionId: "TXN-ESIGN-4134186",
+            gatewayId: "APIB1785307958630015",
+            status: "PENDING",
+            responseMessage: "SUCCESS",
+            esignDetails: { file_name: "agreement.pdf", self_signed: false, no_of_pages: 0 },
+            redirect_url: "https://api.trusthub.in/api/aadhaar-e-sign/redirect/c6fa615f-0ab7-4758-99d1-dcd3942d54a8",
+          },
+        },
+      });
+
+    const r = await luckpayClient.initiateEsignWithUrl({
+      filePath: __filename,
+      request: { clientTransactionId: "TXN-ESIGN-4134186", signedBy: "John Doe", location: "Mumbai", reason: "Signing Agreement" },
+    });
+
+    expect(r.verificationUrl).toBe("https://api.trusthub.in/api/aadhaar-e-sign/redirect/c6fa615f-0ab7-4758-99d1-dcd3942d54a8");
+    expect(r.providerReferenceId).toBe("APIB1785307958630015");
+  });
+
+  it("TC-LPS-16: a PENDING eSign with no agreement_status is not treated as signed", async () => {
+    // The live initiate response carries no esignDetails.agreement_status at
+    // all, so the fallback chain lands on status="PENDING".
+    vi.spyOn(axios, "post")
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            gatewayId: "APIB1785307958630015", status: "PENDING", responseMessage: "SUCCESS",
+            esignDetails: { file_name: "agreement.pdf", self_signed: false, no_of_pages: 0 },
+          },
+        },
+      });
+
+    const r = await luckpayClient.checkESignStatus(REF);
+    expect(r.state).toBe("pending");
+  });
+});
+
 describe("document download", () => {
   it("TC-LPS-10: eSign document reads esignDownloadDetails.file", async () => {
     vi.spyOn(axios, "post")
