@@ -17,7 +17,7 @@
  * 10. Statutory validation (PAN duplicate check, format validation)
  */
 
-import { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import { PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import { checkBgvReadiness, getBgvReadinessSummary } from '../ats/bgv-readiness.service.js';
@@ -175,7 +175,16 @@ export async function createEmployeeFromCandidate(
 
     // Get candidate data
     const [candRows] = await conn.execute<RowDataPacket[]>(
+      // Identity, contact and posting all come from the candidate. The offer
+      // carries none of them — it has no full_name, email, mobile or branch
+      // column — so reading them off `offer` produced blank names and NULL
+      // branch/process on every employee.
       `SELECT
+         c.full_name,
+         c.mobile,
+         c.applied_for_branch,
+         c.applied_for_process,
+         c.education,
          COALESCE(p.gender, c.gender) AS gender,
          COALESCE(p.date_of_birth, c.date_of_birth) AS date_of_birth,
          COALESCE(p.personal_email_id, c.email) AS personal_email,
@@ -184,7 +193,11 @@ export async function createEmployeeFromCandidate(
          COALESCE(p.pan_number, c.pan_number) AS pan_number,
          COALESCE(p.aadhar_number, c.aadhar_number) AS aadhar_number,
          COALESCE(p.uan_number, c.uan_number) AS uan_number,
-         p.present_address AS current_address
+         COALESCE(p.present_address, c.current_address) AS current_address,
+         COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
+         -- The statutory forms need these; they were collected and then dropped.
+         COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
+         p.marital_status
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
@@ -193,36 +206,47 @@ export async function createEmployeeFromCandidate(
 
     const candRow = candRows[0] as any;
 
-    const nameParts = (offer.full_name ?? '').trim().split(/\s+/);
-    const firstName = nameParts[0] ?? '';
+    // The candidate is the only source of the name; `offer.full_name` does not
+    // exist, so this used to split undefined and create every employee with a
+    // blank first_name and a generated full_name of a single space.
+    const nameParts = String(candRow?.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+    if (nameParts.length === 0) {
+      throw new Error('Cannot create an employee: the candidate has no name.');
+    }
+    const firstName = nameParts[0];
     const lastName = nameParts.slice(1).join(' ') || firstName;
 
     const salaryStartDate = offer.date_of_salary ?? offer.date_of_joining;
 
     // Create employee record (active_status=0, no auth_user yet)
     await conn.execute(
+      // employment_status must be written explicitly: the column defaults to
+      // 'Active', and the nightly activation job only selects 'preboarding',
+      // so a future-dated joiner left on the default is never activated.
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, official_email, mobile,
           personal_email, personal_phone, alternate_mobile,
-          gender, date_of_birth, address1, city, country,
+          gender, date_of_birth, father_name, marital_status,
+          address1, permanent_address1,
           branch_id, process_id, department_id, designation_id,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
-          user_id, active_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
+          user_id, active_status, employment_status)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, firstName, lastName,
-        candRow?.personal_email ?? offer.email,
-        offer.mobile,
-        candRow?.personal_email ?? offer.email,
+        candRow?.personal_email ?? null,
+        candRow?.mobile ?? null,
+        candRow?.personal_email ?? null,
         candRow?.personal_phone ?? null,
         candRow?.alternate_mobile ?? null,
         candRow?.gender ?? null,
         candRow?.date_of_birth ?? null,
+        candRow?.father_name ?? null,
+        candRow?.marital_status ?? null,
         candRow?.current_address ?? null,
-        null,
-        null,
-        offer.resolved_branch_id ?? null,
-        offer.resolved_process_id ?? null,
+        candRow?.permanent_address ?? null,
+        candRow?.applied_for_branch ?? null,
+        candRow?.applied_for_process ?? null,
         offer.department_id ?? null,
         offer.designation_id ?? null,
         offer.date_of_joining,
@@ -235,17 +259,31 @@ export async function createEmployeeFromCandidate(
     // Create related records (statutory, salary, nominee, leave)
     await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow);
 
-    // Update bridge
-    await conn.execute(
+    // Link the bridge. The idempotency guard above reads this row, so if the
+    // update matches nothing the guard is silently defeated and a second
+    // approval would create a second employee — insert the row rather than
+    // letting the UPDATE no-op.
+    const [bridgeUpdate] = await conn.execute<ResultSetHeader>(
       `UPDATE ats_onboarding_bridge
        SET employee_id = ?, employee_code = ?, converted_at = NOW()
        WHERE candidate_id = ?`,
       [employeeId, employeeCode, candidateId]
     );
+    if (bridgeUpdate.affectedRows === 0) {
+      await conn.execute(
+        `INSERT INTO ats_onboarding_bridge (id, candidate_id, employee_id, employee_code, converted_at)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE employee_id = VALUES(employee_id),
+                                 employee_code = VALUES(employee_code),
+                                 converted_at = VALUES(converted_at)`,
+        [randomUUID(), candidateId, employeeId, employeeCode]
+      );
+    }
 
-    // Update offer status
+    // Update offer status. The ENUM is ('draft','submitted','bh_approved',
+    // 'bh_rejected') — 'approved' is not a member and was rejected outright.
     await conn.execute(
-      `UPDATE ats_employment_offer SET status = 'approved', approved_at = NOW() WHERE id = ?`,
+      `UPDATE ats_employment_offer SET status = 'bh_approved', approved_at = NOW() WHERE id = ?`,
       [offerId]
     );
 
@@ -292,8 +330,9 @@ export async function createEmployeeFromCandidate(
       await dispatchJoinProvisioningTasks({
         employeeId,
         employeeCode,
-        employeeName: offer.full_name,
-        branchId: offer.resolved_branch_id ?? offer.applied_for_branch,
+        // Name and branch live on the candidate; the offer has neither column.
+        employeeName: candRow?.full_name ?? null,
+        branchId: candRow?.applied_for_branch ?? null,
         actorUserId: approverId,
         triggerEventId: offerId,
         joiningDate: offer.date_of_joining,
@@ -364,9 +403,9 @@ export async function createEmployeeFromCandidate(
     void notifyPayrollHrToIssueJoiningDocuments({
       employeeId,
       employeeCode,
-      employeeName: offer.full_name,
+      employeeName: candRow?.full_name ?? null,
       candidateId,
-      branchId: (offer.resolved_branch_id ?? offer.applied_for_branch) || null,
+      branchId: candRow?.applied_for_branch ?? null,
     });
 
     // Consent and BGV problems are deliberately non-blocking, but the warnings
@@ -658,39 +697,54 @@ async function createRelatedEmployeeRecords(
   const aadhaarNumber = String(candRow?.aadhar_number ?? '').trim() || null;
   const uanNumber = String(candRow?.uan_number ?? '').trim() || null;
 
-  // Statutory info
+  // Statutory info. The column is `aadhaar_id`, not `aadhaar_number`.
   if (panNumber || aadhaarNumber || uanNumber) {
     await conn.execute(
       `INSERT INTO employee_statutory_info
-         (id, employee_id, pan_number, aadhaar_number, uan_number,
+         (id, employee_id, pan_number, aadhaar_id, uan_number,
           pf_eligible, esi_eligible)
        VALUES (?, ?, ?, ?, ?, 1, 1)`,
       [randomUUID(), employeeId, panNumber, aadhaarNumber, uanNumber]
     );
   }
 
-  // Salary snapshot
+  // Salary snapshot. `snapshot_date` is NOT NULL with no default and must be
+  // supplied; the effective column is `effective_date`, not `effective_from`.
   await conn.execute(
     `INSERT INTO employee_salary_snapshot
-       (id, employee_id, ctc_offered, basic, hra, conveyance, special_allowance, effective_from)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, employee_id, snapshot_date, effective_date,
+        ctc_offered, offered_ctc, basic, hra, conveyance, special_allowance)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       randomUUID(),
       employeeId,
+      offer.date_of_joining,
+      offer.date_of_joining,
+      offer.offered_ctc ?? 0,
       offer.offered_ctc ?? 0,
       offer.basic ?? 0,
       offer.hra ?? 0,
       offer.conveyance ?? 0,
       offer.special_allowance ?? 0,
-      offer.date_of_joining,
     ]
   );
 
-  // Leave balance initialization (basic 1 day casual leave for starting)
+  // Opening leave balance. The ledger tracks allocated/used/adjusted days per
+  // `balance_year` — there is no `balance` column — and the lookup column on
+  // leave_type_master is `leave_code`.
+  //
+  // The table carries a unique key on (employee_id, leave_type, year), so a
+  // retry would raise ER_DUP_ENTRY *inside the transaction* and roll the entire
+  // conversion back. Leave an existing balance untouched rather than failing:
+  // whatever is already allocated is more authoritative than this opening row.
   await conn.execute(
     `INSERT INTO leave_balance_ledger
-       (id, employee_id, leave_type_id, balance, created_at)
-     VALUES (?, ?, (SELECT id FROM leave_type_master WHERE leave_type_code = 'CL' LIMIT 1), 1, NOW())`,
-    [randomUUID(), employeeId]
+       (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
+     SELECT ?, ?, lt.id, YEAR(?), 1, 0, 0
+       FROM leave_type_master lt
+      WHERE lt.leave_code = 'CL'
+      LIMIT 1
+     ON DUPLICATE KEY UPDATE employee_id = leave_balance_ledger.employee_id`,
+    [randomUUID(), employeeId, offer.date_of_joining]
   );
 }
