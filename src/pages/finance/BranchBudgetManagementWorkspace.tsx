@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -43,6 +43,7 @@ import {
   type MonthlyDriverInput,
   useBranchBudgetAllocations,
   useBranchBudgetDetail,
+  useBranchBudgetGradeDrivers,
   useBranchBudgetMeters,
   useBranchBudgets,
   useMeterReadings,
@@ -272,6 +273,7 @@ export default function BranchBudgetManagementWorkspace() {
   const [expandedHeads, setExpandedHeads] = useState<Set<string>>(new Set());
   const [reviewRemarks, setReviewRemarks] = useState("");
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [expandedGradeCostCentres, setExpandedGradeCostCentres] = useState<Set<string>>(new Set());
 
   const capabilitiesQuery = useQuery({
     queryKey: ["branch-budget-capabilities"],
@@ -620,18 +622,33 @@ export default function BranchBudgetManagementWorkspace() {
                     {activeCostCentresQuery.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !activeCostCentres.length ? <p className="text-sm text-slate-500">This branch has no active cost centres yet.</p> : (
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[640px] text-sm">
-                          <thead><tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 pr-3">Cost centre</th><th className="py-2 pr-3">Planned headcount</th><th className="py-2 pr-3">Revenue rate / head</th><th className="py-2 pr-3">Calculated planned revenue</th></tr></thead>
+                          <thead><tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 pr-3">Cost centre</th><th className="py-2 pr-3">Planned headcount</th><th className="py-2 pr-3">Revenue rate / head</th><th className="py-2 pr-3">Calculated planned revenue</th><th className="py-2 pr-3">Grade breakdown</th></tr></thead>
                           <tbody>
                             {activeCostCentres.map((cc) => {
                               const draft = driverDraft[cc.id] ?? { costCentreId: cc.id, plannedHeadcount: 0, revenueRatePerHead: 0, remarks: "" };
                               const calculatedRevenue = Number(draft.plannedHeadcount || 0) * Number(draft.revenueRatePerHead || 0);
+                              const expanded = expandedGradeCostCentres.has(cc.id);
                               return (
-                                <tr key={cc.id} className="border-b border-slate-100 last:border-0">
-                                  <td className="py-2 pr-3 font-medium text-slate-700">{cc.costCentreName}</td>
-                                  <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEdit} value={draft.plannedHeadcount} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, plannedHeadcount: Number(event.target.value) } }))} /></td>
-                                  <td className="py-2 pr-3"><Input type="number" min="0" step="0.01" className="h-9 w-32" disabled={!canEdit} value={draft.revenueRatePerHead} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, revenueRatePerHead: Number(event.target.value) } }))} /></td>
-                                  <td className="py-2 pr-3 text-slate-600">{money(calculatedRevenue)}</td>
-                                </tr>
+                                <Fragment key={cc.id}>
+                                  <tr className="border-b border-slate-100 last:border-0">
+                                    <td className="py-2 pr-3 font-medium text-slate-700">{cc.costCentreName}</td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEdit} value={draft.plannedHeadcount} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, plannedHeadcount: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="0.01" className="h-9 w-32" disabled={!canEdit} value={draft.revenueRatePerHead} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, revenueRatePerHead: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3 text-slate-600">{money(calculatedRevenue)}</td>
+                                    <td className="py-2 pr-3">
+                                      <Button type="button" size="sm" variant="ghost" onClick={() => setExpandedGradeCostCentres((current) => { const next = new Set(current); if (next.has(cc.id)) next.delete(cc.id); else next.add(cc.id); return next; })}>
+                                        {expanded ? <ChevronDown className="mr-1 h-3.5 w-3.5" /> : <ChevronRight className="mr-1 h-3.5 w-3.5" />}Grades
+                                      </Button>
+                                    </td>
+                                  </tr>
+                                  {expanded && (
+                                    <tr className="border-b border-slate-100 last:border-0 bg-slate-50/40">
+                                      <td colSpan={5} className="p-3">
+                                        <GradeBreakdownPanel branchId={branchId} costCentreId={cc.id} period={period} canEdit={canEdit} />
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
                               );
                             })}
                           </tbody>
@@ -1006,6 +1023,70 @@ function MeterReadingRow({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function GradeBreakdownPanel({
+  branchId,
+  costCentreId,
+  period,
+  canEdit,
+}: {
+  branchId: string;
+  costCentreId: string;
+  period: string;
+  canEdit: boolean;
+}) {
+  const { gradeDriversQuery, saveGradeDrivers } = useBranchBudgetGradeDrivers(branchId, costCentreId, period);
+  const grades = gradeDriversQuery.data ?? [];
+  const [draft, setDraft] = useState<Record<string, number>>({});
+
+  const headcountFor = (gradeId: string, fallback: number) => draft[gradeId] ?? fallback;
+  const totalHeadcount = grades.reduce((sum, g) => sum + headcountFor(g.gradeId, g.plannedHeadcount), 0);
+  const totalCost = grades.reduce((sum, g) => {
+    const monthlyPerHead = g.plannedHeadcount > 0 ? g.monthlyCost / g.plannedHeadcount : (g.minCtc + g.maxCtc) / 2 / 12;
+    return sum + headcountFor(g.gradeId, g.plannedHeadcount) * monthlyPerHead;
+  }, 0);
+
+  async function save() {
+    try {
+      const drivers = grades.map((g) => ({ gradeId: g.gradeId, plannedHeadcount: headcountFor(g.gradeId, g.plannedHeadcount) }));
+      await saveGradeDrivers.mutateAsync(drivers);
+      setDraft({});
+      toast.success("Grade drivers saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Grade drivers could not be saved");
+    }
+  }
+
+  if (gradeDriversQuery.isLoading) return <Loader2 className="h-4 w-4 animate-spin" />;
+  if (!grades.length) return <p className="text-xs text-slate-500">No active grade bands are configured (Org Masters &gt; Grade Bands).</p>;
+
+  return (
+    <div className="space-y-2">
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+        <table className="w-full min-w-[520px] text-xs">
+          <thead><tr className="border-b border-slate-200 bg-slate-50 text-left uppercase tracking-wide text-slate-500"><th className="px-3 py-2">Grade</th><th className="px-3 py-2">Band</th><th className="px-3 py-2">Avg CTC/month</th><th className="px-3 py-2">Planned headcount</th><th className="px-3 py-2">Cost</th></tr></thead>
+          <tbody>
+            {grades.map((g) => {
+              const avgMonthlyCtc = (g.minCtc + g.maxCtc) / 2 / 12;
+              const headcount = headcountFor(g.gradeId, g.plannedHeadcount);
+              return (
+                <tr key={g.gradeId} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-1.5 font-medium text-slate-700">{g.gradeName}</td>
+                  <td className="px-3 py-1.5 text-slate-500">{g.band ?? "-"}</td>
+                  <td className="px-3 py-1.5 text-slate-600">{money(avgMonthlyCtc)}</td>
+                  <td className="px-3 py-1.5"><Input type="number" min="0" step="0.5" className="h-8 w-24" disabled={!canEdit} value={headcount} onChange={(event) => setDraft((current) => ({ ...current, [g.gradeId]: Number(event.target.value) }))} /></td>
+                  <td className="px-3 py-1.5 text-slate-600">{money(headcount * avgMonthlyCtc)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-slate-500">Total: {totalHeadcount} head(s) · {money(totalCost)}/month blended cost</p>
+      {canEdit && <Button type="button" size="sm" variant="outline" disabled={saveGradeDrivers.isPending} onClick={() => void save()}>{saveGradeDrivers.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save grade drivers</Button>}
     </div>
   );
 }

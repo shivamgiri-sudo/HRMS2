@@ -29,11 +29,19 @@ interface FakeReading {
   amount: number;
 }
 
+interface FakeGradeDriver {
+  cost_centre_id: string;
+  planned_headcount: number;
+  min_ctc: number;
+  max_ctc: number;
+}
+
 function fakeExecutor(
   costCentres: FakeCostCentre[],
   drivers: FakeDriver[] = [],
   meters: FakeMeter[] = [],
-  readings: FakeReading[] = []
+  readings: FakeReading[] = [],
+  gradeDrivers: FakeGradeDriver[] = []
 ) {
   return {
     async execute(sql: string, params?: unknown[]) {
@@ -51,6 +59,10 @@ function fakeExecutor(
         const [meterId, , readingType] = params ?? [];
         const row = readings.find((r) => r.meter_id === meterId && r.reading_type === readingType);
         return [row ? [row] : [], []];
+      }
+      if (sql.includes("FROM finance_cost_centre_grade_driver")) {
+        const [costCentreId] = params ?? [];
+        return [gradeDrivers.filter((g) => g.cost_centre_id === costCentreId && g.planned_headcount > 0), []];
       }
       throw new Error(`fakeExecutor: unexpected query — ${sql}`);
     },
@@ -264,5 +276,64 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
         fakeExecutor(THREE_COST_CENTRES, [], meters, readings)
       )
     ).rejects.toThrow(/Meter reading data is missing.*Customer Support/);
+  });
+
+  it("splits grade_weighted_headcount proportional to blended grade cost, reconciling to the mandatory example", async () => {
+    // rate 10,000/head/month (min_ctc = max_ctc = 120,000/yr), headcount 7.5/5/4 -> 165,000 pool.
+    const gradeDrivers: FakeGradeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 7.5, min_ctc: 120000, max_ctc: 120000 },
+      { cost_centre_id: "cc2", planned_headcount: 5, min_ctc: 120000, max_ctc: 120000 },
+      { cost_centre_id: "cc3", planned_headcount: 4, min_ctc: 120000, max_ctc: 120000 },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "grade_weighted_headcount",
+      { baseAmount: 165000, taxAmount: 0, grossAmount: 165000, pnlCostAmount: 165000 },
+      undefined,
+      fakeExecutor(THREE_COST_CENTRES, [], [], [], gradeDrivers)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(75000);
+    expect(byId.cc2.grossAmount).toBe(50000);
+    expect(byId.cc3.grossAmount).toBe(40000);
+    expect(sumOf(rows, "grossAmount")).toBe(165000);
+  });
+
+  it("blends multiple grades within one cost centre into a single weighted cost", async () => {
+    // cc1: 2 heads @ 10,000/mo + 3 heads @ 20,000/mo = 20,000 + 60,000 = 80,000 blended cost.
+    // cc2: 5 heads @ 10,000/mo = 50,000 blended cost. Pool 130,000 split 80,000/50,000.
+    const gradeDrivers: FakeGradeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 2, min_ctc: 120000, max_ctc: 120000 },
+      { cost_centre_id: "cc1", planned_headcount: 3, min_ctc: 240000, max_ctc: 240000 },
+      { cost_centre_id: "cc2", planned_headcount: 5, min_ctc: 120000, max_ctc: 120000 },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "grade_weighted_headcount",
+      { baseAmount: 130000, taxAmount: 0, grossAmount: 130000, pnlCostAmount: 130000 },
+      undefined,
+      fakeExecutor(
+        [
+          { id: "cc1", cost_centre_code: "CC1", cost_centre_name: "Back Office" },
+          { id: "cc2", cost_centre_code: "CC2", cost_centre_name: "Collections" },
+        ],
+        [], [], [], gradeDrivers
+      )
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(80000);
+    expect(byId.cc2.grossAmount).toBe(50000);
+  });
+
+  it("rejects grade_weighted_headcount when a cost centre has no grade drivers for the period", async () => {
+    const gradeDrivers: FakeGradeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 7.5, min_ctc: 120000, max_ctc: 120000 },
+      { cost_centre_id: "cc2", planned_headcount: 5, min_ctc: 120000, max_ctc: 120000 },
+      // cc3 has no grade drivers at all
+    ];
+    await expect(
+      computeLineAllocations(
+        "branch-1", "2026-08", "grade_weighted_headcount", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES, [], [], [], gradeDrivers)
+      )
+    ).rejects.toThrow(/Grade-wise headcount data is missing.*Customer Support/);
   });
 });

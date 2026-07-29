@@ -18,6 +18,7 @@ import { branchBudgetAllocationService } from "./branch-budget-allocation.servic
 import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
 import { savedViewService } from "./saved-view.service.js";
+import { gradeEngineService } from "./grade-engine.service.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -398,6 +399,52 @@ router.delete(
     const user = actor(req);
     await savedViewService.deleteSavedView(String(req.params.id), user.id);
     res.json({ success: true });
+  })
+);
+
+router.get(
+  "/pnl/branch-budget/grade-drivers",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const costCentreId = String(req.query.costCentreId ?? "");
+    const periodCode = String(req.query.period ?? "");
+    if (!costCentreId) throw new Error("Cost centre is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    const data = await gradeEngineService.listGradeDrivers(costCentreId, periodCode);
+    res.json({ success: true, data });
+  })
+);
+
+router.put(
+  "/pnl/branch-budget/grade-drivers",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.body?.branchId,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const costCentreId = String(req.body?.costCentreId ?? "");
+    const periodCode = String(req.body?.periodCode ?? "");
+    if (!costCentreId) throw new Error("Cost centre is required");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    const drivers = Array.isArray(req.body?.drivers) ? req.body.drivers : [];
+    const data = await gradeEngineService.saveGradeDrivers(
+      branchId,
+      costCentreId,
+      periodCode,
+      drivers.map((d: any) => ({
+        gradeId: String(d.gradeId),
+        plannedHeadcount: Number(d.plannedHeadcount ?? 0),
+        remarks: d.remarks ? String(d.remarks) : null,
+      })),
+      user.id
+    );
+    res.json({ success: true, data });
   })
 );
 

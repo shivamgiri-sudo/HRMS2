@@ -14,7 +14,7 @@ export type BudgetPlanningLevel = "branch" | "cost_centre";
 
 /** Sharing methods supported for a branch-level (planningLevel = "branch") line — reuses the
  *  allocationDriver field, now actually acted on server-side instead of only stored. */
-export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual" | "meter_wise";
+export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual" | "meter_wise" | "grade_weighted_headcount";
 export const BRANCH_SHARING_METHODS: { value: BranchSharingMethod; label: string }[] = [
   { value: "total_manpower", label: "Manpower (planned headcount)" },
   { value: "agent_headcount", label: "Agent headcount" },
@@ -22,6 +22,7 @@ export const BRANCH_SHARING_METHODS: { value: BranchSharingMethod; label: string
   { value: "equal_split", label: "Equal split" },
   { value: "manual", label: "Manual %" },
   { value: "meter_wise", label: "Meter-wise (utility consumption)" },
+  { value: "grade_weighted_headcount", label: "Grade-weighted headcount (blended CTC)" },
 ];
 
 export interface ManualAllocationInput {
@@ -517,4 +518,58 @@ export function useMeterReadings(meterId?: string | null, periodCode?: string | 
       return response.data;
     },
   });
+}
+
+export interface GradeDriverRecord {
+  gradeId: string;
+  gradeName: string;
+  band: string | null;
+  minCtc: number;
+  maxCtc: number;
+  plannedHeadcount: number;
+  monthlyCost: number;
+  remarks: string | null;
+  status: "draft" | "approved";
+}
+
+export interface SaveGradeDriverInput {
+  gradeId: string;
+  plannedHeadcount: number;
+  remarks?: string | null;
+}
+
+/** Branch Budget foundation (PR 12): grade-wise headcount planning per cost centre/period,
+ *  feeding the "grade_weighted_headcount" sharing method exposed above. Reuses grade_band_master
+ *  (already fetched via the existing, unrestricted GET /api/org/grade-bands endpoint). */
+export function useBranchBudgetGradeDrivers(
+  branchId?: string | null,
+  costCentreId?: string | null,
+  periodCode?: string | null
+) {
+  const queryClient = useQueryClient();
+
+  const gradeDriversQuery = useQuery({
+    queryKey: ["branch-budget-grade-drivers", costCentreId, periodCode],
+    enabled: Boolean(costCentreId) && Boolean(periodCode),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: GradeDriverRecord[] }>(
+        `/api/finance/pnl/branch-budget/grade-drivers?costCentreId=${costCentreId}&period=${periodCode}`
+      );
+      return response.data;
+    },
+  });
+
+  const saveGradeDrivers = useMutation({
+    mutationFn: async (drivers: SaveGradeDriverInput[]) => {
+      const response = await hrmsApi.put<{ success: boolean; data: GradeDriverRecord[] }>(
+        "/api/finance/pnl/branch-budget/grade-drivers",
+        { branchId, costCentreId, periodCode, drivers }
+      );
+      return response.data;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["branch-budget-grade-drivers", costCentreId, periodCode] }),
+  });
+
+  return { gradeDriversQuery, saveGradeDrivers };
 }

@@ -4,6 +4,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.js";
 import { getCostCentreMeterConsumption } from "./meter.service.js";
+import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 /**
  * Branch Budget foundation (PR 2): normalized cost-centre allocation for branch-planned budget
@@ -26,7 +27,8 @@ export type SharingMethod =
   | "revenue_share"
   | "equal_split"
   | "manual"
-  | "meter_wise";
+  | "meter_wise"
+  | "grade_weighted_headcount";
 
 const SUPPORTED_SHARING_METHODS: SharingMethod[] = [
   "total_manpower",
@@ -35,6 +37,7 @@ const SUPPORTED_SHARING_METHODS: SharingMethod[] = [
   "equal_split",
   "manual",
   "meter_wise",
+  "grade_weighted_headcount",
 ];
 
 export interface CostCentreOption {
@@ -296,6 +299,26 @@ export async function computeLineAllocations(
     shares = costCentres.map((cc) => ({ key: cc.id, weight: consumptionByCostCentre.get(cc.id)!.consumption }));
     unitByCostCentre = new Map(
       costCentres.map((cc) => [cc.id, consumptionByCostCentre.get(cc.id)!.consumption])
+    );
+    driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
+    mode = "weighted";
+  } else if (method === "grade_weighted_headcount") {
+    const costByCostCentre = new Map<string, { totalHeadcount: number; blendedMonthlyCost: number }>();
+    for (const cc of costCentres) {
+      const cost = await getCostCentreGradeWeightedCost(cc.id, periodCode, executor);
+      if (cost) costByCostCentre.set(cc.id, cost);
+    }
+    const missingGradeData = costCentres.filter((cc) => !costByCostCentre.has(cc.id));
+    if (missingGradeData.length > 0) {
+      throw new Error(
+        `Grade-wise headcount data is missing for: ` +
+        missingGradeData.map((cc) => cc.costCentreName).join(", ") +
+        ". Set grade drivers for every active cost centre before using grade-weighted sharing."
+      );
+    }
+    shares = costCentres.map((cc) => ({ key: cc.id, weight: costByCostCentre.get(cc.id)!.blendedMonthlyCost }));
+    unitByCostCentre = new Map(
+      costCentres.map((cc) => [cc.id, costByCostCentre.get(cc.id)!.totalHeadcount])
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
