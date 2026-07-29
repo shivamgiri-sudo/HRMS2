@@ -2,11 +2,22 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import type { AiAction, AiGenerateResponse, AiInsight } from './ai-provider.types.js';
+import {
+  buildDisciplinePoints,
+  buildGrowthPoints,
+  buildPerformancePoints,
+  buildWellbeingPoints,
+  renderCoachReport,
+  tenureMonths,
+  type AttendanceWindow,
+  type KpiSnapshot,
+} from './ai-coach.service.js';
 
 export const MIRA_NAME = 'Mira';
 export const MIRA_TAGLINE = 'Your private HR assistant';
 
 export type AccountIntent =
+  | 'coach'
   | 'account_overview'
   | 'profile'
   | 'salary'
@@ -41,6 +52,9 @@ export class MiraDataUnavailableError extends Error {
 }
 
 const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
+  // Listed first so "coach my attendance" reaches the coach rather than the
+  // single-number attendance intent.
+  { intent: 'coach', patterns: [/\bcoach\b/i, /\bhow am i doing\b/i, /\bmy performance\b/i, /\bperformance review\b/i, /\bmotivate\b/i, /\bmotivation\b/i, /\bmy progress\b/i, /\banaly[sz]e (?:me|my (?:data|performance|work|record))\b/i, /\bhow can i improve\b/i, /\bwhere (?:do i stand|am i lagging)\b/i, /\bmeri performance\b/i, /\bkaisa (?:kaam )?kar raha hoon\b/i, /\bmujhe guide karo\b/i] },
   { intent: 'salary', patterns: [/\bsalary\b/i, /\bpayslip\b/i, /\bpay slip\b/i, /\bnet pay\b/i, /\bgross pay\b/i, /\btake[ -]?home\b/i, /\bctc\b/i, /\bearnings?\b/i, /\bdeductions?\b/i, /meri salary/i, /mera payslip/i, /kitna pay/i] },
   { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i, /meri leave/i, /kitni chhutti/i, /chhutti (?:baki|remaining)/i] },
   { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i, /how many days (?:was i|did i) (?:present|attend)/i, /meri attendance/i, /mera punch/i, /kitne din (?:present|attend)/i, /aaj (?:ka )?punch/i, /aaj present/i, /kal (?:ka )?attendance/i] },
@@ -262,6 +276,57 @@ async function attendance(employeeId: string, question = ''): Promise<{ label: s
   };
 }
 
+/** Attendance totals for a window ending `offsetDays` ago, `spanDays` long. */
+async function attendanceWindow(
+  employeeId: string,
+  offsetDays: number,
+  spanDays: number,
+): Promise<AttendanceWindow> {
+  const row = await one('coach_attendance', `SELECT
+      SUM(attendance_status = 'present') AS present_days,
+      SUM(attendance_status = 'absent') AS absent_days,
+      SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late_marks,
+      SUM(COALESCE(lwp_value, 0)) AS lwp_days,
+      COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS working_days
+    FROM attendance_daily_record
+    WHERE employee_id = ?
+      AND record_date > DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      AND record_date <= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [employeeId, offsetDays + spanDays, offsetDays]);
+
+  return {
+    presentDays: Number(row.present_days ?? 0),
+    absentDays: Number(row.absent_days ?? 0),
+    lateMarks: Number(row.late_marks ?? 0),
+    lwpDays: Number(row.lwp_days ?? 0),
+    workingDays: Number(row.working_days ?? 0),
+  };
+}
+
+/** Published KPI readings for this employee, with the metric's own target and sample floor. */
+async function coachKpis(employeeId: string, expectedSampleCount: number | null): Promise<KpiSnapshot[]> {
+  const found = await rows('coach_kpi', `SELECT m.metric_name, m.unit, m.direction, m.minimum_sample_size,
+      ker.target_value, ROUND(AVG(k.actual_value), 2) AS average_actual, COUNT(*) AS sample_count
+    FROM kpi_daily_actual k
+    JOIN kpi_metric_master m ON m.id = k.metric_id
+    LEFT JOIN kpi_employee_resolved ker ON ker.employee_id = k.employee_id AND ker.metric_id = k.metric_id
+    WHERE k.employee_id = ? AND k.score_date > DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+    GROUP BY m.id, m.metric_name, m.unit, m.direction, m.minimum_sample_size, ker.target_value
+    ORDER BY m.display_order, m.metric_name`, [employeeId]);
+
+  return found.map((row) => ({
+    metricName: String(row.metric_name ?? 'Unnamed metric'),
+    unit: row.unit === null || row.unit === undefined ? null : String(row.unit),
+    direction: row.direction === null || row.direction === undefined ? null : String(row.direction),
+    targetValue: row.target_value === null || row.target_value === undefined ? null : Number(row.target_value),
+    averageActual: row.average_actual === null || row.average_actual === undefined ? null : Number(row.average_actual),
+    sampleCount: Number(row.sample_count ?? 0),
+    minimumSampleSize: row.minimum_sample_size === null || row.minimum_sample_size === undefined
+      ? null : Number(row.minimum_sample_size),
+    expectedSampleCount,
+  }));
+}
+
 async function roster(employeeId: string): Promise<RowDataPacket[]> {
   return rows('roster', `SELECT DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS roster_date,
       st.shift_name, st.start_time, st.end_time, rda.is_week_off, rda.is_holiday, rda.acknowledgement_status
@@ -378,6 +443,46 @@ export async function answerSelfAccountQuestion(
       [{ key: 'employee-map-missing', label: 'Employee mapping missing', severity: 'high' }], [], 0.25);
   }
   const employeeId = employee.id;
+
+  if (intent === 'coach') {
+    const [recent, previous, quarter, leaveRows, profileRow] = await Promise.all([
+      attendanceWindow(employeeId, 0, 30),
+      attendanceWindow(employeeId, 30, 30),
+      attendanceWindow(employeeId, 0, 90),
+      leave(employeeId),
+      profile(employeeId),
+    ]);
+    const kpis = await coachKpis(employeeId, quarter.workingDays || null);
+
+    const leaveSnapshots = leaveRows.rows.map((row) => {
+      const allocated = Number(row.allocated_days ?? 0) + Number(row.adjusted_days ?? 0);
+      const used = Number(row.used_days ?? 0);
+      return { leaveName: String(row.leave_name ?? 'Leave'), allocated, used, available: allocated - used };
+    });
+
+    const joinedAt = profileRow.date_of_joining ? new Date(String(profileRow.date_of_joining)) : null;
+    const points = [
+      ...buildPerformancePoints(kpis),
+      ...buildDisciplinePoints(recent, previous),
+      ...buildWellbeingPoints(leaveSnapshots),
+      ...(joinedAt && !Number.isNaN(joinedAt.getTime())
+        ? buildGrowthPoints(tenureMonths(joinedAt, new Date()))
+        : []),
+    ];
+
+    const needsAction = points.filter((point) => point.tone === 'act').length;
+    return handled(intent,
+      `Here is your coaching read, built only from your own live HRMS records:\n\n${renderCoachReport(points)}\n\n` +
+      (needsAction
+        ? `${needsAction} item${needsAction === 1 ? '' : 's'} above ${needsAction === 1 ? 'is' : 'are'} worth acting on this week.`
+        : 'Nothing here needs urgent action — keep the pattern going.'),
+      startedAt,
+      [
+        { key: 'coach-actions', label: `${needsAction} item${needsAction === 1 ? '' : 's'} to act on`, count: needsAction, severity: needsAction ? 'medium' : 'low' },
+        { key: 'coach-kpis', label: `${kpis.length} KPI metric${kpis.length === 1 ? '' : 's'} tracked`, count: kpis.length, severity: 'low' },
+      ],
+      [action('Open my dashboard'), action('Open leave dashboard', '/leave')]);
+  }
 
   if (intent === 'profile') {
     const row = await cached(userId, intent, () => profile(employeeId));
