@@ -15,6 +15,8 @@ import {
  * - queueLimit: 100 prevents unbounded queue growth under load
  * - connectTimeout: prevents hung connections from blocking forever
  * - enableKeepAlive: detects stale connections
+ * - maxIdle/idleTimeout: releases connections the server would otherwise hold
+ *   for wait_timeout (8h here), which is what starves max_connections
  * - Circuit breaker: fast-fails when DB is overwhelmed
  */
 const _pool: Pool = mysql.createPool({
@@ -32,6 +34,8 @@ const _pool: Pool = mysql.createPool({
   decimalNumbers:     true,
   enableKeepAlive:    true,
   keepAliveInitialDelay: 30000, // 30s keep-alive
+  maxIdle:            env.DB_POOL_MAX_IDLE,
+  idleTimeout:        env.DB_POOL_IDLE_TIMEOUT_MS,
 });
 
 /**
