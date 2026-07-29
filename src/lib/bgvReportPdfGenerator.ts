@@ -38,6 +38,8 @@ interface BGVReportData {
     criminal_remarks?: string;
     court_status?: string;
     court_remarks?: string;
+    digilocker_status?: string;
+    digilocker_remarks?: string;
     esignature_status: string;
     esignature_remarks?: string;
     overall_status: string;
@@ -720,6 +722,7 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
 
   const verificationChecks = [
     { name: "Aadhaar Verification", status: report.aadhaar_status, match: report.aadhaar_name_match, remarks: report.aadhaar_remarks, type: 'aadhaar' },
+    { name: "DigiLocker KYC", status: report.digilocker_status || 'not_run', match: null, remarks: report.digilocker_remarks, type: 'digilocker' },
     { name: "PAN Verification", status: report.pan_status, match: report.pan_name_match, remarks: report.pan_remarks, type: 'pan' },
     { name: "Bank Account Verification", status: report.bank_status, match: report.bank_account_match, remarks: report.bank_remarks, type: 'bank' },
     { name: "Education Verification", status: report.education_status, match: null, remarks: report.education_remarks, type: 'education' },
