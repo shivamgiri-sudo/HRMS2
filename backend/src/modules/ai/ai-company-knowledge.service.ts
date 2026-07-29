@@ -56,11 +56,16 @@ const FALLBACK_FACTS: CompanyFact[] = [
 const INTENT_PATTERNS: Array<{ intent: CompanyIntent; patterns: RegExp[] }> = [
   { intent: 'leadership', patterns: [/\bceo\b/i, /\bchairman\b/i, /\bcoo\b/i, /\bfounders?\b/i, /\bmanagement\b/i, /\bleadership\b/i, /company ka ceo/i, /maalik kaun/i] },
   { intent: 'branch_heads', patterns: [/branch heads?/i, /head of (?:the )?branch/i, /noida head/i, /ahmedabad head/i, /branch ka head/i] },
-  { intent: 'locations', patterns: [/\boffices?\b/i, /\blocations?\b/i, /\bbranches?\b/i, /address/i, /office kaha/i, /branch kaha/i] },
-  { intent: 'contact', patterns: [/contact/i, /email/i, /phone/i, /customer support/i, /sales inquiry/i] },
+  { intent: 'locations', patterns: [/\boffices?\b/i, /\blocations?\b/i, /\bbranches?\b/i, /\boffice address\b/i, /office kaha/i, /branch kaha/i] },
+  { intent: 'contact', patterns: [/contact (?:details|number|email|info)/i, /how (?:do i |can i )?(?:contact|reach)\b/i, /customer support/i, /support email/i, /sales (?:inquiry|email)/i, /\bhelpline\b/i] },
   { intent: 'careers', patterns: [/career/i, /opening/i, /vacanc/i, /job at/i, /hiring/i] },
-  { intent: 'services', patterns: [/services?/i, /what does (?:mas|the company) do/i, /business process/i, /bpo/i, /capabilit/i] },
-  { intent: 'overview', patterns: [/about (?:mas|company)/i, /company (?:overview|information|profile)/i, /mas callnet/i, /teammas/i, /2gthr/i, /mission/i, /vision/i, /values/i] },
+  { intent: 'services', patterns: [/what (?:services|does (?:mas|the company) (?:do|offer|provide))/i, /services (?:do|does|offered|provided)/i, /business process/i, /\bbpo\b/i, /capabilit/i] },
+  // The company's own name is a subject marker, not a question about the company.
+  // "/mas callnet/" here matched anything that merely mentioned it, so "how many
+  // employees does MAS Callnet have in Mumbai?" was answered with the company
+  // overview and leadership. Naming the company now decides nothing; the question
+  // has to actually ask for an overview.
+  { intent: 'overview', patterns: [/about (?:mas|the )?compan(?:y|ies)/i, /about mas callnet/i, /\bcompany (?:overview|information|profile|background|history)\b/i, /tell me about (?:mas|the company)/i, /2gthr/i, /\bmission\b/i, /\bvision\b/i, /\bcore values\b/i] },
 ];
 
 let factCache: { expiresAt: number; facts: CompanyFact[] } | null = null;
