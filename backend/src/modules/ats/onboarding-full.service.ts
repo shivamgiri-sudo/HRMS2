@@ -8,6 +8,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
+import { withProviderFailureLogged } from "./bgv-api-log.service.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
@@ -1907,7 +1908,11 @@ export async function initiateCandidateDigilocker(candidateId: string, actor?: {
   });
 
   try {
-    const result = await luckpayClient.initiateDigilockerWithUrl(requestPayload);
+    const result = await withProviderFailureLogged(
+      { candidateId, endpointKey: "DIGILOCKER_INITIATE", providerKey: "luckpay",
+        actorType: actor?.initiatedByType ?? null, actorId: actor?.initiatedBy ?? null },
+      () => luckpayClient.initiateDigilockerWithUrl(requestPayload),
+    );
     await updateProviderTransactionLog({
       provider: "luckpay",
       clientTransactionId,
@@ -2067,10 +2072,13 @@ export async function initiateCandidateEsign(
   }
 
   try {
-    const result = await luckpayClient.initiateEsignWithUrl({
-      filePath: source.filePath,
-      request: requestPayload,
-    });
+    const result = await withProviderFailureLogged(
+      { candidateId, endpointKey: "ESIGN_INITIATE", providerKey: "luckpay" },
+      () => luckpayClient.initiateEsignWithUrl({
+        filePath: source.filePath,
+        request: requestPayload,
+      }),
+    );
     await updateProviderTransactionLog({
       provider: "luckpay",
       clientTransactionId,
