@@ -50,6 +50,7 @@ import {
   uploadOnboardingDocument,
   validateOnboardingToken,
 } from "./onboarding-full.service.js";
+import { syncDigilockerStatus } from "../integrations/luckpay/luckpay-status.service.js";
 
 const router = Router();
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
@@ -441,6 +442,21 @@ router.post("/esign/initiate", candidateWriteLimiter, h(async (req, res) => {
   return res.json({ success: true, data: await initiateCandidateESignByToken(token, documentId) });
 }));
 
+/**
+ * Reconcile the candidate's DigiLocker session against Luckpay and pull the KYC
+ * documents once complete. The provider does not reliably push a callback, so
+ * the candidate app calls this when it returns from the hosted flow.
+ */
+router.post("/digilocker/sync", candidateWriteLimiter, h(async (req, res) => {
+  const token = String(req.body.token ?? "");
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  const tokenData = await validateOnboardingToken(token);
+  const result = await syncDigilockerStatus(String(tokenData.candidate_id));
+  // storedFiles are absolute server paths — never expose them to the candidate.
+  const { storedFiles, ...safe } = result;
+  return res.json({ success: true, data: { ...safe, documentsStored: storedFiles?.length ?? 0 } });
+}));
+
 // ── Language proficiency route ────────────────────────────────────────────────
 router.post("/languages", h(async (req, res) => {
   const { token, languages } = req.body;
@@ -507,6 +523,11 @@ router.post("/candidate/:candidateId/digilocker/initiate", requireAuth, requireR
       initiatedByType: "hr",
     }),
   });
+}));
+
+router.post("/candidate/:candidateId/digilocker/sync", requireAuth, requireRole("admin", "super_admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  await assertOnboardingCandidateScope(req, req.params.candidateId, ["hr"]);
+  return res.json({ success: true, data: await syncDigilockerStatus(req.params.candidateId) });
 }));
 
 router.post("/candidate/:candidateId/esign/initiate", requireAuth, requireRole("admin", "super_admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
