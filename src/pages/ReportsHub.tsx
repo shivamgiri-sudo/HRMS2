@@ -1,8 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Library, Brain, Building2, Clock, Shield, ScrollText } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 // ── Lazy-loaded view components ───────────────────────────────────────────────
 const ReportLibraryView    = lazy(() => import("@/components/reports/views/ReportLibraryView"));
@@ -121,14 +122,20 @@ export default function ReportsHub() {
 
         {/* Active view */}
         <div className="flex-1 overflow-auto">
-          <Suspense fallback={<ViewLoader />}>
-            {activeView === 'library'      && <ReportLibraryView    preselectedReport={preselectedReport} />}
-            {activeView === 'control-room' && <DecisionCenterView />}
-            {activeView === 'bpo'          && <BpoMasterView />}
-            {activeView === 'requests'     && <ReportRequestsView />}
-            {activeView === 'validation'   && <SourceValidationView />}
-            {activeView === 'audit'        && <AuditTrailView />}
-          </Suspense>
+          <ErrorBoundary
+            key={activeView}
+            size="card"
+            className="m-6"
+          >
+            <Suspense fallback={<ViewLoader />}>
+              {activeView === 'library'      && <ReportLibraryView    preselectedReport={preselectedReport} />}
+              {activeView === 'control-room' && <DecisionCenterView />}
+              {activeView === 'bpo'          && <BpoMasterView />}
+              {activeView === 'requests'     && <ReportRequestsView />}
+              {activeView === 'validation'   && <SourceValidationView />}
+              {activeView === 'audit'        && <AuditTrailView />}
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </div>
     </DashboardLayout>
