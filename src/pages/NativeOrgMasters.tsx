@@ -148,6 +148,17 @@ function isActive(record: OrgRecord): boolean {
   return true;
 }
 
+/** Month an inactive record stopped being used, from close_date (branch/process/department/
+ *  cost-centre masters). Returns null when no closure date was ever established — those records
+ *  are deliberately left undated rather than guessed at. */
+function inactiveSince(record: OrgRecord): string | null {
+  const raw = (record as Record<string, unknown>).close_date;
+  if (!raw) return null;
+  const d = new Date(String(raw));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+}
+
 function getRecordName(record: OrgRecord, tab: TabConfig): string {
   const nameField = tab.fields.find(f => f.label.toLowerCase().includes("name"));
   return nameField ? String(record[nameField.key] ?? "–") : "–";
@@ -465,9 +476,17 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
                           <Check className="h-3 w-3" /> Active
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
-                          Inactive
-                        </span>
+                        <div className="flex flex-col items-start gap-1">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                            Inactive
+                          </span>
+                          {/* close_date records WHEN the record stopped being used — derived from
+                              the last month salary was paid or an invoice was raised. Absent for
+                              records whose closure date could not be established. */}
+                          {inactiveSince(rec) && (
+                            <span className="text-[10px] text-slate-400">since {inactiveSince(rec)}</span>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="p-4">
