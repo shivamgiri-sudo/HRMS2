@@ -474,11 +474,16 @@ async function checklistContext(checklistId: string): Promise<ChecklistContextRo
   return row;
 }
 
-/** Single-line postal address, permanent first, skipping the parts that are blank. */
-function joinAddress(employee: RowDataPacket | undefined) {
+/**
+ * Single-line postal address, skipping the parts that are blank. Defaults to
+ * the permanent address (what "r/o" and "permanent address" mean on the
+ * statutory forms), falling back to the current one when it is not recorded.
+ */
+function joinAddress(employee: RowDataPacket | undefined, which: "permanent" | "current" = "permanent") {
   const pick = (...keys: string[]) => keys.map((key) => safeTrim(employee?.[key])).filter(Boolean);
   const permanent = pick("permanent_address1", "permanent_address2", "permanent_city", "permanent_state", "permanent_pincode");
   const current = pick("address1", "address2", "city", "state", "pincode");
+  if (which === "current") return current.join(", ");
   return (permanent.length ? permanent : current).join(", ");
 }
 
@@ -591,7 +596,35 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
     [employeeId],
   ).catch(() => [[null] as unknown as RowDataPacket[], []]);
 
+  // EPF Form 2 nominates against the PF corpus, so take the PF nominees. Rows
+  // are flattened to nominee.n1_*, n2_* … because a field map addresses one
+  // scalar path per box and the form prints a fixed number of rows.
+  const [nominees] = await db.execute<RowDataPacket[]>(
+    `SELECT nominee_name, relationship, date_of_birth, share_percentage,
+            address, is_minor, guardian_name, guardian_relation
+       FROM employee_nominee
+      WHERE employee_id = ?
+        AND (nominee_for IS NULL OR nominee_for LIKE '%pf%')
+      ORDER BY share_percentage DESC, id ASC
+      LIMIT 4`,
+    [employeeId],
+  ).catch(() => [[] as unknown as RowDataPacket[], []]);
+
+  const nominee: Record<string, unknown> = {};
+  (nominees as RowDataPacket[]).forEach((entry, index) => {
+    const p = `n${index + 1}_`;
+    nominee[`${p}name`] = entry.nominee_name ?? null;
+    nominee[`${p}relationship`] = entry.relationship ?? null;
+    nominee[`${p}date_of_birth`] = entry.date_of_birth ?? null;
+    nominee[`${p}share_percentage`] = entry.share_percentage == null ? null : `${entry.share_percentage}`;
+    nominee[`${p}address`] = entry.address ?? null;
+    // The guardian line is only meaningful for a minor nominee.
+    nominee[`${p}guardian_name`] = Number(entry.is_minor ?? 0) === 1 ? entry.guardian_name ?? null : null;
+    nominee[`${p}guardian_relation`] = Number(entry.is_minor ?? 0) === 1 ? entry.guardian_relation ?? null : null;
+  });
+
   return {
+    nominee,
     employee: {
       full_name: employee?.full_name ?? null,
       employee_code: employee?.employee_code ?? null,
@@ -607,6 +640,7 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
       // "r/o" on the employment agreement means place of residence, so prefer
       // the permanent address and fall back to the current one.
       permanent_address: joinAddress(employee) || null,
+      current_address: joinAddress(employee, "current") || null,
     },
     epf: {
       employee_name: epf?.employee_name ?? employee?.full_name ?? null,

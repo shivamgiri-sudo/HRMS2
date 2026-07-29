@@ -20,75 +20,11 @@
  * reference", so this is an employer-retained declaration rather than a document
  * filed on the prescribed stationery.
  */
-import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFForm, type PDFFont } from "pdf-lib";
-
-const A4 = { w: 595.28, h: 841.89 };
-const MARGIN = 34;
-const INK = rgb(0, 0, 0);
-const BOX = rgb(0.45, 0.45, 0.45);
-
-type Ctx = { doc: PDFDocument; form: PDFForm; page: PDFPage; font: PDFFont; bold: PDFFont; y: number };
-
-function text(ctx: Ctx, s: string, opts: { size?: number; bold?: boolean; x?: number; dy?: number } = {}) {
-  const size = opts.size ?? 8;
-  ctx.page.drawText(s, {
-    x: opts.x ?? MARGIN,
-    y: ctx.y - (opts.dy ?? 0),
-    size,
-    font: opts.bold ? ctx.bold : ctx.font,
-    color: INK,
-  });
-}
-
-/** A row of empty cells plus a comb field that writes one character per cell. */
-function combField(
-  ctx: Ctx,
-  name: string,
-  x: number,
-  y: number,
-  cells: number,
-  cellW = 13.5,
-  cellH = 15,
-) {
-  for (let i = 0; i < cells; i++) {
-    ctx.page.drawRectangle({
-      x: x + i * cellW, y, width: cellW, height: cellH,
-      borderColor: BOX, borderWidth: 0.6,
-    });
-  }
-  const field = ctx.form.createTextField(name);
-  field.setMaxLength(cells);
-  field.enableCombing(); // one glyph per cell; a space consumes a cell
-  // setFontSize needs the /DA entry that addToPage creates, so it must come after.
-  field.addToPage(ctx.page, { x, y, width: cells * cellW, height: cellH, borderWidth: 0 });
-  field.setFontSize(9);
-  return field;
-}
-
-/** A plain bordered text field, for free-text like email or a signature line. */
-function lineField(ctx: Ctx, name: string, x: number, y: number, width: number, height = 15) {
-  ctx.page.drawRectangle({ x, y, width, height, borderColor: BOX, borderWidth: 0.6 });
-  const field = ctx.form.createTextField(name);
-  field.addToPage(ctx.page, { x, y, width, height, borderWidth: 0 });
-  field.setFontSize(9);
-  return field;
-}
-
-function checkBox(ctx: Ctx, name: string, label: string, x: number, y: number, labelWidth = 74) {
-  ctx.page.drawText(label, { x, y: y + 4, size: 7.5, font: ctx.font, color: INK });
-  const bx = x + labelWidth;
-  ctx.page.drawRectangle({ x: bx, y, width: 13, height: 13, borderColor: BOX, borderWidth: 0.6 });
-  const cb = ctx.form.createCheckBox(name);
-  cb.addToPage(ctx.page, { x: bx, y, width: 13, height: 13, borderWidth: 0 });
-  return bx + 13;
-}
-
-/** Day/month/year as separate comb groups, matching the date_* transform rules. */
-function dateBoxes(ctx: Ctx, prefix: { day: string; month: string; year: string }, x: number, y: number) {
-  combField(ctx, prefix.day, x, y, 2, 13.5);
-  combField(ctx, prefix.month, x + 2 * 13.5 + 6, y, 2, 13.5);
-  combField(ctx, prefix.year, x + 4 * 13.5 + 12, y, 4, 13.5);
-}
+import {
+  A4, MARGIN, INK, type Ctx,
+  combField, lineField, checkBox, dateBoxes,
+} from "./pdfFormBuilder.js";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 export async function buildEpfDeclarationPdf(): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
