@@ -304,6 +304,16 @@ export async function computeLineAllocations(
   const gross = allocatePoolAmount(amounts.grossAmount, shares, mode);
   const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode);
 
+  // Backend-authoritative block for manual splits (the frontend already validates this
+  // pre-save, but the API must not silently persist an unbalanced split reached by any other
+  // caller). balanced/percentTotal are identical across all four calls above since they share
+  // the same `shares` — checking one is sufficient.
+  if (mode === "manual_percentage" && !gross.balanced) {
+    throw new Error(
+      `Manual cost-centre split must total 100% (currently ${(gross.percentTotal ?? 0).toFixed(2)}%)`
+    );
+  }
+
   return costCentres.map((cc) => {
     const grossShare = gross.amounts.get(cc.id) ?? 0;
     const expectedGross = amounts.grossAmount > 0 ? amounts.grossAmount : 1;

@@ -9,6 +9,7 @@ import {
   type AllocationShare,
   type BpoBillingModel,
   type DeliveryMetricInput,
+  type ManualAllocationWarning,
   type RevenueComponentInput,
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
@@ -599,11 +600,12 @@ function allocationDriverValue(row: ProcessPnlRecord, driver: AllocationDriver):
   }
 }
 
-function allocateBranchPools<T extends { amount: number }>(
+export function allocateBranchPools<T extends { amount: number }>(
   baseRows: ProcessPnlRecord[],
   pools: ReadonlyMap<string, T>,
   policies: AllocationPolicyRow[],
-  poolType: string
+  poolType: string,
+  warnings?: ManualAllocationWarning[]
 ): NumericMap {
   const result = new Map<string, number>();
   const byBranch = new Map<string, ProcessPnlRecord[]>();
@@ -632,6 +634,7 @@ function allocateBranchPools<T extends { amount: number }>(
           `[bpo-pnl] manual allocation for branch ${branchId} / pool ${poolType} sums to ` +
           `${outcome.percentTotal}% (expected 100%) — amounts are applied as configured, not rebalanced.`
         );
+        warnings?.push({ branchId, poolType, percentTotal: outcome.percentTotal ?? 0 });
       }
       for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
       continue;
@@ -651,7 +654,8 @@ function allocateBranchPools<T extends { amount: number }>(
 async function getPeopleCosts(
   baseRows: ProcessPnlRecord[],
   period: string,
-  policies: AllocationPolicyRow[]
+  policies: AllocationPolicyRow[],
+  warnings?: ManualAllocationWarning[]
 ) {
   const processMap = new Map<string, PeopleCostMeta>();
   const branchPool = new Map<string, { amount: number; headcount: number }>();
@@ -714,7 +718,7 @@ async function getPeopleCosts(
 
   return {
     processMap,
-    bmcPeopleByProcess: allocateBranchPools(baseRows, branchPool, policies, "bmc_people"),
+    bmcPeopleByProcess: allocateBranchPools(baseRows, branchPool, policies, "bmc_people", warnings),
     branchPool,
     people,
   };
@@ -752,7 +756,8 @@ function addCostComponent(target: CostComponentMeta, type: string, amount: numbe
 async function getCostComponents(
   baseRows: ProcessPnlRecord[],
   period: string,
-  policies: AllocationPolicyRow[]
+  policies: AllocationPolicyRow[],
+  warnings?: ManualAllocationWarning[]
 ) {
   const result = new Map<string, CostComponentMeta>();
   if (!(await tableExists("process_pnl_cost_component"))) return result;
@@ -790,7 +795,7 @@ async function getCostComponents(
       const costType = key.slice(separator + 1);
       if (costType === type) pools.set(branchId, value);
     }
-    const allocated = allocateBranchPools(baseRows, pools, policies, "shared_service");
+    const allocated = allocateBranchPools(baseRows, pools, policies, "shared_service", warnings);
     for (const [processId, amount] of allocated.entries()) {
       const current = result.get(processId) ?? emptyCostComponent();
       addCostComponent(current, type, amount);
@@ -803,7 +808,8 @@ async function getCostComponents(
 async function getBudgets(
   baseRows: ProcessPnlRecord[],
   period: string,
-  policies: AllocationPolicyRow[]
+  policies: AllocationPolicyRow[],
+  warnings?: ManualAllocationWarning[]
 ): Promise<Map<string, BudgetMeta>> {
   const result = new Map<string, BudgetMeta>();
   if (!(await tableExists("finance_budget_header")) || !(await tableExists("finance_budget_line"))) return result;
@@ -843,9 +849,9 @@ async function getBudgets(
     }
   }
 
-  const allocatedApproved = allocateBranchPools(baseRows, branchApproved, policies, "bmc_non_people");
-  const allocatedReserved = allocateBranchPools(baseRows, branchReserved, policies, "bmc_non_people");
-  const allocatedConsumed = allocateBranchPools(baseRows, branchConsumed, policies, "bmc_non_people");
+  const allocatedApproved = allocateBranchPools(baseRows, branchApproved, policies, "bmc_non_people", warnings);
+  const allocatedReserved = allocateBranchPools(baseRows, branchReserved, policies, "bmc_non_people", warnings);
+  const allocatedConsumed = allocateBranchPools(baseRows, branchConsumed, policies, "bmc_non_people", warnings);
   for (const row of baseRows) {
     const current = result.get(row.processId) ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 };
     current.approvedBudget += allocatedApproved.get(row.processId) ?? 0;
@@ -867,7 +873,8 @@ function actualVendorStatusExpr(columns: Set<string>) {
 async function getGrnVendorActuals(
   baseRows: ProcessPnlRecord[],
   period: string,
-  policies: AllocationPolicyRow[]
+  policies: AllocationPolicyRow[],
+  warnings?: ManualAllocationWarning[]
 ): Promise<Map<string, GrnVendorMeta>> {
   const direct = new Map<string, { amount: number; count: number }>();
   const branchPools = new Map<string, { amount: number }>();
@@ -968,7 +975,7 @@ async function getGrnVendorActuals(
     }
   }
 
-  const allocatedBmc = allocateBranchPools(baseRows, branchPools, policies, "bmc_non_people");
+  const allocatedBmc = allocateBranchPools(baseRows, branchPools, policies, "bmc_non_people", warnings);
   const result = new Map<string, GrnVendorMeta>();
   for (const row of baseRows) {
     const directMeta = direct.get(row.processId) ?? { amount: 0, count: 0 };
@@ -1067,15 +1074,16 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
   const baseRows = await processPnlService.listProcesses(normalized);
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(normalized.period);
+  const warnings: ManualAllocationWarning[] = [];
   const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres] = await Promise.all([
     getRevenueRules(processIds, normalized.period),
     getDeliveryActuals(processIds, normalized.period),
     getRevenueComponents(processIds, normalized.period),
     getMonthlyPlans(processIds, normalized.period),
-    getPeopleCosts(baseRows, normalized.period, policies),
-    getCostComponents(baseRows, normalized.period, policies),
-    getBudgets(baseRows, normalized.period, policies),
-    getGrnVendorActuals(baseRows, normalized.period, policies),
+    getPeopleCosts(baseRows, normalized.period, policies, warnings),
+    getCostComponents(baseRows, normalized.period, policies, warnings),
+    getBudgets(baseRows, normalized.period, policies, warnings),
+    getGrnVendorActuals(baseRows, normalized.period, policies, warnings),
     getCostCentres(processIds),
   ]);
 
@@ -1306,6 +1314,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     costComponents,
     budgets,
     grnActuals,
+    warnings,
   };
 }
 
@@ -1418,6 +1427,20 @@ export const bpoPnlService = {
           impact: row.revenueAtRisk,
         });
       }
+    }
+
+    const seenImbalance = new Set<string>();
+    for (const warning of bundle.warnings) {
+      const key = `${warning.branchId}|${warning.poolType}`;
+      if (seenImbalance.has(key)) continue;
+      seenImbalance.add(key);
+      alerts.push({
+        type: "critical",
+        code: "MANUAL_ALLOCATION_NOT_BALANCED",
+        title: "Manual allocation not balanced",
+        detail: `Branch ${warning.branchId} manual allocation policy for ${warning.poolType} sums to ` +
+          `${warning.percentTotal.toFixed(2)}% (expected 100%). Amounts are applied as configured, not rebalanced.`,
+      });
     }
 
     const severity = { critical: 0, warning: 1, info: 2 } as const;

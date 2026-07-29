@@ -230,6 +230,12 @@ export interface AllocationShare {
   weight: number;
 }
 
+export interface ManualAllocationWarning {
+  branchId: string;
+  poolType: string;
+  percentTotal: number;
+}
+
 export interface AllocationOutcome {
   /** key -> allocated amount, rounded to paise. For "weighted"/"equal" mode the amounts always
    *  sum exactly to poolAmount (largest-remainder method on integer paise — no float drift). */
