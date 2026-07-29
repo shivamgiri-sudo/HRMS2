@@ -20,7 +20,7 @@ export default function EmployeeEpfComplianceReviewPage() {
   const [payload, setPayload] = useState<PublicPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"confirm" | "correction" | "esign" | null>(null);
+  const [busy, setBusy] = useState<"confirm" | "correction" | "esign" | "kyc" | null>(null);
   const [actorName, setActorName] = useState("");
   const [comment, setComment] = useState("");
   const [result, setResult] = useState<string | null>(null);
@@ -30,6 +30,54 @@ export default function EmployeeEpfComplianceReviewPage() {
     delayRiskAccepted: false,
     declarationAccepted: false,
   });
+
+  // EPFO requires the full bank account + IFSC (mandatory on the form), and
+  // Aadhaar/PAN where held. We store those masked everywhere else, so the member
+  // supplies them here. They are written into the form and not saved.
+  const [kyc, setKyc] = useState({
+    bank_account_number: "",
+    bank_ifsc: "",
+    bank_account_name: "",
+    pan_number: "",
+    pan_name: "",
+    aadhaar_number: "",
+    aadhaar_name: "",
+    uan_number: "",
+  });
+  const [kycErrors, setKycErrors] = useState<Record<string, string>>({});
+  const [kycSaved, setKycSaved] = useState(false);
+
+  const submitKyc = async () => {
+    setBusy("kyc");
+    setError(null);
+    setKycErrors({});
+    try {
+      const response = await fetch(`/api/public/employee-documents/esign/${token}/epf-kyc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(kyc),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        if (Array.isArray(body?.errors)) {
+          setKycErrors(Object.fromEntries(body.errors.map((e: { field: string; message: string }) => [e.field, e.message])));
+        }
+        throw new Error(body?.message || "Please correct the highlighted details.");
+      }
+      setKycSaved(true);
+      setResult("Statutory details added to your EPF form.");
+      // Clear immediately — these must not linger in the page after submission.
+      setKyc({
+        bank_account_number: "", bank_ifsc: "", bank_account_name: "",
+        pan_number: "", pan_name: "", aadhaar_number: "", aadhaar_name: "", uan_number: "",
+      });
+      await load();
+    } catch (err: any) {
+      setError(err?.message || "Unable to save the statutory details.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -133,6 +181,63 @@ export default function EmployeeEpfComplianceReviewPage() {
                 <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">Comment</span>
                 <textarea value={comment} onChange={(event) => setComment(event.target.value)} className="min-h-[112px] w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-cyan-400" placeholder="Use this for correction notes or context." />
               </label>
+
+              {/* EPFO needs the full numbers; everything shown above is masked
+                  because that is how we store it. These are written into your
+                  form and are not saved by us. */}
+              <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/5 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-300">Statutory details for EPFO</p>
+                <p className="mt-1.5 text-xs text-slate-300">
+                  Your bank account and IFSC are mandatory on the EPF form. Enter the full numbers —
+                  we show them masked elsewhere for your privacy, and we do not store what you type here.
+                </p>
+                {kycSaved ? (
+                  <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-emerald-300">
+                    <CheckCircle2 className="h-4 w-4" /> Added to your form. Download the draft to check it.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {([
+                        ["bank_account_number", "Bank account number *", "50100123456789"],
+                        ["bank_ifsc", "IFSC code *", "HDFC0001234"],
+                        ["bank_account_name", "Name as per bank", "As printed on your passbook"],
+                        ["pan_number", "PAN", "ABCDE1234F"],
+                        ["pan_name", "Name as per PAN", ""],
+                        ["aadhaar_number", "Aadhaar number", "12 digits"],
+                        ["aadhaar_name", "Name as per Aadhaar", ""],
+                        ["uan_number", "UAN (if you have one)", "12 digits"],
+                      ] as const).map(([key, label, placeholder]) => (
+                        <label key={key} className="block">
+                          <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">{label}</span>
+                          <input
+                            value={kyc[key]}
+                            onChange={(event) => setKyc((current) => ({ ...current, [key]: event.target.value }))}
+                            placeholder={placeholder}
+                            autoComplete="off"
+                            className={`min-h-[48px] w-full rounded-2xl border bg-black/20 px-3 text-sm text-white outline-none focus:border-cyan-400 ${kycErrors[key.replace(/_(.)/g, (_m, c) => c.toUpperCase())] ? "border-red-400/60" : "border-white/10"}`}
+                          />
+                          {(() => {
+                            const camel = key.replace(/_(.)/g, (_m, c: string) => c.toUpperCase());
+                            return kycErrors[camel] ? (
+                              <span className="mt-1 block text-xs font-semibold text-red-300">{kycErrors[camel]}</span>
+                            ) : null;
+                          })()}
+                        </label>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void submitKyc()}
+                      disabled={busy !== null}
+                      className="mt-4 inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-4 text-sm font-semibold text-white hover:bg-cyan-400 disabled:opacity-70"
+                    >
+                      {busy === "kyc" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      Add these to my EPF form
+                    </button>
+                  </>
+                )}
+              </div>
 
               <div className="mt-4 space-y-2 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-200">
                 {[

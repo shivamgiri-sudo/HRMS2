@@ -1391,10 +1391,35 @@ async function renderOverlayPdf(templatePath: string, fieldMaps: RowDataPacket[]
   return Buffer.from(await pdfDoc.save());
 }
 
-export async function generateChecklistDraft(checklistId: string, actorUserId?: string | null) {
+/**
+ * Field values supplied for one render and deliberately never persisted.
+ *
+ * The EPF declaration is a statutory EPFO filing: page 3 requires the real bank
+ * account + IFSC (mandatory), Aadhaar and PAN. This system masks those at the
+ * point of save by design, so the stored values are unusable on the form. The
+ * employee therefore supplies them at signing time and they are written into the
+ * generated PDF only — the PDF lives in access-controlled private storage, and
+ * nothing is written back to any column.
+ */
+export type TransientFieldValues = Record<string, string>;
+
+export async function generateChecklistDraft(
+  checklistId: string,
+  actorUserId?: string | null,
+  transientValues?: TransientFieldValues,
+) {
   const checklist = await checklistContext(checklistId);
   const fieldReview = await synchronizeChecklistFieldValues(checklistId, actorUserId);
-  const values = fieldReview.values as RowDataPacket[];
+  const persisted = fieldReview.values as RowDataPacket[];
+  // Overlay the transient values over the persisted (masked) ones for this
+  // render only. synchronizeChecklistFieldValues has already run, so nothing
+  // below writes these back.
+  const values = (transientValues && Object.keys(transientValues).length
+    ? persisted.map((row) => {
+        const override = transientValues[String(row.field_key)];
+        return override === undefined ? row : { ...row, value_text: override };
+      })
+    : persisted) as RowDataPacket[];
   const fieldMaps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
   const replacements = Object.fromEntries([
     ...values.map((value) => [String(value.field_key), String(value.value_text ?? "")]),
