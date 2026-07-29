@@ -5,7 +5,7 @@
  */
 
 import type { PiiCategory, SanitizedContext } from './ai-provider.types.js';
-import { aiRedactionService } from './ai-redaction.service.js';
+import { aiRedactionService, fieldNameMatches } from './ai-redaction.service.js';
 
 interface SafetyCheckResult {
   allowed: boolean;
@@ -61,6 +61,10 @@ class AiSafetyService {
 
   /**
    * Check if field is critical (salary, statutory, bank)
+   *
+   * Matches on word boundaries. A substring test read "com-PAN-y_name" as a PAN
+   * field, and company_name is present in every company-aware context, so this
+   * check blocked the external provider on effectively every request.
    */
   private isCriticalField(fieldName: string): boolean {
     const critical = [
@@ -77,8 +81,7 @@ class AiSafetyService {
       'api_key',
       'secret',
     ];
-    const lower = fieldName.toLowerCase();
-    return critical.some((c) => lower.includes(c));
+    return critical.some((c) => fieldNameMatches(fieldName, c));
   }
 
   /**

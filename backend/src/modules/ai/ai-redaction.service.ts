@@ -22,6 +22,41 @@ function detects(pattern: RegExp, value: string): boolean {
   return new RegExp(pattern.source, pattern.flags.replace('g', '')).test(value);
 }
 
+/**
+ * Split a field name into its words: snake_case, dot paths and camelCase all
+ * become separate tokens. "data_confidence.companyPublicKnowledge" ->
+ * ["data", "confidence", "company", "public", "knowledge"].
+ */
+export function fieldNameTokens(fieldName: string): string[] {
+  return fieldName
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Match a sensitive-field pattern on word boundaries rather than raw substring.
+ *
+ * A plain includes() made "company_name" sensitive, because "com-PAN-y" contains
+ * the "pan" pattern. Since company_name rides along in every Mira context, that
+ * one collision tripped the critical-field check on every request and blocked
+ * the external provider outright. "companion_id" and "expanded_view" collided
+ * the same way.
+ *
+ * Multi-word patterns ("basic_pay", "date_of_birth") match a consecutive run of
+ * tokens, so "annual_basic_pay" still matches "basic_pay".
+ */
+export function fieldNameMatches(fieldName: string, pattern: string): boolean {
+  const tokens = fieldNameTokens(fieldName);
+  const wanted = fieldNameTokens(pattern);
+  if (!wanted.length || wanted.length > tokens.length) return false;
+
+  return tokens.some((_, start) =>
+    wanted.every((word, offset) => tokens[start + offset] === word)
+  );
+}
+
 class AiRedactionService {
   /**
    * Mask Aadhaar number (show last 4 digits only)
@@ -252,7 +287,7 @@ class AiRedactionService {
       'debit_card',
     ];
 
-    return sensitivePatterns.some((pattern) => lowerField.includes(pattern));
+    return sensitivePatterns.some((pattern) => fieldNameMatches(lowerField, pattern));
   }
 
   /**
