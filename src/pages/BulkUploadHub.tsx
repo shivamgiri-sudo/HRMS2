@@ -1144,7 +1144,7 @@ export default function BulkUploadHub() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {previewRows.map((row, index) => (
-                            <tr key={index}>
+                            <tr key={`prev-${row["employee_id"] ?? row["id"] ?? row["Employee ID"] ?? index}`}>
                               {Object.keys(previewRows[0] || {}).map((key) => (
                                 <td
                                   key={key}
@@ -1470,7 +1470,7 @@ function BatchRowsDialog({
                         {row.error_messages?.length ? (
                           <ul className="list-disc pl-4 text-rose-600">
                             {row.error_messages.map((error, index) => (
-                              <li key={index}>{error}</li>
+                              <li key={`${error.slice(0, 30)}-${index}`}>{error}</li>
                             ))}
                           </ul>
                         ) : (

@@ -88,8 +88,8 @@ function insight(title: string, text: string) {
   return <div className="insight"><strong>{title}</strong><span>{text}</span></div>;
 }
 
-function Table({ headers, rows }: { headers: string[]; rows: any[][] }) {
-  return <div className="tableWrap"><table><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>) : <tr><td colSpan={headers.length} className="empty">No data</td></tr>}</tbody></table></div>;
+function Table({ headers, rows, rowKey }: { headers: string[]; rows: any[][]; rowKey?: (r: any[], i: number) => string }) {
+  return <div className="tableWrap"><table><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length ? rows.map((r, i) => <tr key={rowKey ? rowKey(r, i) : `row-${String(r[0])}-${i}`}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>) : <tr><td colSpan={headers.length} className="empty">No data</td></tr>}</tbody></table></div>;
 }
 
 function Badge({ children, type = "stage" }: { children: any; type?: "ok" | "breach" | "waiting" | "stage" }) {

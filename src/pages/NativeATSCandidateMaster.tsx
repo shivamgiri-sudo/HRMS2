@@ -601,9 +601,11 @@ function CandidateFeedbackForm({
               />
               {interviewerDropOpen && (
                 <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl">
-                  {interviewerLoading && <div className="px-3 py-2 text-sm text-slate-400">Searching…</div>}
-                  {!interviewerLoading && interviewers.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">No interviewers found</div>}
-                  {!interviewerLoading && interviewers.map(item => (
+                  {interviewerLoading ? (
+                    <div className="px-3 py-2 text-sm text-slate-400">Searching…</div>
+                  ) : interviewers.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-slate-400">No interviewers found</div>
+                  ) : interviewers.map(item => (
                     <div
                       key={item.id}
                       onMouseDown={e => {

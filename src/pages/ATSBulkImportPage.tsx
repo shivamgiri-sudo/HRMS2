@@ -298,7 +298,7 @@ export default function ATSBulkImportPage() {
                   <p className="text-sm font-semibold text-rose-700 mb-2">Sample Validation Errors (first 50 rows)</p>
                   <ul className="space-y-1">
                     {preview.validationSummary.sampleErrors.map((e, i) => (
-                      <li key={i} className="text-xs text-rose-600 flex items-start gap-1.5">
+                      <li key={`err-${i}-${e.slice(0, 20)}`} className="text-xs text-rose-600 flex items-start gap-1.5">
                         <XCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />{e}
                       </li>
                     ))}
@@ -324,7 +324,7 @@ export default function ATSBulkImportPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {preview.previewRows.map((row, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
+                        <tr key={`prev-${row["CandidateID"] ?? i}`} className="hover:bg-slate-50">
                           {["CandidateID","FullName","Mobile","Email","Branch","RoleApplied","Status","Walk-in EndStage","Round1_Result","FinalDecision"].map(col => (
                             <td key={col} className="px-3 py-2 text-slate-700 whitespace-nowrap max-w-[120px] truncate" title={row[col] ?? ""}>
                               {row[col] || <span className="text-slate-300">—</span>}
@@ -434,7 +434,7 @@ export default function ATSBulkImportPage() {
                       </thead>
                       <tbody className="divide-y divide-rose-50">
                         {result.errors.slice(0, 100).map((e, i) => (
-                          <tr key={i}>
+                          <tr key={`err-${e.row}-${e.field}-${i}`}>
                             <td className="px-3 py-2 text-slate-500">{e.row}</td>
                             <td className="px-3 py-2 font-mono text-slate-700">{e.candidateId}</td>
                             <td className="px-3 py-2 text-slate-600">{e.field}</td>
@@ -469,7 +469,7 @@ export default function ATSBulkImportPage() {
                       </thead>
                       <tbody className="divide-y divide-amber-50">
                         {result.warnings.slice(0, 50).map((w, i) => (
-                          <tr key={i}>
+                          <tr key={`warn-${w.row}-${i}`}>
                             <td className="px-3 py-2 text-slate-500">{w.row}</td>
                             <td className="px-3 py-2 font-mono text-slate-700">{w.candidateId}</td>
                             <td className="px-3 py-2 text-amber-700">{w.message}</td>
