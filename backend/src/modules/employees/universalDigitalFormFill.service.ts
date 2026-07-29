@@ -6,6 +6,7 @@ import pdfLib from "pdf-lib";
 const { PDFDocument, StandardFonts } = pdfLib;
 import PizZip from "pizzip";
 import { epfNominationFieldMaps } from "./epfNominationForm.js";
+import { isOperationsExecutiveByRegex } from "../wfm/attendance-engine.service.js";
 import type { RowDataPacket } from "mysql2";
 
 import { db } from "../../db/mysql.js";
@@ -170,6 +171,13 @@ const COMMON_TEMPLATE_FIELDS: DefaultFieldMap[] = [
   // The employment agreement names the second party as "r/o <address>" and
   // repeats it as the notice address, so a blank here is a defective contract.
   { field_key: "employee_address", field_label: "Residential Address", source_path: "employee.permanent_address", required: false, aliases: ["employee_address", "address", "permanent_address"] },
+  // The agreement's appendix states the remuneration, so figure and words are
+  // both required; a contract that says one and not the other is defective.
+  { field_key: "monthly_remuneration", field_label: "Monthly Remuneration", source_path: "salary.monthly_gross", required: false, aliases: ["monthly_remuneration", "remuneration"] },
+  { field_key: "attendance_system_name", field_label: "Attendance System", source_path: "attendance.system_name", required: false, aliases: ["attendance_system_name"] },
+  { field_key: "attendance_criterion", field_label: "Attendance Criterion", source_path: "attendance.criterion_statement", required: false, aliases: ["attendance_criterion"] },
+  { field_key: "attendance_login_hours", field_label: "Log-in Hours", source_path: "attendance.login_hours_statement", required: false, aliases: ["attendance_login_hours"] },
+  { field_key: "monthly_remuneration_words", field_label: "Monthly Remuneration (in words)", source_path: "salary.monthly_gross_words", required: false, aliases: ["monthly_remuneration_words"] },
 ];
 
 const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
@@ -198,11 +206,11 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
     "zero_tolerance_signature_date",
   ],
   IT_COMPLIANCE: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
-  BAMS_DECLARATION: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date"],
+  BAMS_DECLARATION: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "designation", "department", "current_date", "attendance_system_name", "attendance_criterion", "attendance_login_hours"],
   PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "mobile", "email", "current_date"],
   ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
-  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "employee_address"],
+  EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "employee_address", "monthly_remuneration", "monthly_remuneration_words"],
 };
 
 function normalizeToken(value: string) {
@@ -512,6 +520,88 @@ function joinAddress(employee: RowDataPacket | undefined, which: "permanent" | "
 }
 
 /** Exported so diagnostics can resolve exactly what a document would be filled with. */
+export /**
+ * Whether this employee's attendance is counted from the dialler or from
+ * biometric punches.
+ *
+ * Mirrors the attendance engine's precedence exactly (isAprEligible in
+ * attendance-engine.service.ts): apr_eligibility_config first, most specific
+ * match winning, and the Operations+Executive regex only when that table is
+ * empty or absent. It matters that these agree — the joiner signs a declaration
+ * stating how their attendance is tracked, and a document that contradicts the
+ * engine is a false declaration.
+ */
+async function resolveAttendanceSource(
+  employee: RowDataPacket | undefined,
+): Promise<"dialler" | "biometric"> {
+  const departmentName = String(employee?.department_name ?? "");
+  const designationName = String(employee?.designation_name ?? "");
+  try {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT id FROM apr_eligibility_config
+        WHERE active_status = 1
+          AND (designation_id = ? OR designation_id IS NULL)
+          AND (department_id  = ? OR department_id  IS NULL)
+          AND (process_id     = ? OR process_id     IS NULL)
+        ORDER BY (CASE WHEN process_id     IS NOT NULL THEN 4 ELSE 0 END +
+                  CASE WHEN department_id  IS NOT NULL THEN 2 ELSE 0 END +
+                  CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
+        LIMIT 1`,
+      [employee?.designation_id ?? null, employee?.department_id ?? null, employee?.process_id ?? null],
+    );
+    if ((rows as RowDataPacket[]).length) return "dialler";
+    // An empty table means nothing is configured yet, so fall back to the rule
+    // the engine falls back to rather than declaring everyone biometric.
+    const [[{ total }]] = await db.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM apr_eligibility_config WHERE active_status = 1`,
+    ) as unknown as [[{ total: number }]];
+    if (Number(total) === 0 && isOperationsExecutiveByRegex(departmentName, designationName)) return "dialler";
+    return "biometric";
+  } catch {
+    // Table missing — same fallback the engine uses.
+    return isOperationsExecutiveByRegex(departmentName, designationName) ? "dialler" : "biometric";
+  }
+}
+
+/** Groups digits the Indian way: 12,34,567 rather than 1,234,567. */
+function indianDigits(value: number): string {
+  const [whole] = value.toFixed(2).split(".");
+  const last3 = whole.slice(-3);
+  const rest = whole.slice(0, -3);
+  return rest ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${last3}` : last3;
+}
+
+const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+  "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function underThousand(n: number): string {
+  if (n < 20) return ONES[n];
+  if (n < 100) return `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ""}`;
+  return `${ONES[Math.floor(n / 100)]} Hundred${n % 100 ? ` ${underThousand(n % 100)}` : ""}`;
+}
+
+/**
+ * Amount in words, in the crore/lakh convention an Indian contract uses. The
+ * appendix to the employment agreement prints "(Rupees ______ only)", so the
+ * figure and its words have to agree.
+ */
+function amountInWords(value: number): string {
+  const n = Math.floor(Math.abs(value));
+  if (n === 0) return "Zero";
+  const parts: string[] = [];
+  const crore = Math.floor(n / 10000000);
+  const lakh = Math.floor((n % 10000000) / 100000);
+  const thousand = Math.floor((n % 100000) / 1000);
+  const rest = n % 1000;
+  if (crore) parts.push(`${underThousand(crore)} Crore`);
+  if (lakh) parts.push(`${underThousand(lakh)} Lakh`);
+  if (thousand) parts.push(`${underThousand(thousand)} Thousand`);
+  if (rest) parts.push(underThousand(rest));
+  return parts.join(" ");
+}
+
+/** Exported so diagnostics can resolve exactly what a document would be filled with. */
 export async function buildSourceContext(employeeId: string, candidateId?: string | null) {
   const [[employee]] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -648,6 +738,13 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     nominee[`${p}guardian_relation`] = Number(entry.is_minor ?? 0) === 1 ? entry.guardian_relation ?? null : null;
   });
 
+  const attendanceSource = await resolveAttendanceSource(employee);
+
+  // Gross is the contractual monthly remuneration; fall back to a twelfth of
+  // the offered CTC when no monthly snapshot has been written yet.
+  const grossRaw = salary?.gross ?? (salary?.ctc_offered ? Number(salary.ctc_offered) / 12 : null);
+  const monthlyGross = grossRaw == null || Number.isNaN(Number(grossRaw)) ? null : Number(grossRaw);
+
   return {
     nominee,
     employee: {
@@ -728,6 +825,25 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       professional_tax: salary?.professional_tax ?? null,
       gratuity: salary?.gratuity ?? null,
       admin_charges: salary?.admin_charges ?? null,
+      // The employment agreement's appendix prints the monthly figure and the
+      // same amount in words, so both are derived from one source.
+      monthly_gross: monthlyGross == null ? null : indianDigits(monthlyGross),
+      monthly_gross_words: monthlyGross == null ? null : amountInWords(monthlyGross),
+    },
+    attendance: {
+      source: attendanceSource,
+      // The wording the joiner signs, so it has to match how they are actually
+      // tracked. Log-in hours follow the engine's thresholds: the dialler rule
+      // is 480 minutes, the biometric default 540.
+      system_name: attendanceSource === "dialler"
+        ? "Dialler-based Attendance (APR) with Biometric Attendance Management System (BAMS) for entry and exit"
+        : "Biometric Attendance Management System (BAMS)",
+      criterion_statement: attendanceSource === "dialler"
+        ? "my attendance is tracked from my dialler log-in hours recorded in the Company's systems, and that I am also required to record my entry and exit on the Biometric Attendance Management System"
+        : "the Biometric Attendance Management System is the only criterion for tracking my attendance",
+      login_hours_statement: attendanceSource === "dialler"
+        ? "Log-in hours = 8 hours (dialler log-in) + 1 hour (break)"
+        : "Log-in hours = 9 hours (system log-in, inclusive of 1 hour break)",
     },
     system: {
       current_date: new Date().toISOString().slice(0, 10),

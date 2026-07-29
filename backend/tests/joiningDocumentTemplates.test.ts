@@ -35,7 +35,8 @@ const KNOWN_FIELD_KEYS = new Set([
   "bams_employee_name", "bams_employee_code", "bams_date_of_joining",
   "pi_employee_name", "pi_signature_date",
   "zero_tolerance_employee_name", "zero_tolerance_signature_date",
-  "employee_address",
+  "employee_address", "monthly_remuneration", "monthly_remuneration_words",
+  "attendance_system_name", "attendance_criterion", "attendance_login_hours",
 ]);
 
 const EXPECTED = [

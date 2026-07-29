@@ -12,7 +12,9 @@
  */
 import fs from "fs";
 import path from "path";
+import zlib from "zlib";
 import PDFDocument from "pdfkit";
+import { PDFDocument as PDFLibDocument, PDFRawStream, PDFName, StandardFonts, rgb } from "pdf-lib";
 import { TEMPLATE_DEFINITIONS } from "./joiningDocumentTemplates.js";
 
 const COMPANY_NAME = "Mas Callnet India Pvt. Ltd.";
@@ -75,23 +77,6 @@ function drawLetterhead(doc: Doc) {
   doc.fillColor(INK);
 }
 
-function drawFooters(doc: Doc) {
-  const range = doc.bufferedPageRange();
-  for (let i = 0; i < range.count; i++) {
-    doc.switchToPage(range.start + i);
-    const y = doc.page.height - 42;
-    doc.moveTo(PAGE.margin, y).lineTo(doc.page.width - PAGE.margin, y)
-      .lineWidth(0.6).strokeColor(RULE).stroke();
-    doc.font("Helvetica").fontSize(7).fillColor(MUTED)
-      .text(`${COMPANY_NAME}  |  ${CONFIDENTIAL_NOTE}`, PAGE.margin, y + 6, { lineBreak: false });
-    doc.text(`Page ${i + 1} of ${range.count}`, PAGE.margin, y + 6, {
-      width: doc.page.width - PAGE.margin * 2,
-      align: "right",
-      lineBreak: false,
-    });
-  }
-}
-
 /**
  * Keeps a heading with the text that follows it rather than orphaning it.
  * The letterhead is drawn by the pageAdded hook, not here — PDFKit also creates
@@ -104,7 +89,7 @@ function ensureRoom(doc: Doc, needed: number) {
 /** "Signature: ______  Date: 29/07/2026" is set as a ruled block, not body text. */
 const SIGNATURE_LINE = /^(Signature|Employee Signature|For and on behalf of|Witness \d)/i;
 
-export function renderJoiningDocumentPdf(
+function renderContent(
   documentCode: string,
   replacements: Record<string, string>,
 ): Promise<Buffer> {
@@ -194,7 +179,6 @@ export function renderJoiningDocumentPdf(
       doc.moveDown(0.45);
     }
 
-    drawFooters(doc);
     doc.end();
   });
 }
@@ -202,4 +186,84 @@ export function renderJoiningDocumentPdf(
 /** Document codes this renderer can set. */
 export function hasStructuredPdf(documentCode: string) {
   return TEMPLATE_DEFINITIONS.some((entry) => entry.code === documentCode);
+}
+
+/** Text drawn on a page, used only to decide whether it carries any content. */
+async function pageText(doc: PDFLibDocument, index: number): Promise<string> {
+  const page = doc.getPage(index);
+  const contents = page.node.Contents();
+  const streams: PDFRawStream[] = [];
+  const asArray = (contents as unknown as { asArray?: () => unknown[] })?.asArray;
+  if (contents instanceof PDFRawStream) streams.push(contents);
+  else if (typeof asArray === "function") {
+    for (const ref of asArray.call(contents)) {
+      const looked = doc.context.lookup(ref as never);
+      if (looked instanceof PDFRawStream) streams.push(looked);
+    }
+  }
+  let out = "";
+  for (const stream of streams) {
+    let raw = Buffer.from(stream.contents);
+    const filter = stream.dict.get(PDFName.of("Filter"));
+    if (filter && String(filter).includes("FlateDecode")) {
+      try { raw = zlib.inflateSync(raw); } catch { continue; }
+    }
+    const text = raw.toString("latin1");
+    for (const match of text.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
+      out += Buffer.from(match[1].replace(/\s/g, ""), "hex").toString("latin1");
+    }
+  }
+  return out;
+}
+
+/**
+ * Drops pages carrying nothing but the letterhead, then stamps the footer.
+ *
+ * A paragraph that lands near the bottom can push PDFKit into starting a page
+ * it then never writes to, and the pageAdded hook dutifully letterheads it. The
+ * joiner would receive a document ending in blank sheets. Footers are applied
+ * here rather than in PDFKit so "Page N of M" is counted after the removal.
+ */
+async function finish(pdfBytes: Buffer): Promise<Buffer> {
+  const doc = await PDFLibDocument.load(pdfBytes);
+  const boilerplate = (COMPANY_NAME + COMPANY_ADDRESS).replace(/\s/g, "");
+
+  const empty: number[] = [];
+  for (let i = 0; i < doc.getPageCount(); i++) {
+    const text = (await pageText(doc, i)).replace(/\s/g, "");
+    // Whatever remains once the letterhead is discounted is real content.
+    if (text.replace(boilerplate, "").length === 0) empty.push(i);
+  }
+  // Never remove every page; a document with no content at all is a bug worth
+  // seeing rather than an empty file.
+  if (empty.length && empty.length < doc.getPageCount()) {
+    for (const index of empty.reverse()) doc.removePage(index);
+  }
+
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const total = doc.getPageCount();
+  doc.getPages().forEach((page, index) => {
+    const { width } = page.getSize();
+    const y = 42;
+    page.drawLine({
+      start: { x: PAGE.margin, y: y + 12 }, end: { x: width - PAGE.margin, y: y + 12 },
+      thickness: 0.6, color: rgb(0.82, 0.84, 0.86),
+    });
+    const left = `${COMPANY_NAME}  |  ${CONFIDENTIAL_NOTE}`;
+    page.drawText(left, { x: PAGE.margin, y, size: 7, font, color: rgb(0.42, 0.45, 0.5) });
+    const right = `Page ${index + 1} of ${total}`;
+    page.drawText(right, {
+      x: width - PAGE.margin - font.widthOfTextAtSize(right, 7),
+      y, size: 7, font, color: rgb(0.42, 0.45, 0.5),
+    });
+  });
+  return Buffer.from(await doc.save());
+}
+
+/** Renders a joining document, letterheaded, footered and free of blank pages. */
+export async function renderJoiningDocumentPdf(
+  documentCode: string,
+  replacements: Record<string, string>,
+): Promise<Buffer> {
+  return finish(await renderContent(documentCode, replacements));
 }
