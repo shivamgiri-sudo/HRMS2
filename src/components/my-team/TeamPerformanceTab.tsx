@@ -66,7 +66,12 @@ const chartConfig = {
 export default function TeamPerformanceTab() {
   const [coachModal, setCoachModal] = useState(false);
   const [coachEmpId, setCoachEmpId] = useState("");
-  const [coachDate, setCoachDate] = useState(new Date().toISOString().slice(0, 10));
+  const [coachDate, setCoachDate] = useState(
+    // IST date — toISOString() is UTC and defaults to yesterday before 05:30 IST.
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date())
+  );
   const [coachType, setCoachType] = useState("performance");
   const [submitting, setSubmitting] = useState(false);
   const { toast } = useToast();

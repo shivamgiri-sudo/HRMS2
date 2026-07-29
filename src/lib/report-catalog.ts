@@ -6,6 +6,7 @@
  *
  * Generated: 2026-07-22
  */
+import { formatTime24 } from "@/lib/utils";
 
 export type ColumnFormat =
   | "text" | "number" | "currency" | "percentage"
@@ -82,8 +83,9 @@ export function formatValue(value: unknown, format: ColumnFormat): string {
 
     case "time":
       if (!str || str === "null") return "—";
-      if (str.includes(":")) return str.substring(0, 5);
-      return str;
+      // An ISO datetime also contains ":", so the previous substring(0, 5)
+      // turned "2026-07-29T09:15:00+05:30" into "2026-". Parse properly.
+      return formatTime24(str, str);
 
     case "duration":
       // Expected format: HH:mm:ss or minutes as number

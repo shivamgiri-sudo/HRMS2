@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatTime24 } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,12 +35,19 @@ const STATUS_META: Record<string, { label: string; bg: string; text: string; ico
 };
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  // IST date — toISOString() is UTC and returns yesterday between 00:00-05:30 IST.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
 }
 
+/**
+ * clock_in/clock_out come from /api/wfm/attendance/daily as IST-tagged datetimes,
+ * so the previous `String(t).slice(0, 5)` rendered "2026-" — the year alone — in
+ * both the table and the CSV export. formatTime24 handles datetime and TIME alike.
+ */
 function formatTime(t?: string) {
-  if (!t) return "—";
-  return String(t).slice(0, 5);
+  return formatTime24(t, "—");
 }
 
 function exportCsv(rows: AttendanceRow[], date: string) {

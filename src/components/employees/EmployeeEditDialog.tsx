@@ -25,7 +25,7 @@ import { toast } from "sonner";
 import { Employee } from "./EmployeeTable";
 import { Loader2, Hash, IndianRupee, History, ChevronDown, ChevronUp, Eye, EyeOff, ChevronsUpDown, Check } from "lucide-react";
 import { format } from "date-fns";
-import { parseLocalDate } from "@/lib/utils";
+import { parseLocalDate, extractTimeOfDay } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -335,10 +335,14 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     setIsDepartmentManager(isHead);
   }, [departments, employee?.id]);
 
-  // Parse working hours from TIME format (HH:MM:SS) to input format (HH:MM)
+  // Parse working hours into an <input type="time"> value (HH:MM).
+  // working_hours_start/end are MySQL TIME, so substring(0, 5) was correct for
+  // the normal case — but it silently produced "2026-" if the value ever arrived
+  // as a datetime. extractTimeOfDay handles both shapes.
   const parseTime = (time: string | null) => {
-    if (!time) return '09:00';
-    return time.substring(0, 5);
+    const t = extractTimeOfDay(time);
+    if (!t) return '09:00';
+    return `${String(t.hours % 24).padStart(2, '0')}:${t.minutes}`;
   };
 
   // Update form when employee details are loaded

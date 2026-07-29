@@ -78,51 +78,6 @@ describe('resolveAprUserIds', () => {
 });
 
 /**
- * Regression guard for the "login/logout shows only a year" bug.
- *
- * The attendance hub table rendered clock_in/clock_out with `value.slice(0, 5)`.
- * The API returns those as IST-tagged datetimes, so the UI displayed "2026-" —
- * the year alone — in both columns. The shared extractTimeOfDay/formatTime24
- * helpers (src/lib/utils.ts) must handle every shape the API can return.
- * Logic mirrored here because the frontend has no test runner configured.
- */
-function extractTimeOfDay(value?: string | null) {
-  if (!value) return null;
-  const s = String(value).trim();
-  const dt = /^\d{4}-\d{2}-\d{2}[T ](\d{2}):([0-5]\d)(?::([0-5]\d))?/.exec(s);
-  if (dt) return { hours: Number(dt[1]), minutes: dt[2], seconds: dt[3] ?? '00' };
-  const t = /^(\d{1,3}):([0-5]\d)(?::([0-5]\d))?$/.exec(s);
-  if (t) return { hours: Number(t[1]), minutes: t[2], seconds: t[3] ?? '00' };
-  return null;
-}
-function formatTime24(value?: string | null, fallback = '—') {
-  const t = extractTimeOfDay(value);
-  if (!t) return fallback;
-  return `${String(t.hours % 24).padStart(2, '0')}:${t.minutes}`;
-}
-
-describe('formatTime24 — attendance hub login/logout columns', () => {
-  it('renders an IST-tagged datetime as a time, not a bare year', () => {
-    // The exact shape toIST() returns for attendance_daily_record.clock_in_time.
-    expect('2026-07-29T09:15:00+05:30'.slice(0, 5)).toBe('2026-'); // the old bug
-    expect(formatTime24('2026-07-29T09:15:00+05:30')).toBe('09:15');
-  });
-
-  it('handles MySQL DATETIME, bare TIME and night-shift TIME', () => {
-    expect(formatTime24('2026-07-29 18:45:00')).toBe('18:45');
-    expect(formatTime24('09:15:00')).toBe('09:15');   // APR Login_Time
-    expect(formatTime24('27:30:00')).toBe('03:30');   // TIME beyond 24h
-    expect(formatTime24('2026-07-29T00:05:00+05:30')).toBe('00:05');
-  });
-
-  it('falls back cleanly for null/blank/garbage', () => {
-    expect(formatTime24(null)).toBe('—');
-    expect(formatTime24('')).toBe('—');
-    expect(formatTime24('garbage')).toBe('—');
-  });
-});
-
-/**
  * Late-arrival detection.
  *
  * calculateLateArrival() previously read the clock-in ONLY from

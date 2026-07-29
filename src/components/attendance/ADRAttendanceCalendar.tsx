@@ -296,6 +296,13 @@ function ADRDayDetailSheet({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+/** Today's date in IST as YYYY-MM-DD (toISOString() is UTC and drifts a day). */
+function istTodayString(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+
 export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }: ADRAttendanceCalendarProps) {
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(initialMonth ?? today.getMonth());
@@ -435,7 +442,9 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
               const record    = adrMap.get(dateStr);
               const dayOfWeek = new Date(currentYear, currentMonth, day).getDay();
               const isWknd    = dayOfWeek === 0 || dayOfWeek === 6;
-              const isToday   = dateStr === today.toISOString().slice(0, 10);
+              // IST date — toISOString() is UTC and puts the "today" ring on the
+              // previous day between 00:00 and 05:30 IST.
+              const isToday   = dateStr === istTodayString();
               const status: DayStatus = record?.status ?? (isWknd ? "weekend" : "unprocessed");
 
               return (
