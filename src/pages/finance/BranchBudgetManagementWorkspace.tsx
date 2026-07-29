@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   Gauge,
+  Grid3x3,
   Layers3,
   Loader2,
   Plus,
@@ -56,6 +57,7 @@ import {
   useFinanceExpenseMasters,
 } from "@/hooks/useFinanceExpenseMasters";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 
 const UNITS = [
   "Nos",
@@ -89,7 +91,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "meters" | "approval" | "master";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "approval" | "master";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -599,6 +601,7 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="plan"><Layers3 className="mr-2 h-4 w-4" />Plan Builder</TabsTrigger>
               <TabsTrigger value="coverage"><ClipboardCheck className="mr-2 h-4 w-4" />Head/Sub-head Coverage</TabsTrigger>
               <TabsTrigger value="rollup"><Layers3 className="mr-2 h-4 w-4" />Cost-Centre Rollup</TabsTrigger>
+              <TabsTrigger value="matrix"><Grid3x3 className="mr-2 h-4 w-4" />Grid Matrix</TabsTrigger>
               <TabsTrigger value="meters"><Gauge className="mr-2 h-4 w-4" />Meters</TabsTrigger>
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
@@ -767,6 +770,16 @@ export default function BranchBudgetManagementWorkspace() {
                     ))}
                   </CardContent>
                 </Card>
+              )}
+            </TabsContent>
+
+            <TabsContent value="matrix" className="space-y-5">
+              {!detailId ? (
+                <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><Grid3x3 className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Save the budget draft first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
+              ) : detailQuery.isLoading ? (
+                <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div>
+              ) : (
+                <BranchBudgetMatrixPanel lines={detailQuery.data?.lines ?? []} costCentres={activeCostCentres} />
               )}
             </TabsContent>
 

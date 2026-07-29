@@ -17,6 +17,7 @@ import { branchBudgetService } from "./branch-budget.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
+import { savedViewService } from "./saved-view.service.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -341,6 +342,45 @@ router.put(
       user.id
     );
     res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/saved-views",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const moduleKey = String(req.query.moduleKey ?? "");
+    if (!moduleKey) throw new Error("moduleKey is required");
+    const data = await savedViewService.listSavedViews(user.id, moduleKey);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/saved-views",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const data = await savedViewService.createSavedView(
+      user.id,
+      String(req.body?.moduleKey ?? ""),
+      String(req.body?.viewName ?? ""),
+      req.body?.config ?? {}
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.delete(
+  "/pnl/saved-views/:id",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await savedViewService.deleteSavedView(String(req.params.id), user.id);
+    res.json({ success: true });
   })
 );
 

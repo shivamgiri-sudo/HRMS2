@@ -371,6 +371,7 @@ const MIGRATION_MANIFEST: string[] = [
   "426_mira_audit_resilience.sql",
   "427_finance_meter_subsystem.sql",
   "428_finance_cost_centre_mapping_history.sql",
+  "429_finance_saved_views.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
   "502_designation_bgv_requirements.sql",
