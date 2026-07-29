@@ -73,9 +73,9 @@ async function geoLookupIp(ip: string): Promise<string | null> {
 
 const JWT_SECRET = env.JWT_SECRET;
 const OTP_HMAC_SECRET = env.OTP_HMAC_SECRET;
-const JWT_EXPIRES_IN = '4h'; // extended from 15m to reduce refresh frequency
+const JWT_EXPIRES_IN = '24h'; // long-lived; refresh token rotation handles security
 const PRE_AUTH_EXPIRES_IN = '10m'; // short-lived — only for 2FA challenge exchange
-const REFRESH_EXPIRES_DAYS = 7;
+const REFRESH_EXPIRES_DAYS = 30; // persistent session; only explicit logout revokes it
 const RESET_EXPIRES_HOURS = 24;
 
 interface RoleRow extends RowDataPacket {

@@ -22,7 +22,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRouteProps) {
-  const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified, signOut } = useAuth();
+  const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
   const { isAdminOrHR, isLoading: isRoleLoading, error: roleError, roleKeys } = useIsAdminOrHR();
@@ -30,6 +30,10 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   const isEmployee = employeeStatus?.isEmployee ?? false;
   const routePageCode = dashboardCode ? undefined : getRoutePageCode(location.pathname);
   const hasRoutePageAccess = routePageCode ? canViewPage(routePageCode) : false;
+  // A 401 on these background queries means the access token expired mid-session.
+  // Do NOT call signOut() here — that destroys the refresh cookie.
+  // Simply redirect to /auth; the login page will attempt a silent cookie-based
+  // refresh and restore the session without requiring the user to re-enter credentials.
   const authFailure =
     getHrmsApiErrorStatus(roleError) === 401 ||
     getHrmsApiErrorStatus(accessError) === 401;
@@ -38,8 +42,9 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   useEffect(() => {
     if (!authFailure || hasTriggeredSignOutRef.current) return;
     hasTriggeredSignOutRef.current = true;
-    void signOut();
-  }, [authFailure, signOut]);
+    // Only clear the stale access token; leave the refresh cookie intact
+    localStorage.removeItem('hrms_access_token');
+  }, [authFailure]);
 
   if (isLoading || isEmployeeLoading || isRoleLoading || isAccessLoading) {
     return (
