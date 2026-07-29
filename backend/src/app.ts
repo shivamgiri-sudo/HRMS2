@@ -9,7 +9,7 @@ import path from "path";
 
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter } from "./middleware/rateLimiter.js";
+import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter, publicRegistrationLimiter } from "./middleware/rateLimiter.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { processRouter } from "./modules/process/process.routes.js";
 import { integrationRouter } from "./modules/integration-hub/integration.routes.js";
@@ -355,7 +355,9 @@ app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
 app.use("/api/ats", atsFormConfigRouter);
-app.use("/api/ats/registration", registrationEnhancedRouter);
+// Unauthenticated by design so a walk-in can self-register; rate limited
+// because that also makes it reachable by anyone.
+app.use("/api/ats/registration", publicRegistrationLimiter, registrationEnhancedRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth

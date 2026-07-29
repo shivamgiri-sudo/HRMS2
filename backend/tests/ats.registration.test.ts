@@ -5,6 +5,7 @@
  * (validation layer), unauthorized branch (scope check).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "fs";
 
 vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn().mockResolvedValue([[], []]) },
@@ -156,5 +157,52 @@ describe("atsService.createCandidate — scope column SQL", () => {
     const [sql] = mockExecute.mock.calls[0];
     expect(sql).toMatch(/applied_for_process/i);
     expect(sql).not.toMatch(/\bc\.process_id\b/);
+  });
+});
+
+/**
+ * POST /api/ats/registration/submit-enhanced is unauthenticated by design so a
+ * walk-in can self-register, and it matches an existing candidate by mobile
+ * number alone. That combination meant anyone who knew a candidate's mobile
+ * could rewrite their identity — including the email address that then receives
+ * their Letter of Intent and onboarding token.
+ *
+ * The guard lives in raw SQL, so it is pinned here at the source level: a unit
+ * test cannot reach the statement any other way, and a well-meaning edit that
+ * restores the plain assignment would otherwise be silent.
+ */
+describe("public registration cannot overwrite an existing candidate's identity", () => {
+  const routeSource = readFileSync(
+    new URL("../src/modules/ats/registration.enhanced.routes.ts", import.meta.url),
+    "utf8",
+  );
+  // The UPDATE that runs when a candidate with this mobile already exists.
+  const updateBlock = routeSource.slice(
+    routeSource.indexOf("UPDATE ats_candidate"),
+    routeSource.indexOf("WHERE id = ?", routeSource.indexOf("UPDATE ats_candidate")),
+  );
+
+  it("keeps an existing full_name instead of taking the submitted one", () => {
+    expect(updateBlock).toMatch(/full_name\s*=\s*COALESCE\(\s*NULLIF\(\s*TRIM\(full_name\)/);
+    expect(updateBlock, "full_name is assigned outright — identity is overwritable")
+      .not.toMatch(/full_name\s*=\s*\?/);
+  });
+
+  it("keeps an existing email, so an offer cannot be redirected", () => {
+    expect(updateBlock).toMatch(/email\s*=\s*COALESCE\(\s*NULLIF\(\s*TRIM\(email\)/);
+    expect(updateBlock, "email is assigned outright — the offer letter can be redirected")
+      .not.toMatch(/[^_]email\s*=\s*\?/);
+  });
+
+  it("keeps an existing date of birth and gender", () => {
+    expect(updateBlock).toMatch(/gender\s*=\s*COALESCE\(gender/);
+    expect(updateBlock).toMatch(/date_of_birth\s*=\s*COALESCE\(date_of_birth/);
+  });
+
+  it("is rate limited where it is mounted", () => {
+    const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+    const mount = appSource.split("\n").find((line) => line.includes('"/api/ats/registration"')) ?? "";
+    expect(mount, "the public registration router is mounted without a rate limiter")
+      .toMatch(/publicRegistrationLimiter/);
   });
 });

@@ -207,11 +207,22 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     let candidateId: string;
     if (existingCandidate) {
       await db.execute(
+        // This endpoint is unauthenticated and matches an existing candidate by
+        // mobile number alone, so anyone who knows a candidate's mobile could
+        // reach this UPDATE. It previously overwrote identity outright, which
+        // meant an attacker could replace the email address and receive that
+        // candidate's Letter of Intent and onboarding token.
+        //
+        // Identity fields are therefore fill-only: a blank is completed, an
+        // existing value is kept. A returning candidate can still refresh their
+        // preferences, branch and availability, which is what re-registration is
+        // for. Correcting a name or email is an HR action on an authenticated
+        // route, not something an anonymous request may do.
         `UPDATE ats_candidate
-         SET full_name = ?,
-             email = ?,
-             gender = ?,
-             date_of_birth = ?,
+         SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), ?),
+             email = COALESCE(NULLIF(TRIM(email), ''), ?),
+             gender = COALESCE(gender, ?),
+             date_of_birth = COALESCE(date_of_birth, ?),
              applied_for_process = ?,
              role_applied = ?,
              applied_for_branch = ?,
