@@ -76,19 +76,27 @@ const FAILED = ["failed", "failure", "rejected", "declined", "cancelled", "cance
 const EXPIRED = ["expired", "timeout", "timedout"];
 
 /**
- * Where the real lifecycle state lives, per flow.
+ * Where the lifecycle state lives, per flow, most specific first.
  *
- * For eSign this must NOT be `data.status`: that field reads "SUCCESS" on the
- * initiate call as well as on a completed signature — it reports whether the API
- * call worked, not whether anybody signed. The signing state is
- * esignDetails.agreement_status ("requested" -> "completed"). Reading data.status
- * would mark a document signed the instant it was sent out.
+ * Production and the published samples disagree here, so this follows a captured
+ * live response: in production `status` carries the lifecycle ("PENDING") while
+ * `responseMessage` carries the API outcome ("SUCCESS"). The Postman samples
+ * show the reverse — status "SUCCESS" at initiate — which is why
+ * `responseMessage` is deliberately never consulted for state, and why the
+ * unambiguous esignDetails.agreement_status is preferred when present.
  *
- * For DigiLocker, data.status is the genuine state ("requested" -> "approved").
+ * Anything unrecognised still resolves to "pending", so a mismatch between these
+ * vocabularies can never complete a session early.
  */
 const STATUS_PATHS: Record<"kyc" | "esign", string[]> = {
   kyc: ["details.status", "kycStatus", "status", "state"],
-  esign: ["esignDetails.agreement_status", "esignDetails.signing_parties.0.status", "esignStatus"],
+  esign: [
+    "esignDetails.agreement_status",
+    "esignDetails.signing_parties.0.status",
+    "esignStatus",
+    "details.status",
+    "status",
+  ],
 };
 
 function toStatusResult(
@@ -195,7 +203,13 @@ export const luckpayClient = {
     return {
       raw: response.envelope,
       sanitized: response.sanitized as SanitizedJson,
+      // Production returns the candidate link at data.details.authorizationUrl.
+      // The published Postman samples omit it entirely, so this list is driven
+      // by a captured live response, not the documentation.
       verificationUrl: pickLuckpayField(response, [
+        "details.authorizationUrl",
+        "details.authorization_url",
+        "authorizationUrl",
         "redirectUrl",
         "redirect_url",
         "verificationUrl",
@@ -225,11 +239,14 @@ export const luckpayClient = {
     return {
       raw: response.envelope,
       sanitized: response.sanitized as SanitizedJson,
+      // Production returns this at the data level as redirect_url.
       verificationUrl: pickLuckpayField(response, [
-        "redirectUrl",
         "redirect_url",
+        "redirectUrl",
         "signUrl",
         "sign_url",
+        "esignDetails.redirect_url",
+        "details.authorizationUrl",
       ]),
       providerReferenceId: pickLuckpayField(response, [
         "gatewayId",

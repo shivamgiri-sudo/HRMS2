@@ -1296,7 +1296,10 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     const expiresAt = pickLuckpayField(response, ["expires_at"]);
     return {
       state: pickLuckpayField(response, ["state"]) ?? state,
+      // Production returns the candidate link at data.details.authorizationUrl
+      // (verified against a live response; the published samples omit it).
       authUrl: pickLuckpayField(response, [
+        "details.authorizationUrl", "details.authorization_url", "authorizationUrl",
         "auth_url", "redirect_url", "access_link", "redirectUrl", "verificationUrl", "verification_url",
       ]) ?? "",
       expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
@@ -1328,10 +1331,11 @@ class CompositeBgvProviderAdapter implements BgvProviderAdapter {
     return {
       state,
       authUrl: pickLuckpayField(response, [
-        "sign_url", "signUrl", "redirect_url", "redirectUrl", "auth_url",
+        "redirect_url", "redirectUrl", "sign_url", "signUrl", "auth_url",
+        "esignDetails.redirect_url", "details.authorizationUrl",
       ]) ?? "",
       expiresAt: expiresAt ? new Date(expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
-      requestId: pickLuckpayField(response, ["request_id", "requestId"]) ?? state,
+      requestId: pickLuckpayField(response, ["gatewayId", "request_id", "requestId"]) ?? state,
     };
   }
 
