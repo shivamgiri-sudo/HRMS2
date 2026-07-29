@@ -122,10 +122,10 @@ employeeReactivationRouter.get("/reactivation/all", async (req: AuthenticatedReq
       JOIN employees e ON r.employee_id = e.id
       ${whereClause}
       ORDER BY r.created_at DESC
-      LIMIT ? OFFSET ?
+      LIMIT ${limit} OFFSET ${offset}
     `;
 
-    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(dataQuery, [...params, limit, offset]);
+    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(dataQuery, params);
 
     res.json({ success: true, data: rows, total, page, limit });
   } catch (err: any) {

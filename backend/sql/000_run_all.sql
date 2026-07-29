@@ -365,6 +365,7 @@ SOURCE sql/999_password_expiry_policy.sql;
 SOURCE sql/1015_luckpay_production_same_url_consolidation.sql;
 SOURCE sql/1016_bgv_report_digilocker_esign.sql;
 SOURCE sql/1017_bgv_api_log_failure_reasons.sql;
+SOURCE sql/1018_attendance_lookup_indexes.sql;
 
 SELECT CONCAT('mas_hrms schema bootstrap complete — ', NOW()) AS status;
 SHOW TABLES;
