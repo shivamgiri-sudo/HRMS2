@@ -16,6 +16,7 @@ import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService } from "./branch-budget.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
+import { costCentreMappingService } from "./cost-centre-mapping.service.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -307,6 +308,35 @@ router.put(
         readingType: req.body?.readingType === "estimated" ? "estimated" : "actual",
         estimationMethod: req.body?.estimationMethod ? String(req.body.estimationMethod) : null,
         estimationReason: req.body?.estimationReason ? String(req.body.estimationReason) : null,
+      },
+      user.id
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/cost-centres/:id/mapping-history",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const data = await costCentreMappingService.getMappingHistory(String(req.params.id));
+    res.json({ success: true, data });
+  })
+);
+
+router.put(
+  "/pnl/cost-centres/:id/mapping",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const data = await costCentreMappingService.recordMappingChange(
+      String(req.params.id),
+      {
+        branchId: req.body?.branchId ? String(req.body.branchId) : null,
+        processId: req.body?.processId ? String(req.body.processId) : null,
+        effectiveFrom: String(req.body?.effectiveFrom ?? ""),
+        changeReason: String(req.body?.changeReason ?? ""),
       },
       user.id
     );
