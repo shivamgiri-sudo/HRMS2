@@ -14,13 +14,14 @@ export type BudgetPlanningLevel = "branch" | "cost_centre";
 
 /** Sharing methods supported for a branch-level (planningLevel = "branch") line — reuses the
  *  allocationDriver field, now actually acted on server-side instead of only stored. */
-export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual";
+export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual" | "meter_wise";
 export const BRANCH_SHARING_METHODS: { value: BranchSharingMethod; label: string }[] = [
   { value: "total_manpower", label: "Manpower (planned headcount)" },
   { value: "agent_headcount", label: "Agent headcount" },
   { value: "revenue_share", label: "Revenue share" },
   { value: "equal_split", label: "Equal split" },
   { value: "manual", label: "Manual %" },
+  { value: "meter_wise", label: "Meter-wise (utility consumption)" },
 ];
 
 export interface ManualAllocationInput {
@@ -415,4 +416,105 @@ export function useBranchBudgetAllocations(branchId?: string | null, periodCode?
   });
 
   return { costCentresQuery, monthlyDriversQuery, saveMonthlyDrivers };
+}
+
+export interface MeterOption {
+  id: string;
+  meterCode: string;
+  meterName: string;
+  branchId: string;
+  costCentreId: string;
+  location: string | null;
+  readingUnit: string;
+  fixedRate: number;
+}
+
+export interface CreateMeterInput {
+  costCentreId: string;
+  meterCode: string;
+  meterName: string;
+  location?: string | null;
+  readingUnit: string;
+  fixedRate: number;
+  effectiveFrom: string;
+}
+
+export interface MeterReadingRecord {
+  id: string;
+  meterId: string;
+  periodCode: string;
+  openingReading: number;
+  closingReading: number;
+  consumption: number;
+  rate: number;
+  amount: number;
+  readingType: "actual" | "estimated";
+  estimationMethod: string | null;
+  estimationReason: string | null;
+  reconciliationStatus: "pending" | "reconciled";
+}
+
+export interface SaveMeterReadingInput {
+  meterId: string;
+  periodCode: string;
+  openingReading: number;
+  closingReading: number;
+  readingType: "actual" | "estimated";
+  estimationMethod?: string | null;
+  estimationReason?: string | null;
+}
+
+/** Branch Budget foundation (PR 7): meter master/reading management, feeding the meter_wise
+ *  sharing method exposed above. */
+export function useBranchBudgetMeters(branchId?: string | null) {
+  const queryClient = useQueryClient();
+
+  const metersQuery = useQuery({
+    queryKey: ["branch-budget-meters", branchId],
+    enabled: Boolean(branchId),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: MeterOption[] }>(
+        `/api/finance/pnl/branch-budget/meters?branchId=${branchId}`
+      );
+      return response.data;
+    },
+  });
+
+  const createMeter = useMutation({
+    mutationFn: async (input: CreateMeterInput) => {
+      const response = await hrmsApi.post<{ success: boolean; data: MeterOption }>(
+        "/api/finance/pnl/branch-budget/meters",
+        { branchId, ...input }
+      );
+      return response.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["branch-budget-meters", branchId] }),
+  });
+
+  const saveReading = useMutation({
+    mutationFn: async (input: SaveMeterReadingInput) => {
+      const response = await hrmsApi.put<{ success: boolean; data: { reading: MeterReadingRecord; reconciliation: boolean } }>(
+        `/api/finance/pnl/branch-budget/meters/${input.meterId}/reading`,
+        input
+      );
+      return response.data;
+    },
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: ["branch-budget-meter-readings", variables.meterId, variables.periodCode] }),
+  });
+
+  return { metersQuery, createMeter, saveReading };
+}
+
+export function useMeterReadings(meterId?: string | null, periodCode?: string | null) {
+  return useQuery({
+    queryKey: ["branch-budget-meter-readings", meterId, periodCode],
+    enabled: Boolean(meterId) && Boolean(periodCode),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: MeterReadingRecord[] }>(
+        `/api/finance/pnl/branch-budget/meters/${meterId}/reading?period=${periodCode}`
+      );
+      return response.data;
+    },
+  });
 }

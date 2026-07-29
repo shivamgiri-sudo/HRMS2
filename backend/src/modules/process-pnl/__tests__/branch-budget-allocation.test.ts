@@ -17,14 +17,40 @@ interface FakeDriver {
   updated_at: string | null;
 }
 
-function fakeExecutor(costCentres: FakeCostCentre[], drivers: FakeDriver[] = []) {
+interface FakeMeter {
+  id: string;
+  cost_centre_id: string;
+}
+
+interface FakeReading {
+  meter_id: string;
+  reading_type: "actual" | "estimated";
+  consumption: number;
+  amount: number;
+}
+
+function fakeExecutor(
+  costCentres: FakeCostCentre[],
+  drivers: FakeDriver[] = [],
+  meters: FakeMeter[] = [],
+  readings: FakeReading[] = []
+) {
   return {
-    async execute(sql: string, _params?: unknown[]) {
+    async execute(sql: string, params?: unknown[]) {
       if (sql.includes("FROM cost_centre_master")) {
         return [costCentres, []];
       }
       if (sql.includes("FROM finance_cost_centre_monthly_driver")) {
         return [drivers, []];
+      }
+      if (sql.includes("FROM finance_meter_master")) {
+        const costCentreId = params?.[0];
+        return [meters.filter((m) => m.cost_centre_id === costCentreId), []];
+      }
+      if (sql.includes("FROM finance_meter_reading")) {
+        const [meterId, , readingType] = params ?? [];
+        const row = readings.find((r) => r.meter_id === meterId && r.reading_type === readingType);
+        return [row ? [row] : [], []];
       }
       throw new Error(`fakeExecutor: unexpected query — ${sql}`);
     },
@@ -174,5 +200,69 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     expect(byId.cc2.grossAmount).toBe(50000);
     expect(byId.cc3.grossAmount).toBe(40000);
     expect(sumOf(rows, "grossAmount")).toBe(165000);
+  });
+
+  it("splits meter_wise proportional to summed meter consumption, reconciling to the mandatory example", async () => {
+    const meters: FakeMeter[] = [
+      { id: "m1", cost_centre_id: "cc1" },
+      { id: "m2", cost_centre_id: "cc2" },
+      { id: "m3", cost_centre_id: "cc3" },
+    ];
+    const readings: FakeReading[] = [
+      { meter_id: "m1", reading_type: "actual", consumption: 7500, amount: 75000 },
+      { meter_id: "m2", reading_type: "actual", consumption: 5000, amount: 50000 },
+      { meter_id: "m3", reading_type: "actual", consumption: 4000, amount: 40000 },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "meter_wise",
+      { baseAmount: 165000, taxAmount: 0, grossAmount: 165000, pnlCostAmount: 165000 },
+      undefined,
+      fakeExecutor(THREE_COST_CENTRES, [], meters, readings)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(75000);
+    expect(byId.cc2.grossAmount).toBe(50000);
+    expect(byId.cc3.grossAmount).toBe(40000);
+    expect(sumOf(rows, "grossAmount")).toBe(165000);
+  });
+
+  it("prefers a meter's actual reading over its estimated reading when both exist", async () => {
+    const meters: FakeMeter[] = [
+      { id: "m1", cost_centre_id: "cc1" },
+      { id: "m2", cost_centre_id: "cc2" },
+      { id: "m3", cost_centre_id: "cc3" },
+    ];
+    const readings: FakeReading[] = [
+      { meter_id: "m1", reading_type: "estimated", consumption: 6000, amount: 60000 },
+      { meter_id: "m1", reading_type: "actual", consumption: 7500, amount: 75000 },
+      { meter_id: "m2", reading_type: "actual", consumption: 5000, amount: 50000 },
+      { meter_id: "m3", reading_type: "actual", consumption: 4000, amount: 40000 },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "meter_wise",
+      { baseAmount: 165000, taxAmount: 0, grossAmount: 165000, pnlCostAmount: 165000 },
+      undefined,
+      fakeExecutor(THREE_COST_CENTRES, [], meters, readings)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(75000); // uses the actual 7,500, not the estimated 6,000
+  });
+
+  it("rejects meter_wise when a cost centre has no meter reading for the period", async () => {
+    const meters: FakeMeter[] = [
+      { id: "m1", cost_centre_id: "cc1" },
+      { id: "m2", cost_centre_id: "cc2" },
+      // cc3 has no meter at all
+    ];
+    const readings: FakeReading[] = [
+      { meter_id: "m1", reading_type: "actual", consumption: 7500, amount: 75000 },
+      { meter_id: "m2", reading_type: "actual", consumption: 5000, amount: 50000 },
+    ];
+    await expect(
+      computeLineAllocations(
+        "branch-1", "2026-08", "meter_wise", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES, [], meters, readings)
+      )
+    ).rejects.toThrow(/Meter reading data is missing.*Customer Support/);
   });
 });

@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.js";
+import { getCostCentreMeterConsumption } from "./meter.service.js";
 
 /**
  * Branch Budget foundation (PR 2): normalized cost-centre allocation for branch-planned budget
@@ -24,7 +25,8 @@ export type SharingMethod =
   | "agent_headcount"
   | "revenue_share"
   | "equal_split"
-  | "manual";
+  | "manual"
+  | "meter_wise";
 
 const SUPPORTED_SHARING_METHODS: SharingMethod[] = [
   "total_manpower",
@@ -32,6 +34,7 @@ const SUPPORTED_SHARING_METHODS: SharingMethod[] = [
   "revenue_share",
   "equal_split",
   "manual",
+  "meter_wise",
 ];
 
 export interface CostCentreOption {
@@ -276,6 +279,26 @@ export async function computeLineAllocations(
   } else if (method === "equal_split") {
     shares = costCentres.map((cc) => ({ key: cc.id, weight: 1 }));
     mode = "equal";
+  } else if (method === "meter_wise") {
+    const consumptionByCostCentre = new Map<string, { consumption: number; amount: number }>();
+    for (const cc of costCentres) {
+      const consumption = await getCostCentreMeterConsumption(cc.id, periodCode, executor);
+      if (consumption) consumptionByCostCentre.set(cc.id, consumption);
+    }
+    const missingMeterData = costCentres.filter((cc) => !consumptionByCostCentre.has(cc.id));
+    if (missingMeterData.length > 0) {
+      throw new Error(
+        `Meter reading data is missing for: ` +
+        missingMeterData.map((cc) => cc.costCentreName).join(", ") +
+        ". Record a meter reading for every active cost centre before using meter-wise sharing."
+      );
+    }
+    shares = costCentres.map((cc) => ({ key: cc.id, weight: consumptionByCostCentre.get(cc.id)!.consumption }));
+    unitByCostCentre = new Map(
+      costCentres.map((cc) => [cc.id, consumptionByCostCentre.get(cc.id)!.consumption])
+    );
+    driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
+    mode = "weighted";
   } else {
     const drivers = await getMonthlyDrivers(branchId, periodCode, executor);
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));

@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  Gauge,
   Layers3,
   Loader2,
   Plus,
@@ -36,10 +37,13 @@ import {
   type BranchBudgetLineInput,
   type BranchBudgetSummary,
   type BudgetAttributionScope,
+  type CostCentreOption,
   type MonthlyDriverInput,
   useBranchBudgetAllocations,
   useBranchBudgetDetail,
+  useBranchBudgetMeters,
   useBranchBudgets,
+  useMeterReadings,
 } from "@/hooks/useBranchBudget";
 import {
   type BudgetCoverageEntry,
@@ -85,7 +89,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "approval" | "master";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "meters" | "approval" | "master";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -595,6 +599,7 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="plan"><Layers3 className="mr-2 h-4 w-4" />Plan Builder</TabsTrigger>
               <TabsTrigger value="coverage"><ClipboardCheck className="mr-2 h-4 w-4" />Head/Sub-head Coverage</TabsTrigger>
               <TabsTrigger value="rollup"><Layers3 className="mr-2 h-4 w-4" />Cost-Centre Rollup</TabsTrigger>
+              <TabsTrigger value="meters"><Gauge className="mr-2 h-4 w-4" />Meters</TabsTrigger>
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
             </TabsList>
@@ -765,6 +770,14 @@ export default function BranchBudgetManagementWorkspace() {
               )}
             </TabsContent>
 
+            <TabsContent value="meters" className="space-y-5">
+              {!branchId ? (
+                <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><Gauge className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Select a branch first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
+              ) : (
+                <MetersPanel branchId={branchId} costCentres={activeCostCentres} period={period} canEdit={canEdit} />
+              )}
+            </TabsContent>
+
             <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />{budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
 
             <TabsContent value="master"><ExpenseMasterPanel masters={masters} canManage={Boolean(capabilities?.canManageExpenseMaster)} loading={mastersQuery.isLoading} onSaveHead={async (payload) => { await saveHead.mutateAsync(payload); toast.success("Expense Head saved"); }} onSaveSubHead={async (payload) => { await saveSubHead.mutateAsync(payload); toast.success("Expense Sub-head saved"); }} /></TabsContent>
@@ -778,6 +791,191 @@ export default function BranchBudgetManagementWorkspace() {
 function Field({ label, children, span = 1 }: { label: string; children: React.ReactNode; span?: number }) {
   const spanClass = span === 4 ? "md:col-span-2 xl:col-span-4" : span === 2 ? "xl:col-span-2" : "";
   return <div className={`space-y-2 ${spanClass}`}><Label>{label}</Label>{children}</div>;
+}
+
+const METER_READING_UNITS = ["kWh", "Unit", "KL", "Cu. M.", "Litre"];
+
+function MetersPanel({
+  branchId,
+  costCentres,
+  period,
+  canEdit,
+}: {
+  branchId: string;
+  costCentres: CostCentreOption[];
+  period: string;
+  canEdit: boolean;
+}) {
+  const { metersQuery, createMeter } = useBranchBudgetMeters(branchId);
+  const meters = metersQuery.data ?? [];
+  const [newMeter, setNewMeter] = useState({
+    costCentreId: "",
+    meterCode: "",
+    meterName: "",
+    location: "",
+    readingUnit: "kWh",
+    fixedRate: 0,
+  });
+
+  async function addMeter() {
+    try {
+      if (!newMeter.costCentreId) throw new Error("Cost centre is mandatory");
+      if (!newMeter.meterCode.trim() || !newMeter.meterName.trim()) throw new Error("Meter code and name are mandatory");
+      await createMeter.mutateAsync({
+        costCentreId: newMeter.costCentreId,
+        meterCode: newMeter.meterCode.trim(),
+        meterName: newMeter.meterName.trim(),
+        location: newMeter.location.trim() || null,
+        readingUnit: newMeter.readingUnit,
+        fixedRate: Number(newMeter.fixedRate),
+        effectiveFrom: new Date().toISOString().slice(0, 10),
+      });
+      setNewMeter({ costCentreId: "", meterCode: "", meterName: "", location: "", readingUnit: "kWh", fixedRate: 0 });
+      toast.success("Meter added");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Meter could not be added");
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {canEdit && (
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
+          <CardHeader className="border-b border-slate-100 bg-slate-50/70"><CardTitle className="text-base">Add meter</CardTitle><p className="mt-1 text-xs text-slate-500">Registers a utility meter against a cost centre. Its consumption feeds the "Meter-wise" sharing method for branch-common lines.</p></CardHeader>
+          <CardContent className="grid gap-4 p-5 md:grid-cols-3 xl:grid-cols-6">
+            <Field label="Cost centre *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={newMeter.costCentreId} onChange={(event) => setNewMeter((current) => ({ ...current, costCentreId: event.target.value }))}><option value="">Select cost centre</option>{costCentres.map((cc) => <option key={cc.id} value={cc.id}>{cc.costCentreName}</option>)}</select></Field>
+            <Field label="Meter code *"><Input value={newMeter.meterCode} onChange={(event) => setNewMeter((current) => ({ ...current, meterCode: event.target.value }))} /></Field>
+            <Field label="Meter name *"><Input value={newMeter.meterName} onChange={(event) => setNewMeter((current) => ({ ...current, meterName: event.target.value }))} /></Field>
+            <Field label="Location"><Input value={newMeter.location} onChange={(event) => setNewMeter((current) => ({ ...current, location: event.target.value }))} /></Field>
+            <Field label="Reading unit"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={newMeter.readingUnit} onChange={(event) => setNewMeter((current) => ({ ...current, readingUnit: event.target.value }))}>{METER_READING_UNITS.map((unit) => <option key={unit}>{unit}</option>)}</select></Field>
+            <Field label="Fixed rate / unit *"><Input type="number" min="0" step="0.01" value={newMeter.fixedRate} onChange={(event) => setNewMeter((current) => ({ ...current, fixedRate: Number(event.target.value) }))} /></Field>
+            <div className="md:col-span-3 xl:col-span-6"><Button size="sm" disabled={createMeter.isPending} onClick={() => void addMeter()}>{createMeter.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Add meter</Button></div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
+        <CardHeader className="border-b border-slate-100 bg-slate-50/70"><CardTitle className="text-base">Meters and readings — {period}</CardTitle><p className="mt-1 text-xs text-slate-500">Enter opening/closing readings per meter for this period. An Estimated reading requires a method and reason; a later Actual reading is reconciled against it automatically, not overwritten.</p></CardHeader>
+        <CardContent className="space-y-3 p-5">
+          {metersQuery.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !meters.length ? (
+            <p className="text-sm text-slate-500">No meters registered for this branch yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {meters.map((meter) => (
+                <MeterReadingRow key={meter.id} meter={meter} costCentres={costCentres} period={period} canEdit={canEdit} />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function MeterReadingRow({
+  meter,
+  costCentres,
+  period,
+  canEdit,
+}: {
+  meter: { id: string; meterCode: string; meterName: string; costCentreId: string; readingUnit: string; fixedRate: number };
+  costCentres: CostCentreOption[];
+  period: string;
+  canEdit: boolean;
+}) {
+  // branchId omitted deliberately — this row only needs the saveReading mutation, and passing no
+  // branchId keeps this component from re-querying the whole branch's meter list per row.
+  const { saveReading } = useBranchBudgetMeters(undefined);
+  const readingsQuery = useMeterReadings(meter.id, period);
+  const readings = readingsQuery.data ?? [];
+  const actual = readings.find((row) => row.readingType === "actual");
+  const estimated = readings.find((row) => row.readingType === "estimated");
+  const costCentreName = costCentres.find((cc) => cc.id === meter.costCentreId)?.costCentreName ?? meter.costCentreId;
+
+  const [draft, setDraft] = useState({
+    readingType: "actual" as "actual" | "estimated",
+    openingReading: 0,
+    closingReading: 0,
+    estimationMethod: "",
+    estimationReason: "",
+  });
+  const [editing, setEditing] = useState(false);
+
+  function startEditing(existing?: typeof actual) {
+    setDraft({
+      readingType: existing?.readingType ?? "actual",
+      openingReading: existing?.openingReading ?? 0,
+      closingReading: existing?.closingReading ?? 0,
+      estimationMethod: existing?.estimationMethod ?? "",
+      estimationReason: existing?.estimationReason ?? "",
+    });
+    setEditing(true);
+  }
+
+  async function submit() {
+    try {
+      const result = await saveReading.mutateAsync({
+        meterId: meter.id,
+        periodCode: period,
+        openingReading: Number(draft.openingReading),
+        closingReading: Number(draft.closingReading),
+        readingType: draft.readingType,
+        estimationMethod: draft.readingType === "estimated" ? draft.estimationMethod : null,
+        estimationReason: draft.readingType === "estimated" ? draft.estimationReason : null,
+      });
+      setEditing(false);
+      toast.success(result.reconciliation ? "Reading saved — reconciled against the earlier estimate" : "Reading saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Reading could not be saved");
+    }
+  }
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 px-4 py-3">
+        <div>
+          <p className="text-sm font-bold">{meter.meterName} <span className="font-normal text-slate-500">({meter.meterCode})</span></p>
+          <p className="text-[10px] text-slate-500">{costCentreName} · {meter.readingUnit} · Rate {money(meter.fixedRate)}/unit</p>
+        </div>
+        {canEdit && !editing && <Button size="sm" variant="outline" onClick={() => startEditing(actual ?? estimated)}>Enter reading</Button>}
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-2">
+        <div className="rounded-xl border border-slate-100 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Actual</p>
+          {actual ? (
+            <p className="mt-1 text-sm text-slate-700">{actual.openingReading} → {actual.closingReading} = {actual.consumption} {meter.readingUnit} · {money(actual.amount)}</p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-400">Not recorded yet</p>
+          )}
+        </div>
+        <div className="rounded-xl border border-slate-100 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Estimated</p>
+          {estimated ? (
+            <p className="mt-1 text-sm text-slate-700">{estimated.openingReading} → {estimated.closingReading} = {estimated.consumption} {meter.readingUnit} · {money(estimated.amount)} {estimated.reconciliationStatus === "reconciled" && <Badge variant="outline" className="ml-1 text-[10px]">Reconciled</Badge>}</p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-400">Not recorded yet</p>
+          )}
+        </div>
+      </div>
+      {editing && (
+        <div className="grid gap-3 border-t border-slate-100 p-4 md:grid-cols-2 xl:grid-cols-5">
+          <Field label="Reading type *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={draft.readingType} onChange={(event) => setDraft((current) => ({ ...current, readingType: event.target.value as "actual" | "estimated" }))}><option value="actual">Actual</option><option value="estimated">Estimated</option></select></Field>
+          <Field label="Opening reading *"><Input type="number" min="0" step="0.0001" value={draft.openingReading} onChange={(event) => setDraft((current) => ({ ...current, openingReading: Number(event.target.value) }))} /></Field>
+          <Field label="Closing reading *"><Input type="number" min="0" step="0.0001" value={draft.closingReading} onChange={(event) => setDraft((current) => ({ ...current, closingReading: Number(event.target.value) }))} /></Field>
+          {draft.readingType === "estimated" && (
+            <>
+              <Field label="Estimation method *"><Input value={draft.estimationMethod} onChange={(event) => setDraft((current) => ({ ...current, estimationMethod: event.target.value }))} placeholder="e.g. Prior month average" /></Field>
+              <Field label="Estimation reason *"><Input value={draft.estimationReason} onChange={(event) => setDraft((current) => ({ ...current, estimationReason: event.target.value }))} placeholder="e.g. Meter faulty" /></Field>
+            </>
+          )}
+          <div className="flex items-end gap-2">
+            <Button size="sm" disabled={saveReading.isPending} onClick={() => void submit()}>{saveReading.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ExpenseMasterPanel({

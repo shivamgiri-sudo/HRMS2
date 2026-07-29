@@ -15,6 +15,7 @@ import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService } from "./branch-budget.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
+import { meterService } from "./meter.service.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -226,6 +227,87 @@ router.put(
         revenueRatePerHead: Number(d.revenueRatePerHead ?? 0),
         remarks: d.remarks ? String(d.remarks) : null,
       })),
+      user.id
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/branch-budget/meters",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const data = await meterService.listMeters(branchId);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/branch-budget/meters",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.body?.branchId,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const data = await meterService.createMeter(
+      {
+        branchId,
+        costCentreId: String(req.body?.costCentreId ?? ""),
+        meterCode: String(req.body?.meterCode ?? ""),
+        meterName: String(req.body?.meterName ?? ""),
+        location: req.body?.location ? String(req.body.location) : null,
+        readingUnit: String(req.body?.readingUnit ?? "Unit"),
+        fixedRate: Number(req.body?.fixedRate ?? 0),
+        effectiveFrom: String(req.body?.effectiveFrom ?? new Date().toISOString().slice(0, 10)),
+      },
+      user.id
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/branch-budget/meters/:id/reading",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const periodCode = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    const data = await meterService.listReadings(String(req.params.id), periodCode);
+    res.json({ success: true, data });
+  })
+);
+
+router.put(
+  "/pnl/branch-budget/meters/:id/reading",
+  requireWriteAccess,
+  requireRole(...BUDGET_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const periodCode = String(req.body?.periodCode ?? "");
+    const data = await meterService.saveReading(
+      String(req.params.id),
+      periodCode,
+      {
+        openingReading: Number(req.body?.openingReading ?? 0),
+        closingReading: Number(req.body?.closingReading ?? 0),
+        readingType: req.body?.readingType === "estimated" ? "estimated" : "actual",
+        estimationMethod: req.body?.estimationMethod ? String(req.body.estimationMethod) : null,
+        estimationReason: req.body?.estimationReason ? String(req.body.estimationReason) : null,
+      },
       user.id
     );
     res.json({ success: true, data });
