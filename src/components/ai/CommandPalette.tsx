@@ -145,6 +145,7 @@ export function CommandPalette({
       // path paints progressively.
       let streamed = '';
       let settled: AIResponse | null = null;
+      if (voice.autoSpeak) voice.beginSpeechStream();
 
       await hrmsApi.postStream('/api/ai/ask/stream', {
         question,
@@ -152,6 +153,7 @@ export function CommandPalette({
       }, {
         onChunk: (text) => {
           streamed += text;
+          if (voice.autoSpeak) voice.pushSpeech(text);
           setMessages((previous) => {
             const partial: ChatMessage = { id: assistantId, role: 'assistant', content: streamed };
             return previous.some((message) => message.id === assistantId)
@@ -184,7 +186,12 @@ export function CommandPalette({
           ? previous.map((message) => (message.id === assistantId ? assistantMessage : message))
           : [...previous, assistantMessage]
       ));
-      if (voice.autoSpeak) voice.speak(result.answer);
+      if (voice.autoSpeak) {
+        // Sentences already spoken are not repeated; if the server replaced the
+        // streamed answer, speak the settled one instead of the discarded text.
+        if (result.answer.startsWith(streamed.trim().slice(0, 40)) && streamed.trim()) voice.endSpeechStream();
+        else voice.speak(result.answer);
+      }
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : 'Mira could not answer right now.';
       setError(message);
@@ -196,7 +203,7 @@ export function CommandPalette({
     } finally {
       setLoading(false);
     }
-  }, [contextType, input, loading, voice.autoSpeak, voice.speak]);
+  }, [contextType, input, loading, voice.autoSpeak, voice.speak, voice.beginSpeechStream, voice.pushSpeech, voice.endSpeechStream]);
 
   const startVoice = () => {
     if (voice.listening) {

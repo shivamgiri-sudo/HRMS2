@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { cleanForSpeech, takeSpeakableSentences } from '@/lib/speechChunks';
 
 interface SpeechRecognitionAlternativeLike { transcript: string }
 interface SpeechRecognitionResultLike { isFinal: boolean; 0: SpeechRecognitionAlternativeLike }
@@ -37,16 +38,6 @@ const PREFERRED_INDIAN_VOICE_NAMES = [
 ] as const;
 const PREFERRED_INDIAN_VOICE_NAMES_LOWER = PREFERRED_INDIAN_VOICE_NAMES.map((name) => name.toLowerCase());
 
-function cleanForSpeech(text: string): string {
-  return text
-    .replace(/https?:\/\/\S+/g, '')
-    .replace(/[•*_#`>|]/g, ' ')
-    .replace(/₹/g, ' rupees ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 3000);
-}
-
 function voiceScore(voice: SpeechSynthesisVoice, language: MiraVoiceLanguage): number {
   const name = voice.name.toLowerCase();
   const lang = voice.lang.toLowerCase();
@@ -63,6 +54,8 @@ function voiceScore(voice: SpeechSynthesisVoice, language: MiraVoiceLanguage): n
 
 export function useMiraVoice() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  /** Text received but not yet closing a sentence. */
+  const speechBufferRef = useRef('');
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -119,6 +112,13 @@ export function useMiraVoice() {
     if (!recognitionSupported || listening) return;
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) return;
+    // Barge-in: talking over Mira stops her rather than competing with her, and
+    // it keeps her voice out of the microphone she is about to open.
+    if (speechSupported) {
+      speechBufferRef.current = '';
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+    }
     setVoiceError(null);
     const recognition = new Recognition();
     recognition.lang = language;
@@ -153,18 +153,66 @@ export function useMiraVoice() {
     recognitionRef.current = recognition;
     setListening(true);
     try { recognition.start(); } catch { setListening(false); setVoiceError('Voice input could not be started.'); }
-  }, [language, listening, recognitionSupported]);
+  }, [language, listening, recognitionSupported, speechSupported]);
 
   const stopSpeaking = useCallback(() => {
     if (!speechSupported) return;
+    speechBufferRef.current = '';
     window.speechSynthesis.cancel();
     setSpeaking(false);
   }, [speechSupported]);
 
+  /** Queue one utterance without disturbing anything already queued. */
+  const enqueueUtterance = useCallback((text: string) => {
+    const spoken = cleanForSpeech(text);
+    if (!spoken) return;
+    const utterance = new SpeechSynthesisUtterance(spoken);
+    utterance.lang = language;
+    utterance.rate = language === 'hi-IN' ? 0.92 : 0.96;
+    utterance.pitch = 1;
+    if (selectedVoice) utterance.voice = selectedVoice;
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => {
+      // Only settle when nothing is left queued, or each sentence would flicker
+      // the speaking state off and on again.
+      if (!window.speechSynthesis.pending && !window.speechSynthesis.speaking) setSpeaking(false);
+    };
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  }, [language, selectedVoice]);
+
+  /** Start a fresh spoken answer, discarding whatever was mid-flight. */
+  const beginSpeechStream = useCallback(() => {
+    if (!speechSupported) return;
+    speechBufferRef.current = '';
+    window.speechSynthesis.cancel();
+  }, [speechSupported]);
+
+  /**
+   * Feed streamed text in. Complete sentences are spoken as they close, so the
+   * voice starts a sentence after the first token rather than after the last.
+   */
+  const pushSpeech = useCallback((text: string) => {
+    if (!speechSupported || !text) return;
+    speechBufferRef.current += text;
+    const { sentences, rest } = takeSpeakableSentences(speechBufferRef.current);
+    speechBufferRef.current = rest;
+    sentences.forEach(enqueueUtterance);
+  }, [enqueueUtterance, speechSupported]);
+
+  /** Speak whatever is left once the answer is complete. */
+  const endSpeechStream = useCallback(() => {
+    if (!speechSupported) return;
+    const tail = speechBufferRef.current.trim();
+    speechBufferRef.current = '';
+    if (tail) enqueueUtterance(tail);
+  }, [enqueueUtterance, speechSupported]);
+
   const speak = useCallback((text: string) => {
     if (!speechSupported || !text.trim()) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(cleanForSpeech(text));
+    // One-shot path still bounds length; the streaming path is bounded per sentence.
+    const utterance = new SpeechSynthesisUtterance(cleanForSpeech(text).slice(0, 3000));
     utterance.lang = language;
     utterance.rate = language === 'hi-IN' ? 0.92 : 0.96;
     utterance.pitch = 1;
@@ -184,5 +232,6 @@ export function useMiraVoice() {
     recognitionSupported, speechSupported, listening, speaking, interimTranscript, voiceError,
     autoSpeak, setAutoSpeak, language, setLanguage, voices: indianVoices, selectedVoiceURI,
     selectedVoiceName: selectedVoice?.name || '', setSelectedVoiceURI, startListening, stopListening, speak, stopSpeaking,
+    beginSpeechStream, pushSpeech, endSpeechStream,
   };
 }

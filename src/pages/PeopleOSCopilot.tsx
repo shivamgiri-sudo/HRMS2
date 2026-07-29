@@ -132,10 +132,12 @@ export default function PeopleOSCopilot() {
       // only the provider path actually paints progressively.
       let streamed = '';
       let settled: AIResponse | null = null;
+      if (voice.autoSpeak) voice.beginSpeechStream();
 
       await hrmsApi.postStream('/api/ai/ask/stream', { question, context_type: 'generic' }, {
         onChunk: (text) => {
           streamed += text;
+          if (voice.autoSpeak) voice.pushSpeech(text);
           setMessages((previous) => {
             const existing = previous.find((message) => message.id === assistantId);
             if (!existing) {
@@ -177,7 +179,12 @@ export default function PeopleOSCopilot() {
           ? previous.map((message) => (message.id === assistantId ? settledMessage : message))
           : [...previous, settledMessage];
       });
-      if (voice.autoSpeak) voice.speak(result.answer);
+      if (voice.autoSpeak) {
+        // Sentences already spoken are not repeated; if the server replaced the
+        // streamed answer, speak the settled one instead of the discarded text.
+        if (result.answer.startsWith(streamed.trim().slice(0, 40)) && streamed.trim()) voice.endSpeechStream();
+        else voice.speak(result.answer);
+      }
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : 'Mira could not answer right now.';
       setError(message);
@@ -191,7 +198,7 @@ export default function PeopleOSCopilot() {
       setLoading(false);
       window.setTimeout(() => inputRef.current?.focus(), 80);
     }
-  }, [input, loading, voice.autoSpeak, voice.speak]);
+  }, [input, loading, voice.autoSpeak, voice.speak, voice.beginSpeechStream, voice.pushSpeech, voice.endSpeechStream]);
 
   const startVoice = () => {
     if (voice.listening) {
