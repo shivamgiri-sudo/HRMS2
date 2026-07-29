@@ -241,6 +241,21 @@ function StepHeader({ n, label, complete, open, toggle }: { n: number; label: st
   );
 }
 
+function SectionCard({ n, label, complete, children }: { n: number; label: string; complete: boolean; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+      <div className="flex items-center gap-3 border-b bg-slate-50/70 px-4 py-3">
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${complete ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+          {n}
+        </span>
+        <span className="flex-1 text-sm font-semibold text-slate-800">{label}</span>
+        {complete ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />}
+      </div>
+      <div className="px-4 py-3">{children}</div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function NativeHROnboardingRequests() {
@@ -1232,221 +1247,188 @@ export default function NativeHROnboardingRequests() {
               </div>
             )}
 
-            {/* B — 10-step review panel */}
-            <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
-              <div className="border-b px-5 py-4 flex items-center justify-between">
-                <h3 className="font-bold text-slate-900">Onboarding Profile Review</h3>
-                {detailLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+            {/* B — Profile review: completeness strip + always-visible section grid */}
+            <div className="space-y-4">
+              {/* Completeness strip */}
+              <div className="rounded-xl border bg-white px-4 py-3 shadow-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                    Onboarding Profile Review
+                    {detailLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+                  </h3>
+                  <span className="text-xs font-semibold text-slate-500">
+                    {stepComplete.filter(Boolean).length}/{stepComplete.length} sections complete
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {STEP_LABELS.map((label, i) => (
+                    <span
+                      key={i}
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${stepComplete[i] ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}
+                    >
+                      {stepComplete[i] ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                      {label}
+                    </span>
+                  ))}
+                </div>
               </div>
 
-              {detailError && (
-                <div className="p-4">
-                  <ErrorBanner message={detailError} onRetry={() => void openDetail(selected)} />
-                </div>
-              )}
+              {detailError && <ErrorBanner message={detailError} onRetry={() => void openDetail(selected)} />}
 
               {!detailLoading && !detailError && (
-                <div className="divide-y divide-slate-100">
-                  {/* Step 1 — Welcome */}
-                  <div>
-                    <StepHeader n={1} label={STEP_LABELS[0]} complete={stepComplete[0]} open={openStep === 0} toggle={() => setOpenStep(s => s === 0 ? null : 0)} />
-                    {openStep === 0 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="DPDP Consent" value={dp.dpdp_consent ? 'Yes' : 'No'} />
-                        <InfoRow label="OTP Verified" value={dp.otp_verified ? 'Yes' : 'No'} />
-                        <InfoRow label="BGV Consent" value={dp.bgv_consent ? 'Yes' : 'No'} />
-                        <InfoRow label="OTP Mobile" value={dp.otp_mobile} />
-                        <InfoRow label="OTP Verified At" value={dp.otp_verified_at} />
-                      </div>
-                    )}
-                  </div>
+                <div className="grid gap-4 md:grid-cols-2">
 
-                  {/* Step 2 — Personal */}
-                  <div>
-                    <StepHeader n={2} label={STEP_LABELS[1]} complete={stepComplete[1]} open={openStep === 1} toggle={() => setOpenStep(s => s === 1 ? null : 1)} />
-                    {openStep === 1 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="Full Name (Aadhaar)" value={dp.full_name_aadhaar || dp.employee_name} />
-                        <InfoRow label="Title" value={dp.title} />
-                        <InfoRow label="Date of Birth" value={dp.date_of_birth} />
-                        <InfoRow label="Gender" value={dp.gender} />
-                        <InfoRow label="Marital Status" value={dp.marital_status} />
-                        <InfoRow label="Blood Group" value={dp.blood_group} />
-                        <InfoRow label="Mother Name" value={dp.mother_name} />
-                        <InfoRow label="Father / Husband" value={dp.father_husband_name} />
-                        <InfoRow label="PAN" value={maskId(dp.pan_number_masked || dp.pan_number)} />
-                        <InfoRow label="Aadhaar" value={maskId(dp.aadhaar_number_masked || dp.aadhar_number)} />
-                        <InfoRow label="Nationality" value={dp.nationality} />
-                        <InfoRow label="Religion" value={dp.religion} />
-                        <InfoRow label="Category" value={dp.category} />
-                        <InfoRow label="Nominee 1" value={dp.nominee_name ? `${dp.nominee_name} (${dp.nominee_relation})` : undefined} />
-                        <InfoRow label="Nominee 2" value={dp.nominee2_name ? `${dp.nominee2_name} (${dp.nominee2_relation})` : undefined} />
-                        <InfoRow label="Emergency Contact" value={dp.emergency_contact_name ? `${dp.emergency_contact_name} · ${dp.emergency_contact_mobile}` : undefined} />
-                      </div>
-                    )}
-                  </div>
+                  {/* 1 — Welcome & Consent */}
+                  <SectionCard n={1} label={STEP_LABELS[0]} complete={stepComplete[0]}>
+                    <InfoRow label="DPDP Consent" value={dp.dpdp_consent ? 'Yes' : 'No'} />
+                    <InfoRow label="OTP Verified" value={dp.otp_verified ? 'Yes' : 'No'} />
+                    <InfoRow label="BGV Consent" value={dp.bgv_consent ? 'Yes' : 'No'} />
+                    <InfoRow label="OTP Mobile" value={dp.otp_mobile} />
+                    <InfoRow label="OTP Verified At" value={dp.otp_verified_at} />
+                  </SectionCard>
 
-                  {/* Step 3 — Address & KYC */}
-                  <div>
-                    <StepHeader n={3} label={STEP_LABELS[2]} complete={stepComplete[2]} open={openStep === 2} toggle={() => setOpenStep(s => s === 2 ? null : 2)} />
-                    {openStep === 2 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <p className="mt-2 mb-1 text-xs font-bold uppercase text-slate-400">Permanent Address</p>
-                        <InfoRow label="Address" value={dp.permanent_address} />
-                        <InfoRow label="City" value={dp.permanent_city} />
-                        <InfoRow label="State" value={dp.permanent_state} />
-                        <InfoRow label="Pincode" value={dp.permanent_pincode} />
-                        <p className="mt-3 mb-1 text-xs font-bold uppercase text-slate-400">Present Address</p>
-                        <InfoRow label="Address" value={dp.present_address} />
-                        <InfoRow label="City" value={dp.present_city} />
-                        <InfoRow label="State" value={dp.present_state} />
-                        <InfoRow label="Pincode" value={dp.present_pincode} />
-                        <p className="mt-3 mb-1 text-xs font-bold uppercase text-slate-400">ID Documents</p>
-                        <InfoRow label="Passport" value={dp.passport_no} />
-                        <InfoRow label="Driving License" value={dp.driving_license_no} />
-                        <InfoRow label="Address Proof Type" value={dp.address_proof_type} />
-                      </div>
-                    )}
-                  </div>
+                  {/* 2 — Personal Details */}
+                  <SectionCard n={2} label={STEP_LABELS[1]} complete={stepComplete[1]}>
+                    <InfoRow label="Full Name (Aadhaar)" value={dp.full_name_aadhaar || dp.employee_name} />
+                    <InfoRow label="Title" value={dp.title} />
+                    <InfoRow label="Date of Birth" value={dp.date_of_birth} />
+                    <InfoRow label="Gender" value={dp.gender} />
+                    <InfoRow label="Marital Status" value={dp.marital_status} />
+                    <InfoRow label="Blood Group" value={dp.blood_group} />
+                    <InfoRow label="Mother Name" value={dp.mother_name} />
+                    <InfoRow label="Father / Husband" value={dp.father_husband_name} />
+                    <InfoRow label="PAN" value={maskId(dp.pan_number_masked || dp.pan_number)} />
+                    <InfoRow label="Aadhaar" value={maskId(dp.aadhaar_number_masked || dp.aadhar_number)} />
+                    <InfoRow label="Nationality" value={dp.nationality} />
+                    <InfoRow label="Religion" value={dp.religion} />
+                    <InfoRow label="Category" value={dp.category} />
+                    <InfoRow label="Nominee 1" value={dp.nominee_name ? `${dp.nominee_name} (${dp.nominee_relation})` : undefined} />
+                    <InfoRow label="Nominee 2" value={dp.nominee2_name ? `${dp.nominee2_name} (${dp.nominee2_relation})` : undefined} />
+                    <InfoRow label="Emergency Contact" value={dp.emergency_contact_name ? `${dp.emergency_contact_name} · ${dp.emergency_contact_mobile}` : undefined} />
+                  </SectionCard>
 
-                  {/* Step 4 — Documents */}
-                  <div>
-                    <StepHeader n={4} label={STEP_LABELS[3]} complete={stepComplete[3]} open={openStep === 3} toggle={() => setOpenStep(s => s === 3 ? null : 3)} />
-                    {openStep === 3 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        {docs.length === 0 ? (
-                          <p className="py-3 text-sm text-slate-400">No documents uploaded.</p>
-                        ) : docs.map((d) => (
-                          <div key={d.id} className="flex items-center justify-between gap-3 border-b border-slate-100 py-2 last:border-0">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-slate-700">{d.document_type || d.doc_type || d.doc_name || 'Document'}</p>
-                              <p className="text-xs text-slate-400">{d.file_original_name} {d.file_size_bytes ? `· ${Math.round(d.file_size_bytes / 1024)} KB` : ''}</p>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void openDocumentPreview({
-                                id: d.id,
-                                title: d.document_type || d.doc_type || d.doc_name || d.file_original_name || 'Document',
-                                fileName: d.file_original_name || 'document',
-                                mimeType: d.mime_type,
-                                downloadAllowed: canDownloadDocs(role),
-                              })}
-                              className="min-h-[36px] gap-1 shrink-0"
-                            >
-                              <Eye className="h-3.5 w-3.5" /> Preview
-                            </Button>
-                          </div>
+                  {/* 3 — Address & KYC */}
+                  <SectionCard n={3} label={STEP_LABELS[2]} complete={stepComplete[2]}>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Permanent Address</p>
+                    <InfoRow label="Address" value={dp.permanent_address} />
+                    <InfoRow label="City" value={dp.permanent_city} />
+                    <InfoRow label="State" value={dp.permanent_state} />
+                    <InfoRow label="Pincode" value={dp.permanent_pincode} />
+                    <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Present Address</p>
+                    <InfoRow label="Address" value={dp.present_address} />
+                    <InfoRow label="City" value={dp.present_city} />
+                    <InfoRow label="State" value={dp.present_state} />
+                    <InfoRow label="Pincode" value={dp.present_pincode} />
+                    <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">ID Documents</p>
+                    <InfoRow label="Passport" value={dp.passport_no} />
+                    <InfoRow label="Driving License" value={dp.driving_license_no} />
+                    <InfoRow label="Address Proof Type" value={dp.address_proof_type} />
+                  </SectionCard>
+
+                  {/* 4 — Documents */}
+                  <SectionCard n={4} label={STEP_LABELS[3]} complete={stepComplete[3]}>
+                    {docs.length === 0 ? (
+                      <p className="py-2 text-sm text-slate-400">No documents uploaded.</p>
+                    ) : docs.map((d) => (
+                      <div key={d.id} className="flex items-center justify-between gap-3 border-b border-slate-100 py-2 last:border-0">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-700">{d.document_type || d.doc_type || d.doc_name || 'Document'}</p>
+                          <p className="text-xs text-slate-400">{d.file_original_name} {d.file_size_bytes ? `· ${Math.round(d.file_size_bytes / 1024)} KB` : ''}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void openDocumentPreview({
+                            id: d.id,
+                            title: d.document_type || d.doc_type || d.doc_name || d.file_original_name || 'Document',
+                            fileName: d.file_original_name || 'document',
+                            mimeType: d.mime_type,
+                            downloadAllowed: canDownloadDocs(role),
+                          })}
+                          className="min-h-[36px] gap-1 shrink-0"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Preview
+                        </Button>
+                      </div>
+                    ))}
+                  </SectionCard>
+
+                  {/* 5 — BGV & Verification */}
+                  <SectionCard n={5} label={STEP_LABELS[4]} complete={stepComplete[4]}>
+                    <InfoRow label="BGV Consent" value={dp.bgv_consent ? 'Given' : 'Not given'} />
+                    <InfoRow label="DigiLocker Status" value={digi.status} />
+                    <InfoRow label="DigiLocker Provider" value={digi.provider} />
+                    <InfoRow label="eSign Status" value={esign.status} />
+                    <InfoRow label="eSign Provider" value={esign.provider} />
+                    {bgv && (
+                      <>
+                        <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">BGV Result</p>
+                        <InfoRow label="Overall Status" value={bgv.overall_status} />
+                        <InfoRow label="Score" value={bgv.score != null ? String(bgv.score) : undefined} />
+                        {(bgv.checks ?? []).map((c, idx) => (
+                          <InfoRow key={idx} label={c.check_type} value={`${c.status}${c.result_summary ? ' · ' + c.result_summary : ''}`} />
                         ))}
-                      </div>
+                      </>
                     )}
-                  </div>
+                  </SectionCard>
 
-                  {/* Step 5 — BGV */}
-                  <div>
-                    <StepHeader n={5} label={STEP_LABELS[4]} complete={stepComplete[4]} open={openStep === 4} toggle={() => setOpenStep(s => s === 4 ? null : 4)} />
-                    {openStep === 4 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="BGV Consent" value={dp.bgv_consent ? 'Given' : 'Not given'} />
-                        <InfoRow label="DigiLocker Status" value={digi.status} />
-                        <InfoRow label="DigiLocker Provider" value={digi.provider} />
-                        <InfoRow label="eSign Status" value={esign.status} />
-                        <InfoRow label="eSign Provider" value={esign.provider} />
-                        {bgv && (
-                          <>
-                            <p className="mt-3 mb-1 text-xs font-bold uppercase text-slate-400">BGV Result</p>
-                            <InfoRow label="Overall Status" value={bgv.overall_status} />
-                            <InfoRow label="Score" value={bgv.score != null ? String(bgv.score) : undefined} />
-                            {(bgv.checks ?? []).map((c, idx) => (
-                              <InfoRow key={idx} label={c.check_type} value={`${c.status}${c.result_summary ? ' · ' + c.result_summary : ''}`} />
-                            ))}
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  {/* 6 — Bank Details */}
+                  <SectionCard n={6} label={STEP_LABELS[5]} complete={stepComplete[5]}>
+                    <InfoRow label="Bank Name" value={db.bank_name} />
+                    <InfoRow label="Branch" value={db.branch_name} />
+                    <InfoRow label="Account Holder" value={db.account_holder_name} />
+                    <InfoRow label="Account No." value={maskId(db.account_no_masked || db.account_number)} />
+                    <InfoRow label="IFSC" value={db.ifsc_code} />
+                    <InfoRow label="Account Type" value={db.account_type} />
+                    <InfoRow label="Verification Status" value={db.verification_status} />
+                    <InfoRow label="Name Match" value={db.name_validation_status} />
+                  </SectionCard>
 
-                  {/* Step 6 — Bank */}
-                  <div>
-                    <StepHeader n={6} label={STEP_LABELS[5]} complete={stepComplete[5]} open={openStep === 5} toggle={() => setOpenStep(s => s === 5 ? null : 5)} />
-                    {openStep === 5 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="Bank Name" value={db.bank_name} />
-                        <InfoRow label="Branch" value={db.branch_name} />
-                        <InfoRow label="Account Holder" value={db.account_holder_name} />
-                        <InfoRow label="Account No." value={maskId(db.account_no_masked || db.account_number)} />
-                        <InfoRow label="IFSC" value={db.ifsc_code} />
-                        <InfoRow label="Account Type" value={db.account_type} />
-                        <InfoRow label="Verification Status" value={db.verification_status} />
-                        <InfoRow label="Name Match" value={db.name_validation_status} />
+                  {/* 7 — Education */}
+                  <SectionCard n={7} label={STEP_LABELS[6]} complete={stepComplete[6]}>
+                    {quals.length === 0 ? (
+                      <p className="py-2 text-sm text-slate-400">No education records.</p>
+                    ) : quals.map((q, i) => (
+                      <div key={q.id || i} className={i > 0 ? 'mt-3 pt-3 border-t border-slate-100' : ''}>
+                        <InfoRow label="Qualification" value={q.qualification} />
+                        <InfoRow label="Specialization" value={q.specialization_course_name} />
+                        <InfoRow label="Year" value={q.passed_out_year} />
+                        <InfoRow label="Percentage" value={q.passed_out_percentage ? `${q.passed_out_percentage}%` : undefined} />
+                        <InfoRow label="State" value={q.passed_out_state} />
+                        <InfoRow label="City" value={q.passed_out_city} />
                       </div>
-                    )}
-                  </div>
+                    ))}
+                  </SectionCard>
 
-                  {/* Step 7 — Education */}
-                  <div>
-                    <StepHeader n={7} label={STEP_LABELS[6]} complete={stepComplete[6]} open={openStep === 6} toggle={() => setOpenStep(s => s === 6 ? null : 6)} />
-                    {openStep === 6 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        {quals.length === 0 ? (
-                          <p className="py-3 text-sm text-slate-400">No education records.</p>
-                        ) : quals.map((q, i) => (
-                          <div key={q.id || i} className="mb-3 rounded-lg border bg-white p-3">
-                            <InfoRow label="Qualification" value={q.qualification} />
-                            <InfoRow label="Specialization" value={q.specialization_course_name} />
-                            <InfoRow label="Year" value={q.passed_out_year} />
-                            <InfoRow label="Percentage" value={q.passed_out_percentage ? `${q.passed_out_percentage}%` : undefined} />
-                            <InfoRow label="State" value={q.passed_out_state} />
-                            <InfoRow label="City" value={q.passed_out_city} />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  {/* 8 — Experience */}
+                  <SectionCard n={8} label={STEP_LABELS[7]} complete={stepComplete[7]}>
+                    <InfoRow label="Experience Type" value={exp.working_experience} />
+                    <InfoRow label="Years" value={exp.experience_year} />
+                    <InfoRow label="Employer" value={exp.employer_name} />
+                    <InfoRow label="Last Designation" value={exp.last_designation} />
+                    <InfoRow label="Last CTC" value={exp.last_ctc ? fmt(exp.last_ctc) : undefined} />
+                    <InfoRow label="Doc Type" value={exp.experience_doc_type} />
+                  </SectionCard>
 
-                  {/* Step 8 — Experience */}
-                  <div>
-                    <StepHeader n={8} label={STEP_LABELS[7]} complete={stepComplete[7]} open={openStep === 7} toggle={() => setOpenStep(s => s === 7 ? null : 7)} />
-                    {openStep === 7 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="Experience Type" value={exp.working_experience} />
-                        <InfoRow label="Years" value={exp.experience_year} />
-                        <InfoRow label="Employer" value={exp.employer_name} />
-                        <InfoRow label="Last Designation" value={exp.last_designation} />
-                        <InfoRow label="Last CTC" value={exp.last_ctc ? fmt(exp.last_ctc) : undefined} />
-                        <InfoRow label="Doc Type" value={exp.experience_doc_type} />
-                      </div>
-                    )}
-                  </div>
+                  {/* 9 — Family & Language */}
+                  <SectionCard n={9} label={STEP_LABELS[8]} complete={stepComplete[8]}>
+                    <InfoRow label="Annual Income" value={fam.annual_income != null ? fmt(fam.annual_income) : undefined} />
+                    <InfoRow label="Dependents" value={fam.count_of_dependents != null ? String(fam.count_of_dependents) : undefined} />
+                  </SectionCard>
 
-                  {/* Step 9 — Family */}
-                  <div>
-                    <StepHeader n={9} label={STEP_LABELS[8]} complete={stepComplete[8]} open={openStep === 8} toggle={() => setOpenStep(s => s === 8 ? null : 8)} />
-                    {openStep === 8 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="Annual Income" value={fam.annual_income != null ? fmt(fam.annual_income) : undefined} />
-                        <InfoRow label="Dependents" value={fam.count_of_dependents != null ? String(fam.count_of_dependents) : undefined} />
-                      </div>
-                    )}
-                  </div>
+                  {/* 10 — Statutory Declaration */}
+                  <SectionCard n={10} label={STEP_LABELS[9]} complete={stepComplete[9]}>
+                    <InfoRow label="EPS Member" value={dp.eps_member != null ? (dp.eps_member ? 'Yes' : 'No') : undefined} />
+                    <InfoRow label="Previous PF Member" value={dp.previous_pf_member != null ? (dp.previous_pf_member ? 'Yes' : 'No') : undefined} />
+                    <InfoRow label="International Worker" value={dp.international_worker != null ? (dp.international_worker ? 'Yes' : 'No') : undefined} />
+                    <InfoRow label="UAN Number" value={dp.uan_number} />
+                    <InfoRow label="EPF Number" value={dp.epf_number} />
+                    <InfoRow label="ESIC Number" value={dp.esic_number} />
+                    <InfoRow label="Declaration Accepted" value={dp.statutory_declaration_accepted ? 'Yes' : 'No'} />
+                    <InfoRow label="Declaration At" value={dp.statutory_declaration_at} />
+                  </SectionCard>
 
-                  {/* Step 10 — Statutory */}
-                  <div>
-                    <StepHeader n={10} label={STEP_LABELS[9]} complete={stepComplete[9]} open={openStep === 9} toggle={() => setOpenStep(s => s === 9 ? null : 9)} />
-                    {openStep === 9 && (
-                      <div className="px-5 pb-4 pt-1 bg-slate-50/50">
-                        <InfoRow label="EPS Member" value={dp.eps_member != null ? (dp.eps_member ? 'Yes' : 'No') : undefined} />
-                        <InfoRow label="Previous PF Member" value={dp.previous_pf_member != null ? (dp.previous_pf_member ? 'Yes' : 'No') : undefined} />
-                        <InfoRow label="International Worker" value={dp.international_worker != null ? (dp.international_worker ? 'Yes' : 'No') : undefined} />
-                        <InfoRow label="UAN Number" value={dp.uan_number} />
-                        <InfoRow label="EPF Number" value={dp.epf_number} />
-                        <InfoRow label="ESIC Number" value={dp.esic_number} />
-                        <InfoRow label="Declaration Accepted" value={dp.statutory_declaration_accepted ? 'Yes' : 'No'} />
-                        <InfoRow label="Declaration At" value={dp.statutory_declaration_at} />
-                      </div>
-                    )}
-                  </div>
                 </div>
               )}
             </div>
