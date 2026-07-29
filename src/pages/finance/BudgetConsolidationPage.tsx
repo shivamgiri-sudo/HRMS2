@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Building2, Layers3, Loader2, Pin, PinOff, ShieldCheck } from "lucide-react";
+import { Building2, CheckCircle2, Layers3, Loader2, Pin, PinOff, ShieldCheck } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +37,7 @@ export default function BudgetConsolidationPage() {
   const { data, isLoading, isError, error } = useBudgetConsolidation(period);
   const branchSummaries = data?.branchSummaries ?? [];
   const headBreakdown = data?.headBreakdown ?? [];
+  const readiness = data?.readiness ?? [];
 
   const { pinnedIds, togglePin } = useColumnPinning();
 
@@ -170,6 +171,43 @@ export default function BudgetConsolidationPage() {
                             <td className="px-4 py-2" />
                           </tr>
                         </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-3xl border-slate-200 shadow-sm">
+                <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+                  <CardTitle className="flex items-center gap-2 text-base"><CheckCircle2 className="h-5 w-5 text-emerald-600" />Submission readiness — every branch</CardTitle>
+                  <p className="mt-1 text-xs text-slate-500">Head/Sub-head Coverage completion per branch's budget for this period — the same readiness check each branch already sees in its own workspace.</p>
+                </CardHeader>
+                <CardContent className="p-0">
+                  {readiness.length === 0 ? (
+                    <p className="p-6 text-sm text-slate-500">No branch has a budget for this period yet.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[560px] text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                            <th className="px-4 py-2">Branch</th>
+                            <th className="px-4 py-2">Coverage completion</th>
+                            <th className="px-4 py-2">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {readiness.map((r) => (
+                            <tr key={r.budgetId} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
+                              <td className="px-4 py-2 font-semibold text-slate-900">{r.branchName ?? "-"}</td>
+                              <td className="px-4 py-2 text-slate-600">{r.completionPct}%</td>
+                              <td className="px-4 py-2">
+                                <Badge variant="outline" className={r.readyToSubmit ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                                  {r.readyToSubmit ? "Ready to submit" : "Incomplete"}
+                                </Badge>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
                       </table>
                     </div>
                   )}

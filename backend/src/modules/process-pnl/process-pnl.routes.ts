@@ -19,6 +19,8 @@ import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
 import { savedViewService } from "./saved-view.service.js";
 import { gradeEngineService } from "./grade-engine.service.js";
+import { checkBudgetExceptions, checkSharingMethodReadiness } from "./budget-readiness.service.js";
+import { budgetCoverageService } from "./budget-coverage.service.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -81,7 +83,8 @@ async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
     userRoles: user.roles,
     recordBranchId: budget.branch_id,
   });
-  return budget;
+  const exceptions = await checkBudgetExceptions(budgetId);
+  return { ...budget, exceptions };
 }
 
 router.use(requireAuth);
@@ -116,7 +119,18 @@ router.get(
       branchBudgetService.list({ period: periodCode }),
       getCompanyBudgetConsolidation(periodCode),
     ]);
-    res.json({ success: true, data: { branchSummaries, headBreakdown } });
+    const readiness = await Promise.all(
+      (branchSummaries as any[]).map(async (summary) => {
+        const coverage = await budgetCoverageService.getCoverage(summary.id).catch(() => null);
+        return {
+          budgetId: summary.id,
+          branchName: summary.branch_name,
+          completionPct: coverage?.summary.completionPct ?? 0,
+          readyToSubmit: coverage?.summary.readyToSubmit ?? false,
+        };
+      })
+    );
+    res.json({ success: true, data: { branchSummaries, headBreakdown, readiness } });
   })
 );
 
@@ -444,6 +458,25 @@ router.put(
       })),
       user.id
     );
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/branch-budget/readiness",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId) throw new Error("Branch is required");
+    const periodCode = String(req.query.period ?? "");
+    if (!/^\d{4}-\d{2}$/.test(periodCode)) throw new Error("A valid budget period (YYYY-MM) is required");
+    const data = await checkSharingMethodReadiness(branchId, periodCode);
     res.json({ success: true, data });
   })
 );

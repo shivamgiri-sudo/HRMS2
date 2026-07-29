@@ -171,6 +171,13 @@ export interface CostCentreConsolidationGroup {
   lines: CostCentreConsolidationLine[];
 }
 
+export interface BudgetException {
+  lineId: string;
+  itemName: string;
+  type: "missing_driver_data" | "manual_split_imbalance";
+  message: string;
+}
+
 export interface BranchBudgetDetail extends BranchBudgetSummary {
   lines: BranchBudgetLineRecord[];
   approvals: BranchBudgetApprovalRecord[];
@@ -178,6 +185,9 @@ export interface BranchBudgetDetail extends BranchBudgetSummary {
    *  head/sub-head/item, rolled up into a branch total. See buildCostCentreConsolidation()
    *  (branch-budget.service.ts) — computed server-side, read-only. */
   costCentreConsolidation: CostCentreConsolidationGroup[];
+  /** Branch Budget foundation (PR 13): branch-common lines whose sharing method now has missing
+   *  driver data, or manual splits that no longer total 100% — read-only, non-blocking. */
+  exceptions: BudgetException[];
 }
 
 function queryString(filters: {
@@ -572,4 +582,28 @@ export function useBranchBudgetGradeDrivers(
   });
 
   return { gradeDriversQuery, saveGradeDrivers };
+}
+
+export interface SharingMethodReadiness {
+  method: "total_manpower" | "revenue_share" | "meter_wise" | "grade_weighted_headcount";
+  label: string;
+  ready: boolean;
+  missingCostCentres: { id: string; name: string }[];
+}
+
+/** Branch Budget foundation (PR 13): proactive readiness checks for the weighted sharing
+ *  methods, surfaced before a user picks one — mirrors the exact missing-data checks
+ *  computeLineAllocations() runs at save time, just shown ahead of time instead of only as a
+ *  save-time failure. */
+export function useBudgetReadiness(branchId?: string | null, periodCode?: string | null) {
+  return useQuery({
+    queryKey: ["branch-budget-readiness", branchId, periodCode],
+    enabled: Boolean(branchId) && Boolean(periodCode),
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: SharingMethodReadiness[] }>(
+        `/api/finance/pnl/branch-budget/readiness?branchId=${branchId}&period=${periodCode}`
+      );
+      return response.data;
+    },
+  });
 }

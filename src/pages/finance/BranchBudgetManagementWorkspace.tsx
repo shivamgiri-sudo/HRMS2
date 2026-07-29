@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
+  AlertTriangle,
   Building2,
   CheckCircle2,
   ChevronDown,
@@ -46,6 +47,7 @@ import {
   useBranchBudgetGradeDrivers,
   useBranchBudgetMeters,
   useBranchBudgets,
+  useBudgetReadiness,
   useMeterReadings,
 } from "@/hooks/useBranchBudget";
 import {
@@ -94,7 +96,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "approval" | "master";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "master";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -327,6 +329,8 @@ export default function BranchBudgetManagementWorkspace() {
     useBranchBudgetAllocations(branchId || null, period);
   const activeCostCentres = activeCostCentresQuery.data ?? [];
   const [driverDraft, setDriverDraft] = useState<Record<string, MonthlyDriverInput>>({});
+  const readinessQuery = useBudgetReadiness(branchId || null, period);
+  const readiness = readinessQuery.data ?? [];
 
   const allBranches = unwrapList(branchResponse).filter((item) => Number(item.active_status ?? 1) === 1);
   const branches = capabilities?.branchLocked && capabilities.scopedBranchId
@@ -608,6 +612,7 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="rollup"><Layers3 className="mr-2 h-4 w-4" />Cost-Centre Rollup</TabsTrigger>
               <TabsTrigger value="matrix"><Grid3x3 className="mr-2 h-4 w-4" />Grid Matrix</TabsTrigger>
               <TabsTrigger value="meters"><Gauge className="mr-2 h-4 w-4" />Meters</TabsTrigger>
+              <TabsTrigger value="readiness"><AlertTriangle className="mr-2 h-4 w-4" />Exceptions & Readiness</TabsTrigger>
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
             </TabsList>
@@ -813,6 +818,66 @@ export default function BranchBudgetManagementWorkspace() {
                 <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><Gauge className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Select a branch first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
               ) : (
                 <MetersPanel branchId={branchId} costCentres={activeCostCentres} period={period} canEdit={canEdit} />
+              )}
+            </TabsContent>
+
+            <TabsContent value="readiness" className="space-y-5">
+              {!branchId ? (
+                <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><AlertTriangle className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Select a branch first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
+              ) : (
+                <>
+                  <Card className="rounded-3xl border-slate-200 shadow-sm">
+                    <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+                      <CardTitle className="text-base">Sharing-method readiness — {period}</CardTitle>
+                      <p className="mt-1 text-xs text-slate-500">Whether each weighted sharing method has complete driver data for every active cost centre right now — checked before you pick a method, not just when you hit save.</p>
+                    </CardHeader>
+                    <CardContent className="space-y-3 p-5">
+                      {readinessQuery.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : (
+                        <div className="space-y-3">
+                          {readiness.map((r) => (
+                            <div key={r.method} className={`rounded-2xl border p-4 ${r.ready ? "border-emerald-200 bg-emerald-50/60" : "border-amber-200 bg-amber-50/60"}`}>
+                              <div className="flex items-center gap-2">
+                                {r.ready ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                                <p className="text-sm font-semibold text-slate-900">{r.label}</p>
+                                <Badge variant="outline" className={r.ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                                  {r.ready ? "Ready" : "Incomplete"}
+                                </Badge>
+                              </div>
+                              {!r.ready && r.missingCostCentres.length > 0 && (
+                                <p className="mt-2 text-xs text-slate-600">Missing for: {r.missingCostCentres.map((c) => c.name).join(", ")}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-3xl border-slate-200 shadow-sm">
+                    <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+                      <CardTitle className="text-base">Exceptions — current budget</CardTitle>
+                      <p className="mt-1 text-xs text-slate-500">Branch-common lines whose sharing method now has missing driver data, or manual splits that no longer total 100%. Read-only — nothing is blocked.</p>
+                    </CardHeader>
+                    <CardContent className="p-5">
+                      {!detailId ? (
+                        <p className="text-sm text-slate-500">Save the budget draft first to check its lines for exceptions.</p>
+                      ) : detailQuery.isLoading ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : !detailQuery.data?.exceptions.length ? (
+                        <p className="flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 className="h-4 w-4" />No exceptions found for this budget.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {detailQuery.data.exceptions.map((exception) => (
+                            <div key={exception.lineId} className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+                              <p className="text-sm font-semibold text-rose-900">{exception.itemName}</p>
+                              <p className="mt-1 text-xs text-rose-700">{exception.message}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </>
               )}
             </TabsContent>
 

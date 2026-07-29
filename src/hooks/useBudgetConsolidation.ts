@@ -26,9 +26,19 @@ export interface CompanyConsolidationGroup {
   branches: CompanyConsolidationBranchAmount[];
 }
 
+export interface BranchReadiness {
+  budgetId: string;
+  branchName: string | null;
+  completionPct: number;
+  readyToSubmit: boolean;
+}
+
 export interface BudgetConsolidationResponse {
   branchSummaries: BranchBudgetSummary[];
   headBreakdown: CompanyConsolidationGroup[];
+  /** Branch Budget foundation (PR 13): per-branch Head/Sub-head Coverage completion, reusing
+   *  budgetCoverageService.getCoverage() once per branch's budget — no new coverage logic. */
+  readiness: BranchReadiness[];
 }
 
 export function useBudgetConsolidation(period: string) {
