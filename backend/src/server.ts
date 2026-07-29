@@ -31,6 +31,7 @@ import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
+import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
 // WORKER GOVERNANCE: When WORKERS_PROCESS=external, ALL workers run in separate process
@@ -135,8 +136,13 @@ function startServer() {
         startBreachSlaCron();
         startRetentionCron();
         startAtsRemindersScheduler();
+        // Activates employees whose joining date has arrived, and retries failed
+        // provisioning. Previously only registered in workers/all-workers.ts,
+        // which has no npm script and no importer — so anyone approved before
+        // their joining date was never activated at all.
+        startEmployeeLifecycleWorker();
         console.log(
-          "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders started",
+          "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders, employee-lifecycle started",
         );
 
         // Start heavy workers (with distributed lock protection)

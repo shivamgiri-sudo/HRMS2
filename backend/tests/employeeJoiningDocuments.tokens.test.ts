@@ -172,6 +172,12 @@ describe("joining document token handling", () => {
       if (query.includes("FROM employee_joining_document_checklist\n      WHERE id = ?")) {
         return [[checklistRow], []];
       }
+      // A configured template — e-sign now refuses to send an unconfigured one,
+      // which would otherwise be a placeholder stamped "DRAFT". package.json is
+      // used simply because it is a file that exists at a known path.
+      if (query.includes("FROM employee_joining_document_template")) {
+        return [[{ template_storage_path: path.resolve(process.cwd(), "package.json") }], []];
+      }
       if (query.includes("FROM employee_joining_document_file\n      WHERE checklist_id = ?\n        AND file_role IN ('generated', 'signed')")) {
         return [[{
           id: "file-1",
@@ -261,5 +267,49 @@ describe("joining document token handling", () => {
     expect(String(insert?.[1]?.[14] ?? "")).toContain("publicTokenHash");
     expect(result.provider_url).toBe("https://luckpay.example/esign");
     expect(result.sign_link).toContain("/employee/epf-compliance/review/");
+  });
+
+  it("refuses to issue an eSign request when no document template is configured", async () => {
+    // Five of seven mandatory templates currently have no file uploaded. Without
+    // this guard, generateAgreementPdf produces a placeholder stamped
+    // "DRAFT - TEMPLATE NOT CONFIGURED" and the signing link was emailed anyway,
+    // so a new joiner could be asked to legally sign a watermarked draft.
+    const checklistRow = {
+      id: "check-1",
+      employee_id: "emp-1",
+      candidate_id: null,
+      document_code: "IT_COMPLIANCE",
+      document_name: "IT Compliance",
+      status: "pending_candidate_esign",
+      action_type: "esign",
+      owner_type: "candidate",
+      template_version: "v1",
+    };
+
+    mockExecute.mockImplementation(async (sql: string) => {
+      const query = String(sql);
+      if (query.includes("FROM employees e")) {
+        return [[{ id: "emp-1", employee_code: "EMP001", full_name: "Employee One" }], []];
+      }
+      if (query.includes("FROM employee_joining_document_checklist\n      WHERE id = ?")) {
+        return [[checklistRow], []];
+      }
+      // No template row -> unconfigured.
+      if (query.includes("FROM employee_joining_document_template")) {
+        return [[], []];
+      }
+      return [[], []];
+    });
+
+    await expect(
+      createJoiningDocumentEsignRequest({
+        employeeId: "emp-1",
+        checklistId: "check-1",
+        actorUserId: "user-1",
+      }),
+    ).rejects.toThrow(/No document template is configured for IT_COMPLIANCE/);
+
+    // and nothing was sent to the provider
+    expect(luckpayMocks.esignWithUrl).not.toHaveBeenCalled();
   });
 });

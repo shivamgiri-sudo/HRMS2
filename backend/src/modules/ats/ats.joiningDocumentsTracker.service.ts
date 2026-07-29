@@ -34,6 +34,7 @@ export interface EmployeeDocumentRow {
   lob_name: string | null;
   date_of_joining: string;
   joining_document_status: string | null;
+  active_status?: number;
   joining_document_completion_pct: number;
   total_documents: number;
   verified_count: number;
@@ -149,6 +150,8 @@ interface TrackerQueryRow extends RowDataPacket {
   date_of_joining: string;
   joining_document_status: string | null;
   joining_document_completion_pct: number;
+  /** True when the employee has a code but has not reached their joining date yet. */
+  is_pre_joining: boolean;
   key_documents_raw: string | null;
   total_documents: number;
   verified_count: number;
@@ -166,7 +169,10 @@ export async function getJoiningDocumentsTracker(
   const isBranchHead = roleKeys.includes('branch_head');
 
   // Build WHERE clause filters
-  const whereClauses: string[] = ['e.active_status = 1', 'e.employee_code IS NOT NULL'];
+  // Include pre-joiners: employees are created with active_status = 0 and are
+  // only activated on their joining date, so filtering on 1 hid precisely the
+  // population whose documents must be signed before day one.
+  const whereClauses: string[] = ["e.active_status IN (0, 1)", 'e.employee_code IS NOT NULL'];
   const params: (string | number)[] = [];
 
   // Branch Head scoping
@@ -239,6 +245,7 @@ export async function getJoiningDocumentsTracker(
       e.date_of_joining,
       e.joining_document_status,
       e.joining_document_completion_pct,
+      e.active_status,
       b.branch_name,
       p.process_name,
       p.lob_name,
@@ -257,8 +264,8 @@ export async function getJoiningDocumentsTracker(
       u.full_name AS assigned_hr_name
 
     FROM employees e
-    LEFT JOIN branches b ON e.branch_id = b.id
-    LEFT JOIN processes p ON e.process_id = p.id
+    LEFT JOIN branch_master b ON e.branch_id = b.id
+    LEFT JOIN process_master p ON e.process_id = p.id
     LEFT JOIN employee_joining_document_checklist c ON e.id = c.employee_id
     LEFT JOIN auth_user u ON c.assigned_hr_user_id = u.id
 
@@ -281,6 +288,7 @@ export async function getJoiningDocumentsTracker(
     date_of_joining: row.date_of_joining,
     joining_document_status: row.joining_document_status,
     joining_document_completion_pct: Number(row.joining_document_completion_pct),
+    is_pre_joining: Number(row.active_status ?? 1) === 0,
     total_documents: Number(row.total_documents),
     verified_count: Number(row.verified_count),
     needs_correction_count: Number(row.needs_correction_count),
@@ -329,10 +337,10 @@ export async function sendBulkReminders(
     errors: [],
   };
 
-  const [employees] = await db.execute<RowDataPacket[]>(
+  const [employees] = await db.query<RowDataPacket[]>(
     `SELECT id, employee_code, full_name, official_email, personal_email, mobile
      FROM employees
-     WHERE id IN (?) AND active_status = 1`,
+     WHERE id IN (?) AND active_status IN (0, 1)`,
     [employeeIds]
   );
 
@@ -406,14 +414,14 @@ export async function bulkAssignHR(
   try {
     await connection.beginTransaction();
 
-    const [result] = (await connection.execute(
+    const [result] = (await connection.query(
       `UPDATE employee_joining_document_checklist
        SET assigned_hr_user_id = ?, updated_at = NOW()
        WHERE employee_id IN (?)`,
       [assignedHrUserId, employeeIds]
     )) as [ResultSetHeader, unknown];
 
-    await connection.execute(
+    await connection.query(
       `INSERT INTO employee_joining_document_audit_log
        (employee_id, action_type, actor_user_id, remarks, created_at)
        SELECT DISTINCT employee_id, 'BULK_ASSIGN_HR', ?, ?, NOW()
@@ -459,9 +467,9 @@ export async function bulkSetDueDate(
   try {
     await connection.beginTransaction();
 
-    const [result] = (await connection.execute(sql, params)) as [ResultSetHeader, unknown];
+    const [result] = (await connection.query(sql, params)) as [ResultSetHeader, unknown];
 
-    await connection.execute(
+    await connection.query(
       `INSERT INTO employee_joining_document_audit_log
        (employee_id, action_type, actor_user_id, remarks, created_at)
        SELECT DISTINCT employee_id, 'BULK_SET_DUE_DATE', ?, ?, NOW()
@@ -586,7 +594,7 @@ export async function streamBulkDocumentsZip(
     JOIN employee_joining_document_checklist c ON e.id = c.employee_id
     JOIN employee_joining_document_file f ON c.id = f.checklist_id
     WHERE e.id IN (?)
-      AND f.role IN ('hr_uploaded', 'generated', 'signed')
+      AND f.file_role IN ('hr_uploaded', 'generated', 'signed')
       AND c.verification_status = 'verified'
   `;
 
@@ -599,7 +607,7 @@ export async function streamBulkDocumentsZip(
 
   sql += ` ORDER BY e.employee_code, c.document_code`;
 
-  const [files] = await db.execute<RowDataPacket[]>(sql, params);
+  const [files] = await db.query<RowDataPacket[]>(sql, params);
 
   for (const file of files as Array<{
     employee_code: string;
@@ -639,14 +647,14 @@ export async function bulkGenerateChecklists(
     errors: [],
   };
 
-  const [employees] = await db.execute<RowDataPacket[]>(
+  const [employees] = await db.query<RowDataPacket[]>(
     `SELECT id, employee_code, full_name
      FROM employees
-     WHERE id IN (?) AND active_status = 1`,
+     WHERE id IN (?) AND active_status IN (0, 1)`,
     [employeeIds]
   );
 
-  const [existingChecklists] = await db.execute<RowDataPacket[]>(
+  const [existingChecklists] = await db.query<RowDataPacket[]>(
     `SELECT DISTINCT employee_id FROM employee_joining_document_checklist WHERE employee_id IN (?)`,
     [employeeIds]
   );

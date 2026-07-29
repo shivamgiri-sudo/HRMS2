@@ -5,6 +5,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { checkEmployeeCodeGate } from './employee-code-gate.service.js';
 import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
+import { generateEmployeeCode } from '../employees/employee-code.service.js';
 import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
@@ -44,22 +45,15 @@ router.post(
       });
     }
 
-    // Generate code using atomic sequence to prevent duplicates under concurrency.
-    const now = new Date();
-    const yymm = String(now.getFullYear()).slice(2) + String(now.getMonth() + 1).padStart(2, '0');
+    // Use the shared generator rather than a second format. This route used to
+    // emit MAS{YYMM}{00000}, which the orchestrator's `^MAS[0-9]+$` max-scan
+    // also matches — a single such code would cast to ~260,000,000 and push the
+    // shared sequence permanently into the hundreds of millions.
     let empCode: string;
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
-      await conn.execute(
-        `UPDATE employee_code_sequence SET current_sequence = current_sequence + 1, last_generated_at = NOW()
-         WHERE company_prefix = 'MAS' AND is_offrole = 0`,
-      );
-      const [seqRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT current_sequence FROM employee_code_sequence WHERE company_prefix = 'MAS' AND is_offrole = 0 LIMIT 1`,
-      );
-      const seq = String((seqRows as RowDataPacket[])[0]?.current_sequence ?? 1).padStart(5, '0');
-      empCode = `MAS${yymm}${seq}`;
+      empCode = await generateEmployeeCode(conn, 'Permanent');
       await conn.execute(
         `UPDATE employee_code_sequence SET last_generated_code = ? WHERE company_prefix = 'MAS' AND is_offrole = 0`,
         [empCode],

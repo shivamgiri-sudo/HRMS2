@@ -25,6 +25,12 @@ import { PAN_REGEX, AADHAAR_REGEX } from '../ats/bgv-config.js';
 import { dispatchJoinProvisioningTasks } from '../it-provisioning/it-provisioning.service.js';
 import { activateIfJoiningDateReached } from './employee-activation.service.js';
 import { provisionLmsIdentityForEmployee } from '../lms/lms-provisioning.service.js';
+import { autoGenerateJoiningDocuments } from './employeeJoiningDocuments.service.js';
+import { generateEmployeeCode } from './employee-code.service.js';
+import { appendJourneyEvent } from '../employees/journeyLog.service.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
+import { env } from '../../config/env.js';
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -308,6 +314,66 @@ export async function createEmployeeFromCandidate(
       console.error('[EmployeeOrchestrator] LMS auto-provisioning failed:', err);
     });
 
+    // ── Post-code steps ────────────────────────────────────────────────────
+    // These previously existed only in approveOfferLegacy (marked DO NOT USE),
+    // so the live path never ran them: no joining-document pack was ever
+    // created, no journey event, no audit row, and Payroll HR was never told.
+    // All are fire-and-forget — the employee is already committed and must not
+    // be rolled back by a downstream notification failure.
+
+    appendJourneyEvent({
+      employeeId,
+      eventType: 'hiring',
+      eventDate: offer.date_of_joining,
+      description: `Joined through ATS as ${employeeCode}`,
+      module: 'ATS',
+      triggeredBy: approverId,
+      metadata: { candidate_id: candidateId, offer_id: offerId },
+    }).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Journey log failed for employee', employeeId, ':', err instanceof Error ? err.message : String(err));
+    });
+
+    // No auth_user or password at this stage — IT provisioning creates the
+    // account with the official email later.
+    logSensitiveAction({
+      actor_user_id: approverId,
+      action_type: 'employee_created_preboarding',
+      module_key: 'ats',
+      entity_type: 'employee',
+      entity_id: employeeId,
+      employee_id: employeeId,
+      change_summary: {
+        candidate_id: candidateId,
+        employee_code: employeeCode,
+        active_status: 0,
+        awaiting_it_provisioning: true,
+      },
+    }).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Sensitive action log failed:', err instanceof Error ? err.message : String(err));
+    });
+
+    // Build the joining-document checklist and pre-filled drafts.
+    autoGenerateJoiningDocuments(employeeId, candidateId, approverId).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Auto joining document generation failed:', {
+        employeeCode,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // Tell Payroll HR there is a pack to issue.
+    void notifyPayrollHrToIssueJoiningDocuments({
+      employeeId,
+      employeeCode,
+      employeeName: offer.full_name,
+      candidateId,
+      branchId: (offer.resolved_branch_id ?? offer.applied_for_branch) || null,
+    });
+
+    // Consent and BGV problems are deliberately non-blocking, but the warnings
+    // were only ever returned in the HTTP response and then discarded — a
+    // "manual review required" that no system tracked and nobody was assigned.
+    void raiseManualReviewWorkItem(employeeId, candidateId, employeeCode, result.warnings);
+
     // Real-time activation: if joining date is today or past, activate immediately
     if (result.employeeId && offer.date_of_joining) {
       try {
@@ -333,6 +399,84 @@ export async function createEmployeeFromCandidate(
     throw err;
   } finally {
     conn.release();
+  }
+}
+
+/**
+ * Record consent/BGV warnings as an assignable work item.
+ *
+ * Without this the warnings existed only in the API response for one request,
+ * so an employee could be created with withdrawn DPDP consent or incomplete BGV
+ * and nothing downstream would ever surface it.
+ */
+async function raiseManualReviewWorkItem(
+  employeeId: string,
+  candidateId: string,
+  employeeCode: string,
+  warnings: string[],
+): Promise<void> {
+  if (!warnings.length) return;
+  try {
+    await db.execute(
+      `INSERT INTO work_item (id,item_type,title,description,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at)
+       VALUES (UUID(),'EMPLOYEE_ONBOARDING_MANUAL_REVIEW',?,?,'employees','employee',?,'hr','high','pending',NOW())
+       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
+      [
+        `Manual review required for ${employeeCode}`,
+        `Employee created with unresolved warnings (candidate ${candidateId}):\n- ${warnings.join('\n- ')}`,
+        employeeId,
+      ],
+    );
+  } catch (err: unknown) {
+    console.error('[EmployeeOrchestrator] Failed to raise manual-review work item:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Tell Payroll HR in the joiner's branch that a joining-document pack is ready
+ * to issue. Entirely non-blocking: the employee already exists, and a missing
+ * mailbox must never surface as a creation failure.
+ */
+async function notifyPayrollHrToIssueJoiningDocuments(params: {
+  employeeId: string;
+  employeeCode: string;
+  employeeName: string;
+  candidateId: string;
+  branchId: string | null;
+}): Promise<void> {
+  try {
+    const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+    const [hrRows] = await db.execute<RowDataPacket[]>(
+      `SELECT u.email, u.full_name
+         FROM auth_user u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+        WHERE ur.role_key = 'payroll_hr'
+          AND (? IS NULL OR e.branch_id = ?)
+        LIMIT 3`,
+      [params.branchId, params.branchId],
+    );
+
+    if ((hrRows as RowDataPacket[]).length === 0) {
+      console.warn(`[EmployeeOrchestrator] No payroll_hr users found for branch ${params.branchId}, employee ${params.employeeCode}`);
+      return;
+    }
+
+    for (const hr of hrRows as RowDataPacket[]) {
+      await sendPayrollHrJoiningDocNotification({
+        to: hr.email,
+        hrName: hr.full_name,
+        employeeCode: params.employeeCode,
+        employeeName: params.employeeName,
+        joiningDocUrl: `${baseUrl}/employees/${params.employeeId}/joining-documents`,
+        candidateId: params.candidateId,
+      }).catch((err: unknown) => console.error('[EmployeeOrchestrator] payroll-hr email failed', err));
+    }
+  } catch (err: unknown) {
+    console.error('[EmployeeOrchestrator] Payroll HR notification failed:', {
+      employeeCode: params.employeeCode,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -499,38 +643,6 @@ async function validateReportingManager(
   return managerRows.length > 0 && (managerRows[0] as any).active_status === 1;
 }
 
-/**
- * Generate employee code with atomic sequence
- */
-async function generateEmployeeCode(conn: PoolConnection, empType: string): Promise<string> {
-  const isTrainee = empType === 'Trainee' || empType === 'OffRoll';
-
-  // Get next sequence
-  const [maxRows] = await conn.execute<RowDataPacket[]>(
-    `SELECT GREATEST(
-       IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^MAS[0-9]+$'),0),
-       IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+$'),0),
-       IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,1,CHAR_LENGTH(employee_code)-1) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^[0-9]+C$'),0),
-       IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4,CHAR_LENGTH(employee_code)-4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+C$'),0)
-     ) AS global_max`
-  );
-
-  const nextSeq = ((maxRows[0] as any)?.global_max ?? 0) + 1;
-
-  // Advance sequence table
-  await conn.execute(
-    `UPDATE employee_code_sequence SET current_sequence = ?, last_generated_at = NOW()
-     WHERE current_sequence < ?`,
-    [nextSeq, nextSeq]
-  );
-
-  // Format code (trainee = ####C, regular = MAS####)
-  if (isTrainee) {
-    return `${nextSeq}C`;
-  } else {
-    return `MAS${nextSeq}`;
-  }
-}
 
 /**
  * Create related employee records (statutory, salary, nominee, leave)

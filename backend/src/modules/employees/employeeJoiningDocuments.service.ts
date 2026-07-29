@@ -9,7 +9,7 @@ import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scopeAccess.js";
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
-import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
+import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload, luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { emailService } from "../communication/email.service.js";
@@ -21,6 +21,42 @@ const HR_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assi
 const PAYROLL_SCOPE_ROLES = ["payroll_hr", "payroll"];
 const SECURE_DOWNLOAD_ROLES = new Set(["admin", "super_admin", "hr", "manager", "payroll_hr", "payroll", "employee"]);
 const PAYROLL_DOCUMENT_CODES = new Set(["EPF_DECLARATION", "EMPLOYMENT_CONTRACT"]);
+
+/**
+ * Every status this system actually writes to
+ * employee_joining_document_checklist.status.
+ *
+ * The free-form PATCH endpoint previously accepted any string, so a typo became
+ * a permanent unknown state and a deliberate value could fake completion.
+ */
+const ALLOWED_CHECKLIST_STATUSES = new Set([
+  "pending_candidate_esign",
+  "pending_hr_upload",
+  "pending_generation",
+  "template_pending",
+  "ready_for_esign",
+  "uploaded_pending_review",
+  "uploaded_pending_esign",
+  "esign_initiated",
+  "esign_completed",
+  "esign_failed",
+  "employee_confirmed",
+  "needs_correction",
+  "correction_requested",
+  "verified",
+  "completed",
+  "signed_verified",
+  "wet_signed_uploaded",
+]);
+
+/** Verification outcomes only HR may set — never the employee about their own documents. */
+const HR_ONLY_CHECKLIST_STATUSES = new Set([
+  "verified",
+  "completed",
+  "signed_verified",
+  "needs_correction",
+  "correction_requested",
+]);
 
 type ActorType = "hr" | "candidate" | "system" | "employee" | "public_token";
 type FileRole = "template" | "hr_uploaded" | "generated" | "sent_for_esign" | "signed" | "supporting";
@@ -522,6 +558,32 @@ async function insertFileRecord(params: {
   return id;
 }
 
+/**
+ * Throws unless a real template file exists on disk for this document.
+ * Mirrors the check ensureGeneratedFile uses to decide template_pending.
+ */
+async function assertTemplateConfiguredForEsign(checklist: ChecklistRow): Promise<void> {
+  const [templateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT template_storage_path
+       FROM employee_joining_document_template
+      WHERE document_code = ? AND active_status = 1
+      ORDER BY (version = ?) DESC, updated_at DESC
+      LIMIT 1`,
+    [checklist.document_code, checklist.template_version],
+  ).catch(() => [[] as RowDataPacket[], []] as [RowDataPacket[], unknown]);
+
+  const storagePath = (templateRows as RowDataPacket[])[0]?.template_storage_path;
+  if (storagePath && fs.existsSync(String(storagePath))) return;
+
+  const err = new Error(
+    `No document template is configured for ${checklist.document_code}. ` +
+    `Upload the template under Settings → Document Templates before sending it for e-signature — ` +
+    `otherwise the employee would be asked to sign a placeholder marked DRAFT.`,
+  ) as Error & { statusCode?: number };
+  err.statusCode = 409;
+  throw err;
+}
+
 function isChecklistTerminalStatus(status: string) {
   return new Set(["verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded"]).has(String(status || "").trim().toLowerCase());
 }
@@ -854,6 +916,29 @@ export async function updateJoiningDocumentChecklistStatus(params: {
     throw err;
   }
 
+  // This endpoint accepted any free-text status, and access is granted to the
+  // employee themselves (isSelf). That let a joiner PATCH their own document to
+  // 'verified', which recalculateDocumentProgress counts as complete and which
+  // stamps verified_by/verified_at — self-approval of their own paperwork.
+  if (!ALLOWED_CHECKLIST_STATUSES.has(nextStatus)) {
+    const err = new Error(
+      `Unsupported status "${nextStatus}". Allowed: ${[...ALLOWED_CHECKLIST_STATUSES].sort().join(", ")}`,
+    ) as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Verification outcomes are an HR decision — same guard reviewJoiningDocument
+  // already applies.
+  if (HR_ONLY_CHECKLIST_STATUSES.has(nextStatus)) {
+    const isHrReviewer = access.isAdmin || access.roles.some((role) => [...HR_SCOPE_ROLES, "hr"].includes(role));
+    if (!isHrReviewer) {
+      const err = new Error(`Only HR-scoped users can set a document to "${nextStatus}"`) as Error & { statusCode?: number };
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+
   const normalizedVerificationStatus =
     nextStatus === "verified"
       ? "verified"
@@ -1070,6 +1155,13 @@ export async function createJoiningDocumentEsignRequest(params: {
     err.statusCode = 404;
     throw err;
   }
+
+  // Refuse to send an unconfigured template out for signature. When no template
+  // file exists, generateAgreementPdf produces a placeholder stamped
+  // "DRAFT - TEMPLATE NOT CONFIGURED" and the checklist goes to
+  // template_pending — but this flow ignored that and emailed the signing link
+  // anyway, so a joiner could be asked to legally sign a watermarked draft.
+  await assertTemplateConfiguredForEsign(checklist);
 
   const sourceFile = await ensureGeneratedFile(checklist, access.target, params.actorUserId);
   const publicToken = randomBytes(24).toString("hex");
@@ -1690,11 +1782,41 @@ async function finalizeChecklistEsign(params: {
 
   const sourceFile = await ensureGeneratedFile(params.checklist, target, params.actorUserId ?? null);
   const originalBuffer = fs.readFileSync(sourceFile.storage_path);
+
+  // Prefer the provider's actual signed artefact. Previously this always stored
+  // a byte-identical copy of the unsigned draft and still labelled it 'signed'
+  // with signature_mode 'aadhaar_esign_verified' — a document that asserts a
+  // signature it does not contain.
+  const isWebhookFinalisation = params.actorType === "system" && String(params.actionType).includes("WEBHOOK");
+  let signedBuffer: Buffer = originalBuffer;
+  let providerArtefactRetrieved = false;
+
+  if (isWebhookFinalisation && params.transactionId) {
+    try {
+      const doc = await luckpayClient.downloadESignDocument({
+        clientTransactionId: params.checklist.id,
+        transactionId: params.transactionId,
+      });
+      if (doc.buffer?.length) {
+        signedBuffer = doc.buffer;
+        providerArtefactRetrieved = true;
+      }
+    } catch (err: unknown) {
+      // Never fail the finalisation on a download problem — the signature did
+      // happen. Record that we could not retrieve the artefact so the claim
+      // below stays honest and a retry can pick it up.
+      console.warn(
+        `[finalizeChecklistEsign] Could not retrieve signed artefact for checklist ${params.checklist.id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   const signedCopy = await writeSecureFile({
     employeeId: params.checklist.employee_id,
     documentCode: params.checklist.document_code,
     fileName: `${params.checklist.document_code.toLowerCase()}-signed.pdf`,
-    content: originalBuffer,
+    content: signedBuffer,
   });
   const signedFileId = await insertFileRecord({
     checklistId: params.checklist.id,
@@ -1712,11 +1834,14 @@ async function finalizeChecklistEsign(params: {
     uploadedByType: params.actorType === "employee" ? "employee" : "system",
   });
 
-  const isLuckpayVerifiedWebhook = params.actorType === "system" && String(params.actionType).includes("WEBHOOK");
+  const isLuckpayVerifiedWebhook = isWebhookFinalisation;
   const nextChecklistStatus = isLuckpayVerifiedWebhook ? "esign_completed" : "employee_confirmed";
   const nextFillStatus = isLuckpayVerifiedWebhook ? "esign_completed" : "employee_review_pending";
+  // Only claim a verified Aadhaar signature when we actually hold the signed
+  // artefact. If the provider confirmed but the download failed, the signature
+  // is real yet unretrieved — say so rather than overstating it.
   const nextSignatureMode = isLuckpayVerifiedWebhook
-    ? "aadhaar_esign_verified"
+    ? (providerArtefactRetrieved ? "aadhaar_esign_verified" : "aadhaar_esign_pending_artefact")
     : params.actorType === "public_token"
       ? "internal_employee_acknowledgement"
       : "wet_signature_uploaded";

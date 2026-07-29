@@ -464,7 +464,15 @@ async function getEpfCompliancePack(employeeId: string, actorUserId: string) {
 
 export const employeeJoiningDocumentsRouter = Router();
 
+// Declared before requireAuth because the provider cannot present a session,
+// so it must authenticate with the shared webhook secret instead. Without this
+// check anyone able to guess a provider_reference_id could mark a document
+// e-signed: the handler sets esign_completed, signature_mode
+// 'aadhaar_esign_verified', and final_file_locked_at.
 employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/esign/webhook/luckpay", h(async (req, res) => {
+  if (!verifyLuckpayWebhookSecret(req.get("X-HRMS-Webhook-Secret"), env.LUCKPAY_WEBHOOK_SECRET)) {
+    return res.status(401).json({ success: false, message: "Unauthorized webhook" });
+  }
   const data = await handleJoiningDocumentEsignWebhook({
     payload: (req.body ?? {}) as Record<string, unknown>,
     ipAddress: req.ip,
@@ -1149,7 +1157,15 @@ publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) =
   if (!verifyLuckpayWebhookSecret(webhookSecret, configuredSecret)) {
     return res.status(401).json({ success: false, message: "Unauthorized webhook" });
   }
-  const data = await handleJoiningDocumentEsignWebhook(req.body);
+  // handleJoiningDocumentEsignWebhook expects { payload, ipAddress, userAgent }.
+  // Passing req.body directly left input.payload undefined, so the handler saw
+  // an empty object, matched nothing, and returned 200 with matched:false —
+  // this authenticated route silently no-opped while the unsecured one worked.
+  const data = await handleJoiningDocumentEsignWebhook({
+    payload: (req.body ?? {}) as Record<string, unknown>,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
   return res.json({ success: true, data });
 }));
 

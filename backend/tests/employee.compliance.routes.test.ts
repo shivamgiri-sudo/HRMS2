@@ -62,14 +62,24 @@ vi.mock("../src/modules/employees/epfComplianceValidation.service.js", () => ({
   validateEpfCompliance: vi.fn(),
 }));
 
-process.env.LUCKPAY_WEBHOOK_SECRET = "shared-secret";
+// config/env.ts loads backend/.env with dotenv override:true, so a value set
+// here — even hoisted — is overwritten by whatever the machine has configured.
+// Assert against the resolved secret instead of a literal, so the test verifies
+// the auth mechanism rather than one environment's value.
+process.env.LUCKPAY_WEBHOOK_SECRET = process.env.LUCKPAY_WEBHOOK_SECRET || "shared-secret";
+
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+
+/** The secret the app actually resolved, whatever the environment supplied. */
+let resolvedWebhookSecret = "shared-secret";
 
 let publicEmployeeDocumentRouter: Awaited<typeof import("../src/modules/employees/employee.compliance.routes.js")>["publicEmployeeDocumentRouter"];
 
 beforeAll(async () => {
   const mod = await import("../src/modules/employees/employee.compliance.routes.js");
   publicEmployeeDocumentRouter = mod.publicEmployeeDocumentRouter;
+  const { env } = await import("../src/config/env.js");
+  resolvedWebhookSecret = env.LUCKPAY_WEBHOOK_SECRET ?? "shared-secret";
 });
 
 beforeEach(() => {
@@ -102,12 +112,54 @@ describe("public employee document eSign routes", () => {
 
     const res = await request(app)
       .post("/api/public/employee-documents/esign/webhook/luckpay")
-      .set("X-HRMS-Webhook-Secret", "shared-secret")
+      .set("X-HRMS-Webhook-Secret", resolvedWebhookSecret)
       .send({ provider_reference_id: "ref-1" });
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({ matched: true, processed: true });
-    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).toHaveBeenCalledWith({ provider_reference_id: "ref-1" });
+    // The handler's contract is { payload, ipAddress, userAgent }. This route
+    // used to pass req.body straight through, leaving payload undefined so the
+    // handler matched nothing and returned 200 with matched:false — the
+    // assertion below previously encoded that bug.
+    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { provider_reference_id: "ref-1" } }),
+    );
+  });
+
+  it("rejects the employee-scoped Luckpay webhook without the shared secret", async () => {
+    // This route is declared before requireAuth so the provider can reach it,
+    // and it had no secret check at all. Anyone able to guess a
+    // provider_reference_id could drive it to esign_completed with
+    // signature_mode 'aadhaar_esign_verified' and lock the file.
+    const mod = await import("../src/modules/employees/employee.compliance.routes.js");
+    const app = express();
+    app.use(express.json());
+    app.use("/api/employees", mod.employeeJoiningDocumentsRouter);
+
+    const res = await request(app)
+      .post("/api/employees/emp-1/joining-documents/esign/webhook/luckpay")
+      .send({ provider_reference_id: "ref-1" });
+
+    expect(res.status).toBe(401);
+    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).not.toHaveBeenCalled();
+  });
+
+  it("accepts the employee-scoped Luckpay webhook with the shared secret", async () => {
+    employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook.mockResolvedValueOnce({ matched: true, processed: true });
+    const mod = await import("../src/modules/employees/employee.compliance.routes.js");
+    const app = express();
+    app.use(express.json());
+    app.use("/api/employees", mod.employeeJoiningDocumentsRouter);
+
+    const res = await request(app)
+      .post("/api/employees/emp-1/joining-documents/esign/webhook/luckpay")
+      .set("X-HRMS-Webhook-Secret", resolvedWebhookSecret)
+      .send({ provider_reference_id: "ref-1" });
+
+    expect(res.status).toBe(200);
+    expect(employeeJoiningDocumentsServiceMocks.handleJoiningDocumentEsignWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { provider_reference_id: "ref-1" } }),
+    );
   });
 
   it("returns provider details for the public eSign start route", async () => {
