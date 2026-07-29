@@ -349,16 +349,27 @@ export async function luckpayPostMultipart(
 
 // ── Response field extraction ─────────────────────────────────────────────────
 
+function resolvePath(root: unknown, path: string): unknown {
+  let node: unknown = root;
+  for (const segment of path.split(".")) {
+    if (!node || typeof node !== "object") return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
+}
+
 /**
  * Looks each name up in the unwrapped `data` node first, then the raw envelope.
  *
- * Luckpay is inconsistent about whether it nests the payload under `data`;
- * checking both levels is what lets one extraction path serve every endpoint.
+ * Names may be dotted paths — the real payloads nest the values that matter
+ * (`details.file`, `esignDetails.agreement_status`), and the envelope repeats
+ * generic keys like `status` at several levels with different meanings, so the
+ * caller has to be able to say exactly which one it wants.
  */
 export function pickLuckpayField(r: LuckpayResponse, names: string[]): string | null {
   for (const name of names) {
     for (const scope of [r.data, r.envelope]) {
-      const value = scope?.[name];
+      const value = name.includes(".") ? resolvePath(scope, name) : scope?.[name];
       if (value === null || value === undefined) continue;
       if (typeof value === "string") {
         if (value.trim()) return value;
