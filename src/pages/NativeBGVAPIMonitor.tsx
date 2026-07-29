@@ -37,6 +37,51 @@ interface APILog {
   created_at: string;
 }
 
+interface CostRow {
+  endpointKey: string;
+  checkType: string;
+  billableCalls: number;
+  failedCalls: number;
+  totalCalls: number;
+  unitCost: number;
+  totalCost: number;
+  /** False when no rate is configured for this check type — shown rather than defaulted. */
+  rateConfigured: boolean;
+}
+
+interface CostReport {
+  days: number;
+  rows: CostRow[];
+  totalCost: number;
+  totalCalls: number;
+  unmappedEndpoints: string[];
+}
+
+interface ApiFailure {
+  id: string;
+  created_at: string;
+  endpoint_key: string;
+  provider_key: string;
+  outcome: string;
+  error_code: string | null;
+  error_message: string | null;
+  response_status_code: number | null;
+  duration_ms: number | null;
+  request_ref: string | null;
+  attempt_no: number;
+  candidate_id: string;
+  candidate_name?: string | null;
+  candidate_code?: string | null;
+  mobile?: string | null;
+}
+
+interface FailureSummaryRow {
+  outcome: string;
+  error_code: string | null;
+  n: number;
+  last_seen: string;
+}
+
 interface Stats {
   totalCallsToday: number;
   totalCallsWeek: number;
@@ -52,7 +97,9 @@ export default function NativeBGVAPIMonitor() {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [logs, setLogs] = useState<APILog[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [apiCosts, setApiCosts] = useState<Record<string, number>>({});
+  const [costReport, setCostReport] = useState<CostReport | null>(null);
+  const [failures, setFailures] = useState<ApiFailure[]>([]);
+  const [failureSummary, setFailureSummary] = useState<FailureSummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [search, setSearch] = useState('');
@@ -62,16 +109,22 @@ export default function NativeBGVAPIMonitor() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [statusRes, logsRes, statsRes, costsRes] = await Promise.all([
+      const [statusRes, logsRes, statsRes, costRes, failRes] = await Promise.all([
         hrmsApi.get<any>('/api/ats/bgv/provider-status'),
         hrmsApi.get<any>('/api/ats/bgv/api-logs'),
         hrmsApi.get<any>('/api/ats/bgv/api-stats'),
-        hrmsApi.get<any>('/api/ats/bgv/api-costs').catch(() => ({ data: {} })),
+        // Spend is computed server-side from the request log. It used to be
+        // multiplied in the browser off a regex guess of the check type, which
+        // silently billed anything unparseable at a flat ₹2.
+        hrmsApi.get<any>('/api/ats/bgv/api-cost-report?days=30').catch(() => ({ data: null })),
+        hrmsApi.get<any>('/api/ats/bgv/api-failures?days=30').catch(() => ({ data: null })),
       ]);
       setProviderStatus(statusRes.data || null);
       setLogs(logsRes.data || []);
       setStats(statsRes.data || null);
-      setApiCosts(costsRes.data || {});
+      setCostReport(costRes.data || null);
+      setFailures(failRes.data?.failures || []);
+      setFailureSummary(failRes.data?.summary || []);
     } catch (e: any) {
       alert(e?.message || 'Failed to load API monitor data');
     } finally {
@@ -79,26 +132,15 @@ export default function NativeBGVAPIMonitor() {
     }
   };
 
-  const normalizeEndpointToCheckType = (endpoint: string): string => {
-    return endpoint.toLowerCase()
-      .replace(/_check$/, '')
-      .replace(/^verify_/, '')
-      .replace(/_verify$/, '')
-      .replace(/_offline$/, '');
-  };
+  const calculateTotalCost = (): number => costReport?.totalCost ?? 0;
 
-  const getCostForEndpoint = (endpoint: string): number => {
-    const checkType = normalizeEndpointToCheckType(endpoint);
-    return apiCosts[checkType] ?? 2; // fallback to ₹2 if not configured
-  };
-
-  const calculateTotalCost = (): number => {
-    if (!stats?.callsByEndpoint) return 0;
-    let total = 0;
-    for (const [endpoint, count] of Object.entries(stats.callsByEndpoint)) {
-      total += count * getCostForEndpoint(endpoint);
-    }
-    return total;
+  const OUTCOME_STYLES: Record<string, string> = {
+    provider_error: 'bg-red-100 text-red-700 border-red-200',
+    network_error: 'bg-orange-100 text-orange-700 border-orange-200',
+    config_error: 'bg-amber-100 text-amber-800 border-amber-200',
+    mismatch: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+    manual_review: 'bg-blue-100 text-blue-700 border-blue-200',
+    success: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   };
 
   useEffect(() => {
@@ -337,51 +379,160 @@ export default function NativeBGVAPIMonitor() {
                   <p className="text-xs text-slate-500 mt-1">API calls</p>
                 </div>
                 <div className="bg-blue-50 p-4 rounded-md border border-blue-200">
-                  <p className="text-xs text-blue-600 mb-1">Estimated Cost (Month)</p>
+                  <p className="text-xs text-blue-600 mb-1">Billed Cost ({costReport?.days ?? 30}d)</p>
                   <p className="text-2xl font-bold text-blue-900">₹{calculateTotalCost().toFixed(2)}</p>
-                  <p className="text-xs text-blue-600 mt-1">Per-check pricing configured</p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    {costReport ? `${costReport.totalCalls} calls, computed from the request log` : 'Cost report unavailable'}
+                  </p>
                 </div>
               </div>
 
-              {/* Breakdown by Check Type */}
+              {/* Breakdown by endpoint — figures come from the server so the
+                  billed/failed split and unit rate are authoritative. */}
               <div>
-                <p className="text-sm font-semibold mb-3">API Calls by Check Type (This Month)</p>
-                <div className="space-y-2">
-                  {Object.entries(stats.callsByEndpoint).map(([endpoint, count]) => {
-                    const cost = getCostForEndpoint(endpoint);
-                    const totalCost = count * cost;
-                    return (
-                      <div key={endpoint} className="flex items-center justify-between text-sm">
-                        <span className="text-slate-700">{endpoint.replace(/_/g, ' ')}</span>
-                        <div className="flex items-center gap-3">
-                          <div className="bg-slate-200 h-2 w-24 rounded-full overflow-hidden">
-                            <div
-                              className="bg-blue-500 h-full"
-                              style={{ width: `${(count / Math.max(...Object.values(stats.callsByEndpoint))) * 100}%` }}
-                            />
+                <p className="text-sm font-semibold mb-3">
+                  API Calls by Endpoint (last {costReport?.days ?? 30} days)
+                </p>
+                {!costReport?.rows?.length ? (
+                  <p className="text-sm text-slate-500">No provider calls recorded in this period.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {costReport.rows.map((row) => {
+                      const peak = Math.max(...costReport.rows.map((r) => r.totalCalls), 1);
+                      return (
+                        <div key={row.endpointKey} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-700 flex items-center gap-2">
+                            {row.endpointKey.replace(/_/g, ' ')}
+                            {!row.rateConfigured && (
+                              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                                no rate set
+                              </Badge>
+                            )}
+                            {row.failedCalls > 0 && (
+                              <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">
+                                {row.failedCalls} failed
+                              </Badge>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-3">
+                            <div className="bg-slate-200 h-2 w-24 rounded-full overflow-hidden">
+                              <div className="bg-blue-500 h-full" style={{ width: `${(row.totalCalls / peak) * 100}%` }} />
+                            </div>
+                            <span className="text-slate-600 w-12 text-right">{row.billableCalls}</span>
+                            <span className="text-xs text-slate-400 w-10">× ₹{row.unitCost}</span>
+                            <span className="font-semibold text-slate-900 w-16 text-right">₹{row.totalCost.toFixed(0)}</span>
                           </div>
-                          <span className="text-slate-600 w-12 text-right">{count}</span>
-                          <span className="text-xs text-slate-400 w-8">× ₹{cost}</span>
-                          <span className="font-semibold text-slate-900 w-16 text-right">₹{totalCost.toFixed(0)}</span>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs">
-                <p className="font-semibold text-amber-800 mb-1">💡 Cost Optimization Tip</p>
-                <p className="text-amber-700">
-                  Each BGV check type has its own cost configured in Super Admin → Settings → BGV API Costs.
-                  Complete candidate profile requires 5-8 API calls (~₹{Math.round(calculateTotalCost() / Math.max(stats.totalCallsMonth / 6, 1))} per candidate avg).
-                  Bulk verification of ~{Math.floor(stats.totalCallsMonth / 6)} candidates this month.
-                </p>
+              {costReport?.unmappedEndpoints?.length ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs">
+                  <p className="font-semibold text-amber-800 mb-1">Endpoints with no configured rate</p>
+                  <p className="text-amber-700">
+                    {costReport.unmappedEndpoints.join(', ')} — counted but billed at ₹0.
+                    Add a rate in Super Admin → Settings → BGV API Costs.
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-xs text-slate-600">
+                Only calls that reached the provider are billed. Requests that failed before
+                reaching it (network or configuration errors) are counted but cost ₹0.
               </div>
             </CardContent>
           </Card>
         </>
       )}
+
+      {/* Failed provider calls — who, when, which endpoint, and why. */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+              Failed API Calls (last 30 days)
+            </CardTitle>
+            {failures.length > 0 && (
+              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                {failures.length} failure{failures.length === 1 ? '' : 's'}
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {failureSummary.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {failureSummary.map((row) => (
+                <div
+                  key={`${row.outcome}-${row.error_code ?? 'none'}`}
+                  className={`px-3 py-1.5 rounded-md border text-xs ${OUTCOME_STYLES[row.outcome] ?? 'bg-slate-100 text-slate-700 border-slate-200'}`}
+                >
+                  <span className="font-semibold">{row.error_code || row.outcome}</span>
+                  <span className="ml-2 opacity-75">× {row.n}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {failures.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md p-3">
+              <CheckCircle2 className="w-4 h-4" />
+              No provider call failures recorded in the last 30 days.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+                    <th className="py-2 pr-3 font-medium">When</th>
+                    <th className="py-2 pr-3 font-medium">Candidate</th>
+                    <th className="py-2 pr-3 font-medium">Endpoint</th>
+                    <th className="py-2 pr-3 font-medium">Outcome</th>
+                    <th className="py-2 pr-3 font-medium">Code</th>
+                    <th className="py-2 pr-3 font-medium">Reason</th>
+                    <th className="py-2 pr-3 font-medium text-right">HTTP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {failures.map((f) => (
+                    <tr key={f.id} className="border-b border-slate-100 align-top">
+                      <td className="py-2 pr-3 whitespace-nowrap text-slate-600">
+                        {formatISTDate(f.created_at)}<br />
+                        <span className="text-xs text-slate-400">{formatISTTime(f.created_at)}</span>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span className="text-slate-900">{f.candidate_name || '—'}</span>
+                        {f.candidate_code && (
+                          <span className="block text-xs text-slate-400">{f.candidate_code}</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-slate-700">
+                        {f.endpoint_key.replace(/_/g, ' ')}
+                        <span className="block text-xs text-slate-400">{f.provider_key}</span>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${OUTCOME_STYLES[f.outcome] ?? 'bg-slate-100 text-slate-700 border-slate-200'}`}
+                        >
+                          {f.outcome.replace(/_/g, ' ')}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-3 text-xs font-mono text-slate-600">{f.error_code || '—'}</td>
+                      <td className="py-2 pr-3 text-slate-700 max-w-md">{f.error_message || '—'}</td>
+                      <td className="py-2 pr-3 text-right text-slate-500">{f.response_status_code ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* API Logs Table */}
       <Card>
