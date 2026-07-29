@@ -16,6 +16,9 @@ export function getSourcePool(): mysql.Pool {
       connectionLimit: 8,
       queueLimit: 0,
       connectTimeout: 15000,
+      // Occasional cross-DB reads: park at most one connection on the shared server.
+      maxIdle: 1,
+      idleTimeout: env.DB_POOL_IDLE_TIMEOUT_MS,
     });
   }
   return pool;
