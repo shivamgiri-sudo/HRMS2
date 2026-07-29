@@ -14,6 +14,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import axios from "axios";
 
+// Must run before the module imports below: config/env.ts parses process.env at
+// import time, and the client refuses to call out when the provider is disabled
+// or uncredentialed. Without this the suite only passes on a machine whose
+// backend/.env happens to enable Luckpay — it failed on a clean checkout.
+vi.hoisted(() => {
+  process.env.LUCKPAY_PROVIDER_ENABLED = "true";
+  process.env.LUCKPAY_ENV = "production";
+  process.env.LUCKPAY_BASIC_TOKEN = process.env.LUCKPAY_BASIC_TOKEN || "test-basic-token";
+  process.env.LUCKPAY_CLIENT_ID = process.env.LUCKPAY_CLIENT_ID || "TESTCLIENT";
+  process.env.LUCKPAY_WEBHOOK_SECRET = process.env.LUCKPAY_WEBHOOK_SECRET || "test-webhook-secret";
+});
+
+// No org_settings rows -> credential resolution falls through to env above.
 vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn().mockResolvedValue([[], []]) },
 }));
