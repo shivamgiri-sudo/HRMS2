@@ -184,7 +184,21 @@ export const employeeService = {
     if (branchId)     { conds.push("e.branch_id = ?");         params.push(branchId); }
     if (departmentId) { conds.push("e.department_id = ?");     params.push(departmentId); }
     if (designationId){ conds.push("e.designation_id = ?");    params.push(designationId); }
-    if (search)    { conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ? OR e.email LIKE ? OR e.official_email LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
+    if (search) {
+      // full_name alone missed employees whose full_name is empty — fall back to
+      // first/last name (and the concatenation, so "First Last" still matches).
+      conds.push(`(
+        e.full_name LIKE ?
+        OR e.first_name LIKE ?
+        OR e.last_name LIKE ?
+        OR CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) LIKE ?
+        OR e.employee_code LIKE ?
+        OR e.email LIKE ?
+        OR e.official_email LIKE ?
+      )`);
+      const token = `%${search}%`;
+      params.push(token, token, token, token, token, token, token);
+    }
 
     // Apply scope filter from middleware
     if (scopeFilter?.sql) {

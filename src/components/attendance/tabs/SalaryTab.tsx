@@ -8,8 +8,12 @@ const INR = (v: number | null | undefined) =>
   `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function getTodayMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  // Payroll months are IST months. Deriving this from the browser's local clock
+  // showed the wrong month to anyone outside IST around the month boundary,
+  // which made the running-month salary look inconsistent with Payroll.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
+  }).format(new Date()).slice(0, 7);
 }
 
 const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

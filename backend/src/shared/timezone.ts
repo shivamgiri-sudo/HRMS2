@@ -66,3 +66,20 @@ export function toISTFields<T extends Record<string, unknown>>(
   }
   return out;
 }
+
+/**
+ * Minutes since midnight for any time-bearing value the attendance tables hold:
+ *   - MySQL DATETIME   "2026-07-29 09:15:00"
+ *   - IST-tagged ISO   "2026-07-29T09:15:00+05:30"
+ *   - bare MySQL TIME  "09:15:00" (may exceed 24h on night shifts)
+ * Returns null when the value carries no usable time.
+ */
+export function minutesOfDay(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const s = String(value).trim();
+  const dt = /^\d{4}-\d{2}-\d{2}[T ](\d{2}):([0-5]\d)/.exec(s);
+  if (dt) return Number(dt[1]) * 60 + Number(dt[2]);
+  const t = /^(\d{1,3}):([0-5]\d)/.exec(s);
+  if (t) return (Number(t[1]) % 24) * 60 + Number(t[2]);
+  return null;
+}

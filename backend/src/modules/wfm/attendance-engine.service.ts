@@ -2,7 +2,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
-import { toIST } from '../../shared/timezone.js';
+import { toIST, minutesOfDay } from '../../shared/timezone.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -464,33 +464,51 @@ export const attendanceEngineService = {
   ): Promise<{ lateMark: number; lateByMinutes: number }> {
     if (rule.attendance_source === 'dialler') return { lateMark: 0, lateByMinutes: 0 };
 
-    // Get actual clock-in time
-    const [sessionRows] = await db.execute<RowDataPacket[]>(
-      `SELECT login_time FROM wfm_attendance_session
-       WHERE employee_id = ? AND session_date = ? LIMIT 1`,
-      [employeeId, date]
+    // ── Clock-in: fall back through every source that can carry a first punch ──
+    //
+    // This previously read ONLY wfm_attendance_session.login_time — the web
+    // punch-in table, which is informational and empty for the biometric/COSEC
+    // population that actually drives attendance. With no session row the
+    // function returned 0, so late_mark was never set for anyone and every
+    // "Late Marks" figure in the UI read 0/blank. Fall back to the engine's own
+    // clock_in_time and then to the raw biometric log.
+    const [clockRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(
+                (SELECT was.login_time FROM wfm_attendance_session was
+                  WHERE was.employee_id = ? AND was.session_date = ? LIMIT 1),
+                (SELECT adr.clock_in_time FROM attendance_daily_record adr
+                  WHERE adr.employee_id = ? AND adr.record_date = ? LIMIT 1),
+                (SELECT bal.first_punch_in FROM biometric_attendance_log bal
+                  WHERE bal.employee_id = ? AND bal.punch_date = ? LIMIT 1)
+              ) AS clock_in`,
+      [employeeId, date, employeeId, date, employeeId, date]
     );
-    if (!(sessionRows as RowDataPacket[]).length || !(sessionRows[0] as any).login_time) {
-      return { lateMark: 0, lateByMinutes: 0 };
-    }
+    const clockInMinutes = minutesOfDay((clockRows[0] as any)?.clock_in);
+    if (clockInMinutes === null) return { lateMark: 0, lateByMinutes: 0 };
 
-    // Get shift start from roster assignment → shift master
+    // ── Shift start: rostered shift, else the employee's configured hours ──
+    //
+    // Requiring a published roster row meant employees without one were never
+    // marked late. Fall back to employees.working_hours_start.
     const [shiftRows] = await db.execute<RowDataPacket[]>(
-      `SELECT wsm.start_time FROM wfm_roster_assignment wra
-       JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
-       WHERE wra.employee_id = ? AND wra.roster_date = ? LIMIT 1`,
-      [employeeId, date]
+      `SELECT COALESCE(
+                (SELECT wsm.start_time FROM wfm_roster_assignment wra
+                   JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
+                  WHERE wra.employee_id = ? AND wra.roster_date = ? LIMIT 1),
+                (SELECT e.working_hours_start FROM employees e WHERE e.id = ? LIMIT 1)
+              ) AS start_time`,
+      [employeeId, date, employeeId]
     );
-    if (!(shiftRows as RowDataPacket[]).length) return { lateMark: 0, lateByMinutes: 0 };
+    const shiftStartMinutes = minutesOfDay((shiftRows[0] as any)?.start_time);
+    // No shift basis at all — cannot judge lateness, so do not guess.
+    if (shiftStartMinutes === null) return { lateMark: 0, lateByMinutes: 0 };
 
-    const loginTime = new Date((sessionRows[0] as any).login_time as string);
-    const shiftStartStr = (shiftRows[0] as any).start_time as string; // "HH:MM:SS"
-    const [h, m, s] = shiftStartStr.split(':').map(Number);
-    const shiftStart = new Date(date);
-    shiftStart.setHours(h, m, s ?? 0, 0);
-
-    const lateByMs = loginTime.getTime() - shiftStart.getTime();
-    const lateByMinutes = Math.floor(lateByMs / 60000);
+    // Minutes-of-day arithmetic avoids the timezone drift of the previous
+    // `new Date(date)` + setHours() mix (date parsed as UTC, hours set local).
+    let lateByMinutes = clockInMinutes - shiftStartMinutes;
+    // Night shift: a shift starting 22:00 with a 01:00 punch is 180 min late,
+    // not -1260. Anything more than half a day negative wrapped past midnight.
+    if (lateByMinutes < -720) lateByMinutes += 1440;
 
     if (lateByMinutes > rule.grace_minutes) {
       return { lateMark: 1, lateByMinutes };

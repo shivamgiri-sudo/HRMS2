@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
 import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
 import { toIST } from '../../shared/timezone.js';
+import { getAprMonthly, resolveAprUserIds } from './apr-attendance.service.js';
 import {
   getBulkCosecMappings,
   getMonthlyAttendanceFromNcosec,
@@ -116,6 +117,11 @@ type ScopedEmployeeRow = {
   branch_name: string | null;
   process_name: string | null;
   cost_centre_name: string | null;
+  // APR/dialler identity + eligibility inputs
+  call_centre_code: string | null;
+  biometric_code: string | null;
+  designation_id: string | null;
+  designation_name: string | null;
 };
 
 type BreakSummaryRow = {
@@ -149,7 +155,7 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
   );
   const hasAdminBypass = userRoleSet.has('super_admin') || userRoleSet.has('admin');
   const isPlatformWide = hasAdminBypass || userRoleSet.has('ceo');
-  const isScopedReader = hasAdminBypass || ['hr', 'wfm', 'manager', 'assistant_manager', 'tl'].some((r) => userRoleSet.has(r));
+  const isScopedReader = hasAdminBypass || ['hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'payroll_head', 'payroll_admin'].some((r) => userRoleSet.has(r));
 
   const callerEmp = await getEmployeeForUser(userId);
 
@@ -175,7 +181,7 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
   } else if (!isPlatformWide) {
     const scoped = await buildScopeWhereClause(
       userId,
-      ['hr', 'wfm', 'manager', 'assistant_manager', 'tl'],
+      ['hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'payroll_head', 'payroll_admin'],
       {
         branchId: 'e.branch_id',
         processId: 'e.process_id',
@@ -225,6 +231,10 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
         e.manager_id,
         e.working_hours_start,
         e.working_hours_end,
+        e.call_centre_code,
+        e.biometric_code,
+        e.designation_id,
+        dsg.designation_name,
         dm.dept_name AS department_name,
         bm.branch_name,
         pm.process_name,
@@ -234,6 +244,7 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
        LEFT JOIN branch_master bm ON bm.id = e.branch_id
        LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+       LEFT JOIN designation_master dsg ON dsg.id = e.designation_id
       WHERE ${where.join(' AND ')}
       ORDER BY e.employee_code ASC`,
     params,
@@ -601,6 +612,74 @@ router.get('/ncosec-monthly', h(async (req: AuthenticatedRequest, res: Response)
     total: enriched.length,
     page,
     limit,
+  });
+}));
+
+// GET /apr-monthly — dialler (APR) monthly view read from mas_hrms.apr.
+// Counterpart of /ncosec-monthly for employees whose attendance source is the
+// dialler rather than biometric. Same scope guard, same response shape.
+router.get('/apr-monthly', h(async (req: AuthenticatedRequest, res: Response) => {
+  const fromDate = String(req.query.fromDate ?? '').trim();
+  const toDate = String(req.query.toDate ?? '').trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+    return res.status(400).json({ success: false, error: 'fromDate and toDate are required in YYYY-MM-DD format' });
+  }
+
+  // Reuses the existing scope/role enforcement — an unauthorised caller is
+  // narrowed to their own record or rejected there.
+  const employees = await listScopedEmployees(req);
+  if (employees.length === 0) {
+    return res.json({ success: true, data: [], total: 0, source: 'apr' });
+  }
+  if (employees.length > 1) {
+    return res.status(400).json({ success: false, error: 'apr-monthly requires a single employeeId' });
+  }
+
+  const emp = employees[0];
+  const records = await getAprMonthly(emp, fromDate, toDate);
+
+  return res.json({
+    success: true,
+    data: records.map((r) => ({ ...r, employee_id: emp.id, employee_code: emp.employee_code })),
+    total: records.length,
+    source: 'apr',
+  });
+}));
+
+// GET /attendance-source/:employeeId — which source drives this employee's attendance.
+// The UI uses this to pick between the APR and biometric views instead of guessing.
+router.get('/attendance-source/:employeeId', h(async (req: AuthenticatedRequest, res: Response) => {
+  const employeeId = safeId(req.params.employeeId, 'employeeId');
+  if (!employeeId) return res.status(400).json({ success: false, error: 'Invalid employeeId' });
+
+  // Force the scope query onto this employee so access rules still apply.
+  (req.query as Record<string, unknown>).employeeId = employeeId;
+  const employees = await listScopedEmployees(req);
+  if (employees.length === 0) {
+    return res.status(403).json({ success: false, error: 'Employee not in scope' });
+  }
+
+  const emp = employees[0];
+  const isApr = await attendanceEngineService.isAprEligible(
+    emp.designation_id ?? null,
+    emp.department_id ?? null,
+    emp.process_id ?? null,
+    String(emp.department_name ?? '').toLowerCase(),
+    String(emp.designation_name ?? '').toLowerCase(),
+  );
+
+  return res.json({
+    success: true,
+    data: {
+      employee_id: emp.id,
+      employee_code: emp.employee_code,
+      attendance_source: isApr ? 'dialler' : 'biometric',
+      source_label: isApr ? 'APR / Dialler' : 'Direct COSEC',
+      apr_user_ids: isApr ? resolveAprUserIds(emp) : [],
+      // Surfaced so the UI can show how fresh the data actually is.
+      sync_interval_note: isApr ? 'APR syncs hourly from ViciDial' : 'COSEC syncs every 5 minutes',
+    },
   });
 }));
 

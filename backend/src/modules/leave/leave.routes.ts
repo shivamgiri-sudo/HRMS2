@@ -188,7 +188,24 @@ leaveRouter.get("/requests/legacy", h(async (req: AuthenticatedRequest, res: Res
     LIMIT 200
   `, params);
 
-  return res.json({ success: true, data: rows });
+  // De-duplicate server-side against leave already migrated into mas_hrms.
+  //
+  // The client used to do this by building a Set of legacy_leave_id from the
+  // HRMS list — but that list is capped at 20 rows by leaveRequestFiltersSchema
+  // while this route returns up to 200, so every leave beyond the 20 most recent
+  // survived the filter and rendered a second time. Filtering here makes the
+  // result correct regardless of how the caller paginates.
+  const [migratedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT legacy_leave_id FROM leave_request
+      WHERE employee_id = ? AND legacy_leave_id IS NOT NULL`,
+    [employeeId]
+  );
+  const migrated = new Set(
+    (migratedRows as any[]).map((r) => String(r.legacy_leave_id))
+  );
+  const deduped = (rows as any[]).filter((r) => !migrated.has(String(r.id)));
+
+  return res.json({ success: true, data: deduped });
 }));
 
 // Employee self-scope: employees can view only their own leave balance.

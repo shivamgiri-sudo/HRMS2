@@ -24,8 +24,10 @@ const DEFAULT_FILTERS: HubFilters = {
 };
 
 function currentMonthStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  // IST month — attendance and payroll months are both IST-based.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
+  }).format(new Date()).slice(0, 7);
 }
 
 export default function AdminAttendanceView() {

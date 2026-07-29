@@ -121,6 +121,14 @@ export interface PayslipDetail extends PayslipSummary {
   paid_working_days: number;
   eligible_weekoff_days: number;
   eligible_holiday_days: number;
+  /**
+   * LWP as a DAY COUNT (salary_prep_line.lwp_days) — distinct from
+   * `lwp_deduction` above, which is the rupee amount. The API has always
+   * returned this (payslip.service.ts selects spl.lwp_days); it was simply
+   * missing from this interface, so the payslip attendance grid failed to
+   * typecheck. Optional to match the backend's `lwp_days?: number`.
+   */
+  lwp_days?: number | null;
   final_payable_days: number;
   active_calendar_days: number;
   components: PayslipComponent[];

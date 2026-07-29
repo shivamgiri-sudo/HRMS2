@@ -415,7 +415,47 @@ export const leaveService = {
     const currentYear = new Date().getFullYear();
     const currentMonth = new Date().getMonth() + 1; // 1-12
 
-    return (rows as RowDataPacket[]).map((row: any) => {
+    // Collapse duplicate leave types before returning.
+    //
+    // 052_legacy_migration_tables.sql seeds legacy twins of types that already
+    // exist from 006_leave.sql — 'PTRL' Paternity Leave (Legacy) alongside 'PL'
+    // Paternity Leave, and 'MTRL' alongside 'ML'. The dedupe in
+    // 184_master_data_integrity.sql matches on the EXACT leave_name, so
+    // "Paternity Leave" != "Paternity Leave (Legacy)" and both survive. Because
+    // this query returns every active type, the leave balance UI rendered one
+    // card per twin — the duplicate rows users were seeing.
+    //
+    // Merge on a canonical name (legacy suffix stripped), summing the ledger
+    // figures so no entitlement is lost, and keep the canonical (non-legacy) row
+    // as the display identity. Nothing is deleted — this is display-level only.
+    const canonicalKey = (name: string) =>
+      String(name ?? "")
+        .toLowerCase()
+        .replace(/\s*\(legacy\)\s*$/, "")
+        .trim();
+    const LEGACY_CODES = new Set(["PTRL", "MTRL"]);
+
+    const merged = new Map<string, any>();
+    for (const row of rows as any[]) {
+      const key = canonicalKey(row.leave_name);
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { ...row });
+        continue;
+      }
+      // Prefer the canonical (non-legacy) row for identity/display.
+      const rowIsLegacy = LEGACY_CODES.has(String(row.leave_code ?? "").toUpperCase())
+        || /\(legacy\)\s*$/i.test(String(row.leave_name ?? ""));
+      const base = rowIsLegacy ? existing : row;
+      merged.set(key, {
+        ...base,
+        allocated_days: Number(existing.allocated_days ?? 0) + Number(row.allocated_days ?? 0),
+        used_days:      Number(existing.used_days ?? 0)      + Number(row.used_days ?? 0),
+        adjusted_days:  Number(existing.adjusted_days ?? 0)  + Number(row.adjusted_days ?? 0),
+      });
+    }
+
+    return Array.from(merged.values()).map((row: any) => {
       const allocated = Number(row.allocated_days ?? 0);
       const used = Number(row.used_days ?? 0);
       const adjusted = Number(row.adjusted_days ?? 0);

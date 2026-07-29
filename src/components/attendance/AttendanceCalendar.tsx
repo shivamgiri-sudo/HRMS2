@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatClockTime } from "@/lib/utils";
 import {
   Sheet,
   SheetContent,
@@ -95,10 +96,38 @@ interface DayDetail {
     synced_at: string | null;
   } | null;
   raw_punches: RawPunch[];
+  /**
+   * APR / dialler record for the date. Login/logout are MySQL TIME values —
+   * `login_time`/`logout_time` are raw "HH:MM:SS" (format with formatClockTime),
+   * `login_at`/`logout_at` are IST-tagged datetimes safe for `new Date()`.
+   */
+  apr_record: {
+    record_date: string;
+    login_time: string | null;
+    logout_time: string | null;
+    login_at: string | null;
+    logout_at: string | null;
+    net_minutes: number;
+    calls: number;
+    break_bio: number;
+    break_lunch: number;
+    break_qa: number;
+    break_training: number;
+    campaigns: Array<Record<string, unknown>>;
+  } | null;
 }
+
+type AttendanceSource = "dialler" | "biometric";
 
 interface AttendanceCalendarProps {
   employeeId: string;
+  /** Controlled month (0-11). When provided the parent owns month state. */
+  month?: number;
+  /** Controlled year. When provided the parent owns month state. */
+  year?: number;
+  onMonthChange?: (month: number, year: number) => void;
+  /** Hide the internal navigator when the parent renders its own. */
+  hideNavigator?: boolean;
   initialMonth?: number;
   initialYear?: number;
 }
@@ -120,6 +149,16 @@ function getFirstDayOfMonth(year: number, month: number) {
 function fmtDate(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
 }
+/**
+ * Today's date in IST as YYYY-MM-DD.
+ * `new Date().toISOString().slice(0,10)` is UTC and resolves to the previous day
+ * between 00:00 and 05:30 IST — which mis-highlighted "today" on the calendar.
+ */
+function istTodayString(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
 function fmtTime(val?: string | null): string {
   if (!val) return "--:--";
   try {
@@ -133,6 +172,13 @@ function fmtTime(val?: string | null): string {
       timeZone: "Asia/Kolkata",
     });
   } catch { return val.slice(11, 16) || "--:--"; }
+}
+/** date-fns format() throws on an invalid date — never let that blank a panel. */
+function safeFormat(value: string | null | undefined, pattern: string): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  try { return format(d, pattern); } catch { return "—"; }
 }
 function fmtMinutes(mins?: number | null): string {
   if (mins == null || mins === 0) return "0h 0m";
@@ -248,7 +294,9 @@ function DayDetailSheet({
 
   const adr = data?.attendance_record;
   const agg = data?.cosec_daily_agg;
+  const apr = data?.apr_record ?? null;
   const punches = data?.raw_punches ?? [];
+  const isDialler = adr?.attendance_source === 'dialler' || !!apr;
   const isNight = detectNightShift(agg?.first_punch_in, agg?.last_punch_out);
 
   // When ADR row is absent but COSEC data exists, derive a best-effort status from COSEC work_minutes
@@ -375,8 +423,8 @@ function DayDetailSheet({
       <SheetContent className="w-full sm:max-w-md overflow-y-auto">
         <SheetHeader className="mb-4">
           <div className="flex items-center gap-2">
-            <Fingerprint className="h-5 w-5 text-[#1B6AB5]" />
-            <SheetTitle>Biometric Attendance</SheetTitle>
+            <Fingerprint className={`h-5 w-5 ${isDialler ? 'text-amber-600' : 'text-[#1B6AB5]'}`} />
+            <SheetTitle>{isDialler ? 'APR / Dialler Attendance' : 'Biometric Attendance'}</SheetTitle>
           </div>
           <SheetDescription>
             {date ? format(new Date(date + "T00:00:00"), "EEEE, MMMM d, yyyy") : ""}
@@ -480,15 +528,89 @@ function DayDetailSheet({
               </div>
             )}
 
-            {adr?.attendance_source === 'dialler' && !agg && (
+            {/* APR / Dialler record — real Login/Logout times from mas_hrms.apr.
+                These are MySQL TIME values, so they are formatted with
+                formatClockTime (never `new Date()`, which yields Invalid Date
+                and was the cause of the blank login/logout columns). */}
+            {apr && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                    APR / Dialler Record
+                  </p>
+                  {apr.campaigns?.length > 1 && (
+                    <span className="text-[10px] text-amber-700">
+                      {apr.campaigns.length} campaigns
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-white border border-amber-100 p-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                      <LogIn className="h-3.5 w-3.5 text-emerald-600" />
+                      Login Time
+                    </div>
+                    <p className="text-base font-semibold text-slate-900">
+                      {formatClockTime(apr.login_time)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-white border border-amber-100 p-2.5">
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                      <LogOut className="h-3.5 w-3.5 text-sky-600" />
+                      Logout Time
+                    </div>
+                    <p className="text-base font-semibold text-slate-900">
+                      {formatClockTime(apr.logout_time)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 rounded-lg bg-white border border-amber-100 px-3 py-2">
+                  <Clock className="h-4 w-4 text-indigo-600" />
+                  <span className="text-xs text-slate-600">Net login</span>
+                  <span className="ml-auto text-sm font-bold text-slate-900">
+                    {fmtMinutes(apr.net_minutes)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="flex justify-between rounded-lg bg-white border border-amber-100 px-2.5 py-1.5">
+                    <span className="text-slate-500">Calls</span>
+                    <span className="font-semibold text-slate-800">{apr.calls ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between rounded-lg bg-white border border-amber-100 px-2.5 py-1.5">
+                    <span className="text-slate-500">Lunch</span>
+                    <span className="font-semibold text-slate-800">{fmtMinutes(apr.break_lunch)}</span>
+                  </div>
+                  <div className="flex justify-between rounded-lg bg-white border border-amber-100 px-2.5 py-1.5">
+                    <span className="text-slate-500">Bio break</span>
+                    <span className="font-semibold text-slate-800">{fmtMinutes(apr.break_bio)}</span>
+                  </div>
+                  <div className="flex justify-between rounded-lg bg-white border border-amber-100 px-2.5 py-1.5">
+                    <span className="text-slate-500">Training</span>
+                    <span className="font-semibold text-slate-800">{fmtMinutes(apr.break_training)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Dialler employee with no APR row for this date. */}
+            {!apr && adr?.attendance_source === 'dialler' && (
               <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 space-y-2">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
                   APR / Dialler Record
                 </p>
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Net Login</span>
-                  <span className="font-semibold">{fmtMinutes(adr.dialler_minutes)}</span>
-                </div>
+                {adr.dialler_minutes != null ? (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Net Login</span>
+                    <span className="font-semibold">{fmtMinutes(adr.dialler_minutes)}</span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    No APR record found for this date. APR syncs hourly from the dialler.
+                  </p>
+                )}
               </div>
             )}
 
@@ -539,7 +661,8 @@ function DayDetailSheet({
             )}
 
             {/* Raw punch events timeline */}
-            {punches.length > 0 && (
+            {/* Raw COSEC punch events timeline — biometric employees only. */}
+            {punches.length > 0 && !isDialler && (
               <>
                 <Separator />
                 <div>
@@ -577,7 +700,7 @@ function DayDetailSheet({
               </>
             )}
 
-            {punches.length === 0 && !agg && !adr && (
+            {punches.length === 0 && !agg && !adr && !apr && !isDialler && (
               <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
                 No biometric punch data found for this date.
               </div>
@@ -594,7 +717,9 @@ function DayDetailSheet({
                   <div className="flex justify-between">
                     <span>Processed</span>
                     <span className="font-medium text-slate-700">
-                      {format(new Date(adr.processed_at), "dd MMM yyyy HH:mm")}
+                      {/* Guarded: date-fns format() throws RangeError on an
+                          invalid date, which blanked the entire sheet. */}
+                      {safeFormat(adr.processed_at, "dd MMM yyyy HH:mm")}
                     </span>
                   </div>
                 )}
@@ -813,21 +938,81 @@ function DayDetailSheet({
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: AttendanceCalendarProps) {
+export function AttendanceCalendar({
+  employeeId,
+  month,
+  year,
+  onMonthChange,
+  hideNavigator = false,
+  initialMonth,
+  initialYear,
+}: AttendanceCalendarProps) {
   const today = new Date();
-  const [currentMonth, setCurrentMonth] = useState(initialMonth ?? today.getMonth());
-  const [currentYear,  setCurrentYear]  = useState(initialYear  ?? today.getFullYear());
+  // IST "today" — toISOString() is UTC and lands on the wrong day between
+  // 00:00 and 05:30 IST, which used to put the "today" ring on the previous day.
+  const todayIst = istTodayString();
+
+  const [uncontrolledMonth, setUncontrolledMonth] = useState(initialMonth ?? today.getMonth());
+  const [uncontrolledYear,  setUncontrolledYear]  = useState(initialYear  ?? today.getFullYear());
+
+  // Controlled when the parent passes month/year, so the page's navigator and the
+  // grid can never drift apart (previously props were init-only and desynced).
+  const isControlled = month != null && year != null;
+  const currentMonth = isControlled ? (month as number) : uncontrolledMonth;
+  const currentYear  = isControlled ? (year as number)  : uncontrolledYear;
+
+  const setMonthYear = (m: number, y: number) => {
+    if (!isControlled) { setUncontrolledMonth(m); setUncontrolledYear(y); }
+    onMonthChange?.(m, y);
+  };
+
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [sheetOpen,    setSheetOpen]    = useState(false);
 
+  // Which system drives this employee's attendance — APR (dialler) or COSEC
+  // (biometric). Previously the calendar always read biometric, so dialler
+  // employees saw COSEC data that did not belong to them.
+  const { data: sourceInfo } = useQuery<{ attendance_source: AttendanceSource; source_label: string }>({
+    queryKey: ["attendance-source", employeeId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        `/api/wfm/attendance/attendance-source/${employeeId}`
+      );
+      return res.data;
+    },
+    enabled: !!employeeId,
+    staleTime: 10 * 60_000,
+  });
+  const source: AttendanceSource = sourceInfo?.attendance_source ?? "biometric";
+
   // Fetch monthly attendance data for calendar colouring
-  const { data: attendanceData = [], isLoading } = useQuery<AttendanceDay[]>({
-    queryKey: ["attendance-calendar", employeeId, currentYear, currentMonth],
+  const { data: attendanceData = [], isLoading, isError, refetch } = useQuery<AttendanceDay[]>({
+    queryKey: ["attendance-calendar", employeeId, currentYear, currentMonth, source],
     queryFn: async () => {
       const startDate = fmtDate(currentYear, currentMonth, 1);
       const endDate   = fmtDate(currentYear, currentMonth, getDaysInMonth(currentYear, currentMonth));
+      const params = new URLSearchParams({ employeeId, fromDate: startDate, toDate: endDate });
+
+      if (source === "dialler") {
+        const aprRes = await hrmsApi.get<{ success: boolean; data: any[] }>(
+          `/api/wfm/attendance/apr-monthly?${params}`
+        );
+        return (aprRes.data || []).map((r: any) => ({
+          date:         normalizeDate(r.record_date),
+          status:       normalizeStatus(r.attendance_status),
+          // login_at/logout_at are IST-tagged datetimes, safe for fmtTime.
+          punchIn:      r.login_at ?? undefined,
+          punchOut:     r.logout_at ?? undefined,
+          rawMinutes:   r.net_minutes != null ? Number(r.net_minutes) : undefined,
+          lwpValue:     r.lwp_value   != null ? Number(r.lwp_value)   : undefined,
+          sourceSystem: r.source_system ?? "apr",
+          isNightShift: detectNightShift(r.login_at, r.logout_at),
+        }));
+      }
+
+      params.set("limit", "100");
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
-        `/api/wfm/attendance/ncosec-monthly?${new URLSearchParams({ employeeId, fromDate: startDate, toDate: endDate, limit: "100" })}`
+        `/api/wfm/attendance/ncosec-monthly?${params}`
       );
       return (res.data || []).map((r: any) => ({
         date:        normalizeDate(r.date || r.record_date),
@@ -840,7 +1025,7 @@ export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: At
         isNightShift: detectNightShift(r.clock_in_time || r.first_punch_in, r.clock_out_time || r.last_punch_out),
       }));
     },
-    enabled: !!employeeId,
+    enabled: !!employeeId && !!sourceInfo,
   });
 
   const attendanceMap = new Map<string, AttendanceDay>(
@@ -855,12 +1040,12 @@ export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: At
   ];
 
   const prevMonth = () => {
-    if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear(y => y - 1); }
-    else setCurrentMonth(m => m - 1);
+    if (currentMonth === 0) setMonthYear(11, currentYear - 1);
+    else setMonthYear(currentMonth - 1, currentYear);
   };
   const nextMonth = () => {
-    if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear(y => y + 1); }
-    else setCurrentMonth(m => m + 1);
+    if (currentMonth === 11) setMonthYear(0, currentYear + 1);
+    else setMonthYear(currentMonth + 1, currentYear);
   };
 
   const handleDayClick = (day: number) => {
@@ -881,14 +1066,39 @@ export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: At
     );
   }
 
+  // A failed fetch must not look like a month of genuine absences.
+  if (isError) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center space-y-3">
+          <p className="text-sm font-medium text-red-700">Could not load attendance for this month.</p>
+          <p className="text-xs text-slate-500">
+            The {source === "dialler" ? "APR / dialler" : "biometric"} source did not respond.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <>
       <Card className="overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{MONTHS[currentMonth]} {currentYear}</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base">{MONTHS[currentMonth]} {currentYear}</CardTitle>
+              <Badge
+                className={source === "dialler"
+                  ? "bg-amber-100 text-amber-800 hover:bg-amber-100"
+                  : "bg-[#e8f2fc] text-[#1B6AB5] hover:bg-[#e8f2fc]"}
+              >
+                {sourceInfo?.source_label ?? (source === "dialler" ? "APR / Dialler" : "Direct COSEC")}
+              </Badge>
+            </div>
+            {!hideNavigator && (
             <div className="flex gap-1.5">
-              <Button variant="outline" size="sm" onClick={() => { setCurrentMonth(today.getMonth()); setCurrentYear(today.getFullYear()); }}>
+              <Button variant="outline" size="sm" onClick={() => setMonthYear(today.getMonth(), today.getFullYear())}>
                 <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />Today
               </Button>
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth}>
@@ -898,6 +1108,7 @@ export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: At
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
+            )}
           </div>
 
           {/* Legend */}
@@ -929,8 +1140,22 @@ export function AttendanceCalendar({ employeeId, initialMonth, initialYear }: At
               const record    = attendanceMap.get(dateStr);
               const dayOfWeek = new Date(currentYear, currentMonth, day).getDay();
               const isWknd    = dayOfWeek === 0 || dayOfWeek === 6;
-              const isToday   = dateStr === today.toISOString().slice(0, 10);
-              const status    = record?.status ?? (isWknd ? "weekend" : "absent");
+              const isToday   = dateStr === todayIst;
+              const isFuture  = dateStr > todayIst;
+              // A future date has no attendance yet — it must not paint as "Absent".
+              const status    = record?.status ?? (isWknd ? "weekend" : isFuture ? "unreconciled" : "absent");
+
+              if (isFuture && !record) {
+                return (
+                  <div
+                    key={day}
+                    className="min-h-[72px] rounded-xl border-2 border-dashed border-slate-100 bg-slate-50/40 p-1.5 text-left select-none"
+                    title={`${dateStr} — upcoming`}
+                  >
+                    <span className="text-xs font-bold text-slate-300">{day}</span>
+                  </div>
+                );
+              }
 
               return (
                 <button

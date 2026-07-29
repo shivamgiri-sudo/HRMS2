@@ -4,6 +4,7 @@ import { Calendar, Table, ChevronLeft, ChevronRight, Radio, Fingerprint } from "
 import { AttendanceCalendar } from "@/components/attendance/AttendanceCalendar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAttendanceDailyRecords, useAttendanceSummary } from "@/hooks/useAttendanceHub";
+import { formatTime24 } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
   present:        "bg-emerald-100 text-emerald-800",
@@ -22,9 +23,17 @@ const SOURCE_LABELS: Record<string, { label: string; cls: string }> = {
   dialler:   { label: "APR",       cls: "bg-indigo-100 text-indigo-700" },
 };
 
+/**
+ * Render a punch/login time.
+ *
+ * The API returns clock_in/clock_out as IST-tagged datetimes
+ * ("2026-07-29T09:15:00+05:30") for biometric rows and as bare MySQL TIME
+ * ("09:15:00") for APR/dialler rows. The previous implementation was
+ * `t.slice(0, 5)`, which turned a datetime into "2026-" — the year alone,
+ * with no time at all. formatTime24 handles every shape.
+ */
 function fmtTime(t: string | null) {
-  if (!t) return "—";
-  return t.slice(0, 5);
+  return formatTime24(t, "—");
 }
 
 function fmtMins(m: number | null) {

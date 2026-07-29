@@ -242,8 +242,11 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   });
 
   // Fetch running salary for the current month if it hasn't been finalized
-  const now = new Date();
-  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // Payroll months are IST months — deriving them from the browser's local clock
+  // put users in other timezones a month behind around the month boundary.
+  const currentMonthKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
+  }).format(new Date()).slice(0, 7);
   const hasCurrentMonthPayslip = payrollRecords?.some((r) => r.run_month?.startsWith(currentMonthKey));
 
   const { data: runningSalary } = useQuery({
@@ -282,10 +285,15 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const salaryStructure: SalaryStructure | null = (() => {
     if (employeeData?.monthly_basic) {
       // Use unprorated values from employee_salary_assignment
-      const latest = payrollRecords?.[0];
-      const pf = Number(latest?.pf_employee ?? 0);
-      const esic = Number(latest?.esic_employee ?? 0);
-      const pt = Number(latest?.professional_tax ?? 0);
+      // Deductions must come from the SAME period as the earnings beside them.
+      // `payrollRecords[0]` is the most recent payslip — in an open month that is
+      // *last* month — so pairing it with the current unprorated CTC showed this
+      // month's gross against last month's PF/ESIC/PT/TDS. That mismatch is a main
+      // reason this figure disagreed with the Payroll page and the running summary.
+      const latest = payrollRecords?.find((r) => r.run_month?.startsWith(currentMonthKey));
+      const pf = Number(latest?.pf_employee ?? runningSalary?.pf_employee ?? 0);
+      const esic = Number(latest?.esic_employee ?? runningSalary?.esic_employee ?? 0);
+      const pt = Number(latest?.professional_tax ?? runningSalary?.professional_tax ?? 0);
       return {
         basic_salary: employeeData.monthly_basic,
         hra: employeeData.monthly_hra ?? null,

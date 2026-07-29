@@ -919,7 +919,7 @@ wfmRouter.get(
     const isPrivileged = await checkRole2(
       req.authUser!.id,
       "super_admin", "admin", "hr", "wfm", "manager", "ceo",
-      "finance", "payroll", "branch_head", "process_manager",
+      "finance", "payroll", "payroll_head", "payroll_admin", "branch_head", "process_manager",
       "recruiter", "qa", "trainer"
     );
     if (!isPrivileged) {
@@ -1031,12 +1031,60 @@ wfmRouter.get(
       }
     }
 
+    // APR / dialler source. Previously the drawer had no APR data at all beyond
+    // attendance_daily_record.dialler_minutes, so Login/Logout rendered blank for
+    // dialler employees. Read the real apr rows for this date.
+    // Login_Time/Logout_Time are MySQL TIME — returned both raw and as an
+    // IST-tagged datetime so the client never parses a bare TIME with `new Date()`.
+    let aprRecord: any = null;
+    try {
+      const { getAprDayCampaigns, parseSqlTimeToMinutes, composeIstDateTime } =
+        await import("./apr-attendance.service.js");
+      const [empKeyRows] = await dbConn.execute(
+        `SELECT employee_code, call_centre_code, biometric_code
+           FROM employees WHERE id = ? LIMIT 1`,
+        [employeeId]
+      ) as any[];
+      const empKeys = (empKeyRows as any[])[0];
+      if (empKeys) {
+        const campaigns = await getAprDayCampaigns(empKeys, date);
+        if (campaigns.length > 0) {
+          const logins = campaigns
+            .map((c: any) => c.login_time).filter((t: any) => t && t !== '00:00:00').sort();
+          const logouts = campaigns
+            .map((c: any) => c.logout_time).filter((t: any) => t && t !== '00:00:00').sort();
+          const loginTime = logins[0] ?? null;
+          const logoutTime = logouts[logouts.length - 1] ?? null;
+          const netMinutes = campaigns.reduce(
+            (sum: number, c: any) => sum + parseSqlTimeToMinutes(c.net_login), 0
+          );
+          aprRecord = {
+            record_date: date,
+            login_time: loginTime,
+            logout_time: logoutTime,
+            login_at: composeIstDateTime(date, loginTime),
+            logout_at: composeIstDateTime(date, logoutTime),
+            net_minutes: netMinutes,
+            calls: campaigns.reduce((s: number, c: any) => s + Number(c.calls ?? 0), 0),
+            break_bio: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.bio), 0),
+            break_lunch: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.lunch), 0),
+            break_qa: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.qa), 0),
+            break_training: campaigns.reduce((s: number, c: any) => s + parseSqlTimeToMinutes(c.training), 0),
+            campaigns,
+          };
+        }
+      }
+    } catch {
+      // apr table missing in this environment — leave aprRecord null.
+    }
+
     return res.json({
       success: true,
       data: {
         attendance_record: (attRows as any[])[0] ?? null,
         cosec_daily_agg: cosecAgg,
         raw_punches: punchRows as any[],
+        apr_record: aprRecord,
       },
     });
   })
@@ -1116,7 +1164,8 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
   const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
   const isPrivileged = await checkRole(
     req.authUser.id,
-    "super_admin", "admin", "hr", "wfm", "manager", "branch_head", "process_manager"
+    "super_admin", "admin", "hr", "wfm", "manager", "branch_head", "process_manager",
+    "payroll_head", "payroll_admin"
   );
 
   if (!isPrivileged) {

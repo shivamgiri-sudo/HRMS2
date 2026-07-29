@@ -12,10 +12,24 @@ import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { computeRunningSalary } from "./running-salary.service.js";
+import { toISTDate } from "../../shared/timezone.js";
 import type { RowDataPacket } from "mysql2/promise";
 import type { Response } from "express";
 
 export const runningSalaryRouter = Router();
+
+/**
+ * Current payroll month (YYYY-MM) in IST.
+ *
+ * Payroll months are IST months. `new Date().getFullYear()/getMonth()` reads the
+ * *server's* local clock — on a UTC host that resolves to the previous day
+ * between 00:00 and 05:30 IST, and therefore to the previous *month* during that
+ * window on the 1st. That silently returned last month's running salary.
+ */
+function currentIstRunMonth(): string {
+  return (toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10)).slice(0, 7);
+}
+
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
@@ -134,8 +148,7 @@ runningSalaryRouter.get(
       runMonthYYYYMM = rawMonth;
       runMonth = `${rawMonth}-01`;
     } else {
-      const now = new Date();
-      runMonthYYYYMM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      runMonthYYYYMM = currentIstRunMonth();
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
@@ -184,8 +197,7 @@ runningSalaryRouter.get(
       runMonthYYYYMM = rawMonth;
       runMonth = `${rawMonth}-01`;
     } else {
-      const now = new Date();
-      runMonthYYYYMM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      runMonthYYYYMM = currentIstRunMonth();
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
@@ -234,8 +246,7 @@ runningSalaryRouter.get(
       runMonthYYYYMM = rawMonth;
       runMonth = `${rawMonth}-01`;
     } else {
-      const now = new Date();
-      runMonthYYYYMM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      runMonthYYYYMM = currentIstRunMonth();
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
