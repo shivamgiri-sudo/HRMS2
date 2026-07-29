@@ -65,6 +65,8 @@ import { sendBulkReminders, bulkGenerateChecklists } from '../ats.joiningDocumen
 // Mock external service dependencies
 vi.mock('../ats.email.service.js', () => ({
   sendRejectedEmail: vi.fn(),
+  // sendBulkReminders sends the joining-document reminder, not the rejection mail.
+  sendJoiningDocReminderEmail: vi.fn(),
 }));
 
 vi.mock('../../employees/employeeJoiningDocuments.service.js', () => ({
@@ -82,11 +84,19 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // Mock the DB module with connection support
+// `query` and `execute` are deliberately the same spy. The service uses
+// db.query() wherever a statement expands an array into `IN (?)`, because
+// mysql2's prepared execute() does not expand arrays and silently matches
+// nothing. Which of the two a given statement uses is an implementation detail
+// these tests should not pin, so both resolve to one mock and the existing
+// assertions keep working either way.
 vi.mock('../../../db/mysql.js', () => ({
   db: {
     execute: mocks.mockDbExecute,
+    query: mocks.mockDbExecute,
     getConnection: vi.fn().mockResolvedValue({
       execute: mocks.mockConnectionExecute,
+      query: mocks.mockConnectionExecute,
       beginTransaction: mocks.mockBeginTransaction,
       commit: mocks.mockCommit,
       rollback: mocks.mockRollback,
@@ -96,7 +106,10 @@ vi.mock('../../../db/mysql.js', () => ({
 }));
 
 import { db } from '../../../db/mysql.js';
-import { sendRejectedEmail } from '../ats.email.service.js';
+import { sendRejectedEmail, sendJoiningDocReminderEmail } from '../ats.email.service.js';
+
+/** One row per still-outstanding document; an employee with none is skipped, not mailed. */
+const pendingDocsResult = [[{ document_name: 'NDA_CONFIDENTIALITY' }], []] as never;
 import { generateJoiningDocumentChecklist } from '../../employees/employeeJoiningDocuments.service.js';
 
 describe('sendBulkReminders', () => {
@@ -111,7 +124,10 @@ describe('sendBulkReminders', () => {
     ];
 
     vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
-    vi.mocked(sendRejectedEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
+    // One pending-documents lookup per employee that has an email address.
+    vi.mocked(db.execute).mockResolvedValueOnce(pendingDocsResult);
+    vi.mocked(db.execute).mockResolvedValueOnce(pendingDocsResult);
+    vi.mocked(sendJoiningDocReminderEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
 
     const result = await sendBulkReminders(['emp-1', 'emp-2'], null, 'actor-user-1');
 
@@ -119,7 +135,7 @@ describe('sendBulkReminders', () => {
     expect(result.sent).toBe(2);
     expect(result.failed).toBe(0);
     expect(result.errors).toHaveLength(0);
-    expect(sendRejectedEmail).toHaveBeenCalledTimes(2);
+    expect(sendJoiningDocReminderEmail).toHaveBeenCalledTimes(2);
   });
 
   it('should skip employees without email and report them as failed', async () => {
@@ -129,7 +145,9 @@ describe('sendBulkReminders', () => {
     ];
 
     vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
-    vi.mocked(sendRejectedEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
+    // Only emp-2 has an email, so only one pending-documents lookup happens.
+    vi.mocked(db.execute).mockResolvedValueOnce(pendingDocsResult);
+    vi.mocked(sendJoiningDocReminderEmail).mockResolvedValue({ success: true, message: 'sent' } as never);
 
     const result = await sendBulkReminders(['emp-1', 'emp-2'], 'Please submit docs', 'actor-user-1');
 
@@ -150,7 +168,8 @@ describe('sendBulkReminders', () => {
     ];
 
     vi.mocked(db.execute).mockResolvedValueOnce([mockEmployees, []]);
-    vi.mocked(sendRejectedEmail).mockRejectedValue(new Error('SMTP timeout'));
+    vi.mocked(db.execute).mockResolvedValueOnce(pendingDocsResult);
+    vi.mocked(sendJoiningDocReminderEmail).mockRejectedValue(new Error('SMTP timeout'));
 
     const result = await sendBulkReminders(['emp-1'], null, 'actor-user-1');
 

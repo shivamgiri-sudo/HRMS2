@@ -112,9 +112,15 @@ function nestedValue(source: Record<string, unknown>, sourcePath?: string | null
   }, source);
 }
 
-function formatValueForField(value: unknown, fieldType: string) {
+function formatValueForField(value: unknown, fieldType: string, checkedWhen?: string | null) {
   if (value == null) return "";
   if (fieldType === "checkbox" || fieldType === "radio") {
+    // A map with `checked_when` selects one box out of a group by comparing the
+    // stored value against a discriminant — "Male" picks gender_male, "father"
+    // picks relationship_father. Collapsing to "Yes" here would destroy that
+    // discriminant and leave every box in the group unticked, so keep the raw
+    // value verbatim and let pdfAcroFormFill do the comparison.
+    if (checkedWhen) return String(value);
     return value ? "Yes" : "";
   }
   return String(value);
@@ -473,6 +479,7 @@ async function buildSourceContext(employeeId: string, candidateId?: string | nul
         e.last_name,
         e.date_of_birth,
         e.date_of_joining,
+        e.gender,
         e.mobile,
         COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS email,
         d.designation_name,
@@ -676,7 +683,7 @@ function deriveFieldValue(map: RowDataPacket, sourceContext: Record<string, unkn
   if (maskingRule === "aadhaar") rawValue = maskDigits(sourceValue);
   if (maskingRule === "pan") rawValue = maskPan(sourceValue);
   if (maskingRule === "bank_account") rawValue = maskBankAccount(sourceValue);
-  const textValue = formatValueForField(rawValue, fieldType);
+  const textValue = formatValueForField(rawValue, fieldType, safeTrim(map.checked_when));
   return {
     value_text: textValue || null,
     masked_value: textValue || null,
@@ -1276,13 +1283,39 @@ async function renderSummaryPdf(checklist: ChecklistContextRow, values: RowDataP
   return fs.readFileSync(outputPath);
 }
 
-async function renderPlaceholderDocx(templatePath: string, replacements: Record<string, string>) {
+/**
+ * ISO date -> DD/MM/YYYY, for display in a signed document.
+ *
+ * Presentation only. Stored field values must stay ISO: the EPF declaration
+ * splits dates into individual character boxes via applyTransformRule, whose
+ * splitIsoDate matches /^(\d{4})-(\d{2})-(\d{2})/ — a DD/MM/YYYY value there
+ * would blank every date box on the statutory form.
+ */
+function formatDateForDocumentDisplay(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+/** Exported for tests: the legacy fix-up pass below is easy to regress silently. */
+export async function renderPlaceholderDocx(templatePath: string, replacements: Record<string, string>) {
   const zip = new PizZip(fs.readFileSync(templatePath));
   const documentXml = zip.file("word/document.xml")?.asText();
   if (!documentXml) throw new Error("DOCX template is missing word/document.xml");
   let nextXml = documentXml;
+  // The fix-ups further down were written for the original hand-authored Word
+  // files, which had bare labels ("Employee Name:") and no placeholders. On a
+  // token template they are not just redundant but destructive: the PI consent
+  // line renders "Employee Name: {{pi_employee_name}}   Employee Code: {{employee_code}}"
+  // as a single run, and /Employee Name\s*:\s*[^<]+/ is greedy to the end of
+  // that run, so it swallows the already-substituted employee code. Templates
+  // that carry placeholders are fully described by their tokens — skip the
+  // legacy pass for them and keep it only for the older uploaded documents.
+  const isTokenTemplate = documentXml.includes("{{");
   for (const [token, value] of Object.entries(replacements)) {
-    nextXml = nextXml.split(`{{${token}}}`).join(value);
+    // A joiner signing "Date of Joining: 2017-01-19" reads as a system dump;
+    // Indian documents use DD/MM/YYYY. Applied here so only the rendered
+    // document changes, never the persisted value.
+    nextXml = nextXml.split(`{{${token}}}`).join(formatDateForDocumentDisplay(value));
   }
   const employeeName = escapeXml(replacements.employee_name ?? replacements.full_name ?? "");
   const employeeCode = escapeXml(replacements.employee_code ?? "");
@@ -1298,11 +1331,11 @@ async function renderPlaceholderDocx(templatePath: string, replacements: Record<
   const piDate = escapeXml(replacements.pi_signature_date ?? currentDate);
   const zeroToleranceDate = escapeXml(replacements.zero_tolerance_signature_date ?? currentDate);
   const hrName = escapeXml(replacements.surveillance_hr_name ?? "");
-  if (employeeName) {
+  if (employeeName && !isTokenTemplate) {
     nextXml = nextXml
       .replace(/(I\s+)([A-Z][A-Z\s.]{2,80})(\s*,\s*agree)/g, `$1${employeeName}$3`);
   }
-  nextXml = nextXml
+  if (!isTokenTemplate) nextXml = nextXml
     .replace(/Name of the Analyst:\s*Date/g, `Name of the Analyst: ${employeeName}    Date: ${ndaDate}`)
     .replace(/Signature\s+Date/g, `Signature: __________________    Date: ${itDate}`)
     .replace(/Name of the candidate:\s*HR Person name\s*:/g, `Name of the candidate: ${employeeName}    HR Person name: ${hrName}`)
