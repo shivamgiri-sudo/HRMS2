@@ -328,12 +328,140 @@ export function buildGrowthPoints(months: number): CoachPoint[] {
   return points;
 }
 
+export interface TeamMemberSignal {
+  employeeId: string;
+  name: string;
+  lateMarks: number;
+  lwpDays: number;
+  presentDays: number;
+  workingDays: number;
+}
+
+/**
+ * Team coaching for a manager, over the members their assignment scope already
+ * grants them. Attendance and punctuality only — the same facts their WFM
+ * dashboard shows. Nothing payroll, statutory or bank-related is read here, so
+ * the coach cannot become a side channel around the payroll surface.
+ */
+export function buildTeamPoints(
+  members: TeamMemberSignal[],
+  totalInScope = members.length,
+): CoachPoint[] {
+  if (!members.length) {
+    return [{
+      lens: 'performance',
+      tone: 'watch',
+      headline: 'No team members resolved under your scope',
+      detail: 'Either your assignment scope is empty or nobody mapped to it has attendance in the window. Your HR admin owns the scope mapping.',
+    }];
+  }
+
+  const points: CoachPoint[] = [];
+  const withDays = members.filter((member) => member.workingDays > 0);
+
+  const truncated = totalInScope > members.length;
+  points.push({
+    lens: 'performance',
+    tone: 'steady',
+    headline: `${totalInScope} ${totalInScope === 1 ? 'person' : 'people'} in your scope`,
+    detail: truncated
+      ? `Reading the first ${members.length} by name; ${withDays.length} of those have attendance logged in the last 30 days. Counts below cover the sample, not the whole scope.`
+      : `${withDays.length} of them have attendance logged in the last 30 days.`,
+  });
+
+  const late = withDays
+    .filter((member) => member.lateMarks > 0)
+    .sort((a, b) => b.lateMarks / b.workingDays - a.lateMarks / a.workingDays);
+
+  if (!late.length && withDays.length) {
+    points.push({
+      lens: 'discipline',
+      tone: 'celebrate',
+      headline: 'Nobody in your team carries a late mark this window',
+      detail: 'Worth saying out loud in your next huddle — this rarely holds for a whole team.',
+    });
+  } else if (late.length) {
+    const named = late.slice(0, 3)
+      .map((member) => `${member.name} (${member.lateMarks}/${member.workingDays})`)
+      .join(', ');
+    points.push({
+      lens: 'discipline',
+      tone: late.length > withDays.length / 2 ? 'act' : 'watch',
+      headline: `${late.length} of ${withDays.length} have late marks`,
+      detail: `Highest concentration: ${named}. A short conversation now costs less than a regularisation backlog later.`,
+    });
+  }
+
+  const lwp = withDays
+    .filter((member) => member.lwpDays > 0)
+    .sort((a, b) => b.lwpDays - a.lwpDays);
+  if (lwp.length) {
+    const totalLwp = Math.round(lwp.reduce((sum, member) => sum + member.lwpDays, 0) * 10) / 10;
+    points.push({
+      lens: 'discipline',
+      tone: 'act',
+      headline: `${totalLwp} loss-of-pay day${totalLwp === 1 ? '' : 's'} across ${lwp.length} member${lwp.length === 1 ? '' : 's'}`,
+      detail: `Worst first: ${lwp.slice(0, 3).map((member) => `${member.name} (${Math.round(member.lwpDays * 10) / 10}d)`).join(', ')}. Any recorded in error need regularisation before the payroll cut-off.`,
+    });
+  }
+
+  const thin = withDays
+    .filter((member) => member.presentDays / member.workingDays < 0.8)
+    .sort((a, b) => a.presentDays / a.workingDays - b.presentDays / b.workingDays);
+  if (thin.length) {
+    points.push({
+      lens: 'wellbeing',
+      tone: 'watch',
+      headline: `${thin.length} member${thin.length === 1 ? '' : 's'} below 80% attendance`,
+      detail: `Lowest first: ${thin.slice(0, 3).map((member) => `${member.name} (${Math.round((member.presentDays / member.workingDays) * 100)}%)`).join(', ')}. Low attendance is usually a symptom — worth asking before it becomes an exit.`,
+    });
+  }
+
+  return points;
+}
+
 const TONE_PREFIX: Record<CoachTone, string> = {
   celebrate: '🟢',
   steady: '🔵',
   watch: '🟡',
   act: '🔴',
 };
+
+export interface CoachAddressee {
+  fullName?: string | null;
+  branchName?: string | null;
+  processName?: string | null;
+  isTeamView?: boolean;
+}
+
+/** First name only — "SHIVAM SHIV GIRI" reads as shouting in a greeting. */
+export function firstName(fullName: string | null | undefined): string | null {
+  const parts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  const first = parts[0];
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
+
+/**
+ * Open the report by addressing the person and placing them, so it reads as
+ * written for them rather than rendered from a template.
+ */
+export function coachGreeting(who: CoachAddressee, actionCount: number): string {
+  const name = firstName(who.fullName);
+  const place = [who.processName, who.branchName].filter(Boolean).join(' at ');
+  const hello = name ? `${name}, here` : 'Here';
+  const located = place ? ` for ${place}` : '';
+
+  const framing = actionCount === 0
+    ? 'nothing here needs chasing this week'
+    : actionCount === 1
+      ? 'one thing is worth your attention this week'
+      : `${actionCount} things are worth your attention this week`;
+
+  return who.isTeamView
+    ? `${hello} is your read${located} — your own record first, then your team. ${framing.charAt(0).toUpperCase()}${framing.slice(1)}.`
+    : `${hello} is your coaching read${located}, built only from your own live HRMS records. ${framing.charAt(0).toUpperCase()}${framing.slice(1)}.`;
+}
 
 /** Render the coaching points as the message body Mira returns. */
 export function renderCoachReport(points: CoachPoint[]): string {

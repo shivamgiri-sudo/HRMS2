@@ -5,6 +5,9 @@ import {
   buildPerformancePoints,
   buildWellbeingPoints,
   buildGrowthPoints,
+  buildTeamPoints,
+  coachGreeting,
+  firstName,
   lateRate,
   leaveBurn,
   nextTenureMilestone,
@@ -14,6 +17,7 @@ import {
   tenureMonths,
   type AttendanceWindow,
   type KpiSnapshot,
+  type TeamMemberSignal,
 } from '../ai-coach.service.js';
 
 const window = (over: Partial<AttendanceWindow> = {}): AttendanceWindow => ({
@@ -167,5 +171,108 @@ describe('coach points', () => {
     expect(body).toContain('**Attendance and discipline**');
     expect(body).toContain('**Wellbeing**');
     expect(body).toContain('**Growth**');
+  });
+});
+
+describe('team coaching', () => {
+  const member = (over: Partial<TeamMemberSignal> = {}): TeamMemberSignal => ({
+    employeeId: 'e1', name: 'Asha', lateMarks: 0, lwpDays: 0, presentDays: 20, workingDays: 22, ...over,
+  });
+
+  it('says so when the scope resolves nobody', () => {
+    expect(buildTeamPoints([])[0].headline).toMatch(/no team members/i);
+  });
+
+  it('celebrates a team with no late marks', () => {
+    const points = buildTeamPoints([member(), member({ employeeId: 'e2', name: 'Bilal' })]);
+    expect(points.some((p) => /nobody in your team carries a late mark/i.test(p.headline))).toBe(true);
+  });
+
+  it('names the worst offenders but caps the list at three', () => {
+    const team = ['A', 'B', 'C', 'D'].map((name, i) =>
+      member({ employeeId: `e${i}`, name, lateMarks: 4 - i }));
+    const late = buildTeamPoints(team).find((p) => /have late marks/i.test(p.headline));
+    expect(late?.detail).toContain('A');
+    expect(late?.detail).not.toContain('D');
+  });
+
+  it('escalates when more than half the team is late', () => {
+    const team = [member({ lateMarks: 3 }), member({ employeeId: 'e2', name: 'B', lateMarks: 2 }), member({ employeeId: 'e3', name: 'C' })];
+    const late = buildTeamPoints(team).find((p) => /have late marks/i.test(p.headline));
+    expect(late?.tone).toBe('act');
+  });
+
+  it('surfaces team LWP as an action', () => {
+    const points = buildTeamPoints([member({ lwpDays: 1.5 })]);
+    expect(points.some((p) => p.tone === 'act' && /loss-of-pay/i.test(p.headline))).toBe(true);
+  });
+
+  it('flags members below 80% attendance under wellbeing', () => {
+    const points = buildTeamPoints([member({ presentDays: 10, workingDays: 22 })]);
+    const thin = points.find((p) => /below 80% attendance/i.test(p.headline));
+    expect(thin?.lens).toBe('wellbeing');
+  });
+
+  it('reports the true scope size and says the list is capped', () => {
+    const sample = Array.from({ length: 3 }, (_, i) => member({ employeeId: `e${i}`, name: `M${i}` }));
+    const head = buildTeamPoints(sample, 1343)[0];
+    expect(head.headline).toContain('1343 people');
+    expect(head.detail).toMatch(/first 3 by name/i);
+    expect(head.detail).toMatch(/not the whole scope/i);
+  });
+
+  it('does not claim truncation when the list is complete', () => {
+    const head = buildTeamPoints([member(), member({ employeeId: 'e2', name: 'B' })])[0];
+    expect(head.detail).not.toMatch(/not the whole scope/i);
+  });
+
+  it('names the largest LWP holders first, with their days', () => {
+    const team = [
+      member({ employeeId: 'a', name: 'Small', lwpDays: 1 }),
+      member({ employeeId: 'b', name: 'Big', lwpDays: 20.5 }),
+      member({ employeeId: 'c', name: 'Mid', lwpDays: 8 }),
+    ];
+    const lwp = buildTeamPoints(team).find((p) => /loss-of-pay/i.test(p.headline));
+    expect(lwp?.detail).toMatch(/Big \(20\.5d\).*Mid \(8d\).*Small/);
+  });
+
+  it('names the lowest attendance first, with the percentage', () => {
+    const team = [
+      member({ employeeId: 'a', name: 'Half', presentDays: 11, workingDays: 22 }),
+      member({ employeeId: 'b', name: 'Zero', presentDays: 0, workingDays: 22 }),
+    ];
+    const thin = buildTeamPoints(team).find((p) => /below 80% attendance/i.test(p.headline));
+    expect(thin?.detail).toMatch(/Zero \(0%\).*Half \(50%\)/);
+  });
+
+  it('ignores members with no working days when judging punctuality', () => {
+    const points = buildTeamPoints([member({ workingDays: 0, presentDays: 0 })]);
+    expect(points.some((p) => /below 80% attendance/i.test(p.headline))).toBe(false);
+  });
+});
+
+describe('personalisation', () => {
+  it('uses the first name only, normalised', () => {
+    expect(firstName('SHIVAM SHIV GIRI')).toBe('Shivam');
+    expect(firstName('   ')).toBeNull();
+  });
+
+  it('addresses the person and places them', () => {
+    const line = coachGreeting({ fullName: 'SHIVAM SHIV GIRI', branchName: 'NOIDA-2', processName: 'BACK OFFICE' }, 2);
+    expect(line).toContain('Shivam');
+    expect(line).toContain('BACK OFFICE at NOIDA-2');
+    expect(line).toMatch(/2 things are worth your attention/);
+  });
+
+  it('reads naturally when nothing needs action', () => {
+    expect(coachGreeting({ fullName: 'Asha' }, 0)).toMatch(/nothing here needs chasing/i);
+  });
+
+  it('frames a manager view as self-then-team', () => {
+    expect(coachGreeting({ fullName: 'Asha', isTeamView: true }, 1)).toMatch(/your own record first, then your team/i);
+  });
+
+  it('degrades gracefully with no name or place', () => {
+    expect(coachGreeting({}, 0)).toMatch(/^Here is your coaching read/);
   });
 });
