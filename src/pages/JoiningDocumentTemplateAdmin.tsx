@@ -67,6 +67,8 @@ interface Template {
   is_mandatory: boolean;
   active_status: boolean;
   field_count?: number;
+  /** Server-computed: a file is uploaded AND at least one field is mapped. */
+  template_ready?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -438,7 +440,23 @@ export default function JoiningDocumentTemplateAdmin() {
                   {templates.map((t) => (
                     <TableRow key={t.id}>
                       <TableCell className="font-mono text-xs font-semibold">
-                        {t.document_code}
+                        <div className="flex items-center gap-2">
+                          {t.document_code}
+                          {/* Five of seven mandatory templates currently have no
+                              file uploaded. Without one, generated documents are
+                              stamped "DRAFT - TEMPLATE NOT CONFIGURED" and
+                              e-signature is refused, so HR needs to see this
+                              before a joiner is waiting on it. */}
+                          {t.template_ready === false && (
+                            <Badge
+                              variant="outline"
+                              className="bg-red-50 text-red-700 border-red-200 text-[10px] font-sans"
+                              title="No template file uploaded, or no fields mapped. Documents cannot be generated or e-signed until this is set up."
+                            >
+                              not ready
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="font-medium">{t.document_name}</TableCell>
                       <TableCell className="capitalize">{t.document_category}</TableCell>
