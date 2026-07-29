@@ -736,6 +736,49 @@ router.get("/api-costs", requireAuth, requireRole("admin", "super_admin", "hr"),
   return res.json({ success: true, data: costs });
 }));
 
+/**
+ * Actual spend, computed from the request log rather than in the browser.
+ *
+ * The panel previously multiplied counts by rates client-side using a regex to
+ * guess the check type, which silently billed anything it could not parse at a
+ * ₹2 fallback. This returns the mapping explicitly and reports which endpoints
+ * have no configured rate instead of hiding them.
+ */
+router.get("/api-cost-report", requireAuth, requireRole("admin", "super_admin", "hr"), h(async (req: Request, res: Response) => {
+  const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+  const { getBgvApiCostReport } = await import("./bgv-api-log.service.js");
+  return res.json({ success: true, data: await getBgvApiCostReport(days) });
+}));
+
+/** Failed provider calls, newest first — who, when, which endpoint, and why. */
+router.get("/api-failures", requireAuth, requireRole("admin", "super_admin", "hr"), h(async (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT l.id, l.created_at, l.endpoint_key, l.provider_key, l.outcome,
+            l.error_code, l.error_message, l.response_status_code, l.duration_ms,
+            l.request_ref, l.attempt_no,
+            l.candidate_id, c.full_name AS candidate_name, c.candidate_code, c.mobile
+       FROM candidate_bgv_api_request_log l
+       LEFT JOIN ats_candidate c ON c.id = l.candidate_id
+      WHERE l.outcome NOT IN ('success','mismatch','manual_review')
+        AND l.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      ORDER BY l.created_at DESC
+      LIMIT ?`,
+    [days, limit],
+  );
+  const [summary] = await db.execute<RowDataPacket[]>(
+    `SELECT outcome, error_code, COUNT(*) AS n, MAX(created_at) AS last_seen
+       FROM candidate_bgv_api_request_log
+      WHERE outcome NOT IN ('success','mismatch','manual_review')
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      GROUP BY outcome, error_code
+      ORDER BY n DESC`,
+    [days],
+  );
+  return res.json({ success: true, data: { days, failures: rows, summary } });
+}));
+
 router.post("/test-connection", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {
   try {
     const adapter = await getConfiguredBgvProviderAdapter();
