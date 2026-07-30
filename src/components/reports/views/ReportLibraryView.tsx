@@ -235,7 +235,10 @@ function buildFiltersForReport(code: string): FilterDef[] {
     // required and is passed identically to the preview API and the XLSX export.
     "leave-balance": [...monthFilter, ...branchProcess],
     "leave-balance-export": [...monthFilter, ...branchProcess],
-    "leave-utilization": [...dateFilters, BRANCH_FILTER],
+    // Approved leave register: date range plus branch and process scope.
+    "leave-utilization": [...dateFilters, ...branchProcess],
+    // Retained only so an old deep link still renders sensible filters; these two
+    // reports are no longer listed in the catalog.
     "maternity-paternity-register": [...branchOnly, YEAR_FILTER],
     "leave-encashment-register": [...branchOnly, YEAR_FILTER],
     "holiday-master-list": [...branchOnly, YEAR_FILTER],

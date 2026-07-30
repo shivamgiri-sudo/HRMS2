@@ -26,10 +26,18 @@ import {
   leaveBalanceFileName,
   businessMonth,
 } from "./leave-balance-format.js";
+import { buildCatalogWorkbook } from "./catalog-workbook.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
 
 /** Report codes that render through the business-mandated Leave Balance workbook. */
 const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
+
+/**
+ * Report codes exported through the catalog-driven workbook, so the header row
+ * carries the catalog's exact labels ("SR#", "LEAVE TYPE", "LEAVE REQUST DATE")
+ * instead of the generic builder's uppercased row keys.
+ */
+const CATALOG_FORMAT_CODES = new Set(["leave-utilization"]);
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -239,6 +247,39 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache');
     res.setHeader('Content-Length', leaveBuffer.length);
     res.send(leaveBuffer);
+    return;
+  }
+
+  // ── Catalog-driven exact-label workbook ─────────────────────────────────────
+  if (CATALOG_FORMAT_CODES.has(code)) {
+    const catalogBuffer = await buildCatalogWorkbook({
+      rows,
+      columns: catalogEntry.columns,
+      sheetName: catalogEntry.name,
+    });
+
+    if (catalogBuffer.length > EXPORT_BYTE_CAP) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Request the full report by email.',
+      });
+      return;
+    }
+
+    await recordReportAuditEvent({
+      reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+      eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+      actorType: 'user',
+      reportCode: code,
+      message: `Immediate XLSX export: ${rows.length} rows, ${catalogBuffer.length} bytes`,
+      metadataJson: { userId, rowCount: rows.length, fileSizeBytes: catalogBuffer.length, code },
+    }).catch(() => {});
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${buildSecureFilename(code, 'export')}"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    res.setHeader('Content-Length', catalogBuffer.length);
+    res.send(catalogBuffer);
     return;
   }
 
@@ -581,19 +622,10 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // one-row-per-employee-per-leave-type shape, silently overriding the canonical
     // pivoted executor. Leaving it unhandled makes the request fall through to
     // executeReport(), which is the single source of truth for this report.
-    case "leave-utilization": {
-      const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
-      const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("lr.from_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT lr.from_date, lr.to_date, e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    lt.leave_code, lt.leave_name, lr.total_days, lr.status
-               FROM leave_request lr JOIN employees e ON e.id = lr.employee_id
-               JOIN leave_type_master lt ON lt.id = lr.leave_type_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY lr.from_date DESC`;
-      break;
-    }
+    // "leave-utilization" has no case here on purpose — a case in this switch takes
+    // precedence over the executor fallback below, and this one returned the old
+    // 8-column shape. It now falls through to executeReport(), which is the single
+    // source of truth for the report's format.
     case "payroll-register": {
       const month = monthParam(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);

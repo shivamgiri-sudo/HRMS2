@@ -269,32 +269,47 @@ export async function leaveUtilization(
   clauses.push("lr.from_date BETWEEN ? AND ?");
   params.push(from, to);
 
-  // Worker cursor on e.id — all leave-type rows for one employee share the same cursor
-  // value; keyset pagination resumes cleanly at the next employee.
+  // Grain is one row per leave request, so the keyset cursor is the request id.
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
+    clauses.push("lr.id > ?");
     params.push(options.cursor);
   }
 
+  // One row per approved leave request, matching the business-supplied format:
+  // SR# | EMPLOYEE_CODE | EMPLOYEE_NAME | LEAVE_NAME | LEAVE TYPE | DAYS_USED |
+  // START DATE | END DATE | BRANCH_NAME | PROCESS_NAME | LEAVE REQUST DATE |
+  // LEAVE APPROVED DATE | APPROVED BY | LEAVE REMARKS
+  //
+  // Previously this aggregated with GROUP BY + SUM(total_days) + COUNT(*), which
+  // collapsed each employee's requests into one row per leave type and could not
+  // carry per-request dates. Maternity and paternity requests appear here like any
+  // other leave type, so a separate register is no longer needed.
+  //
+  // Dates render as dd-MMM-yy (30-Jul-26) to match the supplied format.
   const base = `
-    SELECT e.id AS _cursor,
+    SELECT lr.id AS _cursor,
+           ROW_NUMBER() OVER (ORDER BY lr.from_date DESC, e.employee_code ASC) AS sr_no,
            e.employee_code,
-           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-           lt.leave_name, lt.leave_code,
-           SUM(lr.total_days) AS days_used,
-           COUNT(*) AS requests_count,
-           b.branch_name, p.process_name
+           COALESCE(NULLIF(e.full_name,''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+           lt.leave_name,
+           lt.leave_code AS leave_type,
+           lr.total_days AS days_used,
+           DATE_FORMAT(lr.from_date, '%d-%b-%y') AS start_date,
+           DATE_FORMAT(lr.to_date,   '%d-%b-%y') AS end_date,
+           COALESCE(b.branch_name, '')  AS branch_name,
+           COALESCE(p.process_name, '') AS process_name,
+           COALESCE(DATE_FORMAT(COALESCE(lr.requested_at, lr.applied_at), '%d-%b-%y'), '') AS leave_request_date,
+           COALESCE(DATE_FORMAT(lr.approved_at, '%d-%b-%y'), '') AS leave_approved_date,
+           COALESCE(NULLIF(appr.employee_code,''), NULLIF(lr.approved_by,''), '') AS approved_by,
+           COALESCE(NULLIF(lr.reason,''), '') AS leave_remarks
       FROM leave_request lr
       JOIN employees e           ON e.id  = lr.employee_id
       JOIN leave_type_master lt  ON lt.id = lr.leave_type_id
       LEFT JOIN branch_master b  ON b.id  = e.branch_id
       LEFT JOIN process_master p ON p.id  = e.process_id
+      LEFT JOIN employees appr   ON appr.id = lr.approved_by
      WHERE ${clauses.join(" AND ")}
-     GROUP BY e.id, e.employee_code,
-              COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
-              lt.id, lt.leave_name, lt.leave_code,
-              b.branch_name, p.process_name
-     ORDER BY e.id ASC`;
+     ORDER BY lr.from_date DESC, e.employee_code ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
   const sql   = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
@@ -626,10 +641,13 @@ export async function leaveLapseSummary(
 // holiday-master-list
 // ---------------------------------------------------------------------------
 /**
- * holiday_master is not employee-scoped; company and branch scope are applied directly
- * on hm columns.  Process / department / cost-centre scope dimensions are not applicable.
- * Assumes hm.company_id exists; if the column is absent, enforce isolation via
- * branch scope restriction alone and add company_id to the holiday_master schema.
+ * Reads leave_holiday_master (NOT "holiday_master" — that table does not exist).
+ *
+ * The table is not employee-scoped, so branch scope is applied directly on
+ * hm.branch_id; process / department / cost-centre dimensions do not apply.
+ *
+ * An empty result means the table has no rows for the selected branch/year, not
+ * a failure — holiday masters are often sparsely populated.
  */
 export async function holidayMasterList(
   filters: ExecFilters,
