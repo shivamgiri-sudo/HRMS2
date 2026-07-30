@@ -19,12 +19,12 @@ const FEATURES = [
 ];
 
 const SOCIAL_LINKS = [
-  { label: "Website",   href: "https://mascallnet.ai",                                    icon: Globe },
-  { label: "LinkedIn",  href: "https://in.linkedin.com/company/mas-callnet-pvt-ltd",      icon: Linkedin },
-  { label: "Instagram", href: "https://instagram.com/teammas9",                           icon: Instagram },
-  { label: "X",         href: "https://x.com/MCallnet",                                   icon: Twitter },
-  { label: "Facebook",  href: "https://facebook.com/TeamMas9",                            icon: Facebook },
-  { label: "YouTube",   href: "https://youtube.com/@MasCallnet",                          icon: Youtube },
+  { label: "Website",   href: "https://mascallnet.ai",                               icon: Globe,     color: "#06b6d4" },
+  { label: "LinkedIn",  href: "https://in.linkedin.com/company/mas-callnet-pvt-ltd", icon: Linkedin,  color: "#0077B5" },
+  { label: "Instagram", href: "https://instagram.com/teammas9",                      icon: Instagram, color: "#E1306C" },
+  { label: "X",         href: "https://x.com/MCallnet",                              icon: Twitter,   color: "#ffffff" },
+  { label: "Facebook",  href: "https://facebook.com/TeamMas9",                       icon: Facebook,  color: "#1877F2" },
+  { label: "YouTube",   href: "https://youtube.com/@MasCallnet",                     icon: Youtube,   color: "#FF0000" },
 ];
 
 type ForgotPasswordChannel = 'email' | 'sms';
@@ -279,26 +279,24 @@ export default function AuthClean() {
         {/* Bottom tagline + social links */}
         <div className="relative z-10 space-y-3">
           {/* Social icons */}
-          <div className="flex items-center gap-2.5">
-            {SOCIAL_LINKS.map(({ label, href, icon: Icon }) => (
+          <div className="flex items-center gap-3">
+            {SOCIAL_LINKS.map(({ label, href, icon: Icon, color }) => (
               <a
                 key={label}
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
                 title={label}
-                className="flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200 hover:scale-110"
-                style={{ background: "rgba(255,255,255,0.08)", color: "#94a3b8" }}
+                className="flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-200 hover:scale-125"
+                style={{ background: "rgba(255,255,255,0.08)", color }}
                 onMouseEnter={e => {
-                  (e.currentTarget as HTMLAnchorElement).style.background = "rgba(27,106,181,0.4)";
-                  (e.currentTarget as HTMLAnchorElement).style.color = "#ffffff";
+                  (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.18)";
                 }}
                 onMouseLeave={e => {
                   (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.08)";
-                  (e.currentTarget as HTMLAnchorElement).style.color = "#94a3b8";
                 }}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="h-5 w-5" />
               </a>
             ))}
           </div>
