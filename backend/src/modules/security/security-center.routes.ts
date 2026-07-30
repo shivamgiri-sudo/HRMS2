@@ -101,6 +101,8 @@ securityCenterRouter.get("/events", securityRoles, h(async (req, res) => {
   if (req.query.severity && req.query.severity !== "all") { clauses.push("severity = ?"); params.push(String(req.query.severity)); }
   if (req.query.eventType && req.query.eventType !== "all") { clauses.push("event_type = ?"); params.push(String(req.query.eventType)); }
   if (req.query.module && req.query.module !== "all") { clauses.push("module_key = ?"); params.push(String(req.query.module)); }
+  if (req.query.from) { clauses.push("DATE(created_at) >= ?"); params.push(String(req.query.from)); }
+  if (req.query.to) { clauses.push("DATE(created_at) <= ?"); params.push(String(req.query.to)); }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM security_audit_event ${where} ORDER BY created_at DESC LIMIT ${limit}`,

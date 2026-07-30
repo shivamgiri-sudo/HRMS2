@@ -5,8 +5,10 @@ import {
   ChevronRight,
   Clock,
   Database,
+  Edit2,
   FileSpreadsheet,
   GitBranch,
+  List,
   Loader,
   Plus,
   RefreshCcw,
@@ -109,6 +111,15 @@ interface RunRecord {
   status: "success" | "partial" | "failed" | "running";
   records_synced: number;
   errors: number;
+  created_at: string;
+}
+
+interface ConnectorEvent {
+  id: string;
+  integration_key: string;
+  event_type: string;
+  message: string;
+  status: string;
   created_at: string;
 }
 
@@ -221,7 +232,7 @@ const RUN_STATUS_COLORS: Record<string, string> = {
   running: "bg-blue-50 text-blue-700",
 };
 
-const TABS = ["Overview", "Run History", "Connector Config"] as const;
+const TABS = ["Overview", "Run History", "Connector Config", "Event Log"] as const;
 type Tab = (typeof TABS)[number];
 
 function canRunConnector(connector: Connector): boolean {
@@ -317,6 +328,17 @@ export default function NativeIntegrationHub() {
 
   const [newForm, setNewForm] = useState<NewConnectorForm>(emptyConnectorForm);
 
+  // Event Log tab
+  const [eventLogKey, setEventLogKey] = useState<string>("");
+  const [events, setEvents] = useState<ConnectorEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  // Connector edit drawer
+  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
   // ─── Data Loaders ──────────────────────────────────────────────────────────
 
   const loadConnectors = async () => {
@@ -366,6 +388,44 @@ export default function NativeIntegrationHub() {
       setMessage(msg);
     } finally {
       setRunsLoading(false);
+    }
+  };
+
+  const loadEvents = async (key: string) => {
+    if (!key) return;
+    setEventsLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: ConnectorEvent[] }>(
+        `/api/integration-hub/${key}/events`
+      );
+      setEvents(res.data ?? []);
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Failed to load events");
+      setEvents([]);
+    } finally {
+      setEventsLoading(false);
+    }
+  };
+
+  const saveConnectorEdit = async () => {
+    if (!selectedConnector) return;
+    setEditSaving(true);
+    try {
+      await hrmsApi.put(`/api/integration-hub/${selectedConnector.key}`, {
+        name: editName,
+        description: editDescription,
+      });
+      setEditDrawerOpen(false);
+      setMessage("Connector updated.");
+      await loadConnectors();
+      // Update selectedConnector in place
+      setSelectedConnector((prev) =>
+        prev ? { ...prev, name: editName, description: editDescription } : prev
+      );
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -468,6 +528,10 @@ export default function NativeIntegrationHub() {
   useEffect(() => {
     if (activeTab === "Run History") void loadRuns();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "Event Log" && eventLogKey) void loadEvents(eventLogKey);
+  }, [activeTab, eventLogKey]);
 
   // ─── Actions ───────────────────────────────────────────────────────────────
 
@@ -985,6 +1049,107 @@ export default function NativeIntegrationHub() {
           </div>
         )}
 
+        {/* ── Tab: Event Log ───────────────────────────────────────────────── */}
+        {activeTab === "Event Log" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <select
+                value={eventLogKey}
+                onChange={(e) => {
+                  setEventLogKey(e.target.value);
+                  setEvents([]);
+                }}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-blue-400 transition-colors"
+              >
+                <option value="">Select a connector…</option>
+                {connectors.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.name} ({c.key})
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => void loadEvents(eventLogKey)}
+                disabled={!eventLogKey || eventsLoading}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {eventsLoading ? (
+                  <Loader className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCcw className="h-4 w-4" />
+                )}
+                Refresh
+              </button>
+            </div>
+
+            {!eventLogKey ? (
+              <div className="flex h-64 items-center justify-center rounded-3xl border bg-white shadow-sm">
+                <div className="text-center">
+                  <List className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                  <p className="font-semibold text-slate-400">Select a connector to view its event log</p>
+                </div>
+              </div>
+            ) : eventsLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader className="h-8 w-8 animate-spin text-slate-400" />
+              </div>
+            ) : events.length === 0 ? (
+              <div className="flex h-64 items-center justify-center rounded-3xl border bg-white shadow-sm">
+                <div className="text-center">
+                  <List className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                  <p className="font-semibold text-slate-400">No events found.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+                <div className="border-b p-5">
+                  <h2 className="font-black text-slate-950">Event Log</h2>
+                  <p className="text-sm text-slate-500">{events.length} events</p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[700px] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                      <tr>
+                        {["Time", "Event Type", "Message", "Status"].map((h) => (
+                          <th key={h} className="p-4 font-semibold">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {events.map((ev) => (
+                        <tr key={ev.id} className="border-t hover:bg-slate-50/80 transition-colors">
+                          <td className="p-4 font-mono text-xs text-slate-400 whitespace-nowrap">
+                            {formatIST(ev.created_at)}
+                          </td>
+                          <td className="p-4">
+                            <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                              {ev.event_type}
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-700 max-w-sm truncate">{ev.message}</td>
+                          <td className="p-4">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
+                                ev.status === "success"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : ev.status === "error" || ev.status === "failed"
+                                  ? "bg-red-50 text-red-700"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {ev.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Tab: Connector Config ─────────────────────────────────────────── */}
         {activeTab === "Connector Config" && (
           <div className="space-y-5">
@@ -1071,9 +1236,22 @@ export default function NativeIntegrationHub() {
                   <>
                     {/* Connector Info */}
                     <div className="rounded-3xl border bg-white p-5 shadow-sm">
-                      <h3 className="mb-1 font-black text-slate-950">
-                        {selectedConnector.name}
-                      </h3>
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <h3 className="font-black text-slate-950">
+                          {selectedConnector.name}
+                        </h3>
+                        <button
+                          onClick={() => {
+                            setEditName(selectedConnector.name);
+                            setEditDescription(selectedConnector.description ?? "");
+                            setEditDrawerOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 cursor-pointer rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                          Edit
+                        </button>
+                      </div>
                       <p className="mb-3 text-sm text-slate-500">
                         {selectedConnector.description || "No description."}
                       </p>
@@ -1605,6 +1783,66 @@ export default function NativeIntegrationHub() {
           </div>
         )}
       </div>
+
+      {/* ── Connector Edit Drawer ──────────────────────────────────────────── */}
+      {editDrawerOpen && selectedConnector && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b p-6">
+              <h2 className="text-lg font-black text-slate-950">Edit Connector</h2>
+              <button
+                onClick={() => setEditDrawerOpen(false)}
+                className="cursor-pointer text-slate-400 hover:text-slate-700 transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Name</label>
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Connector name"
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Description</label>
+                <textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Brief description…"
+                  rows={3}
+                  className="w-full resize-none rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 border-t p-6">
+              <button
+                onClick={() => setEditDrawerOpen(false)}
+                className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void saveConnectorEdit()}
+                disabled={editSaving || !editName.trim()}
+                className="flex-1 cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50"
+              >
+                {editSaving ? (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader className="h-4 w-4 animate-spin" />
+                    Saving…
+                  </span>
+                ) : (
+                  "Save"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Database Config Modal ───────────────────────────────────────────── */}
       {dbConfigOpen && activeDbKey && (() => {

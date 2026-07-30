@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { assignRole, getUserRoles, listRoleCatalog, revokeRole } from "../access/access.service.js";
+import { writeSecurityEvent } from "../../shared/writeSecurityEvent.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -40,6 +41,18 @@ router.post("/users/:userId/roles", h(async (req: AuthenticatedRequest, res: Res
   }
 
   await assignRole(req.params.userId, roleKey, req.authUser!.id, req);
+  void writeSecurityEvent({
+    event_type: "ROLE_CHANGE",
+    severity: "medium",
+    module_key: "ACCESS_CONTROL",
+    entity_type: "user",
+    entity_id: req.params.userId,
+    actor_user_id: req.authUser!.id,
+    title: `Role assigned: ${roleKey} → user ${req.params.userId}`,
+    new_value: { roleKey, action: "assigned" },
+    ip_address: req.ip ?? null,
+    user_agent: req.get?.("user-agent") ?? null,
+  });
   const roles = await getUserRoles(req.params.userId);
   return res.json({
     success: true,
@@ -58,6 +71,18 @@ router.delete("/users/:userId/roles/:roleKey", h(async (req: AuthenticatedReques
   }
 
   await revokeRole(userId, roleKey, req.authUser!.id, req);
+  void writeSecurityEvent({
+    event_type: "ROLE_CHANGE",
+    severity: "medium",
+    module_key: "ACCESS_CONTROL",
+    entity_type: "user",
+    entity_id: userId,
+    actor_user_id: req.authUser!.id,
+    title: `Role revoked: ${roleKey} from user ${userId}`,
+    old_value: { roleKey, action: "revoked" },
+    ip_address: req.ip ?? null,
+    user_agent: req.get?.("user-agent") ?? null,
+  });
   return res.json({ success: true, message: `Role '${roleKey}' revoked successfully` });
 }));
 
