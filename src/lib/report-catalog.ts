@@ -31,8 +31,35 @@ export interface ReportMeta {
   rowGrain: string;
   primaryKey: string[];
   columns: ColumnDef[];
+  /**
+   * Optional grouped header row rendered ABOVE the normal column header row.
+   * colSpan values must sum to columns.length. Reports that omit this keep their
+   * existing single-row header, so this is fully backward compatible.
+   */
+  headerGroups?: Array<{ label: string; colSpan: number }>;
+  /**
+   * Render empty text cells as a genuinely blank cell instead of the default
+   * em dash. Opt-in per report so no other report's formatting changes.
+   */
+  blankInsteadOfDash?: boolean;
+  /** Numeric column keys whose zero value renders as an empty cell. */
+  blankWhenZero?: string[];
   viewRoles: string[];
   exportRoles: string[];
+  defaultFilters?: Record<string, unknown>;
+}
+
+/**
+ * Current reporting month (YYYY-MM) in the user's local business timezone.
+ *
+ * Deliberately avoids `new Date().toISOString().slice(0, 7)`: that is a UTC
+ * substring, and in IST (UTC+05:30) it yields the PREVIOUS month for the first
+ * 5.5 hours of every month, so the preview would silently default to the wrong
+ * period and disagree with the export.
+ */
+export function currentBusinessMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 // ─── Value Formatters ──────────────────────────────────────────────────────────
@@ -849,57 +876,52 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // LEAVE
   // ═══════════════════════════════════════════════════════════════════════════════
   {
+    // Canonical Leave Balance Report. The former duplicate "leave-balance-export"
+    // ("Leave Balance") was consolidated into this entry so the Report Library shows
+    // exactly one leave-balance report. The backend keeps `leave-balance-export` as a
+    // resolving alias for saved requests, favourites and existing deep links.
     code: "leave-balance",
     name: "Leave Balance Report",
     category: "Leave",
     subcategory: "Balance & Allocation",
-    description: "Current leave balances by employee and leave type",
-    rowGrain: "One row per employee per leave type",
-    primaryKey: ["employee_code", "leave_code"],
-    columns: [
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
-      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
-      { key: "allocated_days", label: "Allocated", format: "number", width: 80, align: "right" },
-      { key: "used_days", label: "Used", format: "number", width: 80, align: "right" },
-      { key: "adjusted_days", label: "Adjusted", format: "number", width: 80, align: "right" },
-      { key: "remaining_days", label: "Remaining", format: "number", width: 80, align: "right" },
-    ],
-    viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
-    exportRoles: ["super_admin", "admin", "hr", "hr_head"],
-  },
-  {
-    code: "leave-balance-export",
-    name: "Leave Balance",
-    category: "Leave",
-    subcategory: "Balance & Allocation",
-    description: "Leave balance in MAS Callnet format — CL/ML/EL/PTL columns for Current, Taken, and Remaining per employee",
-    rowGrain: "One row per employee with pivoted leave type columns",
+    description:
+      "Leave balance in MAS Callnet format — CL/ML/EL/PTL-MTL columns for Current, Taken and Remaining, one row per employee",
+    rowGrain: "One row per employee",
     primaryKey: ["emp_code"],
     columns: [
-      { key: "emp_code", label: "EmpCode", format: "text", width: 100 },
-      { key: "emp_name", label: "EmpName", format: "text", width: 180 },
-      { key: "branch_name", label: "BranchName", format: "text", width: 120 },
-      { key: "cost_center", label: "Cost Center", format: "text", width: 130 },
-      { key: "cl_current", label: "Current CL", format: "number", width: 80, align: "right" },
-      { key: "ml_current", label: "Current ML", format: "number", width: 80, align: "right" },
-      { key: "el_current", label: "Current EL", format: "number", width: 80, align: "right" },
-      { key: "ptl_current", label: "Current PTL/MTL", format: "number", width: 100, align: "right" },
-      { key: "cl_taken", label: "Taken CL", format: "number", width: 80, align: "right" },
-      { key: "ml_taken", label: "Taken ML", format: "number", width: 80, align: "right" },
-      { key: "el_taken", label: "Taken EL", format: "number", width: 80, align: "right" },
-      { key: "ptl_taken", label: "Taken PTL/MTL", format: "number", width: 100, align: "right" },
-      { key: "cl_remain", label: "Remain CL", format: "number", width: 80, align: "right" },
-      { key: "ml_remain", label: "Remain ML", format: "number", width: 80, align: "right" },
-      { key: "el_remain", label: "Remain EL", format: "number", width: 80, align: "right" },
-      { key: "ptl_remain", label: "Remain PTL/MTL", format: "number", width: 100, align: "right" },
+      { key: "emp_code",        label: "EmpCode",      format: "text",   width: 110 },
+      { key: "emp_name",        label: "EmpName",      format: "text",   width: 220 },
+      { key: "branch_name",     label: "BranchName",   format: "text",   width: 130 },
+      { key: "cost_center",     label: "Cost Center",  format: "text",   width: 180 },
+      { key: "process_name",    label: "Process Name", format: "text",   width: 170 },
+
+      { key: "cl_current",      label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_current",      label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_current",      label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_current", label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_taken",        label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_taken",        label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_taken",        label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_taken",   label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_remain",       label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_remain",       label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_remain",       label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_remain",  label: "PTL/MTL",      format: "number", width: 84, align: "center" },
     ],
+    headerGroups: [
+      { label: "Emp Details",   colSpan: 4 },
+      { label: "",              colSpan: 1 },
+      { label: "Current Leave", colSpan: 4 },
+      { label: "Leave Taken",   colSpan: 4 },
+      { label: "Leave Remain",  colSpan: 4 },
+    ],
+    blankInsteadOfDash: true,
+    blankWhenZero: ["cl_taken", "ml_taken", "el_taken", "ptl_mtl_taken"],
     viewRoles: ["super_admin", "admin", "hr", "hr_head", "manager", "process_manager", "branch_head"],
     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
-    defaultFilters: { month: new Date().toISOString().slice(0, 7) },
+    defaultFilters: { month: currentBusinessMonth() },
   },
   {
     code: "leave-utilization",

@@ -102,6 +102,34 @@ type ReportState = "idle" | "loading" | "success" | "empty" | "error";
 
 // ─── Value Formatter ───────────────────────────────────────────────────────────
 
+/**
+ * Report-aware cell formatter.
+ *
+ * Applies two opt-in presentation rules without changing the shared formatter
+ * used by every other report:
+ *   - `blankWhenZero`      → numeric zero renders as an empty cell
+ *                            (the "Leave Taken" group in the Leave Balance format)
+ *   - `blankInsteadOfDash` → missing text renders blank rather than an em dash
+ *
+ * Reports that declare neither behave exactly as before.
+ */
+function formatReportCell(
+  value: unknown,
+  col: { key: string; format: ColumnFormat },
+  report: { blankInsteadOfDash?: boolean; blankWhenZero?: string[] }
+): string {
+  const isEmpty = value === null || value === undefined || value === "";
+
+  if (report.blankWhenZero?.includes(col.key)) {
+    const n = Number(value);
+    if (isEmpty || (Number.isFinite(n) && n === 0)) return "";
+  }
+
+  if (report.blankInsteadOfDash && isEmpty) return "";
+
+  return formatValue(value, col.format);
+}
+
 function formatValue(value: unknown, format: ColumnFormat): string {
   if (value == null || value === "") return "—";
 
@@ -202,7 +230,11 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "daily-shrinkage-report": [...dateFilters, ...branchProcess],
     "monthly-shrinkage-trend": [...dateFilters, ...branchProcess],
     "punch-raw-export": [...dateFilters, ...branchProcess],
-    "leave-balance": [...branchProcess, { key: "leaveType", label: "Leave Type", type: "text" as const, placeholder: "e.g. CL, SL, EL" }],
+    // Leave Balance shows every leave type as columns (CL / ML / EL / PTL-MTL),
+    // so a Leave Type filter is meaningless here and has been removed. Month is
+    // required and is passed identically to the preview API and the XLSX export.
+    "leave-balance": [...monthFilter, ...branchProcess],
+    "leave-balance-export": [...monthFilter, ...branchProcess],
     "leave-utilization": [...dateFilters, BRANCH_FILTER],
     "maternity-paternity-register": [...branchOnly, YEAR_FILTER],
     "leave-encashment-register": [...branchOnly, YEAR_FILTER],
@@ -1259,12 +1291,36 @@ export default function NativeReportsCenterV2() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="border-b border-gray-100 bg-gray-50 sticky top-0">
+                        {/* Optional grouped header row. Only rendered when the report
+                            declares headerGroups, so every other report keeps its
+                            existing single header row unchanged. */}
+                        {selectedReport.headerGroups && (
+                          <tr className="border-b border-gray-100 bg-gray-50 sticky top-0 z-20">
+                            {selectedReport.headerGroups.map((group, gi) => (
+                              <th
+                                key={`${group.label}-${gi}`}
+                                colSpan={group.colSpan}
+                                className="px-3 py-2 font-semibold text-gray-600 tracking-wider whitespace-nowrap text-center border-r border-gray-200 last:border-r-0"
+                              >
+                                {group.label}
+                              </th>
+                            ))}
+                          </tr>
+                        )}
+                        <tr
+                          className={`border-b border-gray-100 bg-gray-50 sticky z-10 ${
+                            selectedReport.headerGroups ? "top-[33px]" : "top-0"
+                          }`}
+                        >
                           {selectedReport.columns.map(col => (
                             <th
                               key={col.key}
                               className={`px-3 py-2.5 font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${
-                                col.align === "right" ? "text-right" : "text-left"
+                                col.align === "right"
+                                  ? "text-right"
+                                  : col.align === "center"
+                                    ? "text-center"
+                                    : "text-left"
                               }`}
                               style={{ minWidth: col.width }}
                             >
@@ -1280,11 +1336,15 @@ export default function NativeReportsCenterV2() {
                               <td
                                 key={col.key}
                                 className={`px-3 py-2 text-gray-700 whitespace-nowrap max-w-[220px] truncate ${
-                                  col.align === "right" ? "text-right tabular-nums" : ""
+                                  col.align === "right"
+                                    ? "text-right tabular-nums"
+                                    : col.align === "center"
+                                      ? "text-center tabular-nums"
+                                      : ""
                                 }`}
                                 title={String(row[col.key] ?? "")}
                               >
-                                {formatValue(row[col.key], col.format)}
+                                {formatReportCell(row[col.key], col, selectedReport)}
                               </td>
                             ))}
                           </tr>

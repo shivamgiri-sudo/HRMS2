@@ -61,6 +61,12 @@ export interface ReportDefinition {
   rowGrain: string;
   primaryKey: string[];
   columns: ColumnDef[];
+  /**
+   * Optional grouped header row rendered ABOVE the normal column header row.
+   * Spans must sum to columns.length. Reports that omit this keep their existing
+   * single-row header, so this is fully backward compatible.
+   */
+  headerGroups?: Array<{ label: string; colSpan: number }>;
   filters: FilterDef[];
   viewRoles: string[];
   exportRoles: string[];
@@ -930,26 +936,49 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     name: "Leave Balance Report",
     category: "Leave",
     subcategory: "Balance & Allocation",
-    description: "Current leave balances by employee and leave type",
-    rowGrain: "One row per employee per leave type",
-    primaryKey: ["employee_code", "leave_code"],
+    description:
+      "Leave balance in MAS Callnet format — CL/ML/EL/PTL-MTL columns for Current, Taken and Remaining, one row per employee",
+    rowGrain: "One row per employee",
+    primaryKey: ["emp_code"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
-      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
-      { key: "branch_name", label: "Branch", format: "text", width: 120 },
-      { key: "process_name", label: "Process", format: "text", width: 140 },
-      { key: "leave_code", label: "Leave Code", format: "text", width: 80 },
-      { key: "leave_name", label: "Leave Type", format: "text", width: 140 },
-      { key: "allocated_days", label: "Allocated", format: "number", width: 80, align: "right" },
-      { key: "used_days", label: "Used", format: "number", width: 80, align: "right" },
-      { key: "adjusted_days", label: "Adjusted", format: "number", width: 80, align: "right" },
-      { key: "remaining_days", label: "Remaining", format: "number", width: 80, align: "right" },
+      { key: "emp_code",        label: "EmpCode",      format: "text",   width: 110 },
+      { key: "emp_name",        label: "EmpName",      format: "text",   width: 220 },
+      { key: "branch_name",     label: "BranchName",   format: "text",   width: 130 },
+      { key: "cost_center",     label: "Cost Center",  format: "text",   width: 180 },
+      { key: "process_name",    label: "Process Name", format: "text",   width: 170 },
+
+      { key: "cl_current",      label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_current",      label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_current",      label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_current", label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_taken",        label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_taken",        label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_taken",        label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_taken",   label: "PTL/MTL",      format: "number", width: 84, align: "center" },
+
+      { key: "cl_remain",       label: "CL",           format: "number", width: 64, align: "center" },
+      { key: "ml_remain",       label: "ML",           format: "number", width: 64, align: "center" },
+      { key: "el_remain",       label: "EL",           format: "number", width: 64, align: "center" },
+      { key: "ptl_mtl_remain",  label: "PTL/MTL",      format: "number", width: 84, align: "center" },
     ],
-    filters: [F_YEAR, F_BRANCH, F_PROCESS, { key: "leaveType", label: "Leave Type", type: "text" }],
+    headerGroups: [
+      { label: "Emp Details",   colSpan: 4 },
+      { label: "",              colSpan: 1 },
+      { label: "Current Leave", colSpan: 4 },
+      { label: "Leave Taken",   colSpan: 4 },
+      { label: "Leave Remain",  colSpan: 4 },
+    ],
+    filters: [F_MONTH, F_BRANCH, F_PROCESS],
     viewRoles: ROLES_HR_MANAGER,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["leave_balance_ledger", "leave_type_master", "employees"],
     branchScoped: true,
+    processScoped: true,
+    calculationNotes:
+      "Current = allocated_days + adjusted_days; Taken = used_days; Remain = Current - Taken, " +
+      "all read from leave_balance_ledger for the selected month's balance year. " +
+      "Maternity and paternity share the single PTL/MTL column; the ML column is medical/sick leave.",
     sensitivityLevel: "confidential",
     containsPII: true,
     containsFinancialData: false,

@@ -187,6 +187,11 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 
   // Leave
   "leave-balance":             leaveBalance,
+  // Backward-compatible alias: the old wide-pivot "leave-balance-export" report was
+  // consolidated into the canonical "leave-balance" report. Existing saved requests,
+  // favourites and deep-links that still carry the old code keep working and resolve
+  // to the same implementation. It is no longer listed separately in the catalog.
+  "leave-balance-export":      leaveBalance,
   "leave-allocation-register": leaveAllocationRegister,
   "leave-utilization":         leaveUtilization,
   "leave-trend-monthly":       leaveTrendMonthly,

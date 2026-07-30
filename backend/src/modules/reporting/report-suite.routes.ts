@@ -21,7 +21,15 @@ import {
   stripCursorField,
   XlsxFileSizeError,
 } from "./xlsx-secure-builder.js";
+import {
+  buildLeaveBalanceWorkbook,
+  leaveBalanceFileName,
+  businessMonth,
+} from "./leave-balance-format.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
+
+/** Report codes that render through the business-mandated Leave Balance workbook. */
+const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -199,6 +207,41 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
   }
 
   const rows = stripCursorField(result.rows);
+
+  // ── Leave Balance: business-mandated exact workbook ─────────────────────────
+  // Uses the shared 17-column layout (merged group headers, exact column widths,
+  // thin borders, no metadata sheet) rather than the generic report workbook.
+  // `rows` here is the complete filtered dataset for the selected filters — it is
+  // fetched with the export row cap, never the preview page size.
+  if (LEAVE_BALANCE_CODES.has(code)) {
+    const month = businessMonth(req.query.month);
+    const leaveBuffer = await buildLeaveBalanceWorkbook({ rows, month });
+
+    if (leaveBuffer.length > EXPORT_BYTE_CAP) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Request the full report by email.',
+      });
+      return;
+    }
+
+    await recordReportAuditEvent({
+      reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+      eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+      actorType: 'user',
+      reportCode: code,
+      message: `Immediate XLSX export: ${rows.length} rows, ${leaveBuffer.length} bytes`,
+      metadataJson: { userId, rowCount: rows.length, fileSizeBytes: leaveBuffer.length, code, month },
+    }).catch(() => {});
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${leaveBalanceFileName(month)}"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    res.setHeader('Content-Length', leaveBuffer.length);
+    res.send(leaveBuffer);
+    return;
+  }
+
   const scopeSummary = scope.isSuperAdmin
     ? 'ALL BRANCHES'
     : `BRANCHES: ${scope.branchScope.mode === 'all' ? 'ALL' : scope.branchScope.ids.join(', ')}`;
@@ -533,17 +576,11 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
               ORDER BY adr.record_date DESC, reconciliation_status DESC`;
       break;
     }
-    case "leave-balance":
-      addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("lbl.balance_year = ?"); params.push(Number(req.query.year ?? new Date().getFullYear()));
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    lt.leave_code, lt.leave_name, lbl.allocated_days, lbl.used_days, lbl.adjusted_days,
-                    (lbl.allocated_days + lbl.adjusted_days - lbl.used_days) AS remaining_days
-               FROM leave_balance_ledger lbl JOIN employees e ON e.id = lbl.employee_id
-               JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY employee_name, lt.leave_code`;
-      break;
+    // "leave-balance" has no case here on purpose. A case in this switch takes
+    // precedence over the executor fallback below, and this one returned the old
+    // one-row-per-employee-per-leave-type shape, silently overriding the canonical
+    // pivoted executor. Leaving it unhandled makes the request fall through to
+    // executeReport(), which is the single source of truth for this report.
     case "leave-utilization": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
