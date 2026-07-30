@@ -63,6 +63,18 @@ async function getFinalizedLineForMonth(
   lwp_days: number;
   present_days: number;
   is_finalized: true;
+  // Live-estimate field aliases — keeps all frontend consumers consistent
+  earned_salary_till_date: number;
+  earned_net_till_date: number;
+  earned_payable_days: number;
+  eligible_weekoff_till_date: number;
+  eligible_holiday_till_date: number;
+  lwp_till_date: number;
+  projected_salary: number;
+  projected_net: number;
+  projected_payable_days: number;
+  gross_monthly: number;
+  esic_applicable: boolean;
 } | null> {
   const { db } = await import("../../db/mysql.js");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -92,12 +104,18 @@ async function getFinalizedLineForMonth(
   );
   const row = (rows as any[])[0];
   if (!row) return null;
+  const grossSalary   = Number(row.gross_salary   ?? 0);
+  const netSalary     = Number(row.net_salary     ?? 0);
+  const payableDays   = Number(row.final_payable_days ?? 0);
+  const weekoffDays   = Number(row.eligible_weekoff_days ?? 0);
+  const holidayDays   = Number(row.eligible_holiday_days ?? 0);
+  const lwpDays       = Number(row.lwp_days       ?? 0);
   return {
     run_status:           String(row.run_status),
     run_month:            String(row.run_month),
-    gross_salary:         Number(row.gross_salary ?? 0),
+    gross_salary:         grossSalary,
     total_deductions:     Number(row.total_deductions ?? 0),
-    net_salary:           Number(row.net_salary ?? 0),
+    net_salary:           netSalary,
     basic:                Number(row.basic ?? 0),
     hra:                  Number(row.hra ?? 0),
     special_allowance:    Number(row.special_allowance ?? 0),
@@ -105,14 +123,28 @@ async function getFinalizedLineForMonth(
     esic_employee:        Number(row.esic_employee ?? 0),
     professional_tax:     Number(row.professional_tax ?? 0),
     tds:                  Number(row.tds ?? 0),
-    final_payable_days:   Number(row.final_payable_days ?? 0),
+    final_payable_days:   payableDays,
     paid_working_days:    Number(row.paid_working_days ?? 0),
-    eligible_weekoff_days:Number(row.eligible_weekoff_days ?? 0),
-    eligible_holiday_days:Number(row.eligible_holiday_days ?? 0),
+    eligible_weekoff_days: weekoffDays,
+    eligible_holiday_days: holidayDays,
     active_calendar_days: Number(row.active_calendar_days ?? 0),
-    lwp_days:             Number(row.lwp_days ?? 0),
+    lwp_days:             lwpDays,
     present_days:         Number(row.present_days ?? 0),
     is_finalized:         true,
+    // Aliases matching the live-estimate field names so every frontend consumer
+    // (SalaryTab, RunningPayrollBreakdown, PayslipViewer) works identically
+    // whether the month is finalized or still in progress.
+    earned_salary_till_date:    grossSalary,
+    earned_net_till_date:       netSalary,
+    earned_payable_days:        payableDays,
+    eligible_weekoff_till_date: weekoffDays,
+    eligible_holiday_till_date: holidayDays,
+    lwp_till_date:              lwpDays,
+    projected_salary:           grossSalary,
+    projected_net:              netSalary,
+    projected_payable_days:     payableDays,
+    gross_monthly:              grossSalary,
+    esic_applicable:            Number(row.esic_employee ?? 0) > 0,
   };
 }
 
