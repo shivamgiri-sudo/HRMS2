@@ -215,12 +215,14 @@ async function createRequest(params: {
       params.assignedRole,
       params.assignedUserId ?? null,
       params.triggerEventId ?? null,
-      // 'pending_unassigned' is not a member of the status ENUM
-      // ('pending','actioned','confirmed','waived'), so it was rejected under
-      // strict mode and aborted the dispatch loop, leaving every later task
-      // uncreated. The unassigned state is already carried by
-      // assignment_exception and locked, which the dashboards read.
-      'pending',
+      // Migration 420 adds 'pending_unassigned' to the status ENUM. It was
+      // missing, so this INSERT was rejected under strict mode and aborted the
+      // dispatch loop, leaving every task after the first unassigned one
+      // uncreated. The value is kept rather than replaced with 'pending'
+      // because the UI renders an "Unassigned" badge and gates its reassign
+      // action on exactly this status, and the list endpoint does not expose
+      // assignment_exception for it to use instead.
+      params.assignmentException ? 'pending_unassigned' : 'pending',
       params.assignmentException ? 1 : 0,
       slaDeadline,
     ],
