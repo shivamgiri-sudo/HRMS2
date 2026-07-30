@@ -55,6 +55,18 @@ export interface SaveExpenseSubHeadPayload {
   activeStatus?: boolean;
 }
 
+/**
+ * What the server did with a delete request. A head or sub-head that budget lines, GRNs or coverage
+ * reviews still reference is retired (removed = false) rather than dropped, because those records
+ * name it in plain text and would otherwise read as pointing at nothing.
+ */
+export interface DeleteExpenseMasterResult {
+  id: string;
+  name: string;
+  removed: boolean;
+  usage: { budgetLines: number; grns: number; coverageReviews: number };
+}
+
 export function useFinanceExpenseMasters(includeInactive = false) {
   const queryClient = useQueryClient();
   const mastersQuery = useQuery({
@@ -87,5 +99,29 @@ export function useFinanceExpenseMasters(includeInactive = false) {
       queryClient.invalidateQueries({ queryKey: ["finance-expense-masters"] }),
   });
 
-  return { mastersQuery, saveHead, saveSubHead };
+  const deleteHead = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await hrmsApi.delete<{
+        success: boolean;
+        data: DeleteExpenseMasterResult;
+      }>(`/api/finance/expense-heads/${id}`);
+      return response.data;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["finance-expense-masters"] }),
+  });
+
+  const deleteSubHead = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await hrmsApi.delete<{
+        success: boolean;
+        data: DeleteExpenseMasterResult;
+      }>(`/api/finance/expense-sub-heads/${id}`);
+      return response.data;
+    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["finance-expense-masters"] }),
+  });
+
+  return { mastersQuery, saveHead, saveSubHead, deleteHead, deleteSubHead };
 }

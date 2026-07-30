@@ -71,6 +71,9 @@ budgetCoverageRouter.get(
           branchLocked: Boolean(scopedBranchId),
           canCreate: isSuperAdmin || roles.includes("admin") || roles.includes("branch_admin"),
           canManageExpenseMaster: isSuperAdmin || roles.includes("finance_head"),
+          // Changing or removing a head/sub-head that budgets already reference is Super Admin
+          // only; Finance Head keeps the ability to add new ones via canManageExpenseMaster.
+          canEditExpenseMaster: isSuperAdmin,
           canReviewBranchStage: isSuperAdmin || roles.includes("branch_head"),
           canReviewFinanceStage: isSuperAdmin || roles.includes("finance_head"),
           canReviewAccountsStage: isSuperAdmin || roles.includes("accounts_head"),

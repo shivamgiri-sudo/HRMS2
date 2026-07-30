@@ -17,6 +17,14 @@ const READ_ROLES = [
   "accounts_head",
 ] as const;
 const WRITE_ROLES = ["super_admin", "finance_head"] as const;
+/** Editing or deleting a head/sub-head that budgets already reference is Super Admin only. */
+const EDIT_ROLES = ["super_admin"] as const;
+
+function isSuperAdmin(req: AuthenticatedRequest) {
+  return [req.authUser?.role, ...(req.userRoles ?? [])]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLowerCase() === "super_admin");
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -51,6 +59,13 @@ router.post(
   requireRole(...WRITE_ROLES),
   async (req: AuthenticatedRequest, res) => {
     try {
+      if (req.body?.id && !isSuperAdmin(req)) {
+        res.status(403).json({
+          success: false,
+          error: "Only a Super Admin can edit an existing expense head",
+        });
+        return;
+      }
       const data = await financeExpenseMasterService.saveHead(
         req.body,
         req.authUser.id
@@ -71,6 +86,13 @@ router.post(
   requireRole(...WRITE_ROLES),
   async (req: AuthenticatedRequest, res) => {
     try {
+      if (req.body?.id && !isSuperAdmin(req)) {
+        res.status(403).json({
+          success: false,
+          error: "Only a Super Admin can edit an existing expense sub-head",
+        });
+        return;
+      }
       const data = await financeExpenseMasterService.saveSubHead(
         req.body,
         req.authUser.id
@@ -80,6 +102,46 @@ router.post(
       res.status(400).json({
         success: false,
         error: error instanceof Error ? error.message : "Unable to save expense sub-head",
+      });
+    }
+  }
+);
+
+router.delete(
+  "/expense-heads/:id",
+  requireWriteAccess,
+  requireRole(...EDIT_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = await financeExpenseMasterService.deleteHead(
+        req.params.id,
+        req.authUser.id
+      );
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to delete expense head",
+      });
+    }
+  }
+);
+
+router.delete(
+  "/expense-sub-heads/:id",
+  requireWriteAccess,
+  requireRole(...EDIT_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = await financeExpenseMasterService.deleteSubHead(
+        req.params.id,
+        req.authUser.id
+      );
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to delete expense sub-head",
       });
     }
   }
