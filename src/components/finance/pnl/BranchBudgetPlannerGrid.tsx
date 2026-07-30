@@ -163,9 +163,12 @@ export function BranchBudgetPlannerGrid({
 
       if (method === "manual") {
         const pctById = new Map((line.manualAllocations ?? []).map((m) => [m.costCentreId, Number(m.percentage) || 0]));
-        const pctTotal = scope.reduce((a, cc) => a + (pctById.get(cc.id) ?? 0), 0);
-        const parts = splitRupees(amount, scope.map((cc) => pctById.get(cc.id) ?? 0));
-        const byCc = new Map(scope.map((cc, i) => [cc.id, parts[i]]));
+        // Deliberately NOT splitRupees: that normalises by the weight total, so whatever you type
+        // gets rescaled back to the row Amount and a manual split can never appear unbalanced —
+        // typing 18,08,800 into one cell silently displayed 15,97,706. Each share is taken at face
+        // value so the figure you type is the figure you see, and any shortfall or excess shows up
+        // as a real imbalance the save must resolve.
+        const byCc = new Map(scope.map((cc) => [cc.id, Math.round(((pctById.get(cc.id) ?? 0) / 100) * amount)]));
         byLine.set(index, {
           amount,
           qty: Number(line.quantity) || null,
@@ -537,39 +540,56 @@ export function BranchBudgetPlannerGrid({
                           title={up ? "Bottom-up: type the cost-centre cells, the branch total is their sum." : "Top-down: type the branch Amount, the cost-centre cells are derived."}>
                           {up ? "↑" : "↓"}
                         </td>
-                        {/* Units and Amount alternate per cost centre. The Units cell carries the
-                            share input: a percentage on a Manual row, and nothing on any other,
-                            because no other method takes a per-cost-centre figure from the user. */}
-                        {costCentres.flatMap((cc, ci) => [
-                          <td key={`u-${index}-${cc.id}`} className={`border-b border-l border-slate-200 p-0 ${isManual ? "bg-white" : calcCell}`}
-                            title={isManual ? "This cost centre's share in rupees. The shares must add up to the row Amount." : `${method || "This method"} derives each cost centre's share from its driver, so there is nothing to type here.`}
-                            onClick={isManual ? undefined : explain(`${method || "This method"} derives each share from its driver — switch the row to Manual % to type shares.`)}>
-                            {isManual ? (
-                              <input type="number" min="0" step="1" disabled={!canEdit} aria-label={`${cc.costCentreCode} share amount`}
-                                className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30 ${unbalanced ? "bg-rose-50" : ""}`}
-                                value={p?.cells[ci]?.units ?? ""}
-                                onChange={(e) => {
-                                  // Typed in rupees because that is how a branch admin thinks
-                                  // ("rent is 4,50,000 of which Onfido takes 2,00,000"), but the
-                                  // engine stores manual splits as percentages, so convert here.
-                                  const amount = Number(e.target.value) || 0;
-                                  const total = p?.amount ?? 0;
-                                  const pct = total > 0 ? (amount / total) * 100 : 0;
-                                  const rest = (line.manualAllocations ?? []).filter((m) => m.costCentreId !== cc.id);
-                                  onUpdateLine(index, { manualAllocations: [...rest, { costCentreId: cc.id, percentage: pct }] });
-                                }} />
-                            ) : <div className={`px-2 py-1 ${num} text-slate-500`}>—</div>}
-                          </td>,
-                          <td key={`a-${index}-${cc.id}`} className={`border-b border-r border-slate-200 px-2 py-1 ${num} ${calcCell} ${unbalanced ? "bg-rose-50 text-rose-700" : ""}`}
-                            title={isMetered
-                              ? "Filled from this period's meter readings when the budget is saved — the browser has no copy of them."
-                              : `Derived from the ${method || "sharing"} split. Switch the row to Manual % to set shares yourself.`}
-                            onClick={explain(isMetered
-                              ? "Metered rows are split by meter consumption, which is read on the server when you save."
-                              : `Derived from the ${method || "sharing"} split — switch the row to Manual % to set shares yourself.`)}>
-                            {isMetered ? <span className="text-slate-400">on save</span> : (p?.cells[ci]?.amount ? money(p.cells[ci].amount) : "—")}
-                          </td>,
-                        ])}
+                        {/* Units and Amount alternate per cost centre. The Amount cell is typeable
+                            on EVERY branch-level row: typing a figure turns the row into a manual
+                            split seeded from whatever the method had just derived, so the numbers
+                            do not jump and you can override one cost centre without first hunting
+                            for the right sharing method. */}
+                        {costCentres.flatMap((cc, ci) => {
+                          const cellAmount = p?.cells[ci]?.amount ?? 0;
+                          // Switch to a manual split, keeping every current figure, then apply the
+                          // one the user just typed. Percentages are what the engine stores.
+                          const typeAmount = (raw: string) => {
+                            const typed = Number(raw) || 0;
+                            const total = p?.amount ?? 0;
+                            if (total <= 0) return;
+                            const amounts = costCentres.map((other, oi) =>
+                              other.id === cc.id ? typed : (p?.cells[oi]?.amount ?? 0));
+                            onUpdateLine(index, {
+                              allocationDriver: "manual",
+                              manualAllocations: costCentres.map((other, oi) => ({
+                                costCentreId: other.id,
+                                percentage: (amounts[oi] / total) * 100,
+                              })),
+                            });
+                          };
+                          return [
+                            <td key={`u-${index}-${cc.id}`} className={`border-b border-l border-slate-200 p-0 ${isMetered ? "bg-white" : calcCell}`}
+                              title={isMetered
+                                ? "Projected consumption for this cost centre. Units × Rate gives its amount."
+                                : "Units are only entered on a metered row; on this row the amounts are what you type or what the method derives."}
+                              onClick={isMetered ? undefined : explain("Units apply to metered rows. On this row, type into the Amount cell instead.")}>
+                              {isMetered ? (
+                                <input type="number" min="0" step="1" disabled={!canEdit} aria-label={`${cc.costCentreCode} units`}
+                                  className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30`}
+                                  value={p?.cells[ci]?.units ?? ""}
+                                  onChange={(e) => {
+                                    const units = Number(e.target.value) || 0;
+                                    const rest = (line.manualAllocations ?? []).filter((m) => m.costCentreId !== cc.id);
+                                    onUpdateLine(index, { manualAllocations: [...rest, { costCentreId: cc.id, percentage: units }] });
+                                  }} />
+                              ) : <div className={`px-2 py-1 ${num} text-slate-500`}>—</div>}
+                            </td>,
+                            <td key={`a-${index}-${cc.id}`} className={`border-b border-r border-slate-200 p-0 ${unbalanced ? "bg-rose-50" : "bg-white"}`}
+                              title="This cost centre's share in rupees. Typing here overrides the sharing method for this row.">
+                              <input type="number" min="0" step="1" disabled={!canEdit}
+                                aria-label={`${cc.costCentreCode} share amount`}
+                                className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30 ${unbalanced ? "text-rose-700" : ""}`}
+                                value={cellAmount || ""}
+                                onChange={(e) => typeAmount(e.target.value)} />
+                            </td>,
+                          ];
+                        })}
                       </tr>
                     );
                   })}
@@ -583,8 +603,10 @@ export function BranchBudgetPlannerGrid({
                       <tr key={`warn-${r.index}`}>
                         <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-rose-50" />
                         <td className="border-b border-r-2 border-slate-300 bg-rose-50 px-2 py-1 text-rose-700" colSpan={7 + costCentres.length * 2}>
-                          <span className="font-semibold">{r.line.subHead}</span>: manual shares total{" "}
-                          {(100 - (preview.get(r.index)?.unallocated ?? 0)).toFixed(2)}% — they must total exactly 100% before this budget can be saved.
+                          <span className="font-semibold">{r.line.subHead}</span>: the cost-centre
+                          amounts are Rs {money(Math.abs(preview.get(r.index)?.unallocated ?? 0))}{" "}
+                          {(preview.get(r.index)?.unallocated ?? 0) > 0 ? "short of" : "over"} the row
+                          Amount. They must add up to it exactly before this budget can be saved.
                         </td>
                       </tr>
                   ))}
