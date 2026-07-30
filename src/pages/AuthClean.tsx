@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Youtube } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,15 @@ const FEATURES = [
   { icon: Clock, label: "Attendance Tracking", desc: "Real-time presence and work-hour monitoring" },
   { icon: BarChart3, label: "Advanced Analytics", desc: "Actionable insights for smarter HR decisions" },
   { icon: CheckCircle2, label: "Leave & Payroll", desc: "Streamlined approvals and payroll processing" },
+];
+
+// Update these URLs with the real MAS Callnet social profile links
+const SOCIAL_LINKS = [
+  { label: "Website",   href: "https://YOUR_COMPANY_WEBSITE",  icon: Globe },
+  { label: "LinkedIn",  href: "https://YOUR_LINKEDIN_URL",      icon: Linkedin },
+  { label: "Instagram", href: "https://YOUR_INSTAGRAM_URL",     icon: Instagram },
+  { label: "Facebook",  href: "https://YOUR_FACEBOOK_URL",      icon: Facebook },
+  { label: "YouTube",   href: "https://YOUR_YOUTUBE_URL",       icon: Youtube },
 ];
 
 type ForgotPasswordChannel = 'email' | 'sms';
@@ -219,8 +228,32 @@ export default function AuthClean() {
           </div>
         </div>
 
-        {/* Bottom tagline */}
-        <div className="relative z-10">
+        {/* Bottom tagline + social links */}
+        <div className="relative z-10 space-y-3">
+          {/* Social icons */}
+          <div className="flex items-center gap-2.5">
+            {SOCIAL_LINKS.map(({ label, href, icon: Icon }) => (
+              <a
+                key={label}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={label}
+                className="flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200 hover:scale-110"
+                style={{ background: "rgba(255,255,255,0.08)", color: "#94a3b8" }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLAnchorElement).style.background = "rgba(27,106,181,0.4)";
+                  (e.currentTarget as HTMLAnchorElement).style.color = "#ffffff";
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.08)";
+                  (e.currentTarget as HTMLAnchorElement).style.color = "#94a3b8";
+                }}
+              >
+                <Icon className="h-4 w-4" />
+              </a>
+            ))}
+          </div>
           <p className="text-xs text-slate-500">
             © {currentYear} Mas Callnet India Pvt Ltd · Secure · Reliable · Enterprise-Grade
           </p>
