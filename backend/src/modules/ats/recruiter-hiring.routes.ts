@@ -30,8 +30,22 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // Allow HR domain roles (hr, branch_head), admin roles, and recruiters
 const authRoles = requireRole("admin", "hr", "super_admin", "recruiter", "branch_head");
 
-recruiterHiringRouter.use(requireAuth);
-recruiterHiringRouter.use(authRoles);
+// Scoped to the paths this router owns, not applied at its root.
+//
+// atsRouter mounts this router with `atsRouter.use(recruiterHiringRouter)`, so
+// a root-level `use` here runs for *every* request that reaches that line —
+// including requests for atsRouter's own routes further down. requireRole
+// answers 403 rather than calling next(), so those siblings became unreachable
+// for any role outside this list: `manager` and `ceo` were refused
+// GET /api/ats/candidates, move-stage, waiting-queue and onboarding-bridge even
+// though each of those routes explicitly grants them, and the 403 named roles
+// belonging to a different route, which made it near-impossible to diagnose.
+//
+// The mount order in ats.routes.ts already carries a comment about this router
+// intercepting /onboarding/*; scoping the guards removes the need to rely on
+// ordering at all.
+recruiterHiringRouter.use("/recruiter", requireAuth, authRoles);
+recruiterHiringRouter.use("/interviewers", requireAuth, authRoles);
 
 function parseQueryBool(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
