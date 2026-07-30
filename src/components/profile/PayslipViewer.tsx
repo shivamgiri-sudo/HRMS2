@@ -247,7 +247,13 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const currentMonthKey = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
   }).format(new Date()).slice(0, 7);
-  const hasCurrentMonthPayslip = payrollRecords?.some((r) => r.run_month?.startsWith(currentMonthKey));
+  // Only treat current month as "has payslip" when the run is locked/approved/disbursed.
+  // Processing/draft/calculated runs are in-flight — show the live estimate instead.
+  const FINALISED_STATUSES = new Set(["locked", "approved", "disbursed", "completed", "paid", "credited"]);
+  const hasCurrentMonthPayslip = payrollRecords?.some(
+    (r) => r.run_month?.startsWith(currentMonthKey) &&
+           FINALISED_STATUSES.has((r.run_status ?? "").toLowerCase()),
+  );
 
   const { data: runningSalary } = useQuery({
     queryKey: ["running-salary", employeeId, currentMonthKey],
