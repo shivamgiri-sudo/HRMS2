@@ -30,6 +30,7 @@ import { generateEmployeeCode } from './employee-code.service.js';
 import { appendJourneyEvent } from '../employees/journeyLog.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
+import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { env } from '../../config/env.js';
 
 export interface EmployeeCreationInput {
@@ -420,6 +421,15 @@ export async function createEmployeeFromCandidate(
       employeeName: candRow?.full_name ?? null,
       candidateId,
       branchId: candRow?.branch_id ?? null,
+    });
+
+    // Candidate-portal credentials, deliberately deferred to here rather than
+    // interview selection — see issueCandidatePortalAccess for why.
+    issueCandidatePortalAccess(candidateId).catch((err: unknown) => {
+      console.error('[EmployeeOrchestrator] Portal access issuance failed:', {
+        employeeCode,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
     // Consent and BGV problems are deliberately non-blocking, but the warnings

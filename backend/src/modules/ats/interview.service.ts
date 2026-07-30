@@ -6,6 +6,7 @@ import { sendOnboardingToken } from './ats.onboarding.service.js';
 import { env } from '../../config/env.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import { getUserRoleKeys } from '../../shared/roleResolver.js';
+import { createPortalAccess } from './candidate-portal.service.js';
 
 /**
  * Interview Service
@@ -301,35 +302,22 @@ async function handleCandidateSelection(candidateId: string) {
   const candidate = rows[0];
 
   // Send onboarding link immediately on selection — candidate fills BGV docs within the onboarding form.
+  // This is a separate, working, token-based flow — untouched by the change below.
   sendOnboardingToken(candidateId, 'system').catch((err) =>
     console.error('[interview] Failed to send onboarding token for', candidateId, err)
   );
 
-  const tempPassword = generateTempPassword();
-
-  if (candidate.email) {
-    const loginId = randomUUID();
-    await db.execute(
-      `INSERT INTO ats_candidate_portal_login (
-        id, candidate_id, email, temp_password, password_reset_required
-      ) VALUES (?, ?, ?, ?, 1)
-      ON DUPLICATE KEY UPDATE
-        temp_password = VALUES(temp_password),
-        password_reset_required = 1`,
-      [loginId, candidateId, candidate.email, tempPassword]
-    );
-
-    const onboardingPortalUrl = `${env.FRONTEND_URL}/candidate-portal/login`;
-    sendSelectionCongratulationsEmail({
-      candidateId: candidate.id,
-      to: candidate.email,
-      candidateName: candidate.full_name,
-      branchDisplayName: candidate.branch_display_name,
-      roleOffered: candidate.applied_for_role,
-      onboardingPortalUrl,
-      tempPassword,
-    }).catch((err) => console.error('Failed to send selection email:', err));
-  }
+  // Portal credentials are no longer issued here. They used to be generated at
+  // selection and mailed immediately — before BGV, before an offer, before an
+  // employee even exists — and written to ats_candidate_portal_login, a table
+  // the login check never reads (it reads ats_candidate_portal_access, whose
+  // only writer, createPortalAccess(), had zero callers). So every selected
+  // candidate was mailed a password that could never work, and the plaintext
+  // temp_password sat in that unused table indefinitely.
+  //
+  // Credentials are now issued by issueCandidatePortalAccess(), called once an
+  // employee code exists (employee-creation-orchestrator.service.ts,
+  // post-commit) — see that function below.
 
   await db.execute(
     `INSERT INTO portal_notification (
@@ -389,6 +377,49 @@ function generateTempPassword(): string {
     password += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return password;
+}
+
+/**
+ * Issue candidate-portal credentials once an employee code exists.
+ *
+ * Called from employee-creation-orchestrator.service.ts, after commit — the
+ * same point that dispatches the joining-document pack and the Payroll HR
+ * notification. Previously, credentials were generated and mailed at
+ * interview selection instead, before BGV or an offer, and written to a table
+ * (ats_candidate_portal_login) the login check never reads — every selected
+ * candidate got a password that could never work. createPortalAccess() writes
+ * the table login actually checks (ats_candidate_portal_access); it already
+ * existed but had never been called.
+ *
+ * Fire-and-forget by design, matching the other post-commit dispatches in the
+ * orchestrator: a failure here must not affect the employee record that is
+ * already committed.
+ */
+export async function issueCandidatePortalAccess(candidateId: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, full_name, email, applied_for_branch, branch_display_name,
+            COALESCE(role_applied, applied_for_process) AS applied_for_role
+       FROM ats_candidate WHERE id = ?`,
+    [candidateId],
+  );
+  const candidate = rows[0];
+  if (!candidate?.email) return;
+
+  const tempPassword = generateTempPassword();
+  // Stores only a bcrypt hash — the plaintext temp password below exists only
+  // long enough to be emailed, never written to a table.
+  await createPortalAccess(candidateId, tempPassword);
+
+  const onboardingPortalUrl = `${env.FRONTEND_URL}/candidate-portal/login`;
+  await sendSelectionCongratulationsEmail({
+    candidateId: candidate.id,
+    to: candidate.email,
+    candidateName: candidate.full_name,
+    branchDisplayName: candidate.branch_display_name,
+    roleOffered: candidate.applied_for_role,
+    onboardingPortalUrl,
+    tempPassword,
+  });
 }
 
 /**
