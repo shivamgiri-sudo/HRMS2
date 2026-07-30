@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { getDriverRevenueActuals, getIndirectCostActuals, type ActualsByKey } from "./pnl-actuals.service.js";
+import { getRunningPeopleCost, type PeopleCostByKey } from "./pnl-running-salary.service.js";
 import { processLobService } from "./process-lob.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
@@ -35,6 +36,15 @@ export interface StatementColumn {
   branchName: string | null;
   processName: string | null;
   status: string | null;
+  /**
+   * How much of this column's active headcount the people cost accounts for, as a percentage.
+   * Below 100 the Operating Profit shown is overstated by whatever the uncovered staff would have
+   * cost, so a consumer must surface the shortfall rather than present the profit as final.
+   * Absent when no snapshot has been refreshed for the period.
+   */
+  peopleCostCoveragePct?: number;
+  peopleCostActiveEmployees?: number;
+  peopleCostCoveredEmployees?: number;
 }
 
 export interface StatementRow {
@@ -150,7 +160,8 @@ function enrichColumn(
   data: Record<string, unknown>,
   key: { branchId?: string | null; processId?: string | null },
   idc: ActualsByKey,
-  revenue: ActualsByKey
+  revenue: ActualsByKey,
+  people: PeopleCostByKey
 ): Record<string, unknown> {
   const pick = (source: ActualsByKey) =>
     (key.processId ? source.byProcess.get(key.processId) : undefined)
@@ -163,9 +174,19 @@ function enrichColumn(
   const recognizedRevenue = existingRevenue > 0 ? existingRevenue : pick(revenue);
   out.recognizedRevenue = recognizedRevenue;
 
-  const agentSalary = n(out.agentSalary);
-  const dscSalary = n(out.dscSalary ?? out.dscPeople);
-  const bmcSalary = n(out.bmcSalary ?? out.bmcPeople);
+  // The snapshot is authoritative when it has been refreshed for this period: it is the only
+  // source that splits Agent / DSC / BMC from real per-employee running salary. Without it the
+  // upstream row reports the whole people cost as Agent, because a residual rule dumps everything
+  // there when no payroll person matched a process.
+  const snapshot = (key.processId ? people.byProcess.get(key.processId) : undefined)
+    ?? (key.branchId ? people.byBranch.get(key.branchId) : undefined);
+  const hasSnapshot = Boolean(snapshot)
+    && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
+
+  const agentSalary = hasSnapshot ? snapshot!.agent_salary : n(out.agentSalary);
+  const dscSalary = hasSnapshot ? snapshot!.dsc_people : n(out.dscSalary ?? out.dscPeople);
+  const bmcSalary = hasSnapshot ? snapshot!.bmc_people : n(out.bmcSalary ?? out.bmcPeople);
+  out.agentSalary = agentSalary;
   const indirectCostTotal = pick(idc);
 
   const directCostTotal = agentSalary + dscSalary + bmcSalary;
@@ -177,6 +198,26 @@ function enrichColumn(
   out.directCostTotal = directCostTotal;
   out.totalCost = totalCost;
   out.operatingProfit = recognizedRevenue - totalCost;
+
+  // How much of this column's headcount the people cost actually covers. An employee who earned
+  // nothing this month — no present days, or no salary assigned — contributes no cost, so a column
+  // whose staff are largely uncovered shows an Operating Profit far higher than the real one. The
+  // figure is published rather than silently corrected, because the shortfall is upstream data and
+  // guessing at the missing salary would be worse than naming the gap.
+  //
+  // Only meaningful once a snapshot exists for the period. Without one there is nothing to be
+  // short of: a future month legitimately has no running salary, and reporting it as "0% covered"
+  // would flag a healthy period as broken.
+  const coverage = people.asOfDate
+    ? (key.processId ? people.coverageByProcess.get(key.processId) : undefined)
+      ?? (key.branchId ? people.coverageByBranch.get(key.branchId) : undefined)
+    : undefined;
+  if (coverage && coverage.activeEmployees > 0) {
+    out.peopleCostActiveEmployees = coverage.activeEmployees;
+    out.peopleCostCoveredEmployees = coverage.coveredEmployees;
+    out.peopleCostCoveragePct =
+      Math.round((coverage.coveredEmployees / coverage.activeEmployees) * 1000) / 10;
+  }
 
   out.agentSalaryPct = pct(agentSalary, recognizedRevenue);
   out.dscPct = pct(dscSalary, recognizedRevenue);
@@ -196,6 +237,7 @@ export interface StatementDependencies {
    *  they fall back to the live readers. */
   getIndirectCost?: (period: string) => Promise<ActualsByKey>;
   getDriverRevenue?: (period: string) => Promise<ActualsByKey>;
+  getPeopleCost?: (period: string) => Promise<PeopleCostByKey>;
 }
 
 const defaultDependencies: StatementDependencies = {
@@ -204,6 +246,7 @@ const defaultDependencies: StatementDependencies = {
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
   getIndirectCost: (period) => getIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
+  getPeopleCost: (period) => getRunningPeopleCost(period),
 };
 
 export async function getStatement(
@@ -243,22 +286,34 @@ export async function getStatement(
 
   // Indirect cost and driver revenue are keyed by cost centre at source; resolve them per column.
   const periodCode = String(filters.period ?? summary.generatedAt).slice(0, 7);
-  const [idc, revenue] = await Promise.all([
+  const [idc, revenue, people] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
+    (deps.getPeopleCost ?? getRunningPeopleCost)(periodCode),
   ]);
-  columnData = columnData.map((item) => ({
-    column: item.column,
-    data: enrichColumn(
+  columnData = columnData.map((item) => {
+    const data = enrichColumn(
       item.data,
       {
         branchId: viewBy === "branch" ? item.column.id : (item.data.branchId as string | undefined),
         processId: viewBy === "process" ? item.column.id : (item.data.processId as string | undefined),
       },
       idc,
-      revenue
-    ),
-  }));
+      revenue,
+      people
+    );
+    // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
+    // column can be trusted, and a consumer must be able to see that before reading any figure in it.
+    const column = data.peopleCostCoveragePct === undefined
+      ? item.column
+      : {
+          ...item.column,
+          peopleCostCoveragePct: data.peopleCostCoveragePct as number,
+          peopleCostActiveEmployees: data.peopleCostActiveEmployees as number,
+          peopleCostCoveredEmployees: data.peopleCostCoveredEmployees as number,
+        };
+    return { column, data };
+  });
 
   const statementRows: StatementRow[] = components.map((component) => ({
     componentKey: component.component_key,
@@ -275,6 +330,8 @@ export async function getStatement(
     viewBy,
     calculationEngine: summary.calculationEngine,
     generatedAt: summary.generatedAt,
+    // So the caller can say how current the people cost is instead of implying it is live.
+    peopleCostAsOf: people.asOfDate,
     columns: columnData.map((item) => item.column),
     rows: statementRows,
   };

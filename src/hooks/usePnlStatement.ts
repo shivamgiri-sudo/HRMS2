@@ -11,6 +11,15 @@ export interface PnlStatementColumn {
   branchName: string | null;
   processName: string | null;
   status: string | null;
+  /**
+   * Share of this column's active headcount that the people cost actually accounts for. Below 100
+   * the Operating Profit is overstated by whatever the uncovered staff would have cost, so the
+   * shortfall must be shown rather than left for the reader to discover. Absent until a running
+   * salary snapshot has been taken for the period.
+   */
+  peopleCostCoveragePct?: number;
+  peopleCostActiveEmployees?: number;
+  peopleCostCoveredEmployees?: number;
 }
 
 export interface PnlStatementRow {
@@ -26,6 +35,8 @@ export interface PnlStatement {
   viewBy: PnlStatementViewBy;
   calculationEngine?: string;
   generatedAt: string;
+  /** Date the running-month people cost was computed up to. Null when no snapshot exists. */
+  peopleCostAsOf?: string | null;
   columns: PnlStatementColumn[];
   rows: PnlStatementRow[];
 }

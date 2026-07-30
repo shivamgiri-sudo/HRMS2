@@ -69,11 +69,33 @@ export function PnlStatementView({
                 <th className="sticky left-0 z-10 min-w-[220px] bg-slate-50 px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   P&amp;L Component
                 </th>
-                {statement.columns.map((column) => (
-                  <th key={column.id} className="min-w-[140px] px-4 py-2 text-right text-xs font-semibold text-slate-600" title={column.branchName ?? undefined}>
-                    {column.name}
-                  </th>
-                ))}
+                {statement.columns.map((column) => {
+                  // A column whose people cost covers only part of its headcount overstates
+                  // Operating Profit by whatever the uncovered staff would have cost. That gap is
+                  // invisible in the numbers themselves — every figure still adds up — so it has to
+                  // be stated on the column that carries it.
+                  const coverage = column.peopleCostCoveragePct;
+                  const underCovered = coverage !== undefined && coverage < 100;
+                  return (
+                    <th
+                      key={column.id}
+                      className="min-w-[140px] px-4 py-2 text-right text-xs font-semibold text-slate-600"
+                      title={column.branchName ?? undefined}
+                    >
+                      {column.name}
+                      {underCovered && (
+                        <span
+                          className={`mt-1 block text-[10px] font-medium ${
+                            coverage === 0 ? "text-rose-600" : "text-amber-600"
+                          }`}
+                          title={`Salary cost covers ${column.peopleCostCoveredEmployees} of ${column.peopleCostActiveEmployees} active employees. Operating Profit is overstated until the rest have attendance and salary data for this month.`}
+                        >
+                          ⚠ {coverage}% salary covered
+                        </span>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>

@@ -22,6 +22,7 @@ import { gradeEngineService } from "./grade-engine.service.js";
 import { checkBudgetExceptions, checkSharingMethodReadiness } from "./budget-readiness.service.js";
 import { budgetCoverageService } from "./budget-coverage.service.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
+import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
@@ -632,6 +633,23 @@ router.get("/pnl/summary", h(async (req, res) => {
   const data = await canonicalPnlService.getSummary(await scopedFilters(req));
   res.json({ success: true, data });
 }));
+
+// Recomputes the per-employee running-salary snapshot the P&L reads for Agent/DSC/BMC. Explicit
+// rather than automatic on read: it calls computeRunningSalary once per employee, so it belongs
+// behind a deliberate refresh, not on the path of every statement load.
+router.post(
+  "/pnl/running-salary/refresh",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const period = String(req.body?.period ?? "");
+    const data = await refreshRunningSalarySnapshot(period, {
+      branchId: req.body?.branchId ? String(req.body.branchId) : undefined,
+      asOfDate: req.body?.asOfDate ? String(req.body.asOfDate) : undefined,
+    });
+    res.json({ success: true, data });
+  })
+);
 
 // Transposed statement (P&L components as rows, entities as dynamic columns) — read-only
 // composition over the same canonical engine as /pnl/summary. See pnl-statement.service.ts.

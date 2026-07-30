@@ -384,6 +384,7 @@ const MIGRATION_MANIFEST: string[] = [
   // superseded by 438, which carries the corrected statement.
   "437_pnl_wfm_follows_process_mapping.sql",
   "438_pnl_people_classification_seed_v2.sql",
+  "439_pnl_running_salary_snapshot.sql",
   "435_bgv_check_type_name_match.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
