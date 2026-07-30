@@ -65,6 +65,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
+import { BranchBudgetPlannerGrid } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
 
 const UNITS = [
   "Nos",
@@ -313,6 +314,9 @@ export default function BranchBudgetManagementWorkspace() {
   /** Reviewer's per head/sub-head correction notes, keyed by correctionKey(line). */
   const [correctionNotes, setCorrectionNotes] = useState<Record<string, string>>({});
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  /** The table planner is the fast path and therefore the default; the card editor stays one click
+   *  away for the fields the table has no room for. */
+  const [plannerMode, setPlannerMode] = useState<"table" | "cards">("table");
   const [expandedGradeCostCentres, setExpandedGradeCostCentres] = useState<Set<string>>(new Set());
 
   const capabilitiesQuery = useQuery({
@@ -812,7 +816,57 @@ export default function BranchBudgetManagementWorkspace() {
                   </CardContent>
                 </Card>
               )}
-              {detailQuery.isLoading && detailId ? <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div> : lines.map((line, index) => {
+              {/* Two ways to plan the same lines. The table is the fast path — rows are
+                  head/sub-head, columns are cost centres — and the card editor stays for the
+                  fields the table has no room for (vendor, justification, cost-centre scope). */}
+              {branchId && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entry mode</span>
+                  <div className="flex overflow-hidden rounded-lg border border-slate-300">
+                    <button type="button" onClick={() => setPlannerMode("table")}
+                      className={`px-3 py-1.5 text-xs font-medium ${plannerMode === "table" ? "bg-blue-50 text-blue-700" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                      Table planner
+                    </button>
+                    <button type="button" onClick={() => setPlannerMode("cards")}
+                      className={`border-l border-slate-300 px-3 py-1.5 text-xs font-medium ${plannerMode === "cards" ? "bg-blue-50 text-blue-700" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                      Detailed line editor
+                    </button>
+                  </div>
+                  <span className="text-xs text-slate-500">{lines.length} line{lines.length === 1 ? "" : "s"}</span>
+                </div>
+              )}
+
+              {plannerMode === "table" && branchId && !(detailQuery.isLoading && detailId) && (
+                <BranchBudgetPlannerGrid
+                  lines={lines}
+                  masters={masters}
+                  costCentres={activeCostCentres}
+                  drivers={driverDraft}
+                  canEdit={canEdit}
+                  period={period}
+                  onUpdateLine={updateLine}
+                  onRemoveLine={(index) => setLines((current) => current.filter((_, i) => i !== index))}
+                  onAddLine={(head, subHead, unit, method) => setLines((current) => [
+                    ...current,
+                    blankLine({
+                      head, subHead, unit,
+                      planningLevel: "branch",
+                      allocationDriver: method,
+                      itemName: subHead,
+                      // The plan is non-taxable, so a new line starts that way instead of
+                      // inheriting an 18% default the branch would have to clear on every row.
+                      taxTreatment: "non_gst", gstRate: 0, gstType: "none", recoverableTaxPct: 0,
+                      justification: `${subHead} for ${period}`,
+                    }),
+                  ])}
+                  onDriverChange={(costCentreId, key, value) => setDriverDraft((current) => {
+                    const existing = current[costCentreId] ?? { costCentreId, plannedHeadcount: 0, revenueRatePerHead: 0 };
+                    return { ...current, [costCentreId]: { ...existing, [key]: value } };
+                  })}
+                />
+              )}
+
+              {plannerMode === "cards" && (detailQuery.isLoading && detailId ? <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div> : lines.map((line, index) => {
                 const scope = scopeOf(line);
                 const head = activeMasters.find((entry) => entry.headName === line.head);
                 const subHeads = head?.subHeads.filter((entry) => entry.activeStatus) ?? [];
@@ -973,10 +1027,10 @@ export default function BranchBudgetManagementWorkspace() {
                     </CardContent>
                   </Card>
                 );
-              })}
+              }))}
               {capabilities?.canCreate && (
                 <div className="flex flex-col gap-3 sm:flex-row">
-                  <Button variant="outline" className="flex-1 rounded-2xl border-dashed py-6" disabled={locked} onClick={() => setLines((current) => [...current, blankLine()])}><Plus className="mr-2 h-4 w-4" />Add budget line</Button>
+                  {plannerMode === "cards" && <Button variant="outline" className="flex-1 rounded-2xl border-dashed py-6" disabled={locked} onClick={() => setLines((current) => [...current, blankLine()])}><Plus className="mr-2 h-4 w-4" />Add budget line</Button>}
                   <Button variant="outline" className="flex-1 rounded-2xl border-dashed py-6" disabled={locked} onClick={() => setImportDialogOpen(true)}><FileSpreadsheet className="mr-2 h-4 w-4" />Import from Excel</Button>
                 </div>
               )}

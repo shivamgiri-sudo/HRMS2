@@ -175,3 +175,34 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
     expect(outcome.percentTotal).toBe(100);
   });
 });
+
+// Rupee granularity for planning figures. Allocating in paise is exact but yields shares like
+// 1428.57, each of which displays as 1,429 in a whole-rupee grid, so a column of seven reads
+// 10,003 against a 10,000 total — a finance sheet whose column visibly does not add up.
+describe("allocatePoolAmount — rupee granularity", () => {
+  const seven = Array.from({ length: 7 }, (_, i) => ({ key: `cc${i}`, weight: 1 }));
+
+  it("splits a whole-rupee pool into whole rupees that still sum exactly", () => {
+    const out = allocatePoolAmount(10000, seven, "equal", "rupee");
+    const values = [...out.amounts.values()];
+    expect(values.every((v) => Number.isInteger(v))).toBe(true);
+    expect(values.reduce((a, b) => a + b, 0)).toBe(10000);
+    // Largest remainder places the odd rupees: four 1,429s and three 1,428s.
+    expect(values.filter((v) => v === 1429)).toHaveLength(4);
+    expect(values.filter((v) => v === 1428)).toHaveLength(3);
+  });
+
+  it("falls back to paise when the pool is not a whole number of rupees", () => {
+    // Reconciling exactly matters more than round numbers: with rupee units the shares could not
+    // add back to 10,000.50, so the finer unit has to win.
+    const out = allocatePoolAmount(10000.5, seven, "equal", "rupee");
+    expect([...out.amounts.values()].reduce((a, b) => a + b, 0)).toBeCloseTo(10000.5, 2);
+  });
+
+  it("still defaults to paise, so actuals are unaffected", () => {
+    const out = allocatePoolAmount(10000, seven, "equal");
+    const values = [...out.amounts.values()];
+    expect(values.some((v) => !Number.isInteger(v))).toBe(true);
+    expect(values.reduce((a, b) => a + b, 0)).toBeCloseTo(10000, 2);
+  });
+});

@@ -42,6 +42,26 @@ function availability(line: RowDataPacket) {
   };
 }
 
+/** Budget lines whose planned amount carries no tax, so tax must not be consumed against them. */
+const NON_TAXABLE_TREATMENTS = new Set(["non_gst", "exempt"]);
+
+/**
+ * Which invoice figure to charge against this budget line.
+ *
+ * GRN books the GST-inclusive amount, which is right for a tax-bearing budget line because its
+ * gross_amount includes the same tax. A non-taxable line's gross_amount is net of tax, so charging
+ * it the inclusive figure compares unlike things: a Rs 1,00,000 purchase carrying Rs 18,000 GST
+ * consumed Rs 1,18,000 against a Rs 1,02,000 line and reserve() then REFUSED it — legitimate
+ * purchases were hard-blocked at Branch Head approval, not merely shown as overspent.
+ *
+ * Falls back to the gross figure when no net is supplied, so a caller that has not been updated
+ * keeps its previous behaviour rather than silently consuming zero.
+ */
+function consumptionBasis(line: RowDataPacket, grossAmount: number, netAmount?: number): number {
+  if (!NON_TAXABLE_TREATMENTS.has(String(line.tax_treatment ?? ""))) return grossAmount;
+  return Number.isFinite(netAmount) && (netAmount as number) > 0 ? roundMoney(netAmount as number) : grossAmount;
+}
+
 function validatePositive(amount: number, quantity: number) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("GRN gross amount must be greater than zero");
@@ -56,13 +76,15 @@ export const budgetConsumptionService = {
     connection: PoolConnection,
     lineId: string,
     amountInput: number,
-    quantityInput: number
+    quantityInput: number,
+    /** The invoice's taxable value. Used instead of amountInput when the budget line is
+     *  non-taxable, so like is compared with like. */
+    netAmountInput?: number
   ) {
-    const amount = roundMoney(amountInput);
     const quantity = roundQuantity(quantityInput);
-    validatePositive(amount, quantity);
-
     const line = await lockActiveBudgetLine(connection, lineId);
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
+    validatePositive(amount, quantity);
     const available = availability(line);
     if (amount > available.amount + 0.01) {
       throw new Error(
@@ -88,13 +110,13 @@ export const budgetConsumptionService = {
     connection: PoolConnection,
     lineId: string,
     amountInput: number,
-    quantityInput: number
+    quantityInput: number,
+    netAmountInput?: number
   ) {
-    const amount = roundMoney(amountInput);
     const quantity = roundQuantity(quantityInput);
-    validatePositive(amount, quantity);
-
     const line = await lockActiveBudgetLine(connection, lineId);
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
+    validatePositive(amount, quantity);
     const reservedAmount = Number(line.reserved_amount ?? 0);
     const reservedQuantity = Number(line.reserved_quantity ?? 0);
     if (reservedAmount + 0.01 < amount) {

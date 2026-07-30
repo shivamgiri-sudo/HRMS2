@@ -460,10 +460,14 @@ export async function computeLineAllocations(
     mode = "weighted";
   }
 
-  const base = allocatePoolAmount(amounts.baseAmount, shares, mode);
-  const tax = allocatePoolAmount(amounts.taxAmount, shares, mode);
-  const gross = allocatePoolAmount(amounts.grossAmount, shares, mode);
-  const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode);
+  // A budget is a plan, and the grid shows it in whole rupees. Allocating in paise yields shares
+  // like 1428.57 which each display as 1,429, so a column of seven reads 10,003 against a 10,000
+  // total. Rupee granularity is ignored automatically when a pool is not a whole number of rupees,
+  // so the shares still sum to the line exactly in every case.
+  const base = allocatePoolAmount(amounts.baseAmount, shares, mode, "rupee");
+  const tax = allocatePoolAmount(amounts.taxAmount, shares, mode, "rupee");
+  const gross = allocatePoolAmount(amounts.grossAmount, shares, mode, "rupee");
+  const pnl = allocatePoolAmount(amounts.pnlCostAmount, shares, mode, "rupee");
 
   // Backend-authoritative block for manual splits (the frontend already validates this
   // pre-save, but the API must not silently persist an unbalanced split reached by any other

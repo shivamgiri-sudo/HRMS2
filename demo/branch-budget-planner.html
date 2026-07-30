@@ -383,12 +383,15 @@
     }
     const rate = r500(3000 + srnd() * 120000);
     if (method === 'direct') {
-      // A direct cost sits on one or two cost centres, not all seven.
-      const amt = r500(20000 + srnd() * 180000);
+      // A direct cost sits on one or two cost centres, not all seven — and it is UNIT-driven, so
+      // Qty x Rate justifies the amount. Seeding a lump sum per cost centre plus an unrelated Rate
+      // produced rows like Rate 12,000 / Qty blank / Amount 1,99,500, which nobody can defend in a
+      // budget review.
+      const unitRate = Math.round(rate / 20 / 100) * 100 || 500;
       const cells = w.map(() => null);
-      cells[0] = amt;
-      if (srnd() > 0.5) cells[1] = r500(amt * 0.3);
-      return { rate, direct: cells };
+      cells[0] = 1 + Math.floor(srnd() * 12);
+      if (srnd() > 0.5) cells[1] = 1 + Math.floor(srnd() * 5);
+      return { rate: unitRate, units: cells };
     }
     const qty = ['Month', 'Year', 'Service', 'Lot'].includes(unit) ? 1 : 1 + Math.floor(srnd() * 30);
     return { qty, rate };
@@ -464,7 +467,11 @@
         if (c.units != null && c.units !== "") c.amount = Math.round(Number(c.units) * (r.rate || 0));
       });
       r.amount = r.cells.reduce((a, c) => a + (c.amount || 0), 0);
-      r.qtyShown = r.method === "meter_wise" ? r.cells.reduce((a, c) => a + (c.units || 0), 0) : r.qty;
+      // Qty on ANY bottom-up row is the sum of the units typed per cost centre — not just on a
+      // metered one. That is what makes Qty x Rate = Amount hold, so the branch figure can be
+      // justified in a review instead of appearing from nowhere.
+      const unitTotal = r.cells.reduce((a, c) => a + (Number(c.units) || 0), 0);
+      r.qtyShown = unitTotal > 0 ? unitTotal : null;
       r.unalloc = 0;
       return;
     }

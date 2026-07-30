@@ -259,8 +259,18 @@ export interface AllocationOutcome {
 export function allocatePoolAmount(
   poolAmount: number,
   shares: AllocationShare[],
-  mode: AllocationDriverMode
+  mode: AllocationDriverMode,
+  /**
+   * Smallest unit the split may land on. "paise" is exact to the last paisa and is the default for
+   * actuals. "rupee" is for planning figures shown as whole rupees: allocating in paise yields
+   * shares like 1428.57, each of which displays as 1,429, so a column of seven reads 10,003
+   * against a 10,000 total — a finance sheet whose column does not add up. Rupee granularity is
+   * ignored unless the pool really is a whole number of rupees, because otherwise the shares could
+   * not sum back to it, and reconciling exactly matters more than round numbers.
+   */
+  granularity: "paise" | "rupee" = "paise"
 ): AllocationOutcome {
+  const unitsPerRupee = granularity === "rupee" && Number.isInteger(n(poolAmount)) ? 1 : 100;
   const amounts = new Map<string, number>();
   if (shares.length === 0) {
     return { amounts, balanced: true, percentTotal: null };
@@ -275,36 +285,36 @@ export function allocatePoolAmount(
     return { amounts, balanced, percentTotal };
   }
 
-  const totalPaise = Math.round(n(poolAmount) * 100);
+  const totalUnits = Math.round(n(poolAmount) * unitsPerRupee);
   const weights = mode === "equal" ? shares.map(() => 1) : shares.map((share) => Math.max(0, n(share.weight)));
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
 
   if (totalWeight <= 0) {
     // Equal-split fallback (matches prior behaviour when driver totals are zero), still exact.
-    const evenPaise = Math.floor(totalPaise / shares.length);
-    const remainder = totalPaise - evenPaise * shares.length;
+    const evenUnits = Math.floor(totalUnits / shares.length);
+    const remainder = totalUnits - evenUnits * shares.length;
     shares.forEach((share, index) => {
-      amounts.set(share.key, (evenPaise + (index < remainder ? 1 : 0)) / 100);
+      amounts.set(share.key, (evenUnits + (index < remainder ? 1 : 0)) / unitsPerRupee);
     });
     return { amounts, balanced: true, percentTotal: null };
   }
 
   // Largest-remainder method: floor each share's exact paise value, then hand out the leftover
-  // paise one at a time to the shares with the biggest fractional remainder. Guarantees the
-  // allocated amounts always sum to exactly totalPaise, unlike naive per-share rounding.
-  const raw = weights.map((weight) => (totalPaise * weight) / totalWeight);
+  // units one at a time to the shares with the biggest fractional remainder. Guarantees the
+  // allocated amounts always sum to exactly totalUnits, unlike naive per-share rounding.
+  const raw = weights.map((weight) => (totalUnits * weight) / totalWeight);
   const floors = raw.map((value) => Math.floor(value));
-  const allocatedPaise = floors.reduce((sum, value) => sum + value, 0);
-  const remainderPaise = totalPaise - allocatedPaise;
+  const allocatedUnits = floors.reduce((sum, value) => sum + value, 0);
+  const remainderUnits = totalUnits - allocatedUnits;
   const order = raw
     .map((value, index) => ({ index, remainder: value - floors[index] }))
     .sort((a, b) => b.remainder - a.remainder);
-  const finalPaise = [...floors];
-  for (let i = 0; i < remainderPaise; i++) {
-    finalPaise[order[i % order.length].index] += 1;
+  const finalUnits = [...floors];
+  for (let i = 0; i < remainderUnits; i++) {
+    finalUnits[order[i % order.length].index] += 1;
   }
   shares.forEach((share, index) => {
-    amounts.set(share.key, finalPaise[index] / 100);
+    amounts.set(share.key, finalUnits[index] / unitsPerRupee);
   });
   return { amounts, balanced: true, percentTotal: null };
 }

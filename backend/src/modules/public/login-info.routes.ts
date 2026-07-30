@@ -18,7 +18,7 @@ loginInfoRouter.get("/", async (_req, res) => {
              ('inactive','terminated','offboarded','absconded','resigned','left','separated')`
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT branch_name
+        `SELECT branch_code, branch_name
          FROM branch_master
          WHERE active_status = 1
          ORDER BY branch_name ASC`
@@ -39,7 +39,7 @@ loginInfoRouter.get("/", async (_req, res) => {
 
     res.json({
       active_employees: stats[0]?.active_employees ?? 0,
-      branches: branches.map(b => b.branch_name as string),
+      branches: branches.map(b => (b.branch_code || b.branch_name) as string),
       announcements: Array.isArray(announcements) ? announcements.map(a => ({
         id:      a.id      as string,
         message: a.message as string,

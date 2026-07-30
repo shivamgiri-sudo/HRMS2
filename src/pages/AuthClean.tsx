@@ -208,8 +208,8 @@ export default function AuthClean() {
               <img src={companyLogo} alt="Mas Callnet India Pvt Ltd" className="h-auto w-48 object-contain" />
             </div>
             <div>
-              <p className="text-xl font-black text-white">Mas Callnet India Pvt Ltd</p>
-              <p className="text-xs font-bold" style={{ color: "#5aa0dd" }}>HRMS Platform</p>
+              <p className="text-2xl font-black text-white leading-tight">Mas Callnet India Pvt Ltd</p>
+              <p className="text-sm font-bold mt-0.5" style={{ color: "#5aa0dd" }}>HRMS Platform</p>
             </div>
           </div>
         </div>
@@ -235,38 +235,21 @@ export default function AuthClean() {
             Manage employees, attendance, payroll, leaves and performance — all from one powerful, beautiful platform.
           </p>
 
-          {/* Live company stats + branch pills */}
-          {(loginInfo.active_employees > 0 || loginInfo.branches.length > 0) && (
-            <div className="mt-5 space-y-3">
-              {/* Headcount badge — only shown when data arrives */}
-              {loginInfo.active_employees > 0 && (
-                <div className="flex flex-wrap items-center gap-3">
-                  <div
-                    className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-bold"
-                    style={{ background: "rgba(59,173,73,0.18)", color: "#6ee47a", border: "1px solid rgba(59,173,73,0.3)" }}
-                  >
-                    <span className="h-2 w-2 rounded-full bg-[#3BAD49] animate-pulse" />
-                    {loginInfo.active_employees.toLocaleString("en-IN")} Active Employees
-                  </div>
-                </div>
-              )}
-              {/* Branch pills — one per active branch from DB */}
-              {loginInfo.branches.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#5aa0dd" }}>
-                    <MapPin className="h-3 w-3" /> Branches:
-                  </span>
-                  {loginInfo.branches.map(b => (
-                    <span
-                      key={b}
-                      className="rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                      style={{ background: "rgba(255,255,255,0.06)", color: "#94a3b8", border: "1px solid rgba(255,255,255,0.08)" }}
-                    >
-                      {b}
-                    </span>
-                  ))}
-                </div>
-              )}
+          {/* Branch pills — alias codes from DB */}
+          {loginInfo.branches.length > 0 && (
+            <div className="mt-5 flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: "#5aa0dd" }}>
+                <MapPin className="h-3 w-3" /> Branches:
+              </span>
+              {loginInfo.branches.map(b => (
+                <span
+                  key={b}
+                  className="rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                  style={{ background: "rgba(255,255,255,0.06)", color: "#94a3b8", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  {b}
+                </span>
+              ))}
             </div>
           )}
 
@@ -651,8 +634,8 @@ export default function AuthClean() {
             <Mail className="h-3.5 w-3.5 text-slate-400" />
             <p className="text-xs text-slate-400">
               Need help?{" "}
-              <a href="mailto:hr@mascallnet.in" className="font-semibold text-slate-500 hover:text-[#1B6AB5] transition-colors">
-                hr@mascallnet.in
+              <a href="mailto:hr.noida@teammas.in" className="font-semibold text-slate-500 hover:text-[#1B6AB5] transition-colors">
+                hr.noida@teammas.in
               </a>
             </p>
           </div>
