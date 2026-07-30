@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
+  Ear,
+  EarOff,
   Loader2,
   Mic,
   MicOff,
@@ -422,6 +424,23 @@ export function CommandPalette({
             >
               {voice.autoSpeak ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
             </button>
+
+            {voice.recognitionSupported && voice.speechSupported && (
+              <button
+                type="button"
+                onClick={() => voice.setBargeInEnabled(!voice.bargeInEnabled)}
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-indigo-50 hover:text-indigo-700',
+                  voice.bargeInEnabled && 'text-indigo-600',
+                )}
+                aria-label={voice.bargeInEnabled ? 'Stop listening for interruptions' : 'Let me interrupt by talking'}
+                title={voice.bargeInEnabled
+                  ? 'Listening while Mira talks — opens the mic only while she speaks, so you can cut in'
+                  : 'Off — press the mic to talk instead'}
+              >
+                {voice.bargeInEnabled ? <Ear className="h-4 w-4" /> : <EarOff className="h-4 w-4" />}
+              </button>
+            )}
 
             <button
               type="button"

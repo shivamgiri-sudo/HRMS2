@@ -4,6 +4,8 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
+  Ear,
+  EarOff,
   Loader2,
   Mic,
   MicOff,
@@ -278,6 +280,23 @@ export default function PeopleOSCopilot() {
                 {voice.autoSpeak ? <Volume2 className="mr-2 h-4 w-4" /> : <VolumeX className="mr-2 h-4 w-4" />}
                 Voice replies {voice.autoSpeak ? 'on' : 'off'}
               </Button>
+              {voice.recognitionSupported && voice.speechSupported && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => voice.setBargeInEnabled(!voice.bargeInEnabled)}
+                  className={cn(
+                    'border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white',
+                    voice.bargeInEnabled && 'border-indigo-300/50 bg-indigo-500/20',
+                  )}
+                  title={voice.bargeInEnabled
+                    ? 'Listening while Mira talks — opens the mic only while she speaks, so you can cut in'
+                    : 'Off — press the mic to talk instead'}
+                >
+                  {voice.bargeInEnabled ? <Ear className="mr-2 h-4 w-4" /> : <EarOff className="mr-2 h-4 w-4" />}
+                  Interrupt by talking {voice.bargeInEnabled ? 'on' : 'off'}
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="outline"
