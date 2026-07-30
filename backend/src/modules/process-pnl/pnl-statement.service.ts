@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
+import { getDriverRevenueActuals, getIndirectCostActuals, type ActualsByKey } from "./pnl-actuals.service.js";
 import { processLobService } from "./process-lob.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
@@ -138,16 +139,71 @@ async function buildLobColumns(
   return results;
 }
 
+/**
+ * Fills the lines the raw P&L row does not carry, then derives the real waterfall:
+ *   DC Total = Agent Salary + DSC + BMC
+ *   Total Cost = DC Total + IDC
+ *   Operating Profit = Revenue - Total Cost
+ * Percentages are all of revenue, matching the workbook.
+ */
+function enrichColumn(
+  data: Record<string, unknown>,
+  key: { branchId?: string | null; processId?: string | null },
+  idc: ActualsByKey,
+  revenue: ActualsByKey
+): Record<string, unknown> {
+  const pick = (source: ActualsByKey) =>
+    (key.processId ? source.byProcess.get(key.processId) : undefined)
+    ?? (key.branchId ? source.byBranch.get(key.branchId) : undefined)
+    ?? 0;
+
+  const out = { ...data };
+  // Revenue comes from the drivers unless the row already carries a recognised figure.
+  const existingRevenue = n(out.recognizedRevenue);
+  const recognizedRevenue = existingRevenue > 0 ? existingRevenue : pick(revenue);
+  out.recognizedRevenue = recognizedRevenue;
+
+  const agentSalary = n(out.agentSalary);
+  const dscSalary = n(out.dscSalary ?? out.dscPeople);
+  const bmcSalary = n(out.bmcSalary ?? out.bmcPeople);
+  const indirectCostTotal = pick(idc);
+
+  const directCostTotal = agentSalary + dscSalary + bmcSalary;
+  const totalCost = directCostTotal + indirectCostTotal;
+
+  out.dscSalary = dscSalary;
+  out.bmcSalary = bmcSalary;
+  out.indirectCostTotal = indirectCostTotal;
+  out.directCostTotal = directCostTotal;
+  out.totalCost = totalCost;
+  out.operatingProfit = recognizedRevenue - totalCost;
+
+  out.agentSalaryPct = pct(agentSalary, recognizedRevenue);
+  out.dscPct = pct(dscSalary, recognizedRevenue);
+  out.bmcPct = pct(bmcSalary, recognizedRevenue);
+  out.directCostPct = pct(directCostTotal, recognizedRevenue);
+  out.indirectCostPct = pct(indirectCostTotal, recognizedRevenue);
+  out.totalCostPct = pct(totalCost, recognizedRevenue);
+  out.operatingProfitPct = pct(n(out.operatingProfit), recognizedRevenue);
+  return out;
+}
+
 export interface StatementDependencies {
   getComponents: () => Promise<ComponentDefinition[]>;
   getSummary: (filters: Partial<PnlQueryFilters>) => Promise<{ rows: BpoPnlRow[]; generatedAt: string; calculationEngine?: string }>;
   getProcessSummary: (processId: string, period: string) => Promise<{ rows?: unknown[] } | null>;
+  /** Optional so an existing caller or test injecting only the original three keeps working —
+   *  they fall back to the live readers. */
+  getIndirectCost?: (period: string) => Promise<ActualsByKey>;
+  getDriverRevenue?: (period: string) => Promise<ActualsByKey>;
 }
 
 const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => canonicalPnlService.getSummary(filters),
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
+  getIndirectCost: (period) => getIndirectCostActuals(period),
+  getDriverRevenue: (period) => getDriverRevenueActuals(period),
 };
 
 export async function getStatement(
@@ -184,6 +240,25 @@ export async function getStatement(
       data: row as unknown as Record<string, unknown>,
     }));
   }
+
+  // Indirect cost and driver revenue are keyed by cost centre at source; resolve them per column.
+  const periodCode = String(filters.period ?? summary.generatedAt).slice(0, 7);
+  const [idc, revenue] = await Promise.all([
+    (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
+    (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
+  ]);
+  columnData = columnData.map((item) => ({
+    column: item.column,
+    data: enrichColumn(
+      item.data,
+      {
+        branchId: viewBy === "branch" ? item.column.id : (item.data.branchId as string | undefined),
+        processId: viewBy === "process" ? item.column.id : (item.data.processId as string | undefined),
+      },
+      idc,
+      revenue
+    ),
+  }));
 
   const statementRows: StatementRow[] = components.map((component) => ({
     componentKey: component.component_key,
