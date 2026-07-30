@@ -137,13 +137,43 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
   return rows;
 }
 
+/**
+ * Work across the caller's branch.
+ *
+ * `LIMIT ?` cannot be bound in a prepared statement — mysql2 rejects it with
+ * "Incorrect arguments to mysqld_stmt_execute" — so GET /api/work-inbox/team returned
+ * HTTP 500 for every user, not just scoped ones. The limit is clamped and interpolated,
+ * matching getMyWorkItems.
+ *
+ * Also unions work_inbox_item, for the same reason getMyWorkItems does: work_item holds
+ * 2 rows. That table has no branch column, so its rows reach this view through
+ * user_id -> employees.branch_id, which is the only branch link it has.
+ */
 export async function getTeamWorkItems(userId: string, limit = 100) {
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT wi.* FROM work_item wi
-     WHERE wi.created_by = ?
-        OR wi.branch_id IN (SELECT branch_id FROM employees WHERE user_id = ?)
-     ORDER BY wi.created_at DESC LIMIT ?`,
-    [userId, userId, limit]
+    `SELECT * FROM (
+       SELECT wi.id, wi.item_type, wi.title, wi.description, wi.module_code,
+              wi.priority, wi.status, wi.due_at, wi.created_at,
+              NULL AS action_url, 'work_item' AS source_table
+         FROM work_item wi
+        WHERE wi.created_by = ?
+           OR wi.branch_id IN (SELECT branch_id FROM employees WHERE user_id = ?)
+       UNION ALL
+       SELECT wii.id, wii.type, wii.title, wii.description, wii.type,
+              CASE WHEN wii.priority = 'urgent' THEN 'critical'
+                   WHEN wii.priority = 'normal' THEN 'medium'
+                   ELSE wii.priority END,
+              CASE WHEN wii.is_actioned = 1 THEN 'completed' ELSE 'pending' END,
+              NULL, wii.created_at, wii.action_url, 'work_inbox_item'
+         FROM work_inbox_item wii
+         JOIN employees owner ON owner.user_id = wii.user_id
+        WHERE owner.branch_id IN (SELECT branch_id FROM employees WHERE user_id = ?)
+          AND wii.is_actioned = 0
+     ) merged
+     ORDER BY merged.created_at DESC
+     LIMIT ${safeLimit}`,
+    [userId, userId, userId]
   );
   return rows;
 }
@@ -238,15 +268,27 @@ export async function getWorkItemStats(userId: string, role: string) {
   return { pending, overdue, critical, aged, byModule };
 }
 
+/**
+ * Items past a real due date.
+ *
+ * Same `LIMIT ?` defect as getTeamWorkItems — this endpoint returned HTTP 500 for every
+ * user. Clamped and interpolated instead.
+ *
+ * Deliberately NOT unioned with work_inbox_item: that table has no due_at, so nothing in
+ * it can be overdue. Including it would mean inventing a deadline. Callers wanting the
+ * age-based signal should read `aged_count` from getUnifiedInboxSummary.
+ */
 export async function getOverdueItems(userId: string, role: string, limit = 50) {
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM work_item
      WHERE (assigned_to_user_id=? OR assigned_to_role=?)
+       AND due_at IS NOT NULL
        AND due_at < NOW()
        AND status='pending'
      ORDER BY due_at ASC
-     LIMIT ?`,
-    [userId, role, limit]
+     LIMIT ${safeLimit}`,
+    [userId, role]
   );
   return rows;
 }

@@ -142,6 +142,37 @@ describe("head office vs branch scope", () => {
     expect(scope.processIds).toEqual(["process-back-office"]);
   });
 
+  it("keeps head-office titles org-wide despite a head-office branch assignment", async () => {
+    // Head office is itself a branch in branch_master — three of them (CORP, HQ,
+    // HEAD_OFFICE), each ~12 employees. Narrowing by assignment alone scoped the real
+    // CEO account (MAS00001) to the 13 people sitting at head office.
+    for (const role of ["ceo", "coo", "management", "ho_hr", "operations_head", "finance_head"]) {
+      withRoles([role, "employee"]);
+      wireDb([row({ role_key: role, branch_id: "branch-head-office" })]);
+
+      const scope = await resolveDashboardScope(`user-${role}`, role);
+
+      expect(scope.level, `${role} is a head-office title and must stay org-wide`).toBe("ORG_ALL");
+      expect(scope.branchIds).toEqual([]);
+    }
+  });
+
+  it("keeps ambiguous head-office/branch titles narrowable", async () => {
+    // These role keys are used for BOTH head-office and branch staff in this database, so
+    // the assignment row is the only evidence of which a given user is. If any of them
+    // were added to HEAD_OFFICE_ROLES the original leak would return for the 14 real
+    // branch-assigned users who hold them.
+    for (const role of ["hr", "hr_admin", "payroll", "payroll_hr", "payroll_admin", "finance"]) {
+      withRoles([role, "employee"]);
+      wireDb([row({ role_key: role })]);
+
+      const scope = await resolveDashboardScope(`user-${role}`, role);
+
+      expect(scope.level, `${role} is ambiguous and must narrow to its assigned branch`).toBe("BRANCH_ALL");
+      expect(scope.branchIds).toEqual(["branch-noida-2"]);
+    }
+  });
+
   it("keeps super_admin org-wide even with a stray branch assignment row", async () => {
     // Narrowing a system administrator could lock them out of the platform entirely.
     withRoles(["super_admin", "employee"]);

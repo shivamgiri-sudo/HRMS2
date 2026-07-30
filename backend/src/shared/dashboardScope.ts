@@ -51,6 +51,33 @@ type AssignmentScopeRow = RowDataPacket & {
 const SYSTEM_WIDE_ROLES = new Set(["super_admin", "admin"]);
 
 /**
+ * Roles that exist only at head office, and therefore stay org-wide even when an
+ * assignment row names a branch.
+ *
+ * Needed because "head office" is itself a branch in branch_master — three of them, in
+ * fact (codes CORP, HQ, HEAD_OFFICE) — each holding ~12 employees. Narrowing by
+ * assignment alone scoped the CEO to the 13 people sitting at head office.
+ *
+ * Membership is deliberately limited to titles with a branch-level counterpart already in
+ * the model, so the distinction is structural rather than guesswork:
+ *   operations_head / ho_operations  vs  branch_head
+ *   ho_hr                            vs  branch_hr, hr_branch
+ *   finance_head                     vs  branch_finance
+ *   ho_it                            vs  branch_it, it
+ *   ho_payroll, payroll_head         vs  payroll_branch
+ *
+ * `hr`, `hr_admin`, `payroll`, `payroll_hr`, `payroll_admin` and `finance` are absent on
+ * purpose: each is used for both head-office and branch staff in this database, so an
+ * assignment row is the only evidence of which one a given user is. Those must stay
+ * narrowable or the leak returns — 14 of the 16 affected users are exactly that case.
+ */
+const HEAD_OFFICE_ROLES = new Set([
+  "ceo", "coo", "management",
+  "ho_hr", "ho_payroll", "ho_operations", "ho_wfm", "ho_rta", "ho_it",
+  "compliance_head", "payroll_head", "finance_head", "accounts_head", "operations_head",
+]);
+
+/**
  * Roles that are head-office by default: they see every branch UNLESS they carry an
  * explicit branch/process assignment, in which case they are branch staff and see only
  * what they were assigned. See resolveDashboardScope for why the employee record is not
@@ -181,7 +208,9 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
 
   // super_admin / admin are system-wide by definition and must never be narrowed by a
   // stray assignment row, or an administrator could lock themselves out of the platform.
-  if (SYSTEM_WIDE_ROLES.has(effectiveRole)) {
+  // Head-office titles are org-wide for the same reason: head office is itself a branch
+  // in branch_master, so narrowing the CEO by assignment scoped him to 13 people.
+  if (SYSTEM_WIDE_ROLES.has(effectiveRole) || HEAD_OFFICE_ROLES.has(effectiveRole)) {
     return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
   }
 
