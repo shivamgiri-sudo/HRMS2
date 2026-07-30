@@ -178,7 +178,37 @@ function startServer() {
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
   });
+
+  // Without this, a listen failure surfaces as an unhandled 'error' event and
+  // takes the process down with a raw stack trace. The realistic cause is a
+  // restart overlapping the previous listener's hold on the port — a watch-mode
+  // reload in development, or a pm2 restart in production — where the old socket
+  // has not been released yet. Both are worth retrying rather than dying for.
+  httpServer.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EADDRINUSE") {
+      console.error("[startup] HTTP server error:", error.message);
+      throw error;
+    }
+
+    listenRetries += 1;
+    if (listenRetries > MAX_LISTEN_RETRIES) {
+      console.error(
+        `[startup] port ${env.PORT} is still in use after ${MAX_LISTEN_RETRIES} attempts. ` +
+        `Another process is bound to it — stop that process, or set PORT to something else.`,
+      );
+      process.exit(1);
+    }
+
+    console.warn(
+      `[startup] port ${env.PORT} busy (attempt ${listenRetries}/${MAX_LISTEN_RETRIES}), retrying in ${LISTEN_RETRY_MS}ms`,
+    );
+    setTimeout(startServer, LISTEN_RETRY_MS);
+  });
 }
+
+const MAX_LISTEN_RETRIES = 5;
+const LISTEN_RETRY_MS = 1_000;
+let listenRetries = 0;
 
 async function withTimeout<T>(
   promise: Promise<T>,
