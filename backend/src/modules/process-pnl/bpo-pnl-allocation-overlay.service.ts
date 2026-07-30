@@ -107,6 +107,11 @@ function driverValue(row: BpoPnlRow, driver: AllocationDriver) {
     case "contracted_seats": return n(row.contractedSeats);
     case "revenue": return n(row.recognizedRevenue);
     case "equal": return 1;
+    // See SUPPORTED_ALLOCATION_DRIVERS in bpo-pnl.service.ts: there is no per-process floor area
+    // or device count, so these cannot be honoured. Named here so the fallback to headcount is
+    // deliberate and greppable rather than an unnoticed `default`.
+    case "floor_area":
+    case "device_count":
     case "active_hc":
     default: return n(row.activeHc);
   }

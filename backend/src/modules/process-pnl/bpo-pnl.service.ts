@@ -589,12 +589,35 @@ function policyFor(
   );
 }
 
+/**
+ * Drivers the Process-P&L allocator can actually satisfy from ProcessPnlRecord.
+ *
+ * floor_area and device_count are deliberately absent. They are declared in the AllocationDriver
+ * union but no per-process floor area or device count exists anywhere in this module, so a policy
+ * configured with either used to fall through the switch's `default` and be split by ACTIVE
+ * HEADCOUNT instead — the wrong basis, applied silently, with the policy still displaying the
+ * driver the user chose. (The floor_area_sqft / device_count columns added in migration 434 are
+ * per COST CENTRE per period, for branch budgets — a different grain, not usable here.)
+ */
+export const SUPPORTED_ALLOCATION_DRIVERS = [
+  "direct", "active_hc", "billable_hc", "contracted_seats", "revenue", "equal", "manual",
+] as const;
+
+export function isSupportedAllocationDriver(driver: string): boolean {
+  return (SUPPORTED_ALLOCATION_DRIVERS as readonly string[]).includes(driver);
+}
+
 function allocationDriverValue(row: ProcessPnlRecord, driver: AllocationDriver): number {
   switch (driver) {
     case "billable_hc": return toNumber(row.billableHc);
     case "contracted_seats": return toNumber(row.contractedSeats);
     case "revenue": return toNumber(row.revenueMtd);
     case "equal": return 1;
+    // Named explicitly rather than left to `default`, so the substitution is a visible decision in
+    // the code instead of an accident. New policies using these are refused at save time; this
+    // path only exists for rows saved before that validation.
+    case "floor_area":
+    case "device_count":
     case "active_hc":
     default: return toNumber(row.activeHc);
   }
@@ -1773,6 +1796,15 @@ export const bpoPnlService = {
   },
 
   async saveAllocationPolicy(payload: Record<string, unknown>, userId: string) {
+    // Nothing validated the driver, so a policy could be saved with one the allocator cannot
+    // satisfy and would quietly split by headcount instead.
+    const driver = String(payload.allocationDriver ?? payload.allocation_driver ?? "");
+    if (driver && !isSupportedAllocationDriver(driver)) {
+      throw new Error(
+        `Allocation driver "${driver}" is not supported for Process P&L. `
+        + `Supported drivers: ${SUPPORTED_ALLOCATION_DRIVERS.join(", ")}.`
+      );
+    }
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
     await db.execute(
