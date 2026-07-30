@@ -1,6 +1,7 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getUserRoleContext } from "./roleResolver.js";
+import { normalizeDashboardRole } from "./dashboardAccessRegistry.js";
 import { logSourceFailure } from "./apiResponse.js";
 
 /**
@@ -136,9 +137,22 @@ async function loadAssignmentScopes(userId: string, roleKeys: readonly string[])
         WHERE user_id = ? AND active_status = 1`,
       [userId],
     );
-    const allowedRoles = new Set(roleKeys.map((role) => String(role).trim().toLowerCase()));
+    // Both sides must be normalised through the same alias table.
+    //
+    // getUserRoleKeys returns roles already normalised (DASHBOARD_ROLE_ALIASES maps
+    // payroll_admin -> payroll, hr_branch -> branch_hr, tl -> team_leader, and ten more),
+    // but user_assignment_scope.role_key stores the raw value an administrator typed. A
+    // one-sided comparison therefore discarded any scope row written in an alias form.
+    //
+    // Live example: NARESH KUMAR CHAUHAN (MAS00175) holds payroll_admin + payroll_hr and
+    // has two scope_type='all' rows keyed payroll_admin / payroll_hr. Both normalise to
+    // `payroll`, so neither matched the raw comparison and both grants were dropped. That
+    // was invisible while a missing grant still fell through to ORG_ALL; once absent
+    // grants correctly fail closed, it would have narrowed a head-office payroll
+    // administrator to the 13 people sitting at Head Office.
+    const allowedRoles = new Set(roleKeys.map((role) => normalizeDashboardRole(role)));
     return (rows as AssignmentScopeRow[]).filter((row) => {
-      const role = String(row.role_key ?? "").trim().toLowerCase();
+      const role = normalizeDashboardRole(row.role_key);
       return !role || allowedRoles.has(role);
     });
   } catch (err) {
@@ -241,9 +255,37 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
   const assignedProcessIds = unique(explicitlyScoped.map((row) => row.process_id));
 
   if (ORG_ALL_ROLES.has(effectiveRole) && !SELF_ONLY_ROLES.has(effectiveRole)) {
-    // No explicit branch or process assignment: this is head office.
     if (assignedBranchIds.length === 0 && assignedProcessIds.length === 0) {
-      return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
+      // No branch/process assignment. These role keys (hr, hr_admin, payroll, payroll_hr,
+      // payroll_admin, finance) are used for both head-office and branch staff, so absence
+      // of any assignment row is not evidence of head office — it is absence of evidence.
+      // Defaulting to ORG_ALL here meant a single mis-provisioned `payroll` account would
+      // silently see every salary line in the company (2,755 lines / 1,467 employees on the
+      // current run). Head office must be stated explicitly, via a scope_type='all' row or
+      // an unambiguous head-office role key.
+      //
+      // Every real privileged user already carries an explicit 'all' grant, so this
+      // narrows nobody in production today — only test fixtures sat on the old default.
+      const hasAllGrant = assignments.some(
+        (row) => String(row.scope_type ?? "").trim().toLowerCase() === "all",
+      );
+      if (hasAllGrant) {
+        return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
+      }
+      // Fail closed to the employee's own branch rather than opening the whole org.
+      if (employee.branchIds.length > 0) {
+        return {
+          level: "BRANCH_ALL",
+          branchIds: employee.branchIds,
+          processIds: [],
+          employeeIds: [],
+          userId,
+          role: effectiveRole,
+        };
+      }
+      // No assignment and no branch to fall back on: refuse rather than guess. The message
+      // tells an administrator exactly what to add.
+      throw new DashboardScopeConfigurationError(effectiveRole, "branch or scope_type='all'");
     }
     // Assigned to specific branches/processes: scope to exactly those, and no wider.
     // The employee's own branch is deliberately excluded — the assignment is the grant.

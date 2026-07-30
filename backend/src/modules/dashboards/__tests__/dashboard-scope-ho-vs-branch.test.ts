@@ -33,15 +33,25 @@ vi.mock("../../../shared/roleResolver.js", async (importOriginal) => {
 });
 
 import { resolvePrimaryRole } from "../../../shared/roleResolver.js";
+import { normalizeDashboardRole } from "../../../shared/dashboardAccessRegistry.js";
 
-/** Builds the context resolveDashboardScope reads, using the real priority ordering. */
+/**
+ * Builds the context resolveDashboardScope reads, using the real priority ordering.
+ *
+ * Roles are normalised through DASHBOARD_ROLE_ALIASES first, because that is what the real
+ * getUserRoleKeys returns. Passing raw keys here made an earlier version of the
+ * alias-matching test pass against broken code: the mismatch under test is precisely
+ * normalised-held-role vs raw-scope-row-key, so a mock that skips normalisation cannot
+ * reproduce it.
+ */
 function withRoles(roleKeys: string[]) {
-  const primaryRole = resolvePrimaryRole(roleKeys);
+  const normalized = Array.from(new Set(roleKeys.map((r) => normalizeDashboardRole(r))));
+  const primaryRole = resolvePrimaryRole(normalized);
   getUserRoleContext.mockResolvedValue({
-    roleKeys,
+    roleKeys: normalized,
     primaryRole,
-    isSuperAdmin: roleKeys.includes("super_admin") || roleKeys.includes("admin"),
-    isHO: roleKeys.some((r) => r.startsWith("ho_") || ["ceo", "coo", "management"].includes(r)),
+    isSuperAdmin: normalized.includes("super_admin") || normalized.includes("admin"),
+    isHO: normalized.some((r) => r.startsWith("ho_") || ["ceo", "coo", "management"].includes(r)),
   });
   return primaryRole;
 }
@@ -101,14 +111,48 @@ describe("head office vs branch scope", () => {
     expect(scope.branchIds).not.toContain("branch-own-office");
   });
 
-  it("gives an HR user with no branch or process assignment the whole org", async () => {
+  it("fails closed for an ambiguous role with no assignment at all", async () => {
+    // hr / payroll / finance are used for both head-office and branch staff, so no
+    // assignment row is absence of evidence, not evidence of head office. Defaulting to
+    // ORG_ALL meant one mis-provisioned `payroll` account would see every salary line in
+    // the company. Head office must be stated explicitly.
+    for (const role of ["hr", "payroll", "payroll_hr", "finance"]) {
+      withRoles([role, "employee"]);
+      wireDb([]);
+
+      const scope = await resolveDashboardScope(`user-unprovisioned-${role}`, role);
+
+      expect(scope.level, `${role} with no scope row must not open the whole org`).toBe("BRANCH_ALL");
+      expect(scope.branchIds).toEqual(["branch-own-office"]);
+    }
+  });
+
+  it("gives an ambiguous role the whole org only on an explicit all grant", async () => {
     withRoles(["employee", "hr"]);
-    wireDb([]);
+    wireDb([row({ scope_type: "all", branch_id: null })]);
 
     const scope = await resolveDashboardScope("user-ho-hr", "hr");
 
-    expect(scope.level, "head-office HR has no branch assignment and sees every branch").toBe("ORG_ALL");
+    expect(scope.level, "an explicit scope_type='all' row is how head office is declared").toBe("ORG_ALL");
     expect(scope.branchIds).toEqual([]);
+  });
+
+  it("refuses rather than guessing when there is no assignment and no branch", async () => {
+    // The E2E fixtures that exposed this have branch_id and process_id both NULL. Opening
+    // the org for them would be the worst outcome; a clear error names what to configure.
+    withRoles(["payroll", "employee"]);
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes("user_assignment_scope")) return [[], []];
+      if (sql.includes("FROM employees") && sql.includes("user_id")) {
+        return [[{ id: "emp-1", branch_id: null, process_id: null }], []];
+      }
+      return [[], []];
+    });
+
+    await expect(resolveDashboardScope("user-no-branch", "payroll")).rejects.toThrow(
+      /No active branch or scope_type='all' scope is configured/,
+    );
   });
 
   it("treats an explicit scope_type='all' row as head office", async () => {
@@ -171,6 +215,41 @@ describe("head office vs branch scope", () => {
       expect(scope.level, `${role} is ambiguous and must narrow to its assigned branch`).toBe("BRANCH_ALL");
       expect(scope.branchIds).toEqual(["branch-noida-2"]);
     }
+  });
+
+  it("matches scope rows written in an alias role form", async () => {
+    // getUserRoleKeys returns roles normalised through DASHBOARD_ROLE_ALIASES
+    // (payroll_admin -> payroll, hr_branch -> branch_hr, tl -> team_leader, ...), but
+    // user_assignment_scope.role_key stores whatever an administrator typed. Comparing a
+    // normalised held role against a raw row key silently discarded the row.
+    //
+    // Live case: NARESH KUMAR CHAUHAN (MAS00175) holds payroll_admin + payroll_hr with two
+    // scope_type='all' rows keyed payroll_admin / payroll_hr. Both normalise to `payroll`,
+    // so neither matched and both grants vanished — which only became visible once a
+    // missing grant correctly failed closed, at which point a head-office payroll
+    // administrator would have been narrowed to the 13 people at Head Office.
+    withRoles(["employee", "payroll_admin", "payroll_hr"]);
+    wireDb([
+      row({ role_key: "payroll_admin", scope_type: "all", branch_id: null }),
+      row({ role_key: "payroll_hr", scope_type: "all", branch_id: null }),
+    ]);
+
+    const scope = await resolveDashboardScope("user-naresh", "payroll");
+
+    expect(scope.level, "an 'all' grant keyed by an alias role must still be honoured").toBe("ORG_ALL");
+    expect(scope.branchIds).toEqual([]);
+  });
+
+  it("still honours an alias-keyed NARROWING row", async () => {
+    // The same normalisation must not accidentally widen anyone: a branch row written in
+    // alias form has to narrow just as a canonical one does.
+    withRoles(["employee", "payroll_admin"]);
+    wireDb([row({ role_key: "payroll_admin", scope_type: "branch" })]);
+
+    const scope = await resolveDashboardScope("user-branch-payroll", "payroll");
+
+    expect(scope.level).toBe("BRANCH_ALL");
+    expect(scope.branchIds).toEqual(["branch-noida-2"]);
   });
 
   it("keeps super_admin org-wide even with a stray branch assignment row", async () => {
