@@ -42,6 +42,20 @@ type AssignmentScopeRow = RowDataPacket & {
   manager_employee_id?: string | null;
 };
 
+/**
+ * Roles whose reach is the whole platform regardless of any assignment row.
+ *
+ * Kept deliberately tiny. Narrowing these by a stray user_assignment_scope row could
+ * lock an administrator out of the system, so they short-circuit before scopes load.
+ */
+const SYSTEM_WIDE_ROLES = new Set(["super_admin", "admin"]);
+
+/**
+ * Roles that are head-office by default: they see every branch UNLESS they carry an
+ * explicit branch/process assignment, in which case they are branch staff and see only
+ * what they were assigned. See resolveDashboardScope for why the employee record is not
+ * used to make that decision.
+ */
 const ORG_ALL_ROLES = new Set([
   "super_admin", "admin", "ceo", "coo", "management", "ho_hr", "hr_admin", "hr",
   "ho_payroll", "payroll_head", "finance_head", "accounts_head", "payroll_admin",
@@ -165,7 +179,9 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
   const context = await getUserRoleContext(userId);
   const effectiveRole = context.primaryRole;
 
-  if (ORG_ALL_ROLES.has(effectiveRole)) {
+  // super_admin / admin are system-wide by definition and must never be narrowed by a
+  // stray assignment row, or an administrator could lock themselves out of the platform.
+  if (SYSTEM_WIDE_ROLES.has(effectiveRole)) {
     return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
   }
 
@@ -174,14 +190,52 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
     resolveEmployeeScope(userId),
   ]);
 
-  // Only elevate to ORG_ALL when BOTH conditions hold:
-  // 1. The user has a scope_type='all' assignment in user_assignment_scope, AND
-  // 2. Their effective role is inherently org-wide (i.e. in ORG_ALL_ROLES).
-  // This prevents branch managers, IT staff, or process managers from accidentally
-  // receiving company-wide data just because an admin created a broad assignment row.
-  const hasAllScope = assignments.some((row) => String(row.scope_type ?? "").toLowerCase() === "all");
-  if (hasAllScope && ORG_ALL_ROLES.has(effectiveRole) && !SELF_ONLY_ROLES.has(effectiveRole)) {
-    return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
+  // Head office sees every branch; anyone assigned to a branch sees only that branch.
+  //
+  // The deciding signal is an explicit branch/process row in user_assignment_scope — NOT
+  // the user's own employees.branch_id. Head-office staff are themselves employees of
+  // some branch, so using the employee record would narrow every HO user to their own
+  // office. An explicit assignment row is a deliberate administrative act; the employee
+  // record is just where the person sits.
+  //
+  // Previously this function returned ORG_ALL for any role in ORG_ALL_ROLES before
+  // assignment scopes were even loaded, which made the check below unreachable and leaked
+  // company-wide data to 15 branch-assigned users. `hr` outranks `branch_head` in
+  // ROLE_PRIORITY, so three branch heads holding both roles were also silently elevated —
+  // defeating the protection BRANCH_ALL_ROLES exists to provide.
+  const explicitlyScoped = assignments.filter((row) => {
+    const scopeType = String(row.scope_type ?? "").trim().toLowerCase();
+    if (scopeType === "all") return false;
+    return Boolean(row.branch_id) || Boolean(row.process_id);
+  });
+  const assignedBranchIds = unique(explicitlyScoped.map((row) => row.branch_id));
+  const assignedProcessIds = unique(explicitlyScoped.map((row) => row.process_id));
+
+  if (ORG_ALL_ROLES.has(effectiveRole) && !SELF_ONLY_ROLES.has(effectiveRole)) {
+    // No explicit branch or process assignment: this is head office.
+    if (assignedBranchIds.length === 0 && assignedProcessIds.length === 0) {
+      return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
+    }
+    // Assigned to specific branches/processes: scope to exactly those, and no wider.
+    // The employee's own branch is deliberately excluded — the assignment is the grant.
+    if (assignedProcessIds.length > 0) {
+      return {
+        level: "PROCESS_ALL",
+        branchIds: unique([...assignedBranchIds, ...await branchesForProcesses(assignedProcessIds)]),
+        processIds: assignedProcessIds,
+        employeeIds: [],
+        userId,
+        role: effectiveRole,
+      };
+    }
+    return {
+      level: "BRANCH_ALL",
+      branchIds: assignedBranchIds,
+      processIds: [],
+      employeeIds: [],
+      userId,
+      role: effectiveRole,
+    };
   }
 
   const processIds = unique([
