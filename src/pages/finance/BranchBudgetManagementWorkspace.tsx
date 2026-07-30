@@ -412,6 +412,10 @@ export default function BranchBudgetManagementWorkspace() {
             costCentreId: driver.costCentreId,
             plannedHeadcount: driver.plannedHeadcount,
             revenueRatePerHead: driver.revenueRatePerHead,
+            seatCount: driver.seatCount ?? 0,
+            floorAreaSqft: driver.floorAreaSqft ?? 0,
+            deviceCount: driver.deviceCount ?? 0,
+            hiringVolume: driver.hiringVolume ?? 0,
             remarks: driver.remarks ?? "",
           },
         ])
@@ -749,12 +753,12 @@ export default function BranchBudgetManagementWorkspace() {
               {locked && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{currentBudget?.budget_number} is {statusLabel(currentBudget?.status ?? "locked")}. It is read-only until revision is requested.</div>}
               {branchId && (
                 <Card className="rounded-3xl border-slate-200 shadow-sm">
-                  <CardHeader className="border-b border-slate-100 bg-slate-50/70"><CardTitle className="text-base">Monthly drivers — {period}</CardTitle><p className="mt-1 text-xs text-slate-500">Planned headcount and revenue rate per head for each active cost centre. Required before a Branch common line can use Manpower or Revenue share sharing.</p></CardHeader>
+                  <CardHeader className="border-b border-slate-100 bg-slate-50/70"><CardTitle className="text-base">Monthly drivers — {period}</CardTitle><p className="mt-1 text-xs text-slate-500">The per-cost-centre quantities every branch-common sharing method divides by. A method throws if its own driver is missing, so fill the column for the methods this branch actually uses.</p></CardHeader>
                   <CardContent className="space-y-3 p-5">
                     {activeCostCentresQuery.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !activeCostCentres.length ? <p className="text-sm text-slate-500">This branch has no active cost centres yet.</p> : (
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[640px] text-sm">
-                          <thead><tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 pr-3">Cost centre</th><th className="py-2 pr-3">Planned headcount</th><th className="py-2 pr-3">Revenue rate / head</th><th className="py-2 pr-3">Calculated planned revenue</th><th className="py-2 pr-3">Grade breakdown</th></tr></thead>
+                          <thead><tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 pr-3">Cost centre</th><th className="py-2 pr-3">Planned headcount</th><th className="py-2 pr-3">Revenue rate / head</th><th className="py-2 pr-3">Seats</th><th className="py-2 pr-3">Floor area (sq ft)</th><th className="py-2 pr-3">Devices</th><th className="py-2 pr-3">Hiring volume</th><th className="py-2 pr-3">Calculated planned revenue</th><th className="py-2 pr-3">Grade breakdown</th></tr></thead>
                           <tbody>
                             {activeCostCentres.map((cc) => {
                               const draft = driverDraft[cc.id] ?? { costCentreId: cc.id, plannedHeadcount: 0, revenueRatePerHead: 0, remarks: "" };
@@ -766,6 +770,12 @@ export default function BranchBudgetManagementWorkspace() {
                                     <td className="py-2 pr-3 font-medium text-slate-700">{cc.costCentreName}</td>
                                     <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEditDrivers} value={draft.plannedHeadcount} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, plannedHeadcount: Number(event.target.value) } }))} /></td>
                                     <td className="py-2 pr-3"><Input type="number" min="0" step="0.01" className="h-9 w-32" disabled={!canEditDrivers} value={draft.revenueRatePerHead} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, revenueRatePerHead: Number(event.target.value) } }))} /></td>
+                                    {/* Drivers for the four methods enabled by migration 434. Without a column here the
+                                        method could be selected but never satisfied, so it would always throw on save. */}
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-24" disabled={!canEditDrivers} value={draft.seatCount ?? 0} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, seatCount: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEditDrivers} value={draft.floorAreaSqft ?? 0} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, floorAreaSqft: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-24" disabled={!canEditDrivers} value={draft.deviceCount ?? 0} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, deviceCount: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-24" disabled={!canEditDrivers} value={draft.hiringVolume ?? 0} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, hiringVolume: Number(event.target.value) } }))} /></td>
                                     <td className="py-2 pr-3 text-slate-600">{money(calculatedRevenue)}</td>
                                     <td className="py-2 pr-3">
                                       <Button type="button" size="sm" variant="ghost" onClick={() => setExpandedGradeCostCentres((current) => { const next = new Set(current); if (next.has(cc.id)) next.delete(cc.id); else next.add(cc.id); return next; })}>

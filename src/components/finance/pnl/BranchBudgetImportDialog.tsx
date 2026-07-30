@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type {
-  BranchBudgetLineInput,
-  BudgetAttributionScope,
-  BudgetGstType,
-  BudgetTaxTreatment,
-  ManualAllocationInput,
+import {
+  BRANCH_SHARING_METHODS,
+  type BranchBudgetLineInput,
+  type BudgetAttributionScope,
+  type BudgetGstType,
+  type BudgetTaxTreatment,
+  type ManualAllocationInput,
 } from "@/hooks/useBranchBudget";
 
 // ── Column template ─────────────────────────────────────────────────────────
@@ -51,7 +52,11 @@ const REQUIRED_COLUMNS = new Set([
 const TAX_TREATMENTS: BudgetTaxTreatment[] = ["exclusive", "inclusive", "exempt", "reverse_charge", "non_gst"];
 const GST_TYPES: BudgetGstType[] = ["cgst_sgst", "igst", "none"];
 const ATTRIBUTION_SCOPES: BudgetAttributionScope[] = ["branch_common", "cost_centre", "process"];
-const SHARING_METHODS = ["total_manpower", "agent_headcount", "revenue_share", "equal_split", "manual", "meter_wise"];
+/** Derived, never hand-listed. This was a third hardcoded copy of the sharing-method list and had
+ *  drifted behind both the engine and the on-screen dropdown: it rejected grade_weighted_headcount
+ *  (shipped in PR 12) and the four driver-based methods, so a valid spreadsheet was refused with
+ *  "Sharing Method must be one of ..." naming only six of the eleven. */
+const SHARING_METHODS: string[] = BRANCH_SHARING_METHODS.map((m) => m.value);
 
 /** Drivers offered for cost-centre / process attributed lines (mirrors ALLOCATION_DRIVERS in
  *  BranchBudgetManagementWorkspace). These lines are attributed whole rather than split, but the

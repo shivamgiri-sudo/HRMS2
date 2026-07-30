@@ -440,6 +440,12 @@ export interface MonthlyDriverRecord {
   plannedHeadcount: number;
   revenueRatePerHead: number;
   calculatedPlannedRevenue: number;
+  /** Drivers for the seat_count / floor_area / device_count / hiring_volume sharing methods
+   *  (migration 434). Optional so an older API response still satisfies the type. */
+  seatCount?: number;
+  floorAreaSqft?: number;
+  deviceCount?: number;
+  hiringVolume?: number;
   remarks: string | null;
   status: "draft" | "approved";
 }
@@ -448,6 +454,10 @@ export interface MonthlyDriverInput {
   costCentreId: string;
   plannedHeadcount: number;
   revenueRatePerHead: number;
+  seatCount?: number;
+  floorAreaSqft?: number;
+  deviceCount?: number;
+  hiringVolume?: number;
   remarks?: string | null;
 }
 

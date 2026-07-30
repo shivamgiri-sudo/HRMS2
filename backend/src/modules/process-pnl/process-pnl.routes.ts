@@ -295,10 +295,17 @@ router.put(
     const data = await branchBudgetAllocationService.saveMonthlyDrivers(
       branchId,
       periodCode,
+      // Every driver the sharing methods can divide by must be mapped here. This whitelist
+      // silently dropped seat/area/device/hiring — the UI sent them and the API answered 200, so
+      // the values simply vanished and the method then failed with "Monthly seat count is missing".
       drivers.map((d: any) => ({
         costCentreId: String(d.costCentreId),
         plannedHeadcount: Number(d.plannedHeadcount ?? 0),
         revenueRatePerHead: Number(d.revenueRatePerHead ?? 0),
+        seatCount: Number(d.seatCount ?? 0),
+        floorAreaSqft: Number(d.floorAreaSqft ?? 0),
+        deviceCount: Number(d.deviceCount ?? 0),
+        hiringVolume: Number(d.hiringVolume ?? 0),
         remarks: d.remarks ? String(d.remarks) : null,
       })),
       user.id
