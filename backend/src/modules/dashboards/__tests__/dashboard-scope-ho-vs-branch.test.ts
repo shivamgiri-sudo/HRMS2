@@ -252,6 +252,55 @@ describe("head office vs branch scope", () => {
     expect(scope.branchIds).toEqual(["branch-noida-2"]);
   });
 
+  it("does not widen a branch role to every branch its process touches", async () => {
+    // VIJAY KUMAR (MAS22774) is branch_head of MOHALI, 3 back-office staff. His own
+    // employee row sits in the BACK OFFICE process, which also runs in NOIDA-2 (55 staff),
+    // AHEMDABAD HOUSE, Delhi Office, HEAD OFFICE and AHMEDABAD-JALDARSHAN.
+    // branchesForProcesses handed all of those back, so a one-branch assignment resolved to
+    // six — and BRANCH_ALL filters rows directly on that list.
+    withRoles(["branch_head", "employee"]);
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes("user_assignment_scope")) {
+        return [[row({ role_key: "branch_head", branch_id: "branch-mohali" })], []];
+      }
+      if (sql.includes("FROM employees") && sql.includes("user_id")) {
+        return [[{ id: "emp-1", branch_id: "branch-mohali", process_id: "process-back-office" }], []];
+      }
+      // branchesForProcesses — the other branches running BACK OFFICE.
+      if (sql.includes("SELECT DISTINCT branch_id")) {
+        return [[{ branch_id: "branch-noida-2" }, { branch_id: "branch-delhi" }], []];
+      }
+      return [[], []];
+    });
+
+    const scope = await resolveDashboardScope("user-vijay", "branch_head");
+
+    expect(scope.level).toBe("BRANCH_ALL");
+    expect(scope.branchIds, "a branch role sees its assigned branch and nothing else")
+      .toEqual(["branch-mohali"]);
+    expect(scope.branchIds).not.toContain("branch-noida-2");
+  });
+
+  it("falls back to the employee's own branch when a branch role has no assignment", async () => {
+    // Narrowing, never widening: without an assignment there is nothing else to grant.
+    withRoles(["branch_head", "employee"]);
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes("user_assignment_scope")) return [[], []];
+      if (sql.includes("FROM employees") && sql.includes("user_id")) {
+        return [[{ id: "emp-1", branch_id: "branch-own-office", process_id: "process-back-office" }], []];
+      }
+      if (sql.includes("SELECT DISTINCT branch_id")) return [[{ branch_id: "branch-noida-2" }], []];
+      return [[], []];
+    });
+
+    const scope = await resolveDashboardScope("user-unassigned-bh", "branch_head");
+
+    expect(scope.level).toBe("BRANCH_ALL");
+    expect(scope.branchIds).toEqual(["branch-own-office"]);
+  });
+
   it("keeps super_admin org-wide even with a stray branch assignment row", async () => {
     // Narrowing a system administrator could lock them out of the platform entirely.
     withRoles(["super_admin", "employee"]);

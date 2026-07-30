@@ -321,8 +321,27 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
     ...derivedBranchIds,
   ]);
   if (BRANCH_ALL_ROLES.has(effectiveRole)) {
-    if (branchIds.length > 0) {
-      return { level: "BRANCH_ALL", branchIds, processIds: [], employeeIds: [], userId, role: effectiveRole };
+    // A branch role is defined by its branch, never by whichever process the person
+    // happens to sit in. `branchIds` above unions the assignment with the employee's own
+    // branch AND every branch reachable from their process, which over-granted:
+    // VIJAY KUMAR (MAS22774) is branch_head of MOHALI — 3 back-office staff — but his own
+    // employee row sits in the BACK OFFICE process, and branchesForProcesses hands that
+    // process's other branches back, including NOIDA-2's 55 staff. Six branches from a
+    // one-branch assignment, and BRANCH_ALL filters rows directly on this list.
+    //
+    // Explicit assignment wins outright, on the same principle applied above: the
+    // assignment is the grant. Only when a branch role carries no assignment at all does
+    // it fall back to the employee's own branch — which is a narrowing, never a widening.
+    const grantedBranchIds = assignedBranchIds.length > 0 ? assignedBranchIds : employee.branchIds;
+    if (grantedBranchIds.length > 0) {
+      return {
+        level: "BRANCH_ALL",
+        branchIds: grantedBranchIds,
+        processIds: [],
+        employeeIds: [],
+        userId,
+        role: effectiveRole,
+      };
     }
     throw new DashboardScopeConfigurationError(effectiveRole, "branch");
   }
