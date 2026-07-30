@@ -821,12 +821,21 @@ router.get('/it-dashboard-summary', requireRole('admin', 'super_admin', 'it', 'b
               CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS raised_by_name,
               e.employee_code,
               bm.branch_name, pm.process_name,
-              au.display_name AS resolved_by_name
+              -- auth_user has no display_name column, so this endpoint returned
+              -- HTTP 500 ("Unknown column 'au.display_name'") on every IT dashboard
+              -- load. Resolve the assignee's name from their employee record, falling
+              -- back to the login email.
+              COALESCE(
+                assignee.full_name,
+                NULLIF(TRIM(CONCAT_WS(' ', assignee.first_name, assignee.last_name)), ''),
+                au.email
+              ) AS resolved_by_name
          FROM helpdesk_ticket t
          LEFT JOIN employees e ON e.id = t.employee_id
          LEFT JOIN branch_master bm ON bm.id = e.branch_id
          LEFT JOIN process_master pm ON pm.id = e.process_id
          LEFT JOIN auth_user au ON au.id = t.assigned_to
+         LEFT JOIN employees assignee ON assignee.auth_user_id = au.id AND assignee.active_status = 1
         WHERE t.category = 'it'
         ORDER BY t.created_at DESC
         LIMIT 50`,

@@ -94,18 +94,30 @@ export async function getMetricTrend(
   lookbackDays = 30,
 ): Promise<TrendResult> {
   try {
+    // dashboard_metric_snapshot has no branch_id / process_id columns. Scope is stored
+    // generically as (scope_type, scope_id), so filtering by the old column names
+    // guaranteed ER_BAD_FIELD_ERROR regardless of whether the table held any rows.
     const whereParts = ['metric_code = ?'];
     const params: unknown[] = [metricCode];
 
-    if (branchId) { whereParts.push('branch_id = ?'); params.push(branchId); }
-    else           { whereParts.push('branch_id IS NULL'); }
-    if (processId) { whereParts.push('process_id = ?'); params.push(processId); }
-    else           { whereParts.push('process_id IS NULL'); }
+    if (branchId) {
+      whereParts.push("scope_type = 'BRANCH'", 'scope_id = ?');
+      params.push(branchId);
+    } else if (processId) {
+      whereParts.push("scope_type = 'PROCESS'", 'scope_id = ?');
+      params.push(processId);
+    } else {
+      whereParts.push("scope_type = 'ORG'", 'scope_id IS NULL');
+    }
 
     whereParts.push(`snapshot_date <= DATE_SUB(CURDATE(), INTERVAL ${lookbackDays} DAY)`);
 
+    // The column is `value`, not `metric_value` (see 290_dashboard_analytics_engine.sql).
+    // This query raised ER_BAD_FIELD_ERROR on every metric, so previousValue, trend and
+    // variancePct came back null for all 38 metric instances across all 12 dashboards —
+    // which is why no tile has ever shown a period-on-period arrow.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT metric_value FROM dashboard_metric_snapshot
+      `SELECT value FROM dashboard_metric_snapshot
        WHERE ${whereParts.join(' AND ')}
        ORDER BY snapshot_date DESC
        LIMIT 1`,
@@ -116,7 +128,7 @@ export async function getMetricTrend(
       return { previousValue: null, trend: 'stable', changePct: null };
     }
 
-    const prev = parseFloat(String((rows as any[])[0].metric_value));
+    const prev = parseFloat(String((rows as any[])[0].value));
     if (isNaN(prev) || prev === 0) {
       return { previousValue: prev, trend: 'stable', changePct: null };
     }

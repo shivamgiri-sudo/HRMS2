@@ -2,6 +2,45 @@ import type { FieldPacket, PoolConnection, QueryResult, RowDataPacket } from "my
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 
+/**
+ * Row scope for the live-operations reads.
+ *
+ * These endpoints took their branch/process filters purely from query parameters, so
+ * omitting the parameters returned live agent status and attrition risk for the whole
+ * organisation to any role on the route — including manager and branch_head. The route
+ * layer now resolves the caller's own scope and passes it here; `null` means the caller
+ * is genuinely org-wide.
+ *
+ * The underlying tables store branch/process NAMES rather than FK ids, hence names.
+ */
+export type OperationsScopeFilter = {
+  branchNames?: readonly string[] | null;
+  processNames?: readonly string[] | null;
+} | null | undefined;
+
+export function buildOperationsScopeClause(
+  scope: OperationsScopeFilter,
+  alias: string,
+): { sql: string; params: unknown[] } {
+  if (!scope) return { sql: "1=1", params: [] };
+
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+
+  if (scope.branchNames) {
+    if (scope.branchNames.length === 0) return { sql: "1=0", params: [] };
+    clauses.push(`${alias}.branch_name IN (${scope.branchNames.map(() => "?").join(",")})`);
+    params.push(...scope.branchNames);
+  }
+  if (scope.processNames) {
+    if (scope.processNames.length === 0) return { sql: "1=0", params: [] };
+    clauses.push(`${alias}.process_name IN (${scope.processNames.map(() => "?").join(",")})`);
+    params.push(...scope.processNames);
+  }
+
+  return clauses.length ? { sql: clauses.join(" AND "), params } : { sql: "1=1", params: [] };
+}
+
 export interface AgentStatus {
   agent_id: string;
   agent_code: string;
@@ -80,7 +119,8 @@ class OperationsLiveService {
    */
   async getLiveStatus(
     processName?: string,
-    branchName?: string
+    branchName?: string,
+    scope?: OperationsScopeFilter
   ): Promise<LiveStatusResponse> {
     try {
       const conditions: string[] = ["e.employment_status = 'Active'"];
@@ -95,6 +135,12 @@ class OperationsLiveService {
         conditions.push("ra.branch_name = ?");
         params.push(branchName);
       }
+
+      // Caller's own entitlement, applied on top of any requested filter. Without this
+      // an omitted query string meant "show me everyone".
+      const scopeClause = buildOperationsScopeClause(scope, "ra");
+      conditions.push(scopeClause.sql);
+      params.push(...scopeClause.params);
 
       const whereClause = conditions.join(" AND ");
 
@@ -158,8 +204,11 @@ class OperationsLiveService {
   /**
    * Get roster vs actual utilization comparison by process
    */
-  async getRosterVsActual(): Promise<RosterVsActualResponse> {
+  async getRosterVsActual(scope?: OperationsScopeFilter): Promise<RosterVsActualResponse> {
     try {
+      // Previously returned every process org-wide regardless of who asked. A
+      // branch- or process-scoped caller must only see their own.
+      const scopeClause = buildOperationsScopeClause(scope, "ra");
       const [processes] = await this.db.execute<RowDataPacket[]>(
         `
         SELECT
@@ -169,10 +218,11 @@ class OperationsLiveService {
         FROM wfm_roster_assignment ra
         LEFT JOIN wfm_attendance_session s
           ON s.employee_id = ra.employee_id AND s.session_date = ra.roster_date AND ra.roster_date = CURDATE()
-        WHERE ra.roster_date = CURDATE()
+        WHERE ra.roster_date = CURDATE() AND ${scopeClause.sql}
         GROUP BY ra.process_name
         ORDER BY ra.process_name
-        `
+        `,
+        scopeClause.params
       );
 
       const processUtilization: ProcessUtilization[] = (processes as any[]).map((p) => {
@@ -209,8 +259,31 @@ class OperationsLiveService {
   /**
    * Calculate attrition risk scores based on resignation signals, attendance drop, and quality decline
    */
-  async getAttritionRiskScores(minRiskScore: number = 0): Promise<AttritionRiskResponse> {
+  async getAttritionRiskScores(
+    minRiskScore: number = 0,
+    employeeScope?: { branchIds?: readonly string[] | null; processIds?: readonly string[] | null } | null,
+  ): Promise<AttritionRiskResponse> {
     try {
+      // This read had no scope at all: a branch_head or manager received per-employee
+      // attrition risk for the entire organisation. `employees` carries FK ids, so it is
+      // scoped on branch_id / process_id rather than by name.
+      const conditions: string[] = ["e.employment_status IN ('Active', 'Resigned')"];
+      const params: unknown[] = [];
+      if (employeeScope?.branchIds) {
+        if (employeeScope.branchIds.length === 0) conditions.push("1=0");
+        else {
+          conditions.push(`e.branch_id IN (${employeeScope.branchIds.map(() => "?").join(",")})`);
+          params.push(...employeeScope.branchIds);
+        }
+      }
+      if (employeeScope?.processIds) {
+        if (employeeScope.processIds.length === 0) conditions.push("1=0");
+        else {
+          conditions.push(`e.process_id IN (${employeeScope.processIds.map(() => "?").join(",")})`);
+          params.push(...employeeScope.processIds);
+        }
+      }
+
       // Get employees with risk signals
       const [employees] = await this.db.execute<RowDataPacket[]>(
         `
@@ -223,8 +296,9 @@ class OperationsLiveService {
           res.resignation_accepted_on
         FROM employees e
         LEFT JOIN resignation res ON res.employee_id = e.id
-        WHERE e.employment_status IN ('Active', 'Resigned')
-        `
+        WHERE ${conditions.join(" AND ")}
+        `,
+        params
       );
 
       const riskList: EmployeeAttritionRisk[] = [];

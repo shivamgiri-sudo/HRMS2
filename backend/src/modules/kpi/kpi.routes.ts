@@ -212,13 +212,13 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
 
   const byMetric = (metricRows as any[]) ?? [];
 
-  // ATTENDANCE_PCT has by far the widest coverage, so it would win headline selection —
-  // but the dashboard already derives attendance authoritatively from
-  // attendance_daily_record, and the two disagree materially (the KPI copy averages
-  // ~45% where the attendance table shows ~75% present for the same population).
-  // Surfacing both would put two contradictory attendance figures on one screen, so the
-  // KPI headline skips it and the disagreement is reported in `dataQuality` instead of
-  // being silently resolved in favour of one source.
+  // ATTENDANCE_PCT has by far the widest coverage and would otherwise win headline
+  // selection, but attendance has a single system of record: attendance_daily_record,
+  // the processed attendance engine that payroll is computed from. The KPI copy is a
+  // derived nightly roll-up from the dialer feed and disagrees materially with it
+  // (~45% vs ~75% present for the same population). Attendance is therefore reported
+  // only from attendance_daily_record via the ATTENDANCE metric; the KPI duplicate is
+  // excluded from the headline so the two can never appear as competing figures.
   const HEADLINE_EXCLUDED = new Set(["ATTENDANCE_PCT"]);
 
   const headline =
@@ -226,17 +226,6 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
       String(row.unit) === "percent" &&
       String(row.direction) === "higher_is_better" &&
       !HEADLINE_EXCLUDED.has(String(row.metric_code))) ?? null;
-
-  const dataQuality: string[] = [];
-  const attendanceKpi = byMetric.find((row) => String(row.metric_code) === "ATTENDANCE_PCT");
-  if (attendanceKpi) {
-    dataQuality.push(
-      `Attendance appears in two sources with different values: the KPI feed averages ` +
-      `${attendanceKpi.avg_value}% for ${period}, while attendance_daily_record is the ` +
-      `system of record for the attendance tile. They are not reconciled — do not treat ` +
-      `either as authoritative until they are.`,
-    );
-  }
 
   let summary: Record<string, unknown> = {};
   let processRows: RowDataPacket[] = [];
@@ -304,7 +293,6 @@ router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "man
       by_process: processRows,
       by_metric: byMetric,
       trend: trendRows,
-      ...(dataQuality.length ? { dataQuality } : {}),
       ...(headline ? {} : {
         unavailableSources: {
           kpi: byMetric.length

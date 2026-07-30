@@ -78,9 +78,37 @@ export const DASHBOARD_SQL_MANIFEST: readonly SqlDependency[] = [
     columns: ["id"],
   },
   {
-    usedBy: "modules/dashboards/dashboard.routes.ts",
+    usedBy: "modules/work-inbox/work-inbox.service.ts (getUnifiedInboxSummary)",
     table: "work_item",
-    columns: ["assigned_to_user_id", "assigned_to_role", "status", "due_at"],
+    columns: [
+      "assigned_to_user_id", "assigned_to_role", "status", "due_at", "item_type",
+      "priority", "created_at",
+    ],
+  },
+  {
+    usedBy: "modules/work-inbox/work-inbox.service.ts (getUnifiedInboxSummary)",
+    table: "work_inbox_item",
+    columns: ["user_id", "type", "priority", "is_read", "is_actioned", "action_url", "created_at"],
+    note:
+      "The second of two work-inbox tables, both actively written. Dashboards read only " +
+      "work_item (2 rows) while this one holds 65k and grows continuously, so every " +
+      "dashboard showed an empty inbox. Has no branch_id/process_id and no due_at, so it " +
+      "is addressable per-user only and its rows can never be counted as overdue.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard.routes.ts (root-causes)",
+    table: "ats_onboarding_bridge",
+    columns: ["id", "candidate_id", "status", "bridge_date", "created_at"],
+    note:
+      "root-causes queried bridge_status, branch_id, process_id and updated_at — none of " +
+      "which exist here — so the panel threw ER_BAD_FIELD_ERROR on all 12 dashboards. " +
+      "bridge_date and created_at are the only dates on this table.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard.routes.ts (root-causes)",
+    table: "ats_candidate",
+    columns: ["id", "full_name"],
+    note: "first_name / last_name were queried here but the column is full_name.",
   },
 
   // ── Payroll operational summary (B1: this shipped 6 nonexistent columns) ────
@@ -156,6 +184,114 @@ export const DASHBOARD_SQL_MANIFEST: readonly SqlDependency[] = [
     usedBy: "modules/it-provisioning/it-provisioning.routes.ts",
     table: "it_provisioning_request",
     columns: ["employee_id", "request_type", "status", "sla_due_at", "assigned_role"],
+  },
+
+  // ── Metric trend / target enrichment ───────────────────────────────────────
+  {
+    usedBy: "modules/dashboards/dashboard-target.service.ts + dashboard.routes.ts (trend)",
+    table: "dashboard_metric_snapshot",
+    columns: ["metric_code", "scope_type", "scope_id", "snapshot_date", "value", "previous_value", "trend"],
+    note:
+      "Queried as metric_value / metric_status / dashboard_code / role_code / branch_id / " +
+      "process_id — six columns this table has never had. Result: the trend endpoint 500'd " +
+      "for every metric and previousValue/variancePct were null on all 38 metric instances, " +
+      "so no dashboard tile could show a period-on-period arrow. The table is also never " +
+      "written to; an empty series is expected until a snapshot writer exists.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard.routes.ts (:dashboardCode/metrics)",
+    table: "dashboard_metric_catalog",
+    columns: ["metric_code", "metric_name", "unit", "higher_is_better", "is_active"],
+    note: "Unseeded in production, so /metrics returns [] and no metric has a target.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-target.service.ts",
+    table: "dashboard_role_metric_config",
+    columns: ["role_code", "dashboard_code", "metric_code", "display_order", "is_primary", "scope_level"],
+  },
+
+  // ── New metric sources (each column verified against live information_schema) ──
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (ATTENDANCE_EXCEPTIONS)",
+    table: "attendance_reconciliation_issue",
+    columns: [
+      "id", "issue_date", "employee_id", "employee_code", "issue_type", "severity",
+      "resolved_at", "auto_fix_status",
+    ],
+    note:
+      "Has NO created_at and NO status column — the date is issue_date and open-ness is " +
+      "resolved_at IS NULL. 996 of 4,389 rows in a 30-day window carry no employee_id " +
+      "(mostly unmapped_cosec_user) and so cannot be branch-scoped.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (DOC_COMPLIANCE)",
+    table: "employee_documents",
+    columns: ["employee_id", "verified", "expiry_date"],
+    note:
+      "The verification flag is `verified` (tinyint), not verification_status. " +
+      "expiry_date is 0% populated for active employees, so expiry is deliberately not " +
+      "reported — it would be a permanent zero.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (BIOMETRIC_ACTIVITY)",
+    table: "integration_biometric_daily",
+    columns: [
+      "employee_code", "activity_date", "first_punch", "last_punch", "total_punches",
+      "biometric_minutes",
+    ],
+    note:
+      "Keyed by employee_code, not employee_id, and the date is activity_date not " +
+      "attendance_date. Used in place of cosec_punch_sync, which holds 3.19M rows but " +
+      "has not been written since 2026-06-18.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (SALARY_COMPONENTS)",
+    table: "salary_prep_line_component",
+    columns: [
+      "run_id", "line_id", "employee_id", "component_code", "component_name",
+      "component_type", "amount", "taxable",
+    ],
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (RECRUITER_ACTIVITY)",
+    table: "ats_recruiter_hiring_activity",
+    columns: [
+      "activity_date", "recruiter_name_snapshot", "branch_name", "process_name",
+      "contacted_flag", "walkin_flag", "hr_interview_status", "final_selection_flag",
+      "joined_flag",
+    ],
+    note:
+      "recruiter_employee_id / recruiter_id / recruiter_code are each populated on only " +
+      "10 of 16,857 rows, so grouping or scoping by them would discard 99.94% of the " +
+      "data. Only recruiter_name_snapshot is fully populated, and it is a name not an " +
+      "FK — scope therefore routes via branch_name/process_name joined by name. " +
+      "offer_letter_status is 100% NULL and is not reported.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (TRAINING_PROGRESS)",
+    table: "lms_learning_progress_snapshot",
+    columns: ["employee_id", "course_id", "course_name", "completion_pct", "score", "status", "synced_at"],
+    note:
+      "The synced copy inside mas_hrms. Read here so the deployed LMS stays the system " +
+      "of record and is never queried directly (CLAUDE.md LMS boundary).",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-metric.service.ts (LEAVE_APPROVALS)",
+    table: "leave_request",
+    columns: [
+      "id", "employee_id", "status", "from_date", "to_date", "total_days", "applied_at",
+      "leave_type_id", "requires_branch_head_approval",
+    ],
+    note:
+      "Leave type resolves via leave_type_id -> leave_type_master, NOT the legacy " +
+      "leave_request.leave_type_code: that column is 0% populated and is only defined in " +
+      "064_leave_legacy_sync.sql, which 000_run_all.sql does not source because " +
+      "064_leave_type_updated_at.sql shares its numeric prefix.",
+  },
+  {
+    usedBy: "modules/dashboards/dashboard-drilldown.service.ts (LEAVE_APPROVALS)",
+    table: "leave_type_master",
+    columns: ["id", "leave_code", "leave_name"],
   },
 
   // ── Tables the audit script expects to exist ───────────────────────────────

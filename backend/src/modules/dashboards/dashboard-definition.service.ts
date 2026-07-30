@@ -3,17 +3,24 @@ import type { DashboardMetric } from "../../shared/dashboardMetricContract.js";
 import type { DashboardScope } from "../../shared/dashboardScope.js";
 import {
   getAppointmentEsignMetrics,
+  getAttendanceExceptionMetrics,
   getAttendanceMetrics,
   getBgvMetrics,
+  getBiometricActivityMetrics,
+  getDocumentComplianceMetrics,
   getDpdpWithdrawalMetrics,
   getHeadcountMetrics,
   getIncentiveMetrics,
   getJoiningDocEsignMetrics,
+  getLeaveApprovalMetrics,
   getNameMismatchMetrics,
   getOnboardingMetrics,
   getPayrollReadinessMetrics,
+  getRecruiterActivityMetrics,
   getResignationMetrics,
+  getSalaryComponentMetrics,
   getTatMetrics,
+  getTrainingProgressMetrics,
   type MetricResult,
 } from "./dashboard-metric.service.js";
 
@@ -29,7 +36,14 @@ type MetricKey =
   | "appointmentEsign"
   | "bgv"
   | "nm"
-  | "joiningDocEsign";
+  | "joiningDocEsign"
+  | "attException"
+  | "docCompliance"
+  | "biometric"
+  | "salaryComponents"
+  | "recruiterActivity"
+  | "training"
+  | "leaveApprovals";
 
 type MetricDefinition = {
   code: string;
@@ -55,21 +69,49 @@ const METRICS: Readonly<Record<MetricKey, MetricDefinition>> = {
   bgv: { code: "BGV", label: "BGV pending", unit: "candidates", source: "Candidate BGV", sourceTable: "candidate_bgv_check", execute: getBgvMetrics },
   nm: { code: "NAME_MISMATCH", label: "Name mismatches", unit: "candidates", source: "Name match summary", sourceTable: "candidate_name_match_summary", execute: getNameMismatchMetrics },
   joiningDocEsign: { code: "JOINING_DOC_ESIGN", label: "Joining document eSign pending", unit: "documents", source: "Joining documents", sourceTable: "employee_joining_document_checklist", execute: getJoiningDocEsignMetrics },
+  attException: { code: "ATTENDANCE_EXCEPTIONS", label: "Open attendance exceptions", unit: "issues", source: "Attendance reconciliation", sourceTable: "attendance_reconciliation_issue", numeratorKey: "blockers", denominatorKey: "openTotal", execute: getAttendanceExceptionMetrics },
+  docCompliance: { code: "DOC_COMPLIANCE", label: "Employees with no documents", unit: "employees", source: "Employee documents", sourceTable: "employee_documents", numeratorKey: "employeesWithDocs", denominatorKey: "activeEmployees", execute: getDocumentComplianceMetrics },
+  biometric: { code: "BIOMETRIC_ACTIVITY", label: "Biometric punch coverage", unit: "employees", source: "Biometric daily activity", sourceTable: "integration_biometric_daily", numeratorKey: "completePunchPairs", denominatorKey: "employees", execute: getBiometricActivityMetrics },
+  salaryComponents: { code: "SALARY_COMPONENTS", label: "Payroll components in latest run", unit: "components", source: "Salary component lines", sourceTable: "salary_prep_line_component", execute: getSalaryComponentMetrics },
+  recruiterActivity: { code: "RECRUITER_ACTIVITY", label: "Recruiter pipeline (30d)", unit: "leads", source: "Recruiter hiring activity", sourceTable: "ats_recruiter_hiring_activity", numeratorKey: "selected", denominatorKey: "leads", execute: getRecruiterActivityMetrics },
+  training: { code: "TRAINING_PROGRESS", label: "Training completion rate", unit: "percent", source: "LMS progress snapshot", sourceTable: "lms_learning_progress_snapshot", numeratorKey: "completed", denominatorKey: "assignments", execute: getTrainingProgressMetrics },
+  leaveApprovals: { code: "LEAVE_APPROVALS", label: "Pending leave approvals", unit: "requests", source: "Leave requests", sourceTable: "leave_request", execute: getLeaveApprovalMetrics },
 };
 
+/**
+ * Which metrics each dashboard requests.
+ *
+ * SUPER_ADMIN, QUALITY and IT_MANAGER were empty arrays, so `/summary` returned
+ * `metrics: {}` for them. That was not a cosmetic gap: SuperAdminReferenceLayout reads
+ * `metricDetail(m, "att", …)` for Present / On Leave / Absent Today and the attendance
+ * donut, so four KPI cards and a chart were permanently blank on the most privileged
+ * dashboard — with no UI change needed to fix them once the bundle is populated.
+ *
+ * Bundles are chosen against sources that actually hold rows. `tat` is deliberately
+ * absent everywhere it was not already present: task_tat_instance is empty in
+ * production, so adding it would ship more blank tiles.
+ */
 const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> = {
-  SUPER_ADMIN_DASHBOARD: [],
-  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign"],
-  HR_DASHBOARD: ["onb", "tat", "resign", "dpdp", "appointmentEsign", "bgv", "nm", "joiningDocEsign"],
-  WFM_DASHBOARD: ["hc", "att"],
-  WFM_ATTENDANCE_DASHBOARD: ["att"],
-  PAYROLL_HR_DASHBOARD: ["payroll", "incentive"],
-  QUALITY_DASHBOARD: [],
+  // Fixes 4 blank KPI cards + the attendance donut with no layout change.
+  // attException + docCompliance give the org-wide blocker roll-up: the exceptions that
+  // stop a payroll run, and the active employees with no document on file.
+  SUPER_ADMIN_DASHBOARD: ["hc", "att", "onb", "resign", "payroll", "attException", "docCompliance"],
+  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance"],
+  HR_DASHBOARD: [
+    "onb", "tat", "resign", "dpdp", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
+    "hc", "att", "docCompliance", "training", "leaveApprovals",
+  ],
+  WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
+  WFM_ATTENDANCE_DASHBOARD: ["att", "attException", "biometric"],
+  PAYROLL_HR_DASHBOARD: ["payroll", "incentive", "salaryComponents", "attException"],
+  // Scoped headcount and attendance context for QA; audit scores stay on /api/quality-dashboard/*.
+  QUALITY_DASHBOARD: ["hc", "att"],
   OPERATIONS_DASHBOARD: ["hc", "att"],
-  RECRUITER_DASHBOARD: ["onb", "tat"],
-  IT_MANAGER_DASHBOARD: [],
-  MANAGEMENT_DASHBOARD: ["hc", "att", "tat"],
-  EMPLOYEE_SELF_DASHBOARD: ["att"],
+  RECRUITER_DASHBOARD: ["onb", "tat", "recruiterActivity"],
+  // Incoming joiners are provisioning demand; exits are deprovisioning and asset recovery.
+  IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
+  MANAGEMENT_DASHBOARD: ["hc", "att", "tat", "training", "leaveApprovals"],
+  EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
 };
 
 function numberFromDetail(result: MetricResult, key?: string): number | null {

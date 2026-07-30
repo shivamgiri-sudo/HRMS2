@@ -23,12 +23,19 @@ import {
 } from "../src/modules/dashboards/dashboard-definition.service.js";
 import {
   validateAttendance,
+  validateAttendanceExceptions,
   validateBgv,
+  validateBiometricActivity,
+  validateDocCompliance,
   validateEmptySourceMetric,
   validateHeadcount,
+  validateLeaveApprovals,
   validateOnboarding,
   validatePayrollReadiness,
+  validateRecruiterActivity,
   validateResignation,
+  validateSalaryComponents,
+  validateTrainingProgress,
   summarise,
   rowCount,
   latestAttendanceDate,
@@ -259,7 +266,9 @@ export async function runValidateMode(employeeCode: string): Promise<number> {
     getHeadcountMetrics, getOnboardingMetrics, getAttendanceMetrics,
     getPayrollReadinessMetrics, getTatMetrics, getNameMismatchMetrics,
     getDpdpWithdrawalMetrics, getIncentiveMetrics, getBgvMetrics,
-    getResignationMetrics,
+    getResignationMetrics, getAttendanceExceptionMetrics, getDocumentComplianceMetrics,
+    getBiometricActivityMetrics, getSalaryComponentMetrics, getRecruiterActivityMetrics,
+    getTrainingProgressMetrics, getLeaveApprovalMetrics,
   } = await import("../src/modules/dashboards/dashboard-metric.service.js");
 
   const checks: DatapointCheck[] = [];
@@ -273,6 +282,14 @@ export async function runValidateMode(employeeCode: string): Promise<number> {
   checks.push(...await validateEmptySourceMetric("NAME_MISMATCH", await getNameMismatchMetrics(scope)));
   checks.push(...await validateEmptySourceMetric("DPDP_WITHDRAWAL", await getDpdpWithdrawalMetrics(scope)));
   checks.push(...await validateEmptySourceMetric("INCENTIVE", await getIncentiveMetrics(scope)));
+  // Newly-added metric sources.
+  checks.push(...await validateAttendanceExceptions(scope, await getAttendanceExceptionMetrics(scope)));
+  checks.push(...await validateDocCompliance(scope, await getDocumentComplianceMetrics(scope)));
+  checks.push(...await validateBiometricActivity(scope, await getBiometricActivityMetrics(scope)));
+  checks.push(...await validateSalaryComponents(scope, await getSalaryComponentMetrics(scope)));
+  checks.push(...await validateRecruiterActivity(scope, await getRecruiterActivityMetrics(scope)));
+  checks.push(...await validateTrainingProgress(scope, await getTrainingProgressMetrics(scope)));
+  checks.push(...await validateLeaveApprovals(scope, await getLeaveApprovalMetrics(scope)));
 
   console.table(checks.map((c) => ({
     metric: c.metric, datapoint: c.datapoint,

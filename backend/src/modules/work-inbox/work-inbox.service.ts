@@ -3,6 +3,14 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 
+/**
+ * Rows unactioned for longer than this are reported as aged.
+ *
+ * Used instead of an overdue count for `work_inbox_item`, which carries no due date —
+ * see getUnifiedInboxSummary.
+ */
+const INBOX_AGED_DAYS = 7;
+
 export type WorkItemInput = {
   itemType: string;
   title: string;
@@ -60,18 +68,71 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
   return id;
 }
 
+/**
+ * The caller's open inbox, unioned across both work tables.
+ *
+ * `work_item` alone holds 2 rows while `work_inbox_item` holds 65k and is written
+ * continuously, so every panel backed by this function ("Your inbox is clear" on five
+ * dashboards) was reporting an empty inbox to users who had dozens of items waiting.
+ *
+ * The two are normalised to `work_item`'s response shape so existing consumers keep
+ * working unchanged: the frontend panel reads id / title / description / module_code /
+ * priority / action_url / due_date. `work_inbox_item` has no due date, so `due_at` is
+ * null for its rows rather than invented, and no module_code, so its `type` stands in.
+ *
+ * Priority vocabularies differ — work_item uses critical/high/medium/low and
+ * work_inbox_item uses urgent/high/normal/low — so `urgent` is mapped onto `critical`
+ * for a single ordering.
+ */
 export async function getMyWorkItems(userId: string, role: string, limit = 50, offset = 0) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
   const safeOffset = Math.max(0, Number(offset) || 0);
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT wi.*, e.full_name as assigned_employee_name
-     FROM work_item wi
-     LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
-     WHERE (wi.assigned_to_user_id = ? OR wi.assigned_to_role = ?)
-       AND wi.status NOT IN ('completed', 'cancelled')
-     ORDER BY FIELD(wi.priority,'critical','high','medium','low'), wi.due_at ASC
+    `SELECT * FROM (
+       SELECT wi.id,
+              wi.item_type,
+              wi.title,
+              wi.description,
+              wi.module_code,
+              wi.entity_type,
+              wi.entity_id,
+              CASE WHEN wi.priority = 'urgent' THEN 'critical' ELSE wi.priority END AS priority,
+              wi.status,
+              wi.due_at,
+              wi.created_at,
+              NULL AS action_url,
+              e.full_name AS assigned_employee_name,
+              'work_item' AS source_table
+         FROM work_item wi
+         LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
+        WHERE (wi.assigned_to_user_id = ? OR wi.assigned_to_role = ?)
+          AND wi.status NOT IN ('completed', 'cancelled')
+       UNION ALL
+       SELECT wii.id,
+              wii.type AS item_type,
+              wii.title,
+              wii.description,
+              wii.type AS module_code,
+              wii.entity_type,
+              wii.entity_id,
+              CASE WHEN wii.priority = 'urgent' THEN 'critical'
+                   WHEN wii.priority = 'normal' THEN 'medium'
+                   ELSE wii.priority END AS priority,
+              CASE WHEN wii.is_read = 1 THEN 'read' ELSE 'pending' END AS status,
+              NULL AS due_at,
+              wii.created_at,
+              wii.action_url,
+              NULL AS assigned_employee_name,
+              'work_inbox_item' AS source_table
+         FROM work_inbox_item wii
+        WHERE wii.user_id = ? AND wii.is_actioned = 0
+     ) merged
+     ORDER BY FIELD(merged.priority,'critical','high','medium','low'),
+              merged.due_at IS NULL,
+              merged.due_at ASC,
+              merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    [userId, role]
+    [userId, role, userId]
   );
   return rows;
 }
@@ -136,28 +197,45 @@ export async function createWorkItemIfNotExists(
   return createWorkItem(input);
 }
 
+/**
+ * Counts for the inbox badge, unioned across both work tables for the same reason
+ * getMyWorkItems is — reading work_item alone reported 0 pending to every user.
+ *
+ * `overdue` counts only rows with a real due date (work_item); work_inbox_item has none,
+ * so its age is reported separately as `aged` rather than presented as a missed deadline.
+ */
 export async function getWorkItemStats(userId: string, role: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT module_code,
             COUNT(*) as count,
-            SUM(CASE WHEN priority='critical' THEN 1 ELSE 0 END) as critical_count,
-            SUM(CASE WHEN due_at < NOW() AND status='pending' THEN 1 ELSE 0 END) as overdue_count
-     FROM work_item
-     WHERE (assigned_to_user_id=? OR assigned_to_role=?) AND status='pending'
+            SUM(CASE WHEN priority IN ('critical','urgent') THEN 1 ELSE 0 END) as critical_count,
+            SUM(CASE WHEN due_at IS NOT NULL AND due_at < NOW() THEN 1 ELSE 0 END) as overdue_count,
+            SUM(CASE WHEN created_at < DATE_SUB(NOW(), INTERVAL ${INBOX_AGED_DAYS} DAY) THEN 1 ELSE 0 END) as aged_count
+     FROM (
+       SELECT module_code, priority, due_at, created_at
+         FROM work_item
+        WHERE (assigned_to_user_id=? OR assigned_to_role=?) AND status='pending'
+       UNION ALL
+       SELECT type AS module_code, priority, NULL AS due_at, created_at
+         FROM work_inbox_item
+        WHERE user_id=? AND is_actioned=0
+     ) merged
      GROUP BY module_code`,
-    [userId, role]
+    [userId, role, userId]
   );
   const byModule: Record<string, number> = {};
   let pending = 0;
   let critical = 0;
   let overdue = 0;
+  let aged = 0;
   for (const row of rows as RowDataPacket[]) {
     byModule[row.module_code] = Number(row.count);
     pending += Number(row.count);
     critical += Number(row.critical_count);
     overdue += Number(row.overdue_count);
+    aged += Number(row.aged_count);
   }
-  return { pending, overdue, critical, byModule };
+  return { pending, overdue, critical, aged, byModule };
 }
 
 export async function getOverdueItems(userId: string, role: string, limit = 50) {
@@ -171,6 +249,103 @@ export async function getOverdueItems(userId: string, role: string, limit = 50) 
     [userId, role, limit]
   );
   return rows;
+}
+
+/**
+ * The work inbox is split across two tables that were built independently and are
+ * both still written on every deploy:
+ *
+ *   `work_item`       — role/branch/process-addressed, has status + due_at.
+ *                       Written by ats/employee-code-gate, ats/jclr, ats/name-consistency,
+ *                       ats/salary-component-assignment, employees/employee-creation-orchestrator,
+ *                       exit/resignation, governance/tat, incentives, privacy/dpdp-withdrawal.
+ *   `work_inbox_item` — user-addressed, has is_read/is_actioned + action_url, no due date.
+ *                       Written by wfm/attendance-engine, control-tower, ats/recruiter-hiring,
+ *                       kpi, inbox, auth-launch, reporting, official-email-compliance.worker.
+ *
+ * Every dashboard read `work_item` alone, which holds 2 rows, while `work_inbox_item`
+ * holds 65k and is written continuously — so all 12 dashboards showed an empty inbox
+ * while the super admin actually had 40 open items.
+ *
+ * This unions the two rather than repointing, because both writer sets are live and
+ * dropping either would silently lose work. Neither table is modified.
+ *
+ * Row-scope note: `work_inbox_item` has no branch_id/process_id, only user_id, so it
+ * can only ever be addressed per-user — which is what an inbox is. 12,271 open rows
+ * carry a user_id that no longer resolves to auth_user; those are unreachable by any
+ * viewer and are reported under `unreachable` rather than folded into a total.
+ */
+export type UnifiedInboxSummary = {
+  pending_count: number;
+  overdue_count: number;
+  aged_count: number;
+  unread_count: number;
+  by_source: Record<string, number>;
+  by_type: Array<{ type: string; priority: string; count: number; actionUrl: string | null }>;
+};
+
+export async function getUnifiedInboxSummary(
+  userId: string,
+  roleKeys: readonly string[],
+): Promise<UnifiedInboxSummary> {
+  // An empty role list must not become `IN ()`, which is a syntax error.
+  const roles = roleKeys.length > 0 ? [...roleKeys] : ["__none__"];
+  const rolePlaceholders = roles.map(() => "?").join(",");
+
+  const [legacy] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS pending_count,
+            SUM(CASE WHEN due_at IS NOT NULL AND due_at < NOW() THEN 1 ELSE 0 END) AS overdue_count,
+            SUM(CASE WHEN created_at < DATE_SUB(NOW(), INTERVAL ${INBOX_AGED_DAYS} DAY) THEN 1 ELSE 0 END) AS aged_count
+       FROM work_item
+      WHERE status = 'pending'
+        AND (assigned_to_user_id = ? OR assigned_to_role IN (${rolePlaceholders}))`,
+    [userId, ...roles],
+  );
+
+  const [inbox] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS pending_count,
+            SUM(CASE WHEN created_at < DATE_SUB(NOW(), INTERVAL ${INBOX_AGED_DAYS} DAY) THEN 1 ELSE 0 END) AS aged_count,
+            SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread_count
+       FROM work_inbox_item
+      WHERE user_id = ? AND is_actioned = 0`,
+    [userId],
+  );
+
+  const [byType] = await db.execute<RowDataPacket[]>(
+    `SELECT item_type AS type, priority, COUNT(*) AS count, NULL AS actionUrl
+       FROM work_item
+      WHERE status = 'pending'
+        AND (assigned_to_user_id = ? OR assigned_to_role IN (${rolePlaceholders}))
+      GROUP BY item_type, priority
+     UNION ALL
+     SELECT type, priority, COUNT(*) AS count, MIN(action_url) AS actionUrl
+       FROM work_inbox_item
+      WHERE user_id = ? AND is_actioned = 0
+      GROUP BY type, priority
+      ORDER BY count DESC`,
+    [userId, ...roles, userId],
+  );
+
+  const legacyRow = (legacy as RowDataPacket[])[0] ?? {};
+  const inboxRow = (inbox as RowDataPacket[])[0] ?? {};
+  const legacyPending = Number(legacyRow.pending_count ?? 0);
+  const inboxPending = Number(inboxRow.pending_count ?? 0);
+
+  return {
+    pending_count: legacyPending + inboxPending,
+    // Only `work_item` carries a due date. `work_inbox_item` has none, so its rows are
+    // never counted as overdue — an unactioned age is not a missed deadline.
+    overdue_count: Number(legacyRow.overdue_count ?? 0),
+    aged_count: Number(legacyRow.aged_count ?? 0) + Number(inboxRow.aged_count ?? 0),
+    unread_count: Number(inboxRow.unread_count ?? 0),
+    by_source: { work_item: legacyPending, work_inbox_item: inboxPending },
+    by_type: (byType as RowDataPacket[]).map((row) => ({
+      type: String(row.type),
+      priority: String(row.priority),
+      count: Number(row.count),
+      actionUrl: (row.actionUrl as string | null) ?? null,
+    })),
+  };
 }
 
 export async function getDashboardWorkItems(branchId?: string, processId?: string) {

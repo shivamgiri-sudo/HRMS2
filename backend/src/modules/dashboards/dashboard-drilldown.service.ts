@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { type DashboardScope, buildScopeWhere } from "../../shared/dashboardScope.js";
+import { type DashboardScope, buildScopeWhere, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
+import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
 
 export interface DrilldownResult {
   metricCode: string;
@@ -61,6 +62,20 @@ export async function getDrilldown(
       return drillAppointmentEsign(scope);
     case "JOINING_DOC_ESIGN":
       return drillJoiningDocEsign(scope);
+    case "ATTENDANCE_EXCEPTIONS":
+      return drillAttendanceExceptions(scope);
+    case "DOC_COMPLIANCE":
+      return drillDocCompliance(scope);
+    case "BIOMETRIC_ACTIVITY":
+      return drillBiometricActivity(scope);
+    case "SALARY_COMPONENTS":
+      return drillSalaryComponents(scope);
+    case "RECRUITER_ACTIVITY":
+      return drillRecruiterActivity(scope);
+    case "TRAINING_PROGRESS":
+      return drillTrainingProgress(scope);
+    case "LEAVE_APPROVALS":
+      return drillLeaveApprovals(scope);
     default:
       return {
         metricCode,
@@ -175,9 +190,7 @@ async function drillAttendance(scope: DashboardScope): Promise<DrilldownResult> 
     // Anchor on the latest day that actually carries records. Production attendance
     // trails by a day or two, so CURDATE() routinely selects a near-empty day.
     const [dayRows] = await db.execute<RowDataPacket[]>(
-      `SELECT record_date FROM attendance_daily_record
-        GROUP BY record_date HAVING COUNT(*) > 10
-        ORDER BY record_date DESC LIMIT 1`,
+      `SELECT ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} AS record_date`,
     );
     const day = (dayRows as any[])[0]?.record_date;
     if (!day) {
@@ -534,6 +547,308 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
         verificationStatus: r.verificationStatus,
         dueAt: r.dueAt,
         overdue: Boolean(r.overdue),
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── ATTENDANCE_EXCEPTIONS: open reconciliation issues by type ───────────────
+async function drillAttendanceExceptions(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    // Date column is issue_date; open-ness is resolved_at IS NULL. There is no
+    // created_at and no status column on this table.
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "emp.branch_id", "emp.process_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ari.issue_type AS issueType,
+              ari.severity AS severity,
+              COUNT(*) AS count,
+              SUM(CASE WHEN ari.auto_fix_status = 'failed' THEN 1 ELSE 0 END) AS autoFixFailed,
+              MIN(ari.issue_date) AS oldestIssueDate,
+              DATEDIFF(CURDATE(), MIN(ari.issue_date)) AS oldestAgeDays
+         FROM attendance_reconciliation_issue ari
+         LEFT JOIN employees emp ON emp.id = ari.employee_id
+        WHERE ari.resolved_at IS NULL
+          AND ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          AND ${scopeSql}
+        GROUP BY ari.issue_type, ari.severity
+        ORDER BY FIELD(ari.severity,'blocker','warning','info'), count DESC`,
+      params,
+    );
+    return {
+      metricCode: "ATTENDANCE_EXCEPTIONS",
+      records: (rows as any[]).map((r) => ({
+        issueType: r.issueType,
+        severity: r.severity,
+        count: Number(r.count),
+        autoFixFailed: Number(r.autoFixFailed),
+        oldestIssueDate: r.oldestIssueDate,
+        oldestAgeDays: Number(r.oldestAgeDays ?? 0),
+      })),
+      totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── DOC_COMPLIANCE: active employees with the weakest document coverage ────
+async function drillDocCompliance(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
+    // Ordered so employees with nothing on file surface first — those are the
+    // actionable ones. `verified` is a tinyint; there is no verification_status column.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employeeId,
+              e.employee_code AS employeeCode,
+              e.full_name AS employeeName,
+              b.branch_name AS branchName,
+              COALESCE(d.doc_count, 0) AS documentCount,
+              COALESCE(d.verified_count, 0) AS verifiedCount
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN (
+           SELECT employee_id,
+                  COUNT(*) AS doc_count,
+                  SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_count
+             FROM employee_documents
+            GROUP BY employee_id
+         ) d ON d.employee_id = e.id
+        WHERE e.active_status = 1
+          AND COALESCE(d.verified_count, 0) = 0
+          AND ${scopeSql}
+        ORDER BY documentCount ASC, e.employee_code ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "DOC_COMPLIANCE",
+      records: (rows as any[]).map((r) => ({
+        employeeId: r.employeeId,
+        employeeCode: r.employeeCode,
+        employeeName: r.employeeName ?? "—",
+        branchName: r.branchName ?? "Unassigned",
+        documentCount: Number(r.documentCount),
+        verifiedCount: Number(r.verifiedCount),
+      })),
+      totalCount: rows.length,
+      note: rows.length === 100 ? "Showing the first 100 employees with no verified document" : undefined,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── BIOMETRIC_ACTIVITY: punch coverage on the latest complete day ──────────
+async function drillBiometricActivity(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
+    // Anchored strictly before today: today's partial day would read as mass early
+    // departure. Single-punch rows are listed first because they become attendance
+    // exceptions downstream.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.employee_code AS employeeCode,
+              e.full_name AS employeeName,
+              br.branch_name AS branchName,
+              b.activity_date AS activityDate,
+              b.first_punch AS firstPunch,
+              b.last_punch AS lastPunch,
+              b.total_punches AS totalPunches,
+              ROUND(b.biometric_minutes / 60, 2) AS hours
+         FROM integration_biometric_daily b
+         JOIN employees e ON e.employee_code = b.employee_code
+         LEFT JOIN branch_master br ON br.id = e.branch_id
+        WHERE b.activity_date = (
+                SELECT MAX(activity_date) FROM integration_biometric_daily
+                 WHERE activity_date < CURDATE()
+              )
+          AND e.active_status = 1
+          AND ${scopeSql}
+        ORDER BY b.total_punches ASC, b.biometric_minutes ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "BIOMETRIC_ACTIVITY",
+      records: (rows as any[]).map((r) => ({
+        employeeCode: r.employeeCode,
+        employeeName: r.employeeName ?? "—",
+        branchName: r.branchName ?? "Unassigned",
+        activityDate: r.activityDate,
+        firstPunch: r.firstPunch,
+        lastPunch: r.lastPunch,
+        totalPunches: Number(r.totalPunches ?? 0),
+        hours: r.hours === null ? null : Number(r.hours),
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── SALARY_COMPONENTS: component split of the latest run ───────────────────
+async function drillSalaryComponents(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.component_code AS componentCode,
+              MIN(c.component_name) AS componentName,
+              c.component_type AS componentType,
+              MAX(c.taxable) AS taxable,
+              COUNT(*) AS lineCount,
+              COUNT(DISTINCT c.employee_id) AS employees,
+              ROUND(SUM(c.amount), 2) AS totalAmount,
+              ROUND(AVG(c.amount), 2) AS avgAmount
+         FROM salary_prep_line_component c
+         JOIN employees e ON e.id = c.employee_id
+        WHERE c.run_id = (
+                SELECT id FROM salary_prep_run ORDER BY run_month DESC, created_at DESC LIMIT 1
+              )
+          AND ${scopeSql}
+        GROUP BY c.component_code, c.component_type
+        ORDER BY c.component_type, totalAmount DESC`,
+      params,
+    );
+    return {
+      metricCode: "SALARY_COMPONENTS",
+      records: (rows as any[]).map((r) => ({
+        componentCode: r.componentCode,
+        componentName: r.componentName,
+        componentType: r.componentType,
+        taxable: Boolean(r.taxable),
+        lineCount: Number(r.lineCount),
+        employees: Number(r.employees),
+        totalAmount: Number(r.totalAmount ?? 0),
+        avgAmount: Number(r.avgAmount ?? 0),
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── RECRUITER_ACTIVITY: funnel per recruiter, last 30 days ─────────────────
+async function drillRecruiterActivity(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    // Grouped by recruiter_name_snapshot, the only recruiter identifier populated on
+    // more than 10 of 16,857 rows. It is a denormalised name, not an FK, so it can
+    // identify a recruiter but cannot be used for row scoping — scope routes through
+    // branch_name / process_name joined to the masters by name.
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.recruiter_name_snapshot AS recruiterName,
+              COUNT(*) AS leads,
+              SUM(CASE WHEN r.contacted_flag = 1 THEN 1 ELSE 0 END) AS contacted,
+              SUM(CASE WHEN r.walkin_flag = 1 THEN 1 ELSE 0 END) AS walkins,
+              SUM(CASE WHEN r.hr_interview_status IS NOT NULL AND r.hr_interview_status <> '' THEN 1 ELSE 0 END) AS hrScreened,
+              SUM(CASE WHEN r.final_selection_flag = 1 THEN 1 ELSE 0 END) AS selected,
+              SUM(CASE WHEN r.joined_flag = 1 THEN 1 ELSE 0 END) AS joined,
+              MAX(r.activity_date) AS latestActivity
+         FROM ats_recruiter_hiring_activity r
+         LEFT JOIN branch_master bm ON bm.branch_name = r.branch_name
+         LEFT JOIN process_master pm ON pm.process_name = r.process_name
+        WHERE r.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          AND ${scopeSql}
+        GROUP BY r.recruiter_name_snapshot
+        ORDER BY leads DESC
+        LIMIT 50`,
+      params,
+    );
+    return {
+      metricCode: "RECRUITER_ACTIVITY",
+      records: (rows as any[]).map((r) => ({
+        recruiterName: r.recruiterName ?? "—",
+        leads: Number(r.leads),
+        contacted: Number(r.contacted),
+        walkins: Number(r.walkins),
+        hrScreened: Number(r.hrScreened),
+        selected: Number(r.selected),
+        joined: Number(r.joined),
+        latestActivity: r.latestActivity,
+      })),
+      totalCount: (rows as any[]).reduce((a, r) => a + Number(r.leads), 0),
+      note: "Recruiter identified by name snapshot — the activity table carries no usable recruiter foreign key",
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── TRAINING_PROGRESS: course completion from the synced LMS snapshot ──────
+async function drillTrainingProgress(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    // Reads the snapshot inside mas_hrms, never the deployed LMS (CLAUDE.md boundary).
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT s.course_name AS courseName,
+              COUNT(*) AS assignments,
+              COUNT(DISTINCT s.employee_id) AS learners,
+              SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+              SUM(CASE WHEN s.status = 'in_progress' THEN 1 ELSE 0 END) AS inProgress,
+              SUM(CASE WHEN s.status = 'not_started' THEN 1 ELSE 0 END) AS notStarted,
+              ROUND(AVG(s.completion_pct), 1) AS avgCompletionPct,
+              MAX(s.synced_at) AS syncedAt
+         FROM lms_learning_progress_snapshot s
+         JOIN employees e ON e.id = s.employee_id AND e.active_status = 1
+        WHERE ${scopeSql}
+        GROUP BY s.course_name
+        ORDER BY notStarted DESC, assignments DESC
+        LIMIT 50`,
+      params,
+    );
+    return {
+      metricCode: "TRAINING_PROGRESS",
+      records: (rows as any[]).map((r) => ({
+        courseName: r.courseName ?? "—",
+        assignments: Number(r.assignments),
+        learners: Number(r.learners),
+        completed: Number(r.completed),
+        inProgress: Number(r.inProgress),
+        notStarted: Number(r.notStarted),
+        avgCompletionPct: r.avgCompletionPct === null ? null : Number(r.avgCompletionPct),
+        syncedAt: r.syncedAt,
+      })),
+      totalCount: rows.length,
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
+// ─── LEAVE_APPROVALS: pending requests awaiting a decision ──────────────────
+async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT lr.id AS requestId,
+              e.employee_code AS employeeCode,
+              e.full_name AS employeeName,
+              b.branch_name AS branchName,
+              lt.leave_code AS leaveTypeCode,
+              lt.leave_name AS leaveTypeName,
+              lr.from_date AS fromDate,
+              lr.to_date AS toDate,
+              lr.total_days AS totalDays,
+              lr.applied_at AS appliedAt,
+              CASE WHEN lr.from_date < CURDATE() THEN 1 ELSE 0 END AS alreadyStarted,
+              DATEDIFF(CURDATE(), lr.from_date) AS ageDays,
+              lr.requires_branch_head_approval AS needsBranchHead
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+        WHERE lr.status = 'pending'
+          AND ${scopeSql}
+        ORDER BY lr.from_date ASC
+        LIMIT 100`,
+      params,
+    );
+    return {
+      metricCode: "LEAVE_APPROVALS",
+      records: (rows as any[]).map((r) => ({
+        requestId: r.requestId,
+        employeeCode: r.employeeCode,
+        employeeName: r.employeeName ?? "—",
+        branchName: r.branchName ?? "Unassigned",
+        leaveTypeCode: r.leaveTypeCode,
+        leaveTypeName: r.leaveTypeName,
+        fromDate: r.fromDate,
+        toDate: r.toDate,
+        totalDays: r.totalDays === null ? null : Number(r.totalDays),
+        appliedAt: r.appliedAt,
+        alreadyStarted: Boolean(r.alreadyStarted),
+        ageDays: Number(r.ageDays ?? 0),
+        needsBranchHead: Boolean(r.needsBranchHead),
       })),
       totalCount: rows.length,
     };

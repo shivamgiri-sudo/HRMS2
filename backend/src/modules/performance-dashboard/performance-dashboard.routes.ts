@@ -8,6 +8,11 @@ import type { RowDataPacket } from 'mysql2'
 import mysql from 'mysql2/promise'
 import { env } from '../../config/env.js'
 import { getUserRoleContext } from '../../shared/roleResolver.js'
+import {
+  buildScopeWhereEmployees,
+  narrowDashboardScope,
+  resolveDashboardScope,
+} from '../../shared/dashboardScope.js'
 import { logSourceFailure } from "../../shared/apiResponse.js"
 import { randomUUID } from "node:crypto"
 
@@ -48,7 +53,17 @@ const WIDE_SCOPE_ROLES = new Set(['super_admin', 'admin', 'ceo', 'coo', 'operati
 /**
  * Returns allowed employee_codes for the calling user.
  * Wide-scope roles return null (no restriction).
- * Other roles return codes filtered to their query-param branch/process.
+ *
+ * Scope is derived from the caller's own assignment, NOT from query parameters.
+ * Previously branchId/processId came straight off req.query, so a scoped role that
+ * simply omitted them fell through to `WHERE e.active_status = 1` and received the
+ * first 500 employees company-wide — the query string was the only thing standing
+ * between a process manager and org-wide performance data.
+ *
+ * Query params may now only NARROW the caller's own scope, via narrowDashboardScope,
+ * which validates the requested branch/process against what they are entitled to.
+ * The former LIMIT 500 is also gone: it silently truncated legitimately-scoped
+ * managers, producing wrong numbers rather than restricted ones.
  */
 async function getScopeFilter(req: AuthenticatedRequest): Promise<{ codes: string[] | null; branchId?: string; processId?: string }> {
   const userId = req.authUser!.id
@@ -56,21 +71,25 @@ async function getScopeFilter(req: AuthenticatedRequest): Promise<{ codes: strin
   if (ctx.isSuperAdmin || ctx.isHO || ctx.roleKeys.some(r => WIDE_SCOPE_ROLES.has(r))) {
     return { codes: null }
   }
-  // Read optional scope from query params (UI can pass branchId / processId)
-  const branchId = req.query.branchId ? String(req.query.branchId) : undefined
-  const processId = req.query.processId ? String(req.query.processId) : undefined
 
-  const whereParts: string[] = ['e.active_status = 1']
-  const params: unknown[] = []
-  if (branchId) { whereParts.push('e.branch_id = ?'); params.push(branchId) }
-  if (processId) { whereParts.push('e.process_id = ?'); params.push(processId) }
+  let scope
+  try {
+    scope = await resolveDashboardScope(userId, ctx.primaryRole)
+    scope = await narrowDashboardScope(scope, req.query.branchId as string | undefined, req.query.processId as string | undefined)
+  } catch {
+    // Unresolvable scope is fail-closed: no rows rather than everyone's rows.
+    return { codes: [] }
+  }
 
+  if (scope.level === 'ORG_ALL') return { codes: null }
+
+  const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, 'e')
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.employee_code FROM employees e WHERE ${whereParts.join(' AND ')} LIMIT 500`,
+    `SELECT e.employee_code FROM employees e WHERE e.active_status = 1 AND ${scopeSql}`,
     params
   )
   const codes = (rows as any[]).map((r: any) => String(r.employee_code)).filter(Boolean)
-  return { codes, branchId, processId }
+  return { codes, branchId: scope.branchIds[0], processId: scope.processIds[0] }
 }
 
 /**

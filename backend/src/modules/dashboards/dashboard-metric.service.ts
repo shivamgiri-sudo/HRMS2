@@ -8,6 +8,15 @@ import {
 } from "../../shared/dashboardScope.js";
 import { enrichMetric, type MetricEnrichment } from "./dashboard-target.service.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
+import {
+  HALF_DAY_STATUS,
+  LATEST_COMPLETE_ATTENDANCE_DATE_SQL,
+  LEAVE_STATUSES,
+  attendedDaysSql,
+  expectedToWorkSql,
+  presentSql,
+  statusList,
+} from "../../shared/attendanceStatus.js";
 import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
 
 // ─── Shared metric wrapper shape ──────────────────────────────────────────────
@@ -183,8 +192,18 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
       scopeParams
     );
 
+    // This subquery carried no scope predicate, so an org-wide OTP count leaked into
+    // every branch- and process-scoped dashboard. candidate_onboarding_profile has no
+    // branch/process column, so it is scoped the same way the bridge is — through the
+    // candidate's applied_for_* fields.
     const [otpRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS otp_verified FROM candidate_onboarding_profile WHERE otp_verified = 1`
+      `SELECT COUNT(*) AS otp_verified
+         FROM candidate_onboarding_profile cop
+         LEFT JOIN ats_candidate cand ON cand.id = cop.candidate_id
+         LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
+         LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
+        WHERE cop.otp_verified = 1 AND ${scopeSql}`,
+      scopeParams
     );
 
     const r = bridgeRows[0] as any;
@@ -223,60 +242,75 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       buildScopeWhereEmployees(scope, "e").params
     );
 
-    // Get processed attendance records for detailed breakdown
+    // Processed attendance trails real time: the most recent record_date routinely holds
+    // a handful of stray rows while the last complete day is one or two days back.
+    // Anchoring on today therefore reported ~0 present against several hundred actual.
+    // Anchor on the latest day that carries a usable number of records instead, and
+    // report which day that was so the tile can label itself.
+    const [dayRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} AS record_date`,
+    );
+    const anchorDate = (dayRows[0] as any)?.record_date ?? null;
+    if (!anchorDate) {
+      return wrapEnriched("ATTENDANCE", null, {}, "unknown", true,
+        scope.branchIds[0], scope.processIds[0], 0);
+    }
+
+    // Status vocabulary comes from shared/attendanceStatus.ts. Previously this counted
+    // attendance_status='late' (not an ENUM member — always 0), omitted week_off_worked
+    // from present, ignored half_day entirely, and left leave_approved inside the
+    // expected-to-work denominator.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         SUM(CASE WHEN attendance_status = 'present' THEN 1 ELSE 0 END) AS present,
+         ${presentSql()} AS present,
+         SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END) AS halfDay,
          SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
-         SUM(CASE WHEN attendance_status = 'late' THEN 1 ELSE 0 END) AS late,
-         SUM(CASE WHEN attendance_status IN ('missing_punch', 'missed_punch') THEN 1 ELSE 0 END) AS missedPunch,
+         SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late,
+         SUM(CASE WHEN attendance_status = 'missing_punch' THEN 1 ELSE 0 END) AS missedPunch,
+         SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS onLeave,
+         ${attendedDaysSql()} AS attended_days,
+         ${expectedToWorkSql()} AS expected_to_work,
          COUNT(*) AS total
        FROM attendance_daily_record
-       WHERE record_date = ${IST_DATE_EXPR} AND ${scopeSql}`,
-      scopeParams
-    );
-
-    // Get employees expected to work today (rostered, excluding leave/week-off)
-    const [expectedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS expected_to_work
-       FROM attendance_daily_record
-       WHERE record_date = ${IST_DATE_EXPR}
-         AND attendance_status NOT IN ('on_leave', 'leave', 'week_off', 'holiday')
-         AND ${scopeSql}`,
-      scopeParams
+       WHERE record_date = ? AND ${scopeSql}`,
+      [anchorDate, ...scopeParams]
     );
 
     const livePresent = Number((liveRows[0] as any)?.live_present ?? 0);
-    const expectedToWork = Number((expectedRows[0] as any)?.expected_to_work ?? 0);
 
     // Live and processed attendance are intentionally kept separate. The rate
     // uses only processed attendance numerator and denominator.
     const r = rows[0] as any;
-    const processedPresent = Number(r?.present ?? 0);
+    const present = Number(r?.present ?? 0);
+    const halfDay = Number(r?.halfDay ?? 0);
     const absent = Number(r?.absent ?? 0);
     const late = Number(r?.late ?? 0);
     const missedPunch = Number(r?.missedPunch ?? 0);
+    const onLeave = Number(r?.onLeave ?? 0);
+    const attendedDays = Number(r?.attended_days ?? 0);
+    const expectedToWork = Number(r?.expected_to_work ?? 0);
     const totalRecords = Number(r?.total ?? 0);
 
-    // Use live present count if available, otherwise use processed
-    const present = processedPresent;
-    // Denominator: employees expected to work (from attendance records, excluding leave/week-off)
-    // Fall back to total records if expected query returns 0
-    const denominator = expectedToWork > 0 ? expectedToWork : (totalRecords > 0 ? totalRecords : 0);
-    const attendanceRate = denominator > 0 ? Math.round((present / denominator) * 100) : null;
+    // Half days count as 0.5, matching the employee self dashboard exactly so the same
+    // person cannot see two different attendance percentages.
+    const denominator = expectedToWork > 0 ? expectedToWork : totalRecords;
+    const attendanceRate = denominator > 0 ? Math.round((attendedDays / denominator) * 100) : null;
 
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
 
     return wrapEnriched("ATTENDANCE", attendanceRate, {
       present,
+      halfDay,
       livePresent,
       absent,
       late,
       missedPunch,
+      onLeave,
       expectedToWork: denominator,
+      totalRecords,
       attendanceRate,
-    }, status, true, scope.branchIds[0], scope.processIds[0]);
+    }, status, true, scope.branchIds[0], scope.processIds[0], totalRecords);
   } catch (err) {
     return nullResult("ATTENDANCE", err);
   }
@@ -662,5 +696,484 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
     );
   } catch (err) {
     return nullResult("JOINING_DOC_ESIGN", err);
+  }
+}
+
+// ─── Attendance reconciliation exceptions ─────────────────────────────────────
+/**
+ * Open attendance reconciliation issues — the queue that blocks payroll.
+ *
+ * Column names verified against live `attendance_reconciliation_issue`: the date column
+ * is `issue_date` (there is no `created_at`), open-ness is `resolved_at IS NULL` (there
+ * is no `status`), and the buckets are `issue_type` + `severity`.
+ *
+ * 3,393 of 4,389 rows in a 30-day window carry an `employee_id` that resolves; the
+ * remaining 996 (mostly `unmapped_cosec_user`, which by definition has no employee yet)
+ * cannot be scoped to a branch. Those are counted in `unscopeable` and excluded from a
+ * scoped viewer's totals rather than leaked org-wide.
+ */
+export async function getAttendanceExceptionMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "emp.branch_id", "emp.process_id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS source_rows,
+         SUM(CASE WHEN ari.resolved_at IS NULL THEN 1 ELSE 0 END) AS open_total,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.severity = 'blocker' THEN 1 ELSE 0 END) AS blockers,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.severity = 'warning' THEN 1 ELSE 0 END) AS warnings,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'missing_adr' THEN 1 ELSE 0 END) AS missingAdr,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'salary_payable_days_mismatch' THEN 1 ELSE 0 END) AS payableMismatch,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'unmapped_cosec_user' THEN 1 ELSE 0 END) AS unmappedCosec,
+         SUM(CASE WHEN ari.resolved_at IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
+         SUM(CASE WHEN ari.employee_id IS NULL THEN 1 ELSE 0 END) AS unscopeable
+       FROM attendance_reconciliation_issue ari
+       LEFT JOIN employees emp ON emp.id = ari.employee_id
+       WHERE ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         AND ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const blockers = Number(r.blockers ?? 0);
+    const openTotal = Number(r.open_total ?? 0);
+    const payableMismatch = Number(r.payableMismatch ?? 0);
+
+    // A payable-days mismatch stops a payroll run, so any open blocker is critical.
+    const status: MetricResult["status"] =
+      blockers > 0 ? "critical" : openTotal > 50 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "ATTENDANCE_EXCEPTIONS",
+      openTotal,
+      {
+        openTotal,
+        blockers,
+        warnings: Number(r.warnings ?? 0),
+        missingAdr: Number(r.missingAdr ?? 0),
+        payableMismatch,
+        unmappedCosec: Number(r.unmappedCosec ?? 0),
+        resolved: Number(r.resolved ?? 0),
+        unscopeable: Number(r.unscopeable ?? 0),
+      },
+      status,
+      false,
+      scope.branchIds[0],
+      scope.processIds[0],
+      Number(r.source_rows ?? 0),
+    );
+  } catch (err) {
+    return nullResult("ATTENDANCE_EXCEPTIONS", err);
+  }
+}
+
+// ─── Document compliance ──────────────────────────────────────────────────────
+/**
+ * Document verification backlog for **active** employees only.
+ *
+ * `employee_documents` holds 207,616 rows across 22,672 employees, but only 1,344 of
+ * those employees are active — the rest is historical debt that never reaches zero. This
+ * counts the active population, which is the number an HR user can work down.
+ *
+ * Real column names: `verified` (tinyint), `expiry_date`, `verification_date`. There is
+ * no `verification_status`.
+ *
+ * `expiry_date` is 0% populated for active employees, so expiry is deliberately NOT part
+ * of this metric — an "expiring documents" figure would be a permanent, misleading zero.
+ * The headline is instead the count of active employees with no document on file at all
+ * (1,084 of 1,344), which is the real compliance signal.
+ */
+export async function getDocumentComplianceMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS activeEmployees,
+         SUM(CASE WHEN d.doc_count IS NULL THEN 1 ELSE 0 END) AS employeesWithNoDocs,
+         SUM(CASE WHEN d.doc_count IS NOT NULL THEN 1 ELSE 0 END) AS employeesWithDocs,
+         COALESCE(SUM(d.doc_count), 0) AS totalDocs,
+         COALESCE(SUM(d.verified_count), 0) AS verifiedDocs,
+         COALESCE(SUM(d.doc_count - d.verified_count), 0) AS unverifiedDocs
+       FROM employees e
+       LEFT JOIN (
+         SELECT employee_id,
+                COUNT(*) AS doc_count,
+                SUM(CASE WHEN verified = 1 THEN 1 ELSE 0 END) AS verified_count
+           FROM employee_documents
+          GROUP BY employee_id
+       ) d ON d.employee_id = e.id
+       WHERE e.active_status = 1
+         AND ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const activeEmployees = Number(r.activeEmployees ?? 0);
+    const employeesWithNoDocs = Number(r.employeesWithNoDocs ?? 0);
+    const unverifiedDocs = Number(r.unverifiedDocs ?? 0);
+    const coveragePct = activeEmployees > 0
+      ? Math.round(((activeEmployees - employeesWithNoDocs) / activeEmployees) * 1000) / 10
+      : null;
+
+    const status: MetricResult["status"] =
+      coveragePct === null ? "unknown" : coveragePct < 50 ? "critical" : coveragePct < 90 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "DOC_COMPLIANCE",
+      employeesWithNoDocs,
+      {
+        activeEmployees,
+        employeesWithNoDocs,
+        employeesWithDocs: Number(r.employeesWithDocs ?? 0),
+        totalDocs: Number(r.totalDocs ?? 0),
+        verifiedDocs: Number(r.verifiedDocs ?? 0),
+        unverifiedDocs,
+        coveragePct,
+      },
+      status,
+      false,
+      scope.branchIds[0],
+      scope.processIds[0],
+      activeEmployees,
+    );
+  } catch (err) {
+    return nullResult("DOC_COMPLIANCE", err);
+  }
+}
+
+// ─── Biometric activity ───────────────────────────────────────────────────────
+/**
+ * Biometric punch activity from `integration_biometric_daily`.
+ *
+ * Uses this table, not `cosec_punch_sync`: that holds 3.19M rows but its last write was
+ * 2026-06-18, so a "live punches" tile over it would present six-week-old data as today's.
+ *
+ * Anchored on the latest date strictly before today. Today's partial day reads 1.54
+ * average hours at 15:00 against 10.34 for the completed day before it, so anchoring on
+ * MAX(activity_date) would make every afternoon look like a mass early-departure.
+ *
+ * Real columns: `employee_code` (not employee_id), `activity_date` (not attendance_date),
+ * `first_punch`, `last_punch`, `total_punches`, `biometric_minutes`.
+ */
+export async function getBiometricActivityMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS source_rows,
+         COUNT(DISTINCT b.employee_code) AS employees,
+         SUM(CASE WHEN b.total_punches >= 2 THEN 1 ELSE 0 END) AS completePunchPairs,
+         SUM(CASE WHEN b.total_punches = 1 THEN 1 ELSE 0 END) AS singlePunchOnly,
+         ROUND(AVG(b.biometric_minutes) / 60, 2) AS avgHours,
+         ROUND(AVG(b.total_punches), 1) AS avgPunches,
+         MAX(b.activity_date) AS activityDate
+       FROM integration_biometric_daily b
+       JOIN employees e ON e.employee_code = b.employee_code
+       WHERE b.activity_date = (
+               SELECT MAX(activity_date) FROM integration_biometric_daily
+                WHERE activity_date < CURDATE()
+             )
+         AND e.active_status = 1
+         AND ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const employees = Number(r.employees ?? 0);
+    const singlePunchOnly = Number(r.singlePunchOnly ?? 0);
+    const completePunchPairs = Number(r.completePunchPairs ?? 0);
+
+    // A single punch means no out-punch was captured, which becomes an attendance
+    // exception downstream — so a high share of them is the signal worth surfacing.
+    const singlePunchPct = employees > 0 ? Math.round((singlePunchOnly / employees) * 1000) / 10 : null;
+    const status: MetricResult["status"] =
+      singlePunchPct === null ? "unknown" : singlePunchPct > 25 ? "critical" : singlePunchPct > 10 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "BIOMETRIC_ACTIVITY",
+      employees,
+      {
+        employees,
+        completePunchPairs,
+        singlePunchOnly,
+        singlePunchPct,
+        avgHours: r.avgHours === null ? null : Number(r.avgHours),
+        avgPunches: r.avgPunches === null ? null : Number(r.avgPunches),
+      },
+      status,
+      true,
+      scope.branchIds[0],
+      scope.processIds[0],
+      Number(r.source_rows ?? 0),
+    );
+  } catch (err) {
+    return nullResult("BIOMETRIC_ACTIVITY", err);
+  }
+}
+
+// ─── Salary component breakdown ───────────────────────────────────────────────
+/**
+ * Component-level split of the most recent payroll run.
+ *
+ * The payroll dashboard shows gross, net and total deductions but never which components
+ * make them up. Anchored on the newest run by (run_month, created_at) so it tracks the
+ * run the rest of the payroll panel describes.
+ */
+export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS source_rows,
+         COUNT(DISTINCT c.component_code) AS componentCodes,
+         COUNT(DISTINCT c.employee_id) AS employees,
+         SUM(CASE WHEN c.component_type = 'earning' THEN 1 ELSE 0 END) AS earningLines,
+         SUM(CASE WHEN c.component_type = 'deduction' THEN 1 ELSE 0 END) AS deductionLines,
+         ROUND(SUM(CASE WHEN c.component_type = 'earning' THEN c.amount ELSE 0 END), 2) AS earningTotal,
+         ROUND(SUM(CASE WHEN c.component_type = 'deduction' THEN c.amount ELSE 0 END), 2) AS deductionTotal,
+         SUM(CASE WHEN c.taxable = 1 THEN 1 ELSE 0 END) AS taxableLines
+       FROM salary_prep_line_component c
+       JOIN employees e ON e.id = c.employee_id
+       WHERE c.run_id = (
+               SELECT id FROM salary_prep_run ORDER BY run_month DESC, created_at DESC LIMIT 1
+             )
+         AND ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const componentCodes = Number(r.componentCodes ?? 0);
+    const earningTotal = Number(r.earningTotal ?? 0);
+    const deductionTotal = Number(r.deductionTotal ?? 0);
+
+    // Deductions exceeding earnings on a run is arithmetically impossible for a payable
+    // register and indicates a component-mapping fault, so it is surfaced, not smoothed.
+    const status: MetricResult["status"] =
+      componentCodes === 0 ? "unknown" : deductionTotal > earningTotal ? "critical" : "ok";
+
+    return wrapEnriched(
+      "SALARY_COMPONENTS",
+      componentCodes,
+      {
+        componentCodes,
+        employees: Number(r.employees ?? 0),
+        earningLines: Number(r.earningLines ?? 0),
+        deductionLines: Number(r.deductionLines ?? 0),
+        earningTotal,
+        deductionTotal,
+        taxableLines: Number(r.taxableLines ?? 0),
+      },
+      status,
+      true,
+      scope.branchIds[0],
+      scope.processIds[0],
+      Number(r.source_rows ?? 0),
+    );
+  } catch (err) {
+    return nullResult("SALARY_COMPONENTS", err);
+  }
+}
+
+// ─── Recruiter hiring activity ────────────────────────────────────────────────
+/**
+ * Recruiter funnel over the last 30 days from `ats_recruiter_hiring_activity`.
+ *
+ * Scope routes through `branch_name` / `process_name`, joined to the masters by name —
+ * NOT through a recruiter FK. `recruiter_employee_id`, `recruiter_id` and
+ * `recruiter_code` are each populated on only 10 of 16,857 rows, so scoping or grouping
+ * by them would silently discard 99.94% of the data. `recruiter_name_snapshot` is 100%
+ * populated (15 distinct recruiters) and is what the drilldown groups by; it is a
+ * denormalised name, not a foreign key, so it identifies but cannot be scoped.
+ *
+ * `offer_letter_status` is 100% NULL in this window, so offers are not reported at all
+ * rather than shown as a permanent zero.
+ */
+export async function getRecruiterActivityMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS source_rows,
+         COUNT(DISTINCT r.recruiter_name_snapshot) AS recruiters,
+         SUM(CASE WHEN r.contacted_flag = 1 THEN 1 ELSE 0 END) AS contacted,
+         SUM(CASE WHEN r.walkin_flag = 1 THEN 1 ELSE 0 END) AS walkins,
+         SUM(CASE WHEN r.hr_interview_status IS NOT NULL AND r.hr_interview_status <> '' THEN 1 ELSE 0 END) AS hrScreened,
+         SUM(CASE WHEN r.final_selection_flag = 1 THEN 1 ELSE 0 END) AS selected,
+         SUM(CASE WHEN r.joined_flag = 1 THEN 1 ELSE 0 END) AS joined,
+         MAX(r.activity_date) AS latestActivity
+       FROM ats_recruiter_hiring_activity r
+       LEFT JOIN branch_master bm ON bm.branch_name = r.branch_name
+       LEFT JOIN process_master pm ON pm.process_name = r.process_name
+       WHERE r.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         AND ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const leads = Number(r.source_rows ?? 0);
+    const selected = Number(r.selected ?? 0);
+    const joined = Number(r.joined ?? 0);
+    const conversionPct = selected > 0 ? Math.round((joined / selected) * 1000) / 10 : null;
+
+    const status: MetricResult["status"] =
+      leads === 0 ? "unknown" : selected === 0 ? "critical" : conversionPct !== null && conversionPct < 20 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "RECRUITER_ACTIVITY",
+      leads,
+      {
+        leads,
+        recruiters: Number(r.recruiters ?? 0),
+        contacted: Number(r.contacted ?? 0),
+        walkins: Number(r.walkins ?? 0),
+        hrScreened: Number(r.hrScreened ?? 0),
+        selected,
+        joined,
+        conversionPct,
+      },
+      status,
+      true,
+      scope.branchIds[0],
+      scope.processIds[0],
+      leads,
+    );
+  } catch (err) {
+    return nullResult("RECRUITER_ACTIVITY", err);
+  }
+}
+
+// ─── Training progress ────────────────────────────────────────────────────────
+/**
+ * Learning progress from `lms_learning_progress_snapshot`.
+ *
+ * This is the synced copy already inside `mas_hrms`, which is what CLAUDE.md's LMS
+ * boundary requires — the deployed LMS stays the system of record and is never queried
+ * here. 151k rows, last synced today.
+ *
+ * The snapshot covers 264 employees, of whom 214 resolve to an active employee. The
+ * remainder are leavers whose history is retained; they are excluded by the active join
+ * so a branch-scoped viewer's numbers reconcile with their own headcount.
+ */
+export async function getTrainingProgressMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS source_rows,
+         COUNT(DISTINCT s.employee_id) AS learners,
+         COUNT(DISTINCT s.course_id) AS courses,
+         SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+         SUM(CASE WHEN s.status = 'in_progress' THEN 1 ELSE 0 END) AS inProgress,
+         SUM(CASE WHEN s.status = 'not_started' THEN 1 ELSE 0 END) AS notStarted,
+         ROUND(AVG(s.completion_pct), 1) AS avgCompletionPct,
+         ROUND(AVG(NULLIF(s.score, 0)), 1) AS avgScore
+       FROM lms_learning_progress_snapshot s
+       JOIN employees e ON e.id = s.employee_id AND e.active_status = 1
+       WHERE ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const total = Number(r.source_rows ?? 0);
+    const completed = Number(r.completed ?? 0);
+    const notStarted = Number(r.notStarted ?? 0);
+    const completionRate = total > 0 ? Math.round((completed / total) * 1000) / 10 : null;
+
+    const status: MetricResult["status"] =
+      completionRate === null ? "unknown" : completionRate < 40 ? "critical" : completionRate < 70 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "TRAINING_PROGRESS",
+      completionRate,
+      {
+        assignments: total,
+        learners: Number(r.learners ?? 0),
+        courses: Number(r.courses ?? 0),
+        completed,
+        inProgress: Number(r.inProgress ?? 0),
+        notStarted,
+        avgCompletionPct: r.avgCompletionPct === null ? null : Number(r.avgCompletionPct),
+        avgScore: r.avgScore === null ? null : Number(r.avgScore),
+      },
+      status,
+      true,
+      scope.branchIds[0],
+      scope.processIds[0],
+      total,
+    );
+  } catch (err) {
+    return nullResult("TRAINING_PROGRESS", err);
+  }
+}
+
+// ─── Leave approvals ──────────────────────────────────────────────────────────
+/**
+ * Pending leave approvals.
+ *
+ * Deliberately modest: `leave_request` holds 2,678 rows but only 29 are pending, and
+ * once restricted to active employees that is 14 — all of which have a start date
+ * already in the past. A small number an approver can clear, not a headline.
+ *
+ * `oldestPendingDays` is reported because those 14 requests date from 2018: they are a
+ * legacy import backlog, not live approvals, and a bare "14 pending" would read as
+ * today's queue. The age makes the difference visible on the tile.
+ *
+ * Leave type resolves through `leave_type_master` (sourced by sql/006_leave.sql) rather
+ * than `leave_request.leave_type_code`: that column is 0% populated and is defined only
+ * in 064_leave_legacy_sync.sql, which 000_run_all.sql does not source because another
+ * file shares its 064 prefix.
+ */
+export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<MetricResult> {
+  try {
+    const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS source_rows,
+         SUM(CASE WHEN lr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.from_date < CURDATE() THEN 1 ELSE 0 END) AS pendingAlreadyStarted,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.requires_branch_head_approval = 1 THEN 1 ELSE 0 END) AS needsBranchHead,
+         SUM(CASE WHEN lr.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+         SUM(CASE WHEN lr.status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+         MAX(CASE WHEN lr.status = 'pending' THEN DATEDIFF(CURDATE(), lr.from_date) END) AS oldestPendingDays
+       FROM leave_request lr
+       JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
+       WHERE ${scopeSql}`,
+      scopeParams,
+    );
+
+    const r = rows[0] as any;
+    const pending = Number(r.pending ?? 0);
+    const pendingAlreadyStarted = Number(r.pendingAlreadyStarted ?? 0);
+
+    // A leave request whose start date has already passed cannot be approved in time,
+    // so it is the urgent case regardless of how small the queue is.
+    const status: MetricResult["status"] =
+      pendingAlreadyStarted > 0 ? "critical" : pending > 20 ? "warn" : "ok";
+
+    return wrapEnriched(
+      "LEAVE_APPROVALS",
+      pending,
+      {
+        pending,
+        pendingAlreadyStarted,
+        needsBranchHead: Number(r.needsBranchHead ?? 0),
+        approved: Number(r.approved ?? 0),
+        rejected: Number(r.rejected ?? 0),
+        oldestPendingDays: r.oldestPendingDays === null ? null : Number(r.oldestPendingDays),
+      },
+      status,
+      false,
+      scope.branchIds[0],
+      scope.processIds[0],
+      Number(r.source_rows ?? 0),
+    );
+  } catch (err) {
+    return nullResult("LEAVE_APPROVALS", err);
   }
 }

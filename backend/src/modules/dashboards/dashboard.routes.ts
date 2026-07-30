@@ -15,8 +15,18 @@ import {
   type DashboardCode,
 } from "../../shared/dashboardAccessRegistry.js";
 import { getDrilldown } from "./dashboard-drilldown.service.js";
+import { getUnifiedInboxSummary } from "../work-inbox/work-inbox.service.js";
 import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashboard-definition.service.js";
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
+import {
+  HALF_DAY_STATUS,
+  LEAVE_STATUSES,
+  NON_WORKING_STATUSES,
+  attendedDaysSql,
+  expectedToWorkSql,
+  presentSql,
+  statusList,
+} from "../../shared/attendanceStatus.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -91,19 +101,20 @@ router.get("/employee/summary", requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD")
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
+    // Status vocabulary is shared with the org-wide ATTENDANCE metric via
+    // shared/attendanceStatus.ts so this employee's percentage here and on the
+    // CEO/WFM dashboards are computed identically.
     `SELECT
-       SUM(CASE WHEN attendance_status IN ('present','week_off_worked') THEN 1 ELSE 0 END) AS present,
-       SUM(CASE WHEN attendance_status = 'half_day' THEN 1 ELSE 0 END) AS half_day,
+       ${presentSql()} AS present,
+       SUM(CASE WHEN attendance_status = '${HALF_DAY_STATUS}' THEN 1 ELSE 0 END) AS half_day,
        SUM(CASE WHEN attendance_status = 'absent' THEN 1 ELSE 0 END) AS absent,
        SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS late,
        SUM(CASE WHEN attendance_status = 'missing_punch' THEN 1 ELSE 0 END) AS missed_punch,
-       SUM(CASE WHEN attendance_status IN ('on_leave','leave','leave_approved') THEN 1 ELSE 0 END) AS on_leave,
-       COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off') THEN 1 END) AS total_working_days,
-       COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off','on_leave','leave','leave_approved') THEN 1 END) AS expected_to_work,
+       SUM(CASE WHEN attendance_status IN (${statusList(LEAVE_STATUSES)}) THEN 1 ELSE 0 END) AS on_leave,
+       COUNT(CASE WHEN attendance_status NOT IN (${statusList(NON_WORKING_STATUSES)}) THEN 1 END) AS total_working_days,
+       ${expectedToWorkSql()} AS expected_to_work,
        ROUND(
-         (SUM(CASE WHEN attendance_status IN ('present','week_off_worked') THEN 1 ELSE 0 END)
-          + SUM(CASE WHEN attendance_status = 'half_day' THEN 0.5 ELSE 0 END))
-         / NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('holiday','week_off','on_leave','leave','leave_approved') THEN 1 END), 0) * 100,
+         ${attendedDaysSql()} / NULLIF(${expectedToWorkSql()}, 0) * 100,
          1
        ) AS attendance_pct
      FROM attendance_daily_record
@@ -238,19 +249,15 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
   const { user, context, scope } = await requestedScope(req);
-  const [workItems] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS pending_count,
-            SUM(CASE WHEN due_at < NOW() AND status = 'pending' THEN 1 ELSE 0 END) AS overdue_count
-       FROM work_item
-      WHERE (assigned_to_user_id = ? OR assigned_to_role = ?) AND status = 'pending'`,
-    [user.id, context.primaryRole],
-  );
+  // Unions work_item with work_inbox_item. Reading work_item alone showed an empty
+  // inbox on all 12 dashboards while 65k live rows sat in the other table.
+  const workItems = await getUnifiedInboxSummary(user.id, context.roleKeys);
 
   const generatedAt = new Date();
   const data = dashboardSummarySchema.parse({
     dashboardCode,
     scope,
-    workItems: workItems[0],
+    workItems,
     metrics: await executeDashboardMetrics(dashboardCode, scope, generatedAt),
     generatedAt: generatedAt.toISOString(),
   });
@@ -286,16 +293,25 @@ router.get("/:dashboardCode/metrics", h(async (req: AuthenticatedRequest, res: a
 
 router.get("/:dashboardCode/good-bad-insights", h(async (req: AuthenticatedRequest, res: any) => {
   const context = await getUserRoleContext(req.authUser!.id);
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT item_type, priority, COUNT(*) AS count, SUM(CASE WHEN due_at < NOW() THEN 1 ELSE 0 END) AS overdue
-       FROM work_item
-      WHERE (assigned_to_user_id = ? OR assigned_to_role = ?) AND status = 'pending'
-      GROUP BY item_type, priority`,
-    [req.authUser!.id, context.primaryRole],
-  );
-  const good = (rows as any[]).filter((row) => Number(row.overdue) === 0);
-  const bad = (rows as any[]).filter((row) => Number(row.overdue) > 0);
-  return res.json({ success: true, data: { good: { count: good.reduce((sum, row) => sum + Number(row.count), 0), items: good }, bad: { count: bad.reduce((sum, row) => sum + Number(row.count), 0), items: bad } } });
+  // Reads the union, not work_item alone. Splitting on `overdue` alone put every
+  // work_inbox_item row in "good" regardless of urgency, because that table has no
+  // due date — an urgent SLA breach is a bad signal whether or not a deadline exists.
+  const inbox = await getUnifiedInboxSummary(req.authUser!.id, context.roleKeys);
+  const isBad = (row: { priority: string }) =>
+    row.priority === "urgent" || row.priority === "critical" || row.priority === "high";
+  const bad = inbox.by_type.filter(isBad);
+  const good = inbox.by_type.filter((row) => !isBad(row));
+  const total = (rows: typeof inbox.by_type) => rows.reduce((sum, row) => sum + row.count, 0);
+  return res.json({
+    success: true,
+    data: {
+      good: { count: total(good), items: good },
+      bad: { count: total(bad), items: bad },
+      overdueCount: inbox.overdue_count,
+      agedCount: inbox.aged_count,
+      bySource: inbox.by_source,
+    },
+  });
 }));
 
 router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: AuthenticatedRequest, res: any) => {
@@ -309,18 +325,54 @@ router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: Authent
 router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
   requireDashboardMetric(dashboardCode, req.params.metricCode);
-  const { context, scope } = await requestedScope(req);
-  const scoped = buildScopeWhere(scope, "branch_id", "process_id");
+  const { scope } = await requestedScope(req);
+
+  // dashboard_metric_snapshot stores (metric_code, scope_type, scope_id, snapshot_date,
+  // value, previous_value, trend). The previous query selected `metric_value` and
+  // `metric_status` and filtered on `dashboard_code`, `role_code`, `branch_id` and
+  // `process_id` — six columns the table has never had — so this endpoint returned
+  // HTTP 500 for every metric on every dashboard rather than an empty series.
+  const scopeParts: string[] = [];
+  const scopeParams: unknown[] = [];
+  if (scope.level === "BRANCH_ALL" && scope.branchIds.length > 0) {
+    scopeParts.push(`scope_type = 'BRANCH'`, `scope_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.branchIds);
+  } else if (scope.level === "PROCESS_ALL" && scope.processIds.length > 0) {
+    scopeParts.push(`scope_type = 'PROCESS'`, `scope_id IN (${scope.processIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.processIds);
+  } else if (scope.level === "ORG_ALL") {
+    scopeParts.push(`scope_type = 'ORG'`);
+  } else {
+    // A scope this table cannot express (TEAM_ONLY, SELF_ONLY, CUSTOM) must return
+    // nothing rather than fall through to org-wide history.
+    scopeParts.push("1 = 0");
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT snapshot_date AS snapshotDate, metric_value AS value, metric_status AS status
+    `SELECT snapshot_date AS snapshotDate, value, previous_value AS previousValue, trend
        FROM dashboard_metric_snapshot
-      WHERE dashboard_code = ? AND metric_code = ? AND role_code = ?
+      WHERE metric_code = ?
         AND snapshot_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        AND ${scoped.sql}
+        AND ${scopeParts.join(" AND ")}
       ORDER BY snapshot_date ASC`,
-    [req.params.dashboardCode, req.params.metricCode, context.primaryRole, ...scoped.params],
+    [req.params.metricCode, ...scopeParams],
   );
-  return res.json({ success: true, data: { metricCode: req.params.metricCode, dashboardCode: req.params.dashboardCode, points: rows, periodDays: 30 } });
+
+  return res.json({
+    success: true,
+    data: {
+      metricCode: req.params.metricCode,
+      dashboardCode: req.params.dashboardCode,
+      points: rows,
+      periodDays: 30,
+      // The snapshot table is never written to — no job populates it — so an empty
+      // series here is expected until a snapshot writer exists. Stated rather than
+      // rendered as a flat zero line.
+      ...(rows.length === 0
+        ? { unavailableSources: { trend: "No metric snapshots have been recorded yet" } }
+        : {}),
+    },
+  });
 }));
 
 router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: any) => {
@@ -352,17 +404,48 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
 
 router.get("/:dashboardCode/root-causes", h(async (req: AuthenticatedRequest, res: any) => {
   const { scope } = await requestedScope(req);
-  const scoped = buildScopeWhere(scope, "b.branch_id", "b.process_id");
+  // This query shipped six columns that exist on neither table: b.bridge_status,
+  // b.branch_id, b.process_id, b.updated_at, c.first_name and c.last_name. It threw
+  // ER_BAD_FIELD_ERROR on every call, so the root-cause panel was empty on all 12
+  // dashboards. Real names: ats_onboarding_bridge.status (no updated_at — bridge_date
+  // and created_at are the only dates) and ats_candidate.full_name.
+  //
+  // The bridge has no branch/process columns either, so scope routes through
+  // ats_candidate.applied_for_branch / applied_for_process, which hold NAMES and must
+  // be joined to the masters by name — the same route the ONBOARDING metric uses.
+  // 259 of 266 open rows resolve a branch this way; 148 resolve a process.
+  const scoped = buildScopeWhere(scope, "bm.id", "pm.id");
   const [onboarding] = await db.execute<RowDataPacket[]>(
-    `SELECT b.id AS entityId, CONCAT(c.first_name, ' ', COALESCE(c.last_name,'')) AS label, b.bridge_status AS detail
+    `SELECT b.id AS entityId,
+            c.full_name AS label,
+            b.status AS detail,
+            DATEDIFF(CURDATE(), COALESCE(b.bridge_date, DATE(b.created_at))) AS ageDays
        FROM ats_onboarding_bridge b
        LEFT JOIN ats_candidate c ON c.id = b.candidate_id
-      WHERE (b.bridge_status = 'stuck' OR (b.bridge_status IN ('pending','in_progress') AND b.updated_at < DATE_SUB(NOW(), INTERVAL 3 DAY)))
+       LEFT JOIN branch_master bm ON bm.branch_name = c.applied_for_branch
+       LEFT JOIN process_master pm ON pm.process_name = c.applied_for_process
+      WHERE b.status IN ('pending', 'in_progress', 'stuck', 'initiated')
+        AND COALESCE(b.bridge_date, DATE(b.created_at)) < DATE_SUB(CURDATE(), INTERVAL 3 DAY)
         AND ${scoped.sql}
-      ORDER BY b.updated_at ASC LIMIT 3`,
+      ORDER BY COALESCE(b.bridge_date, DATE(b.created_at)) ASC
+      LIMIT 5`,
     scoped.params,
   );
-  return res.json({ success: true, data: { rootCauses: (onboarding as any[]).map((row) => ({ domain: "ONBOARDING", label: row.label, entityId: row.entityId, count: 1, severity: "warn", detail: row.detail })), generatedAt: new Date().toISOString() } });
+  return res.json({
+    success: true,
+    data: {
+      rootCauses: (onboarding as any[]).map((row) => ({
+        domain: "ONBOARDING",
+        label: row.label ?? "Unnamed candidate",
+        entityId: row.entityId,
+        count: 1,
+        severity: Number(row.ageDays) >= 14 ? "critical" : "warn",
+        detail: `${row.detail} for ${Number(row.ageDays)} days`,
+        drilldownUrl: `/ats/onboarding-bridge?id=${row.entityId}`,
+      })),
+      generatedAt: new Date().toISOString(),
+    },
+  });
 }));
 
 router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRequest, res: any) => {
@@ -380,7 +463,51 @@ router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRe
       ORDER BY overdue DESC, pending DESC`,
     [req.authUser!.id, context.primaryRole],
   );
-  return res.json({ success: true, data: { accountability: (rows as any[]).map((row) => ({ ...row, total: Number(row.total), pending: Number(row.pending), overdue: Number(row.overdue), completed: Number(row.completed), completionRate: Number(row.total) > 0 ? Math.round(Number(row.completed) / Number(row.total) * 100) : 0 })), generatedAt: new Date().toISOString() } });
+  // work_inbox_item is addressed per-user, not per-role, so it cannot be grouped by
+  // assigned_to_role above. The viewer's own open items are attributed to their primary
+  // role here rather than left out, which is what made this panel read as all-clear.
+  const [inboxOwn] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN is_actioned = 0 THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN is_actioned = 1 THEN 1 ELSE 0 END) AS completed
+       FROM work_inbox_item WHERE user_id = ?`,
+    [req.authUser!.id],
+  );
+
+  const accountability = (rows as any[]).map((row) => ({
+    ...row,
+    total: Number(row.total),
+    pending: Number(row.pending),
+    overdue: Number(row.overdue),
+    completed: Number(row.completed),
+    completionRate: Number(row.total) > 0 ? Math.round(Number(row.completed) / Number(row.total) * 100) : 0,
+  }));
+
+  const own = (inboxOwn as RowDataPacket[])[0];
+  if (own && Number(own.total) > 0) {
+    const existing = accountability.find((row) => row.role === context.primaryRole);
+    const total = Number(own.total);
+    const pending = Number(own.pending);
+    const completed = Number(own.completed);
+    if (existing) {
+      existing.total += total;
+      existing.pending += pending;
+      existing.completed += completed;
+      existing.completionRate = existing.total > 0 ? Math.round(existing.completed / existing.total * 100) : 0;
+    } else {
+      accountability.push({
+        role: context.primaryRole,
+        total, pending, completed,
+        // No due date exists on work_inbox_item, so overdue stays 0 rather than
+        // being inferred from age.
+        overdue: 0,
+        completionRate: total > 0 ? Math.round(completed / total * 100) : 0,
+      });
+    }
+    accountability.sort((a, b) => b.overdue - a.overdue || b.pending - a.pending);
+  }
+
+  return res.json({ success: true, data: { accountability, generatedAt: new Date().toISOString() } });
 }));
 
 export { router as dashboardRouter };

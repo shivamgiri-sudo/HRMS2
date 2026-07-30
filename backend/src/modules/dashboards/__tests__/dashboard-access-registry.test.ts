@@ -38,18 +38,30 @@ describe("dashboard access registry", () => {
   });
 
   it("matches the complete production role-dashboard matrix", () => {
+    // Realigned to workforce_role_catalog (see workforceRoleCatalog.ts). Previously
+    // `admin` expected [] — 8 real users held that role and could open nothing, while
+    // role_page_access granted them the self dashboard. Administrative roles now reach
+    // the self dashboard and nothing privileged.
     const expected: Record<string, string[]> = {
-      admin: [],
+      admin: ["EMPLOYEE_SELF_DASHBOARD"],
+      trainer: ["EMPLOYEE_SELF_DASHBOARD"],
+      branch_admin: ["EMPLOYEE_SELF_DASHBOARD"],
+      interviewer: ["EMPLOYEE_SELF_DASHBOARD"],
       super_admin: Object.keys(DASHBOARD_ACCESS_REGISTRY),
-      ceo: ["CEO_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      ceo: ["CEO_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       hr: ["HR_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       wfm: ["WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       payroll: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      qa: ["QUALITY_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      qa: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       operations_manager: ["WFM_ATTENDANCE_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       recruiter: ["RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       it: ["IT_MANAGER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      manager: ["MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      it_head: ["IT_MANAGER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      tq_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      finance_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      accounts_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      branch_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      manager: ["OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       employee: ["EMPLOYEE_SELF_DASHBOARD"],
     };
 

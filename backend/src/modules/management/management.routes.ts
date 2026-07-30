@@ -8,11 +8,25 @@ import { managementService } from "./management.service.js";
 import { db } from "../../db/mysql.js";
 import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
+
+/**
+ * Whether the caller may see salary, PF/ESIC and payroll cost figures.
+ *
+ * Several endpoints here returned company-wide payroll totals to any role on their
+ * `requireRole` list — which included `hr`, `manager`, `branch_head` and
+ * `process_manager`, none of which are in PAYROLL_ROLES. CLAUDE.md is explicit that
+ * payroll/salary data must never surface through management endpoints, so financial
+ * fields are now nulled per-caller rather than the routes being removed.
+ */
+async function callerHasPayrollAccess(userId: string): Promise<boolean> {
+  return hasRole(userId, ...(PAYROLL_ROLES as string[]));
+}
 
 /**
  * Resolve scoped employee ID list for non-admin/hr roles.
@@ -196,6 +210,19 @@ router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", 
 router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const data = await managementService.getCeoMetrics();
+
+    // `hr` is on this route's role list but is NOT in PAYROLL_ROLES, so it was
+    // receiving total_gross / total_net / PF / ESIC liability. Strip the financial
+    // block for callers without payroll entitlement instead of removing the route.
+    const PAYROLL_ONLY_FIELDS = ["payroll_liability", "ff_liability"] as const;
+    if (!(await callerHasPayrollAccess(_req.authUser!.id))) {
+      const redacted = { ...(data as Record<string, unknown>) };
+      for (const key of PAYROLL_ONLY_FIELDS) {
+        if (key in redacted) redacted[key] = null;
+      }
+      return res.json({ success: true, data: redacted, restricted: [...PAYROLL_ONLY_FIELDS] });
+    }
+
     res.json({ success: true, data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to load CEO metrics";
@@ -244,14 +271,28 @@ router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head"
          AND e.active_status = 1 ${empClause}`,
       empParams
     ),
-    // Last approved payroll cost
+    // Last approved payroll cost.
+    // Previously this read salary_prep_run.total_gross with no employee clause, so a
+    // manager or branch_head scoped to a handful of reports received the entire
+    // company's payroll total as their "monthly cost". Summing the run's LINES with
+    // the same scope filter as every other query here keeps it to the caller's people.
     db.execute<any[]>(
-      `SELECT COALESCE(total_gross, 0) AS total_gross
-       FROM salary_prep_run
-       WHERE status IN ('approved','processing','FINALIZED')
-       ORDER BY run_month DESC LIMIT 1`
+      `SELECT COALESCE(SUM(spl.gross_salary), 0) AS total_gross
+         FROM salary_prep_line spl
+         JOIN employees e ON e.id = spl.employee_id
+        WHERE spl.run_id = (
+                SELECT id FROM salary_prep_run
+                 WHERE status IN ('approved','processing','FINALIZED')
+                 ORDER BY run_month DESC LIMIT 1
+              )
+          ${empClause}`,
+      empParams
     ),
   ]);
+
+  // Even correctly scoped, salary cost is payroll data — withhold it from roles that
+  // are on this route but outside PAYROLL_ROLES (manager, branch_head, process_manager, hr).
+  const canSeePayroll = await callerHasPayrollAccess(req.authUser!.id);
 
   const headcount = Number(headcountRows[0][0]?.headcount ?? 0);
   const att = attendanceRows[0][0] ?? {};
@@ -259,13 +300,14 @@ router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head"
   const present = Number(att.present_count ?? 0) + Number(att.half_count ?? 0) * 0.5;
   const utilization = total > 0 ? Math.round((present / total) * 100) : 0;
   const avgKpi = Math.round(Number(kpiRows[0][0]?.avg_kpi ?? 0));
-  const monthlyCost = Number(salaryRows[0][0]?.total_gross ?? 0);
+  const monthlyCost = canSeePayroll ? Number(salaryRows[0][0]?.total_gross ?? 0) : null;
 
   res.json({ success: true, data: {
     headcount,
     utilization_pct: utilization,
     avg_quality_score: avgKpi,
     monthly_cost: monthlyCost,
+    ...(canSeePayroll ? {} : { restricted: ["monthly_cost"] }),
   }});
 }));
 
@@ -288,7 +330,15 @@ router.get("/agent-performance", requireRole("admin", "hr", "manager", "branch_h
   res.json({ success: true, data: mapped });
 }));
 
-router.get("/payroll-projection", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+// Payroll cost projection. Previously open to manager / branch_head / process_manager /
+// hr with no scoping at all, so any of them received the whole company's salary run.
+// Restricted to payroll-entitled roles plus the CEO, and scoped to the caller's people.
+router.get("/payroll-projection", requireRole(...(PAYROLL_ROLES as string[]), "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+  const hasScope = !isWide && employeeIds && employeeIds.length > 0;
+  const empClause = hasScope ? `AND sl.employee_id IN (${employeeIds!.map(() => "?").join(",")})` : "";
+  const empParams: unknown[] = hasScope ? [...employeeIds!] : [];
+
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -300,8 +350,9 @@ router.get("/payroll-projection", requireRole("admin", "hr", "manager", "branch_
             COUNT(DISTINCT sl.employee_id) as emp_count
      FROM salary_prep_run sp
      JOIN salary_prep_line sl ON sl.run_id = sp.id
-     WHERE sp.run_month >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
-     GROUP BY sp.run_month ORDER BY sp.run_month ASC LIMIT 3`
+     WHERE sp.run_month >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH) ${empClause}
+     GROUP BY sp.run_month ORDER BY sp.run_month ASC LIMIT 3`,
+    empParams
   );
   const avgDaily = salaryRows.length > 0
     ? salaryRows.reduce((s: number, r: any) => s + Number(r.total_gross ?? 0), 0) / salaryRows.length / 30
@@ -313,7 +364,18 @@ router.get("/payroll-projection", requireRole("admin", "hr", "manager", "branch_
   const periodStart = days[0]?.date;
   const periodEnd = days[days.length - 1]?.date;
   const totalProjected = days.reduce((s, d) => s + d.projected_cost, 0);
-  res.json({ success: true, data: { period_start: periodStart, period_end: periodEnd, days, total_projected: totalProjected } });
+  res.json({
+    success: true,
+    data: {
+      period_start: periodStart,
+      period_end: periodEnd,
+      days,
+      total_projected: totalProjected,
+      // This is not a forecast: it is the trailing 3-month average spread flat across
+      // 30 identical days. Labelled so the UI cannot present it as a projection model.
+      method: "trailing_3_month_average_flat_daily",
+    },
+  });
 }));
 
 router.get("/training-needs", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {

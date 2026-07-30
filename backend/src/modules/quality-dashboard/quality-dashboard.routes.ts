@@ -7,6 +7,7 @@ import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
 import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getQualityHeatmap, predictAgentRisk, generateInsights, calculateQualityROI } from "./quality-insights.service.js";
+import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   getTopObjectionPatterns,
   getTopObjectionHandlers,
@@ -186,11 +187,35 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
       { param: "accuracy",        fail_rate: row.fail_rate_accuracy },
     ];
 
-    return res.json({ success: true, summary: row, parameter_fails: parameterFails, scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}` });
+    // Stamp the newest audited call in range. db_audit is an upstream system, so a
+    // dashboard must be able to say how current its quality numbers are rather than
+    // implying they are live.
+    const [freshRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) AS latest FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ?`,
+      [from, to],
+    );
+
+    return res.json({
+      success: true,
+      summary: row,
+      parameter_fails: parameterFails,
+      source: { table: "db_audit.call_quality_assessment", latest_record: (freshRows[0] as any)?.latest ?? null },
+      scope_label: scope.global ? "All" : scope.campaignIds ? `Processes: ${scope.campaignIds.join(", ")}` : `Branch agents: ${scope.agentCodes?.length ?? 0}`,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
-    console.error("[quality-dashboard/summary]", msg);
-    return res.json({ success: true, summary: { total_calls: 0, audited_calls: 0, avg_quality_score: 0, calls_above_80: 0, calls_below_50: 0, unique_agents: 0, unique_clients: 0, fraud_flags: 0 }, parameter_fails: [], scope_label: "All", _error: msg });
+    logSourceFailure("quality-dashboard.summary", err, { endpoint: "/summary" });
+    // Previously returned a full set of zeros at HTTP 200, which renders as "0% quality,
+    // 0 calls audited" — indistinguishable from a genuinely quiet period. Return nulls
+    // plus an explicit unavailable reason so the UI states the source is down.
+    return res.json({
+      success: true,
+      summary: null,
+      parameter_fails: [],
+      scope_label: "All",
+      unavailableSources: { quality: `Quality audit source unavailable: ${msg}` },
+    });
   }
 }));
 
