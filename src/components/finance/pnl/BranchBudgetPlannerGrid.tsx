@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   BRANCH_SHARING_METHODS,
@@ -103,11 +103,17 @@ export interface BranchBudgetPlannerGridProps {
   onAddLine: (head: string, subHead: string, unit: string, method: string) => void;
   onRemoveLine: (index: number) => void;
   onDriverChange: (costCentreId: string, key: DriverKey, value: number) => void;
+  /** Hiding the standalone drivers card in table mode also hid its Save button, leaving no way to
+   *  persist a driver edited in the pinned band. Both saves belong on the grid's own toolbar. */
+  onSaveDrivers?: () => void;
+  onSaveDraft?: () => void;
+  saving?: boolean;
 }
 
 export function BranchBudgetPlannerGrid({
   lines, masters, costCentres, drivers, canEdit, period,
   onUpdateLine, onAddLine, onRemoveLine, onDriverChange,
+  onSaveDrivers, onSaveDraft, saving,
 }: BranchBudgetPlannerGridProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [pickerHead, setPickerHead] = useState<string | null>(null);
@@ -116,6 +122,19 @@ export function BranchBudgetPlannerGrid({
   const [filter, setFilter] = useState<"all" | "planned" | "gaps">("all");
   /** Row index whose cost-centre scope popover is open. */
   const [scopeRow, setScopeRow] = useState<number | null>(null);
+  /** Full-page mode: 38 rows x 7 cost centres does not fit a page that also carries a hero,
+   *  a tab bar and a driver card, so the grid can take the whole viewport while planning. */
+  const [fullPage, setFullPage] = useState(false);
+
+  useEffect(() => {
+    if (!fullPage) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullPage(false); };
+    window.addEventListener("keydown", onKey);
+    // Stop the page behind from scrolling while the grid owns the screen.
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [fullPage]);
 
   const activeHeads = useMemo(
     () => masters.filter((h) => h.activeStatus).map((h) => ({
@@ -231,7 +250,9 @@ export function BranchBudgetPlannerGrid({
   const calcCell = "bg-slate-50 text-slate-700 cursor-help";
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <div className={fullPage
+      ? "fixed inset-0 z-[70] flex flex-col overflow-hidden border-0 bg-white"
+      : "overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"}>
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-[13px] text-slate-600">
         <input value={query} onChange={(e) => setQuery(e.target.value)} type="search"
           placeholder="Find a head or sub-head…" aria-label="Find a head or sub-head"
@@ -244,16 +265,31 @@ export function BranchBudgetPlannerGrid({
             </button>
           ))}
         </div>
-        <button type="button" className="h-7 rounded-md border border-slate-300 bg-white px-2 hover:bg-slate-100"
+        <button type="button" className="h-8 rounded-md border border-slate-300 bg-white px-2 hover:bg-slate-100"
           onClick={() => setCollapsed((c) => (c.size ? new Set() : new Set(activeHeads.map((h) => h.id))))}>
           {collapsed.size ? "Expand all" : "Collapse all"}
+        </button>
+        <button type="button" aria-label={fullPage ? "Exit full page" : "Full page"}
+          className={`h-8 rounded-md border px-2 font-medium ${fullPage ? "border-blue-600 bg-blue-50 text-blue-700" : "border-slate-300 bg-white hover:bg-slate-100"}`}
+          onClick={() => setFullPage((v) => !v)}>
+          {fullPage ? "Exit full page (Esc)" : "Full page"}
         </button>
         <span className="ml-2 flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-white" />Type here</span>
         <span className="flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-slate-100" />Calculated</span>
         <span className="ml-auto font-medium text-blue-700">{hint}</span>
+        {onSaveDrivers && (
+          <button type="button" disabled={!canEdit || saving}
+            className="h-8 rounded-md border border-slate-300 bg-white px-2.5 font-medium hover:bg-slate-100 disabled:opacity-50"
+            onClick={onSaveDrivers}>Save drivers</button>
+        )}
+        {onSaveDraft && (
+          <button type="button" disabled={!canEdit || saving}
+            className="h-8 rounded-md bg-blue-600 px-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            onClick={onSaveDraft}>{saving ? "Saving…" : "Save draft"}</button>
+        )}
       </div>
 
-      <div className="max-h-[68vh] overflow-auto">
+      <div className={fullPage ? "flex-1 overflow-auto" : "max-h-[68vh] overflow-auto"}>
         <table className="w-max table-fixed border-separate border-spacing-0 text-[14px]">
           <colgroup>
             <col style={{ width: 250 }} /><col style={{ width: 160 }} />
@@ -336,6 +372,46 @@ export function BranchBudgetPlannerGrid({
               </tr>
             ))}
 
+            {/* Lines whose head matches no active master head — the blank starter row, or a line
+                left behind by a renamed head — are invisible in a grid keyed on the master, yet the
+                engine still validates them and refuses the save with "Head and Sub-head are
+                mandatory" about a row nobody can see. Surface them so they can be removed. */}
+            {(() => {
+              const known = new Set(activeHeads.map((h) => h.headName));
+              const orphans = lines
+                .map((line, index) => ({ index, line }))
+                .filter(({ line }) => !known.has(line.head || ""));
+              if (!orphans.length) return null;
+              return (
+                <>
+                  <tr className="bg-amber-50">
+                    <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-amber-50 px-2 py-1.5 font-semibold text-amber-900">
+                      Not on the Finance master
+                    </td>
+                    <td className="border-b border-slate-200 bg-amber-50 px-2 py-1.5 text-amber-800" colSpan={7 + costCentres.length * 2}>
+                      {orphans.length} line{orphans.length === 1 ? "" : "s"} with no recognised head. They block the save — remove them or set a head in the detailed line editor.
+                    </td>
+                  </tr>
+                  {orphans.map(({ index, line }) => (
+                    <tr key={`orphan-${index}`} className="hover:bg-amber-50/60">
+                      <td className="sticky left-0 z-20 border-b border-r border-slate-200 bg-white px-2 py-1">
+                        <span className="flex items-center gap-1">
+                          <span className="flex-1 truncate text-slate-500">{line.head || "(no head)"}{line.subHead ? ` / ${line.subHead}` : ""}</span>
+                          {canEdit && (
+                            <button type="button" aria-label="Remove line" title="Remove this line"
+                              className="rounded px-1 text-slate-400 hover:bg-rose-50 hover:text-rose-700"
+                              onClick={() => onRemoveLine(index)}>✕</button>
+                          )}
+                        </span>
+                      </td>
+                      <td className="border-b border-slate-200 bg-white px-2 py-1 text-slate-500" colSpan={7 + costCentres.length * 2}>
+                        {line.itemName || "(no item)"}
+                      </td>
+                    </tr>
+                  ))}
+                </>
+              );
+            })()}
             {activeHeads.map((head) => {
               const rows = rowsByHead.get(head.headName) ?? [];
               // While a search or filter is on, a head with no surviving rows must disappear

@@ -1031,6 +1031,85 @@ export const branchBudgetService = {
     return this.get(id);
   },
 
+  /**
+   * Remove a budget, or retire it when removal would destroy history.
+   *
+   * A hard delete is only safe while no GRN has ever touched the budget: grn_cost_allocation and
+   * finance_budget_line's reserved/consumed columns record real spend against these line ids, and
+   * deleting the budget would cascade those away or orphan them. So the caller's intent is honoured
+   * where it is safe and converted to a supersede where it is not, and the outcome is reported back
+   * rather than silently chosen.
+   */
+  async deleteOrSupersede(id: string, actorId: string, actorRole: string, reason: string) {
+    if (!reason?.trim()) {
+      throw new Error("A reason is required to delete or supersede a budget");
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, budget_number, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
+        [id]
+      );
+      if (!rows[0]) throw new Error("Budget not found");
+      const status = String(rows[0].status);
+      const budgetNumber = String(rows[0].budget_number);
+
+      const [[usage]] = await connection.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(reserved_amount),0) AS reserved,
+                COALESCE(SUM(consumed_amount),0) AS consumed,
+                COUNT(*) AS line_count
+           FROM finance_budget_line WHERE budget_id = ?`,
+        [id]
+      ) as unknown as [RowDataPacket[], unknown];
+      const [[grn]] = await connection.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS n FROM grn_cost_allocation WHERE budget_id = ?`,
+        [id]
+      ) as unknown as [RowDataPacket[], unknown];
+
+      const touchedByGrn = Number(usage?.reserved ?? 0) > 0
+        || Number(usage?.consumed ?? 0) > 0
+        || Number(grn?.n ?? 0) > 0;
+
+      if (touchedByGrn) {
+        await connection.execute(
+          `UPDATE finance_budget_header
+              SET status = 'closed', rejection_reason = ?
+            WHERE id = ?`,
+          [reason.trim(), id]
+        );
+        await auditInTransaction(connection, id, "SUPERSEDE", status, "closed", actorId, actorRole,
+          `${reason.trim()} — kept because GRN activity exists against it`);
+        await connection.commit();
+        return {
+          outcome: "superseded" as const,
+          budgetNumber,
+          message: `${budgetNumber} has GRN activity against it, so it was closed rather than deleted. `
+            + `A new budget can now be created for this branch and month.`,
+        };
+      }
+
+      // Audit BEFORE the delete: the FK on the audit table cascades with the header.
+      await auditInTransaction(connection, id, "DELETE", status, "deleted", actorId, actorRole, reason.trim());
+      const [result] = await connection.execute<ResultSetHeader>(
+        `DELETE FROM finance_budget_header WHERE id = ?`,
+        [id]
+      );
+      if (result.affectedRows !== 1) throw new Error("Budget was changed by someone else; refresh and retry");
+      await connection.commit();
+      return {
+        outcome: "deleted" as const,
+        budgetNumber,
+        message: `${budgetNumber} was deleted. No GRN had consumed against it, so nothing was lost.`,
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
   async review(
     id: string,
     decision: "approve" | "reject" | "revision",

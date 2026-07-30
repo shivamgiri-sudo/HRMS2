@@ -420,7 +420,20 @@ export function useBranchBudgets(filters: {
     },
   });
 
-  return { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget };
+  /** Super-admin removal. The server deletes outright only when no GRN has consumed against the
+   *  budget, and closes it instead when spend history exists, reporting which it did. */
+  const deleteBudget = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const response = await hrmsApi.delete<{
+        success: boolean;
+        data: { outcome: "deleted" | "superseded"; budgetNumber: string; message: string };
+      }>(`/api/finance/pnl/budgets/${id}`, { data: { reason } });
+      return response.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["branch-budgets"] }),
+  });
+
+  return { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget, deleteBudget };
 }
 
 export function useBranchBudgetDetail(id?: string | null) {

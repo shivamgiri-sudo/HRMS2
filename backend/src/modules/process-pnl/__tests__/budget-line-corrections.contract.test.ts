@@ -46,7 +46,10 @@ describe("reviewer paths", () => {
     const service = read("src/modules/process-pnl/branch-budget.service.ts");
     const start = service.indexOf("async reviewerRevise(");
     expect(start).toBeGreaterThan(-1);
-    const body = service.slice(start, service.indexOf("async review(", start));
+    // End at the NEXT method, not at "async review(" — another method may sit between them, and
+    // slicing that far swept deleteOrSupersede's "SET status = 'closed'" into this assertion.
+    const nextMethod = service.indexOf("\n  async ", start + 10);
+    const body = service.slice(start, nextMethod > -1 ? nextMethod : undefined);
     // A reviewer editing lines must not advance, reset or otherwise move the budget: they still
     // have to Approve afterwards, so the edit cannot be used to skip their own stage.
     expect(body).not.toMatch(/SET\s+status\s*=/i);

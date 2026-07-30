@@ -214,6 +214,25 @@ router.post(
 // A reviewer correcting the lines in place at their own stage, rather than sending the whole budget
 // back for a small fix. Status is unchanged by this call — the reviewer must still Approve — so it
 // cannot be used to bypass a stage. Same review roles and row scope as the review endpoint.
+// Super admin only. Deletes a budget outright when nothing has consumed against it, and closes it
+// instead when GRN activity exists, because deleting then would take real spend history with it.
+router.delete(
+  "/pnl/budgets/:id",
+  requireWriteAccess,
+  requireRole("super_admin"),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.id);
+    const data = await branchBudgetService.deleteOrSupersede(
+      req.params.id,
+      user.id,
+      user.role,
+      String(req.body?.reason ?? "")
+    );
+    res.json({ success: true, data });
+  })
+);
+
 router.post(
   "/pnl/budgets/:id/reviewer-revise",
   requireWriteAccess,

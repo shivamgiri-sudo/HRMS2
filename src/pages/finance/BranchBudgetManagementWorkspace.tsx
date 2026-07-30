@@ -59,7 +59,11 @@ import {
   useBudgetCoverage,
 } from "@/hooks/useBudgetCoverage";
 import {
+  type DeleteExpenseMasterResult,
   type FinanceExpenseHead,
+  type FinanceExpenseSubHead,
+  type SaveExpenseHeadPayload,
+  type SaveExpenseSubHeadPayload,
   useFinanceExpenseMasters,
 } from "@/hooks/useFinanceExpenseMasters";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -107,6 +111,8 @@ type BudgetCapabilities = {
   branchLocked: boolean;
   canCreate: boolean;
   canManageExpenseMaster: boolean;
+  /** Super Admin only: rename, retire or delete an existing head/sub-head. */
+  canEditExpenseMaster: boolean;
   canReviewBranchStage: boolean;
   canReviewFinanceStage: boolean;
   canReviewAccountsStage: boolean;
@@ -333,7 +339,7 @@ export default function BranchBudgetManagementWorkspace() {
     if (capabilities?.scopedBranchId) setBranchId(capabilities.scopedBranchId);
   }, [capabilities?.scopedBranchId]);
 
-  const { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget } = useBranchBudgets({
+  const { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget, deleteBudget } = useBranchBudgets({
     period,
     branchId: branchId || undefined,
   });
@@ -348,9 +354,8 @@ export default function BranchBudgetManagementWorkspace() {
   const detailId = savedBudgetId ?? editableBudget?.id ?? currentBudget?.id ?? null;
   const detailQuery = useBranchBudgetDetail(detailId);
   const { coverageQuery, saveCoverage } = useBudgetCoverage(detailId);
-  const { mastersQuery, saveHead, saveSubHead } = useFinanceExpenseMasters(
-    Boolean(capabilities?.canManageExpenseMaster)
-  );
+  const { mastersQuery, saveHead, saveSubHead, deleteHead, deleteSubHead } =
+    useFinanceExpenseMasters(Boolean(capabilities?.canManageExpenseMaster));
   const masters = mastersQuery.data ?? [];
   const activeMasters = masters.filter((head) => head.activeStatus);
 
@@ -693,6 +698,28 @@ export default function BranchBudgetManagementWorkspace() {
     }
   }
 
+  /** Super-admin removal. The server decides between a true delete and a supersede based on
+   *  whether any GRN has consumed against the budget, and says which it did. */
+  async function removeBudget(budget: BranchBudgetSummary) {
+    const reason = window.prompt(
+      `Delete ${budget.budget_number}?
+
+If any GRN has consumed against it, it will be closed instead of deleted so the spend history survives.
+
+Reason:`
+    );
+    if (!reason?.trim()) return;
+    try {
+      const result = await deleteBudget.mutateAsync({ id: budget.id, reason: reason.trim() });
+      toast.success(result.message);
+      setSavedBudgetId(null);
+      setLoadedDetailId(null);
+      setLines([blankLine()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to remove the budget");
+    }
+  }
+
   /** A reviewer correcting the lines themselves rather than sending the budget back. The budget
    *  stays at this reviewer's stage: they still have to Approve it afterwards. */
   async function saveReviewerEdit() {
@@ -864,6 +891,9 @@ export default function BranchBudgetManagementWorkspace() {
                       justification: `${subHead} for ${period}`,
                     }),
                   ])}
+                  onSaveDrivers={() => void saveDrivers()}
+                  onSaveDraft={() => void save(false)}
+                  saving={saveBudget.isPending || saveMonthlyDrivers.isPending}
                   onDriverChange={(costCentreId, key, value) => setDriverDraft((current) => {
                     const existing = current[costCentreId] ?? { costCentreId, plannedHeadcount: 0, revenueRatePerHead: 0 };
                     return { ...current, [costCentreId]: { ...existing, [key]: value } };
@@ -1176,9 +1206,29 @@ export default function BranchBudgetManagementWorkspace() {
             <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />
               {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
               {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
-              {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
+              {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}
+                {capabilities?.roles?.includes("super_admin") && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />Delete / supersede (super admin)</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
 
-            <TabsContent value="master"><ExpenseMasterPanel masters={masters} canManage={Boolean(capabilities?.canManageExpenseMaster)} loading={mastersQuery.isLoading} onSaveHead={async (payload) => { await saveHead.mutateAsync(payload); toast.success("Expense Head saved"); }} onSaveSubHead={async (payload) => { await saveSubHead.mutateAsync(payload); toast.success("Expense Sub-head saved"); }} /></TabsContent>
+            <TabsContent value="master">
+              <ExpenseMasterPanel
+                masters={masters}
+                canManage={Boolean(capabilities?.canManageExpenseMaster)}
+                canEdit={Boolean(capabilities?.canEditExpenseMaster)}
+                loading={mastersQuery.isLoading}
+                busy={saveHead.isPending || saveSubHead.isPending || deleteHead.isPending || deleteSubHead.isPending}
+                onSaveHead={async (payload) => { await saveHead.mutateAsync(payload); toast.success("Expense Head saved"); }}
+                onSaveSubHead={async (payload) => { await saveSubHead.mutateAsync(payload); toast.success("Expense Sub-head saved"); }}
+                onDeleteHead={async (head) => {
+                  const subHeadNote = head.subHeads.length ? ` and its ${head.subHeads.length} sub-head(s)` : "";
+                  if (!window.confirm(`Delete "${head.headName}"${subHeadNote}?\n\nIf any budget line, GRN or coverage review already uses it, it is retired (set inactive) instead of removed so the history stays readable.`)) return;
+                  reportExpenseMasterDelete("Head", await deleteHead.mutateAsync(head.id));
+                }}
+                onDeleteSubHead={async (_head, item) => {
+                  if (!window.confirm(`Delete sub-head "${item.subHeadName}"?\n\nIf any budget line, GRN or coverage review already uses it, it is retired (set inactive) instead of removed so the history stays readable.`)) return;
+                  reportExpenseMasterDelete("Sub-head", await deleteSubHead.mutateAsync(item.id));
+                }}
+              />
+            </TabsContent>
           </Tabs>
         </div>
       </div>
@@ -1451,35 +1501,369 @@ function GradeBreakdownPanel({
   );
 }
 
+/**
+ * Say which of the two things the server did. A retire is not a failed delete — it is the only safe
+ * outcome once a budget line, GRN or coverage review names the entry — so the toast has to name the
+ * records that forced it, or the user just retries and sees the same "still there" result.
+ */
+function reportExpenseMasterDelete(label: string, result: DeleteExpenseMasterResult) {
+  if (result.removed) {
+    toast.success(`${label} "${result.name}" deleted`);
+    return;
+  }
+  const used = [
+    result.usage.budgetLines ? `${result.usage.budgetLines} budget line(s)` : "",
+    result.usage.grns ? `${result.usage.grns} GRN(s)` : "",
+    result.usage.coverageReviews ? `${result.usage.coverageReviews} coverage review(s)` : "",
+  ].filter(Boolean).join(", ");
+  toast.success(`${label} "${result.name}" retired`, {
+    description: `${used} still reference it, so it was set inactive instead of removed. It no longer appears in the planner or any picker.`,
+  });
+}
+
+type SubHeadDraft = {
+  subHeadName: string;
+  defaultUnit: string;
+  defaultTaxTreatment: BranchBudgetLineInput["taxTreatment"];
+  defaultGstRate: number;
+  defaultGstType: NonNullable<BranchBudgetLineInput["gstType"]>;
+  defaultRecoverableTaxPct: number;
+  defaultAllocationDriver: string;
+};
+
+const TAX_TREATMENTS: BranchBudgetLineInput["taxTreatment"][] = [
+  "exclusive",
+  "inclusive",
+  "exempt",
+  "reverse_charge",
+  "non_gst",
+];
+
+const NEW_SUB_HEAD: SubHeadDraft = {
+  subHeadName: "",
+  defaultUnit: "Unit",
+  defaultTaxTreatment: "exclusive",
+  defaultGstRate: 18,
+  defaultGstType: "cgst_sgst",
+  defaultRecoverableTaxPct: 100,
+  defaultAllocationDriver: "agent_headcount",
+};
+
+const draftFromSubHead = (item: FinanceExpenseSubHead): SubHeadDraft => ({
+  subHeadName: item.subHeadName,
+  defaultUnit: item.defaultUnit,
+  defaultTaxTreatment: item.defaultTaxTreatment,
+  defaultGstRate: item.defaultGstRate,
+  defaultGstType: item.defaultGstType,
+  defaultRecoverableTaxPct: item.defaultRecoverableTaxPct,
+  defaultAllocationDriver: item.defaultAllocationDriver ?? "agent_headcount",
+});
+
+/** The sub-head form, shared by "add under this head" and "edit this sub-head". */
+function SubHeadForm({
+  draft,
+  saving,
+  submitLabel,
+  onChange,
+  onSubmit,
+  onCancel,
+}: {
+  draft: SubHeadDraft;
+  saving: boolean;
+  submitLabel: string;
+  onChange: (next: SubHeadDraft) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const set = <K extends keyof SubHeadDraft>(key: K, value: SubHeadDraft[K]) =>
+    onChange({ ...draft, [key]: value });
+  const field = "h-9 w-full rounded-md border border-input bg-background px-2 text-sm";
+  return (
+    <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50/50 p-3">
+      <Input
+        className="h-9"
+        value={draft.subHeadName}
+        placeholder="Sub-head name"
+        onChange={(event) => set("subHeadName", event.target.value)}
+      />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="space-y-1 text-[11px] text-slate-500">
+          Default unit
+          <select className={field} value={draft.defaultUnit} onChange={(event) => set("defaultUnit", event.target.value)}>
+            {UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1 text-[11px] text-slate-500">
+          Tax treatment
+          <select className={field} value={draft.defaultTaxTreatment} onChange={(event) => set("defaultTaxTreatment", event.target.value as SubHeadDraft["defaultTaxTreatment"])}>
+            {TAX_TREATMENTS.map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1 text-[11px] text-slate-500">
+          GST rate
+          <select className={field} value={draft.defaultGstRate} onChange={(event) => set("defaultGstRate", Number(event.target.value))}>
+            {GST_RATES.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}
+          </select>
+        </label>
+        <label className="space-y-1 text-[11px] text-slate-500">
+          GST type
+          <select className={field} value={draft.defaultGstType} onChange={(event) => set("defaultGstType", event.target.value as SubHeadDraft["defaultGstType"])}>
+            <option value="cgst_sgst">CGST + SGST</option>
+            <option value="igst">IGST</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+        <label className="space-y-1 text-[11px] text-slate-500">
+          Recoverable GST %
+          <Input className="h-9" type="number" min="0" max="100" value={draft.defaultRecoverableTaxPct}
+            onChange={(event) => set("defaultRecoverableTaxPct", Number(event.target.value))} />
+        </label>
+        <label className="space-y-1 text-[11px] text-slate-500">
+          Default sharing
+          <select className={field} value={draft.defaultAllocationDriver} onChange={(event) => set("defaultAllocationDriver", event.target.value)}>
+            {ALLOCATION_DRIVERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!draft.subHeadName.trim() || saving} onClick={onSubmit}>
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}{submitLabel}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
 function ExpenseMasterPanel({
   masters,
   canManage,
+  canEdit,
   loading,
+  busy,
   onSaveHead,
   onSaveSubHead,
+  onDeleteHead,
+  onDeleteSubHead,
 }: {
   masters: FinanceExpenseHead[];
+  /** Finance Head or Super Admin: may add new heads and sub-heads. */
   canManage: boolean;
+  /** Super Admin only: may rename, restore or delete what already exists. */
+  canEdit: boolean;
   loading: boolean;
-  onSaveHead: (payload: { headName: string; headCode?: string; description?: string }) => Promise<void>;
-  onSaveSubHead: (payload: { headId: string; subHeadName: string; defaultUnit: string; defaultTaxTreatment: BranchBudgetLineInput["taxTreatment"]; defaultGstRate: number; defaultGstType: NonNullable<BranchBudgetLineInput["gstType"]>; defaultRecoverableTaxPct: number; defaultAllocationDriver?: string | null; pnlTreatment: "operating_expense" }) => Promise<void>;
+  busy: boolean;
+  onSaveHead: (payload: SaveExpenseHeadPayload) => Promise<void>;
+  onSaveSubHead: (payload: SaveExpenseSubHeadPayload) => Promise<void>;
+  onDeleteHead: (head: FinanceExpenseHead) => Promise<void>;
+  onDeleteSubHead: (head: FinanceExpenseHead, subHead: FinanceExpenseSubHead) => Promise<void>;
 }) {
   const [headName, setHeadName] = useState("");
   const [headCode, setHeadCode] = useState("");
-  const [subHead, setSubHead] = useState({
+  const [subHead, setSubHead] = useState<SubHeadDraft & { headId: string }>({
+    ...NEW_SUB_HEAD,
     headId: "",
-    subHeadName: "",
-    defaultUnit: "Unit",
-    defaultTaxTreatment: "exclusive" as BranchBudgetLineInput["taxTreatment"],
-    defaultGstRate: 18,
-    defaultGstType: "cgst_sgst" as NonNullable<BranchBudgetLineInput["gstType"]>,
-    defaultRecoverableTaxPct: 100,
-    defaultAllocationDriver: "agent_headcount",
   });
+  /** Which head is being renamed inline, and the values being typed. */
+  const [editingHead, setEditingHead] = useState<{ id: string; headName: string; headCode: string } | null>(null);
+  /** Which sub-head is being edited inline, or which head is having one added. */
+  const [editingSubHead, setEditingSubHead] = useState<{ id: string; headId: string; draft: SubHeadDraft } | null>(null);
+  const [addingUnderHead, setAddingUnderHead] = useState<{ headId: string; draft: SubHeadDraft } | null>(null);
+
   return (
     <div className={`grid gap-5 ${canManage ? "xl:grid-cols-[0.8fr_1.2fr]" : ""}`}>
-      {canManage && <div className="space-y-5"><Card className="rounded-3xl"><CardHeader><CardTitle className="text-base">Add Expense Head</CardTitle></CardHeader><CardContent className="space-y-3"><Input value={headName} onChange={(event) => setHeadName(event.target.value)} placeholder="Head name" /><Input value={headCode} onChange={(event) => setHeadCode(event.target.value)} placeholder="Head code" /><Button className="w-full" disabled={!headName.trim()} onClick={async () => { await onSaveHead({ headName, headCode: headCode || undefined }); setHeadName(""); setHeadCode(""); }}><Plus className="mr-2 h-4 w-4" />Save Head</Button></CardContent></Card><Card className="rounded-3xl"><CardHeader><CardTitle className="text-base">Add Expense Sub-head</CardTitle></CardHeader><CardContent className="space-y-3"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={subHead.headId} onChange={(event) => setSubHead((current) => ({ ...current, headId: event.target.value }))}><option value="">Select Head</option>{masters.map((head) => <option key={head.id} value={head.id}>{head.headName}</option>)}</select><Input value={subHead.subHeadName} onChange={(event) => setSubHead((current) => ({ ...current, subHeadName: event.target.value }))} placeholder="Sub-head name" /><Button className="w-full" disabled={!subHead.headId || !subHead.subHeadName.trim()} onClick={async () => { await onSaveSubHead({ ...subHead, pnlTreatment: "operating_expense" }); setSubHead((current) => ({ ...current, subHeadName: "" })); }}><Plus className="mr-2 h-4 w-4" />Save Sub-head</Button></CardContent></Card></div>}
-      <Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Current Head/Sub-head Master</CardTitle><p className="text-xs text-slate-500">{canManage ? "Editing enabled for Finance Head / Super Admin." : "Read-only directory."}</p></CardHeader><CardContent className="space-y-4">{loading ? <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin" /></div> : masters.map((head) => <div key={head.id} className="rounded-2xl border border-slate-200 p-4"><div className="flex items-center justify-between"><div><p className="font-semibold">{head.headName}</p><p className="text-xs text-slate-500">{head.headCode}</p></div><Badge>{head.activeStatus ? "Active" : "Inactive"}</Badge></div><div className="mt-3 grid gap-2 md:grid-cols-2">{head.subHeads.map((item) => <div key={item.id} className="rounded-xl bg-slate-50 p-3"><p className="text-sm font-medium">{item.subHeadName}</p><p className="mt-1 text-xs text-slate-500">{item.defaultUnit} · {item.defaultTaxTreatment.replaceAll("_", " ")} · {item.defaultGstRate}%</p></div>)}</div></div>)}</CardContent></Card>
+      {canManage && (
+        <div className="space-y-5">
+          <Card className="rounded-3xl">
+            <CardHeader><CardTitle className="text-base">Add Expense Head</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <Input value={headName} onChange={(event) => setHeadName(event.target.value)} placeholder="Head name" />
+              <Input value={headCode} onChange={(event) => setHeadCode(event.target.value)} placeholder="Head code" />
+              <Button className="w-full" disabled={!headName.trim() || busy}
+                onClick={async () => { await onSaveHead({ headName, headCode: headCode || undefined }); setHeadName(""); setHeadCode(""); }}>
+                <Plus className="mr-2 h-4 w-4" />Save Head
+              </Button>
+            </CardContent>
+          </Card>
+          <Card className="rounded-3xl">
+            <CardHeader><CardTitle className="text-base">Add Expense Sub-head</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={subHead.headId} onChange={(event) => setSubHead((current) => ({ ...current, headId: event.target.value }))}>
+                <option value="">Select Head</option>
+                {masters.map((head) => <option key={head.id} value={head.id}>{head.headName}</option>)}
+              </select>
+              <Input value={subHead.subHeadName} placeholder="Sub-head name"
+                onChange={(event) => setSubHead((current) => ({ ...current, subHeadName: event.target.value }))} />
+              <Button className="w-full" disabled={!subHead.headId || !subHead.subHeadName.trim() || busy}
+                onClick={async () => { await onSaveSubHead({ ...subHead, pnlTreatment: "operating_expense" }); setSubHead((current) => ({ ...current, subHeadName: "" })); }}>
+                <Plus className="mr-2 h-4 w-4" />Save Sub-head
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle>Current Head/Sub-head Master</CardTitle>
+          <p className="text-xs text-slate-500">
+            {canEdit
+              ? "Super Admin: edit, add a sub-head or delete. A head or sub-head that budgets already use is retired instead of removed, so the history stays readable."
+              : canManage
+                ? "Finance Head: add new heads and sub-heads. Editing and deleting existing entries is Super Admin only."
+                : "Read-only directory."}
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {loading ? <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin" /></div> : masters.map((head) => (
+            <div key={head.id} className={`rounded-2xl border p-4 ${head.activeStatus ? "border-slate-200" : "border-amber-200 bg-amber-50/40"}`}>
+              {editingHead?.id === head.id ? (
+                <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50/50 p-3">
+                  <Input className="h-9" value={editingHead.headName} placeholder="Head name"
+                    onChange={(event) => setEditingHead({ ...editingHead, headName: event.target.value })} />
+                  <Input className="h-9" value={editingHead.headCode} placeholder="Head code"
+                    onChange={(event) => setEditingHead({ ...editingHead, headCode: event.target.value })} />
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={!editingHead.headName.trim() || busy}
+                      onClick={async () => {
+                        await onSaveHead({
+                          id: head.id,
+                          headName: editingHead.headName,
+                          headCode: editingHead.headCode || undefined,
+                          description: head.description,
+                          displayOrder: head.displayOrder,
+                          activeStatus: head.activeStatus,
+                        });
+                        setEditingHead(null);
+                      }}>
+                      {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Save head
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditingHead(null)}>Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">{head.headName}</p>
+                    <p className="text-xs text-slate-500">{head.headCode}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge>{head.activeStatus ? "Active" : "Inactive"}</Badge>
+                    {canEdit && (
+                      <>
+                        <Button size="sm" variant="outline" className="h-8"
+                          onClick={() => { setEditingHead({ id: head.id, headName: head.headName, headCode: head.headCode }); setEditingSubHead(null); setAddingUnderHead(null); }}>
+                          <Settings2 className="mr-1.5 h-3.5 w-3.5" />Edit
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8"
+                          onClick={() => { setAddingUnderHead({ headId: head.id, draft: { ...NEW_SUB_HEAD } }); setEditingSubHead(null); setEditingHead(null); }}>
+                          <Plus className="mr-1.5 h-3.5 w-3.5" />Sub-head
+                        </Button>
+                        {!head.activeStatus && (
+                          <Button size="sm" variant="outline" className="h-8" disabled={busy}
+                            onClick={() => void onSaveHead({
+                              id: head.id,
+                              headName: head.headName,
+                              headCode: head.headCode,
+                              description: head.description,
+                              displayOrder: head.displayOrder,
+                              activeStatus: true,
+                            })}>
+                            Restore
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" className="h-8 border-rose-200 text-rose-700 hover:bg-rose-50" disabled={busy}
+                          aria-label={`Delete ${head.headName}`}
+                          onClick={() => void onDeleteHead(head)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {addingUnderHead?.headId === head.id && (
+                <div className="mt-3">
+                  <SubHeadForm
+                    draft={addingUnderHead.draft}
+                    saving={busy}
+                    submitLabel="Add sub-head"
+                    onChange={(draft) => setAddingUnderHead({ headId: head.id, draft })}
+                    onCancel={() => setAddingUnderHead(null)}
+                    onSubmit={async () => {
+                      await onSaveSubHead({ headId: head.id, ...addingUnderHead.draft, pnlTreatment: "operating_expense" });
+                      setAddingUnderHead(null);
+                    }}
+                  />
+                </div>
+              )}
+
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {head.subHeads.map((item) => (
+                  editingSubHead?.id === item.id ? (
+                    <div key={item.id} className="md:col-span-2">
+                      <SubHeadForm
+                        draft={editingSubHead.draft}
+                        saving={busy}
+                        submitLabel="Save sub-head"
+                        onChange={(draft) => setEditingSubHead({ ...editingSubHead, draft })}
+                        onCancel={() => setEditingSubHead(null)}
+                        onSubmit={async () => {
+                          await onSaveSubHead({
+                            id: item.id,
+                            headId: head.id,
+                            ...editingSubHead.draft,
+                            pnlTreatment: item.pnlTreatment,
+                            displayOrder: item.displayOrder,
+                            activeStatus: item.activeStatus,
+                          });
+                          setEditingSubHead(null);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div key={item.id} className={`flex items-start justify-between gap-2 rounded-xl p-3 ${item.activeStatus ? "bg-slate-50" : "bg-amber-50"}`}>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{item.subHeadName}{!item.activeStatus && <span className="ml-2 text-[10px] uppercase text-amber-700">inactive</span>}</p>
+                        <p className="mt-1 text-xs text-slate-500">{item.defaultUnit} · {item.defaultTaxTreatment.replaceAll("_", " ")} · {item.defaultGstRate}%</p>
+                      </div>
+                      {canEdit && (
+                        <div className="flex shrink-0 gap-1">
+                          <Button size="sm" variant="ghost" className="h-7 px-2" aria-label={`Edit ${item.subHeadName}`}
+                            onClick={() => { setEditingSubHead({ id: item.id, headId: head.id, draft: draftFromSubHead(item) }); setAddingUnderHead(null); setEditingHead(null); }}>
+                            <Settings2 className="h-3.5 w-3.5" />
+                          </Button>
+                          {!item.activeStatus && (
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" disabled={busy}
+                              aria-label={`Restore ${item.subHeadName}`}
+                              onClick={() => void onSaveSubHead({
+                                id: item.id,
+                                headId: head.id,
+                                ...draftFromSubHead(item),
+                                pnlTreatment: item.pnlTreatment,
+                                displayOrder: item.displayOrder,
+                                activeStatus: true,
+                              })}>
+                              Restore
+                            </Button>
+                          )}
+                          <Button size="sm" variant="ghost" className="h-7 px-2 text-rose-700 hover:bg-rose-50" disabled={busy}
+                            aria-label={`Delete ${item.subHeadName}`}
+                            onClick={() => void onDeleteSubHead(head, item)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                ))}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }
