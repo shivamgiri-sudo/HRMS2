@@ -104,8 +104,11 @@ router.post(
     }
 
     // Update onboarding bridge with the generated code.
+    // `bridge_status` is not a column on ats_onboarding_bridge (only `status` is) —
+    // this silently no-op'd via the trailing .catch() on every real call, so the
+    // bridge's employee_code/status never reflected code generation at all.
     await db.execute(
-      'UPDATE ats_onboarding_bridge SET employee_code = ?, bridge_status = \'code_generated\', updated_at = NOW() WHERE candidate_id = ?',
+      'UPDATE ats_onboarding_bridge SET employee_code = ?, status = \'code_generated\', updated_at = NOW() WHERE candidate_id = ?',
       [empCode, candidateId],
     ).catch(() => {});
 

@@ -172,7 +172,7 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
   // Internal helper to avoid hoisting issues
   async function computeAndSaveScoreInternal(candId: string) {
     const [checks] = await db.execute<RowDataPacket[]>(
-      `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+      `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
       [candId]
     );
     let score = 0;
@@ -212,7 +212,7 @@ const SCORE_WEIGHTS: Record<string, number> = {
  */
 export async function computeAndSaveScore(candidateId: string): Promise<number> {
   const [checks] = await db.execute<RowDataPacket[]>(
-    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
     [candidateId]
   );
 
@@ -982,7 +982,7 @@ export async function listBgvQueueScoped(status: string | undefined, scopeClause
  */
 export async function syncBgvChecksToReport(candidateId: string): Promise<{ synced: number }> {
   const [checks] = await db.execute<RowDataPacket[]>(
-    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ? AND deleted_at IS NULL`,
+    `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
     [candidateId]
   );
 

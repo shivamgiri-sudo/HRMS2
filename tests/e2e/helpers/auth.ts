@@ -47,6 +47,12 @@ function credentialsForRole(role: E2ERole): { email: string; password: string } 
 export async function loginAs(page: Page, role: E2ERole): Promise<string> {
   const creds = credentialsForRole(role);
 
+  // Pre-accept the cookie banner (localStorage-gated) so its fixed bottom bar
+  // never mounts and steals the click from the Sign In button below it.
+  await page.addInitScript(() => {
+    window.localStorage.setItem('cookie-consent', 'accepted');
+  });
+
   // Use "load" instead of "networkidle" because Vite HMR websocket keeps network active
   await page.goto(process.env.E2E_LOGIN_PATH ?? '/auth', { waitUntil: 'load', timeout: 60_000 });
 
