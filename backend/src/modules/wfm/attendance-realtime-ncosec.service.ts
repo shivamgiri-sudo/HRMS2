@@ -209,15 +209,20 @@ export async function getRealTimePunchesRange(
 
     const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
+    const todayIST = nowIST().slice(0, 10);
     return result.recordset.map(row => {
+      const punchDate = String(row.punch_date);
       const assessed = assessAggregatePunches({
         firstPunch: row.first_punch,
         lastPunch: row.last_punch,
         totalPunches: row.total_punches,
         workingMinutes: row.raw_minutes,
+        // Past dates: treat odd punch count as completed shift (last swipe = out)
+        // Today: keep live mode so mid-shift odd count isn't shown as clocked-out
+        mode: punchDate < todayIST ? 'historical' : 'live',
       });
       return {
-        punch_date: String(row.punch_date),
+        punch_date: punchDate,
         first_punch_in: tagIST(assessed.effectivePunchIn),
         last_punch_out: tagIST(assessed.effectivePunchOut),
         total_punches: assessed.effectivePunchCount,
