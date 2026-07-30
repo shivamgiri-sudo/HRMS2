@@ -14,7 +14,11 @@ export type BudgetPlanningLevel = "branch" | "cost_centre";
 
 /** Sharing methods supported for a branch-level (planningLevel = "branch") line — reuses the
  *  allocationDriver field, now actually acted on server-side instead of only stored. */
-export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual" | "meter_wise" | "grade_weighted_headcount";
+export type BranchSharingMethod = "total_manpower" | "agent_headcount" | "revenue_share" | "equal_split" | "manual" | "meter_wise" | "grade_weighted_headcount" | "seat_count" | "floor_area" | "device_count" | "hiring_volume";
+/** Must stay in step with SUPPORTED_SHARING_METHODS in branch-budget-allocation.service.ts.
+ *  The last four were added because finance_expense_sub_head_master already seeds them as
+ *  default_allocation_driver on 26 of the 38 sub-heads; leaving them out of this list meant a
+ *  sub-head's own default could not be picked in the UI even once the engine accepted it. */
 export const BRANCH_SHARING_METHODS: { value: BranchSharingMethod; label: string }[] = [
   { value: "total_manpower", label: "Manpower (planned headcount)" },
   { value: "agent_headcount", label: "Agent headcount" },
@@ -23,6 +27,10 @@ export const BRANCH_SHARING_METHODS: { value: BranchSharingMethod; label: string
   { value: "manual", label: "Manual %" },
   { value: "meter_wise", label: "Meter-wise (utility consumption)" },
   { value: "grade_weighted_headcount", label: "Grade-weighted headcount (blended CTC)" },
+  { value: "seat_count", label: "Seats" },
+  { value: "floor_area", label: "Floor area" },
+  { value: "device_count", label: "Devices" },
+  { value: "hiring_volume", label: "Hiring volume" },
 ];
 
 export interface ManualAllocationInput {
