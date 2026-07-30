@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Youtube } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Youtube, MapPin, Megaphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,32 @@ export default function AuthClean() {
   const [forgotChannel, setForgotChannel] = useState<ForgotPasswordChannel>('sms');
   const [forgotStep, setForgotStep] = useState<ForgotPasswordStep>('send');
   const [loading, setLoading] = useState(false);
+
+  // ── Login page company info (public, no auth) ──────────────────────────────
+  const [loginInfo, setLoginInfo] = useState<{
+    active_employees: number;
+    branches: string[];
+    announcements: { id: string; message: string; pinned: boolean }[];
+  }>({ active_employees: 0, branches: [], announcements: [] });
+  const [tickerIdx, setTickerIdx] = useState(0);
+  const tickerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_HRMS_API_URL?.replace(/\/$/, "") ?? ""}/api/public/login-info`)
+      .then(r => r.json())
+      .then(d => setLoginInfo(d))
+      .catch(() => {});
+  }, []);
+
+  // Rotate announcement ticker every 4 seconds
+  useEffect(() => {
+    if (loginInfo.announcements.length <= 1) return;
+    tickerRef.current = setInterval(() => {
+      setTickerIdx(i => (i + 1) % loginInfo.announcements.length);
+    }, 4000);
+    return () => { if (tickerRef.current) clearInterval(tickerRef.current); };
+  }, [loginInfo.announcements.length]);
+
   const { signIn, forgotPassword, user, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -204,6 +230,49 @@ export default function AuthClean() {
           <p className="mt-4 max-w-md text-base leading-7 text-slate-300">
             Manage employees, attendance, payroll, leaves and performance — all from one powerful, beautiful platform.
           </p>
+
+          {/* Live company stats */}
+          {loginInfo.active_employees > 0 && (
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <div
+                className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-bold"
+                style={{ background: "rgba(59,173,73,0.18)", color: "#6ee47a", border: "1px solid rgba(59,173,73,0.3)" }}
+              >
+                <span className="h-2 w-2 rounded-full bg-[#3BAD49] animate-pulse" />
+                {loginInfo.active_employees.toLocaleString("en-IN")} Active Employees
+              </div>
+              {loginInfo.branches.length > 0 && (
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-bold"
+                  style={{ background: "rgba(27,106,181,0.18)", color: "#5aa0dd", border: "1px solid rgba(27,106,181,0.3)" }}
+                >
+                  <MapPin className="h-3.5 w-3.5" />
+                  {loginInfo.branches.length} Branches
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Branch pills strip */}
+          {loginInfo.branches.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {loginInfo.branches.slice(0, 12).map(b => (
+                <span
+                  key={b}
+                  className="rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                  style={{ background: "rgba(255,255,255,0.06)", color: "#94a3b8", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  {b}
+                </span>
+              ))}
+              {loginInfo.branches.length > 12 && (
+                <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                  style={{ background: "rgba(255,255,255,0.06)", color: "#64748b" }}>
+                  +{loginInfo.branches.length - 12} more
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Feature list */}
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
@@ -552,9 +621,56 @@ export default function AuthClean() {
             </div>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">
+          {/* Announcement ticker */}
+          {loginInfo.announcements.length > 0 && (
+            <div className="mt-5 overflow-hidden rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <Megaphone className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#1B6AB5]" />
+                <p
+                  key={tickerIdx}
+                  className="text-xs font-semibold text-blue-800 leading-5 transition-all duration-500"
+                  style={{ animation: "fadeSlideIn 0.4s ease" }}
+                >
+                  {loginInfo.announcements[tickerIdx]?.message}
+                </p>
+              </div>
+              {loginInfo.announcements.length > 1 && (
+                <div className="mt-2 flex justify-center gap-1">
+                  {loginInfo.announcements.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setTickerIdx(i)}
+                      className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                        i === tickerIdx ? "w-4 bg-[#1B6AB5]" : "w-1.5 bg-blue-200"
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* HR support contact */}
+          <div className="mt-4 flex items-center justify-center gap-1.5 text-center">
+            <Mail className="h-3.5 w-3.5 text-slate-400" />
+            <p className="text-xs text-slate-400">
+              Need help?{" "}
+              <a href="mailto:hr@mascallnet.in" className="font-semibold text-slate-500 hover:text-[#1B6AB5] transition-colors">
+                hr@mascallnet.in
+              </a>
+            </p>
+          </div>
+
+          <p className="mt-3 text-center text-xs text-slate-400">
             © {currentYear} Mas Callnet India Pvt Ltd · All rights reserved
           </p>
+
+          <style>{`
+            @keyframes fadeSlideIn {
+              from { opacity: 0; transform: translateY(6px); }
+              to   { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
         </div>
       </div>
     </div>

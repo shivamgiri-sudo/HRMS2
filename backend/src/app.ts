@@ -204,6 +204,7 @@ import { candidateOnboardingRouter } from "./modules/candidate-onboarding/candid
 import { orgChartRouter } from "./modules/org-chart/org-chart.routes.js";
 import { visitorRouter } from "./modules/visitor/visitor.routes.js";
 import { visitorPublicRouter } from "./modules/visitor/visitor-public.routes.js";
+import { loginInfoRouter } from "./modules/public/login-info.routes.js";
 import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes.js";
 import { pushRouter } from "./modules/push/push.routes.js";
 import { locationRouter } from "./modules/location/location.routes.js";
@@ -360,6 +361,7 @@ app.use("/api/ats", atsFormConfigRouter);
 app.use("/api/ats/registration", publicRegistrationLimiter, registrationEnhancedRouter);
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
+app.use("/api/public/login-info", loginInfoRouter);  // public login page stats (no auth, aggregate only)
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
 app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
 app.use("/api/visitor/public", visitorPublicRouter); // PUBLIC: token-scoped visitor registration and status only
