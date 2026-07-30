@@ -11,7 +11,11 @@ describe("payslip display routes", () => {
   it("uses a clamped SQL literal for history limits on MySQL", () => {
     expect(routeSource).toContain("Number.isFinite(requestedLimit)");
     expect(routeSource).toContain("Math.trunc(requestedLimit)");
-    expect(routeSource).toContain("LIMIT ${limit}");
+    // MySQL prepared statements reject a placeholder for LIMIT, so the value is
+    // interpolated — which is only safe because `limit` is already clamped above.
+    // The query over-fetches (`limit * 3`) and dedupes runs in JS, so accept any
+    // integer multiple rather than pinning the exact expression.
+    expect(routeSource).toMatch(/LIMIT \$\{limit(\s*\*\s*\d+)?\}/);
     expect(routeSource).not.toContain("ORDER BY spr.run_month DESC\n      LIMIT ?");
   });
 

@@ -21,6 +21,7 @@ import { leaveRouter } from "./modules/leave/leave.routes.js";
 import { leaveSecureRouter } from "./modules/leave/leave.secure.routes.js";
 import { payrollRouter } from "./modules/payroll/payroll.routes.js";
 import { payrollSecureRouter } from "./modules/payroll/payroll.secure.routes.js";
+import { payrollPublicRouter } from "./modules/payroll/payroll.public.routes.js";
 import { payrollStatutoryConfigCompatRouter } from "./modules/payroll/payroll-statutory-config.compat.routes.js";
 import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat.routes.js";
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
@@ -314,6 +315,9 @@ app.use("/api/wfm/roster", rosterActualSecureRouter);
 app.use("/api/wfm/roster", rosterRouter);
 app.use("/api/leave", leaveSecureRouter);
 app.use("/api/leave", leaveRouter);
+// PUBLIC payslip QR verification — must precede every other /api/payroll router,
+// since those apply requireAuth at router level and would 401 the scan first.
+app.use("/api/payroll", payrollPublicRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
 app.use("/api/payroll/readiness", payrollReadinessRouter);

@@ -11,7 +11,10 @@ export async function buildQrCodeUrl(data: string, size = 120): Promise<string> 
   try {
     return await QRCode.toDataURL(data, {
       width: size,
-      margin: 1,
+      // 4 modules is the quiet zone the QR spec requires. It was 1, which left the
+      // finder patterns butted against whatever the code was drawn on and made the
+      // symbol unreadable to most scanners.
+      margin: 4,
       color: { dark: "#000000", light: "#ffffff" },
     });
   } catch {
@@ -19,9 +22,30 @@ export async function buildQrCodeUrl(data: string, size = 120): Promise<string> 
   }
 }
 
+const MONTH_INDEX: Record<string, string> = {
+  january: "01", february: "02", march: "03", april: "04",
+  may: "05", june: "06", july: "07", august: "08",
+  september: "09", october: "10", november: "11", december: "12",
+};
+
+/**
+ * "June - 2026" → "2026-06". Keeps the QR payload short: the spelled-out form
+ * encodes as "June%20-%202026" (16 chars), which pushes the symbol up a version
+ * and shrinks each module past what a phone can resolve at screen resolution.
+ * Unrecognised input is passed through so the QR still points somewhere valid.
+ */
+function compactPeriod(monthYear: string): string {
+  const parts = String(monthYear ?? "").trim().split(/\s*-\s*|\s+/).filter(Boolean);
+  if (parts.length === 2) {
+    const month = MONTH_INDEX[parts[0].toLowerCase()];
+    if (month && /^\d{4}$/.test(parts[1])) return `${parts[1]}-${month}`;
+  }
+  return monthYear;
+}
+
 /** Payslip QR → opens public payslip verification page */
 export function buildPayslipQrData(employeeCode: string, monthYear: string): string {
-  return `${APP_BASE_URL}/verify/payslip/${encodeURIComponent(employeeCode)}/${encodeURIComponent(monthYear)}`;
+  return `${APP_BASE_URL}/verify/payslip/${encodeURIComponent(employeeCode)}/${encodeURIComponent(compactPeriod(monthYear))}`;
 }
 
 /** Employee ID card QR → opens public employee verification page */

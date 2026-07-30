@@ -2,15 +2,16 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { expenseController } from './expense.controller.js';
 import { expenseService } from './expense.service.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const RECEIPTS_DIR = path.resolve(__dirname, '../../../../uploads/expense-receipts');
+// Must match files.routes.ts UPLOADS_ROOT, which serves these back via
+// /api/files/expense-receipts/*. Resolving from __dirname climbed one level too far
+// and wrote to the repo root instead of backend/, so receipts uploaded in dev 404'd.
+const RECEIPTS_DIR = path.resolve(process.cwd(), 'uploads', 'expense-receipts');
 fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
 
 const ALLOWED_TYPES = new Map([

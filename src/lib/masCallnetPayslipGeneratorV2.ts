@@ -68,6 +68,23 @@ const formatINR = (amount: number): string => {
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(amount);
 };
 
+// jsPDF's built-in helvetica is WinAnsi-encoded and has no glyph for the rupee sign
+// (U+20B9) or the em dash (U+2014) — they rendered as stray characters on the slip.
+// "Rs." is what the rest of this document already uses.
+const RUPEE = "Rs.";
+
+/** "June - 2026" → "June 2026" for display; the raw form is kept for the QR URL. */
+const displayPeriod = (monthYear: string): string => monthYear.replace(/\s*-\s*/, " ").trim();
+
+// Page geometry — every table is pinned to these so column widths are deterministic
+// rather than depending on jspdf-autotable's default margin.
+const MARGIN_X = 14;
+const CONTENT_W = 210 - MARGIN_X * 2; // 182mm usable on A4 portrait
+// Every table's column widths must sum to exactly CONTENT_W. jspdf-autotable logs
+// "could not fit page" for any mismatch in either direction, and a short sum leaves
+// a ragged right edge against the full-width header and net-salary bands.
+const TABLE_MARGIN = { left: MARGIN_X, right: MARGIN_X };
+
 async function loadLogoBase64(): Promise<string | null> {
   try {
     const response = await fetch('/mcn-logo.png');
@@ -88,7 +105,9 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   const pageWidth = doc.internal.pageSize.getWidth();
 
   // ── NAVY HEADER BAND ──────────────────────────────────────────────────────────
-  const headerH = 22;
+  // 26mm rather than 22mm so the QR can be drawn large enough to scan reliably
+  // and still leave room for its caption inside the band.
+  const headerH = 26;
   doc.setFillColor(...MCN_NAVY);
   doc.rect(0, 0, pageWidth, headerH, "F");
 
@@ -96,34 +115,36 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   const logoBase64 = await loadLogoBase64();
   if (logoBase64) {
     try {
-      doc.addImage(logoBase64, 'PNG', 4, 2, 32, 11);
+      doc.addImage(logoBase64, 'PNG', 4, 5, 32, 11);
     } catch { /* skip */ }
   }
 
-  // QR code (top-right inside band)
+  // QR code (top-right inside band). Rendered at 512px so it stays sharp in print,
+  // and sized 18mm: at the previous 15mm the modules fell below what a phone camera
+  // resolves off a screen, so the code only decoded from a 300dpi printout.
   try {
     const qrData = buildPayslipQrData(data.empCode, data.monthYear);
-    const qrUrl = await buildQrCodeUrl(qrData, 80);
-    const qrSize = 14;
+    const qrUrl = await buildQrCodeUrl(qrData, 512);
+    const qrSize = 18;
     const qrX = pageWidth - 4 - qrSize;
-    doc.addImage(qrUrl, 'PNG', qrX, 2, qrSize, qrSize);
+    doc.addImage(qrUrl, 'PNG', qrX, 3, qrSize, qrSize);
     doc.setFontSize(5.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(200, 220, 255);
-    doc.text("Scan to verify", qrX + qrSize / 2, 17.5, { align: "center" });
+    doc.text("Scan to verify", qrX + qrSize / 2, 24, { align: "center" });
   } catch { /* skip */ }
 
   // Company name centered in band
   doc.setFontSize(15);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...WHITE);
-  doc.text("MAS CALLNET INDIA PVT. LTD.", pageWidth / 2, 10, { align: "center" });
+  doc.text("MAS CALLNET INDIA PVT. LTD.", pageWidth / 2, 12, { align: "center" });
 
   // Month subtitle
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(190, 215, 255);
-  doc.text(`Payslip — ${data.monthYear}`, pageWidth / 2, 17, { align: "center" });
+  doc.text(`Payslip for ${displayPeriod(data.monthYear)}`, pageWidth / 2, 20, { align: "center" });
 
   let currentY = headerH + 3;
 
@@ -159,9 +180,10 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       ],
     ],
     theme: "grid",
+    margin: TABLE_MARGIN,
     styles: {
-      fontSize: 8.5,
-      cellPadding: 2,
+      fontSize: 8,
+      cellPadding: 1.6,
       lineColor: [180, 200, 230] as [number, number, number],
       lineWidth: 0.15,
       textColor: [0, 0, 0],
@@ -170,12 +192,13 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       minCellHeight: 7,
       overflow: "linebreak",
     },
+    // 26 + 38 + 24 + 36 + 22 + 36 = 182 = CONTENT_W
     columnStyles: {
       0: { cellWidth: 26 },
-      1: { cellWidth: 36 },
+      1: { cellWidth: 38 },
       2: { cellWidth: 24 },
-      3: { cellWidth: 32 },
-      4: { cellWidth: 24 },
+      3: { cellWidth: 36 },
+      4: { cellWidth: 22 },
       5: { cellWidth: 36 },
     },
   });
@@ -208,7 +231,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
     ],
     body: [
       [
-        { content: "", styles: { fillColor: [255, 245, 245] as [number, number, number] } },
+        { content: "Amount (Rs.)", styles: { fillColor: [255, 245, 245] as [number, number, number], fontStyle: "bold" as const, textColor: [120, 20, 25] as [number, number, number], fontSize: 7 } },
         { content: formatINR(data.basic), styles: earningsValueStyle },
         { content: formatINR(data.hra), styles: earningsValueStyle },
         { content: formatINR(data.bonus), styles: earningsValueStyle },
@@ -223,14 +246,26 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       ],
     ],
     theme: "grid",
+    margin: TABLE_MARGIN,
     styles: {
-      fontSize: 8,
-      cellPadding: 2,
+      // 12 currency columns on A4 portrait only fit at this size — at 8pt every
+      // amount wrapped, splitting figures like "1,25,000.50" across two lines.
+      fontSize: 6.5,
+      cellPadding: 0.8,
       lineColor: [210, 180, 180] as [number, number, number],
       lineWidth: 0.1,
       textColor: [0, 0, 0],
+      valign: "middle",
     },
-    columnStyles: { 0: { cellWidth: 18, halign: "left" } },
+    // 20 + (10 x 14.2) + 20 = 182 = CONTENT_W
+    columnStyles: {
+      0: { cellWidth: 20, halign: "left", fontSize: 7 },
+      1: { cellWidth: 14.2 }, 2: { cellWidth: 14.2 }, 3: { cellWidth: 14.2 },
+      4: { cellWidth: 14.2 }, 5: { cellWidth: 14.2 }, 6: { cellWidth: 14.2 },
+      7: { cellWidth: 14.2 }, 8: { cellWidth: 14.2 }, 9: { cellWidth: 14.2 },
+      10: { cellWidth: 14.2 },
+      11: { cellWidth: 20 },
+    },
     headStyles: { minCellHeight: 7 },
     bodyStyles: { minCellHeight: 7 },
   });
@@ -265,7 +300,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
     ],
     body: [
       [
-        { content: "", styles: { fillColor: [240, 245, 255] as [number, number, number] } },
+        { content: "Amount (Rs.)", styles: { fillColor: [240, 245, 255] as [number, number, number], fontStyle: "bold" as const, textColor: MCN_NAVY as [number, number, number], fontSize: 7 } },
         { content: formatINR(data.pf), styles: dedValueStyle },
         { content: formatINR(data.esic), styles: dedValueStyle },
         { content: formatINR(data.pt), styles: dedValueStyle },
@@ -277,14 +312,24 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       ],
     ],
     theme: "grid",
+    margin: TABLE_MARGIN,
     styles: {
-      fontSize: 8,
-      cellPadding: 2,
+      fontSize: 7.5,
+      cellPadding: 1.2,
       lineColor: [180, 200, 230] as [number, number, number],
       lineWidth: 0.1,
       textColor: [0, 0, 0],
+      valign: "middle",
     },
-    columnStyles: { 0: { cellWidth: 18, halign: "left" } },
+    // 24 + (7 x 19.6) + 20.8 = 182 = CONTENT_W. The label column needs ~24mm so
+    // "DEDUCTIONS" stays on one line instead of breaking into "DEDUCTI / ONS".
+    columnStyles: {
+      0: { cellWidth: 24, halign: "left", fontSize: 7 },
+      1: { cellWidth: 19.6 }, 2: { cellWidth: 19.6 }, 3: { cellWidth: 19.6 },
+      4: { cellWidth: 19.6 }, 5: { cellWidth: 19.6 }, 6: { cellWidth: 19.6 },
+      7: { cellWidth: 19.6 },
+      8: { cellWidth: 20.8 },
+    },
     headStyles: { minCellHeight: 7 },
     bodyStyles: { minCellHeight: 7 },
   });
@@ -339,6 +384,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       ]],
       body,
       theme: "grid",
+      margin: TABLE_MARGIN,
       styles: {
         fontSize: 7.5,
         cellPadding: 1.8,
@@ -348,11 +394,12 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         halign: "center",
         minCellHeight: 6,
       },
+      // 48 + 43 + 48 + 43 = 182 = CONTENT_W
       columnStyles: {
-        0: { cellWidth: 42, halign: "left" },
-        1: { cellWidth: 38, halign: "right" },
-        2: { cellWidth: 42, halign: "left" },
-        3: { cellWidth: 38, halign: "right" },
+        0: { cellWidth: 48, halign: "left" },
+        1: { cellWidth: 43, halign: "right" },
+        2: { cellWidth: 48, halign: "left" },
+        3: { cellWidth: 43, halign: "right" },
       },
     });
     currentY = (doc as any).lastAutoTable.finalY + 4;
@@ -362,8 +409,17 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
 
   // ── NET SALARY BAND ───────────────────────────────────────────────────────────
   const netBandH = 14;
+
+  // The band, the words line and the footer are drawn manually, so unlike the tables
+  // they will not paginate themselves. Break first if the closing block cannot fit.
+  const CLOSING_BLOCK_H = netBandH + 3 + 8 + 12;
+  if (currentY + CLOSING_BLOCK_H > doc.internal.pageSize.getHeight() - MARGIN_X) {
+    doc.addPage();
+    currentY = MARGIN_X;
+  }
+
   doc.setFillColor(...MCN_NAVY);
-  doc.rect(14, currentY, pageWidth - 28, netBandH, "F");
+  doc.rect(MARGIN_X, currentY, CONTENT_W, netBandH, "F");
 
   // Cheque/UTR info (left) — only show when payment details exist
   if (data.chequeNo) {
@@ -378,7 +434,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   doc.setFontSize(10);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...WHITE);
-  doc.text(`Net Salary : ₹ ${formatINR(data.netSalary)}`, pageWidth - 18, currentY + 6, { align: "right" });
+  doc.text(`Net Salary : ${RUPEE} ${formatINR(data.netSalary)}`, pageWidth - 18, currentY + 6, { align: "right" });
 
   currentY += netBandH + 3;
 
@@ -386,14 +442,17 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...MCN_NAVY);
-  doc.text(data.netSalaryWords, pageWidth / 2, currentY, { align: "center" });
+  doc.text(`In Words: ${data.netSalaryWords}`, pageWidth / 2, currentY, { align: "center" });
 
   currentY += 8;
 
   // ── FOOTER ────────────────────────────────────────────────────────────────────
   doc.setDrawColor(...MCN_NAVY);
-  doc.setLineDash([1.5, 1], 0);
-  doc.line(14, currentY, pageWidth - 14, currentY);
+  // setLineDash exists at runtime but is missing from jsPDF's type declarations.
+  (doc as any).setLineDash([1.5, 1], 0);
+  doc.line(MARGIN_X, currentY, pageWidth - MARGIN_X, currentY);
+  // Reset, or the dash pattern leaks into anything drawn after this line.
+  (doc as any).setLineDash([], 0);
 
   currentY += 4;
   doc.setFontSize(7.5);

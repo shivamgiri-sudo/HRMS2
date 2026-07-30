@@ -3,7 +3,6 @@ import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { fileURLToPath } from "url";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
@@ -32,8 +31,10 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOADS_ROOT = path.resolve(__dirname, "../../../uploads");
+// Must match files.routes.ts UPLOADS_ROOT, which serves these back via
+// /api/files/tax-documents/*. Resolving from __dirname wrote to backend/dist/uploads/
+// once compiled, so uploaded tax proofs 404'd in production.
+const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -863,63 +864,9 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
   return res.json({ success: true, data: combined });
 }));
 
-// GET /api/payroll/verify/payslip/:empCode/:monthYear — PUBLIC (no auth) — QR code verify
-// monthYear is encoded as "May - 2025" (URL-encoded). Parse to YYYY-MM for DB lookup.
-router.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Response) => {
-  const empCode = req.params.empCode ?? "";
-  const monthYearRaw = decodeURIComponent(req.params.monthYear ?? "");
-
-  // Parse "May - 2025" → "2025-05"
-  const MONTH_MAP: Record<string, string> = {
-    january: "01", february: "02", march: "03", april: "04",
-    may: "05", june: "06", july: "07", august: "08",
-    september: "09", october: "10", november: "11", december: "12",
-  };
-  let runMonth = "";
-  const parts = monthYearRaw.split(/\s*-\s*/);
-  if (parts.length === 2) {
-    const monthNum = MONTH_MAP[parts[0].trim().toLowerCase()];
-    const year = parts[1].trim();
-    if (monthNum && /^\d{4}$/.test(year)) {
-      runMonth = `${year}-${monthNum}`;
-    }
-  }
-
-  if (!empCode || !runMonth) {
-    return res.json({ verified: false, message: "Invalid or missing payslip reference" });
-  }
-
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT sp.payslip_ref, sp.generated_at,
-            spr.run_month,
-            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            e.employee_code
-       FROM salary_payslip sp
-       JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
-       JOIN salary_prep_run spr  ON spr.id = spl.run_id
-       JOIN employees e          ON e.id   = sp.employee_id
-      WHERE e.employee_code = ?
-        AND spr.run_month   = ?
-      LIMIT 1`,
-    [empCode, runMonth]
-  );
-
-  const rec = (rows as any[])[0];
-  if (!rec) {
-    return res.json({ verified: false, message: "Payslip not found for this employee and period" });
-  }
-
-  // Salary figures are NOT returned here — this endpoint is public (QR verification only).
-  // Compensation data is only accessible through authenticated payslip endpoints.
-  return res.json({
-    verified: true,
-    employee_name: rec.employee_name,
-    employee_code: rec.employee_code,
-    run_month: rec.run_month,
-    payslip_ref: rec.payslip_ref,
-    generated_at: rec.generated_at,
-  });
-}));
+// GET /api/payroll/verify/payslip/:empCode/:monthYear — moved to payroll.public.routes.ts.
+// It must stay off this router: `router.use(requireAuth)` above gates every route
+// registered here, so the payslip QR scan was answered with 401 instead of a verdict.
 
 // GET /api/payroll/payslip/list/:employeeId — paginated payslip history for one employee (admin/HR view)
 router.get("/payslip/list/:employeeId", requireAuth, requireRole("super_admin", "admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {

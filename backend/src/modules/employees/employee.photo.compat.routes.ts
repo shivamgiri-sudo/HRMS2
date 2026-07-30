@@ -3,15 +3,17 @@ import { Router } from "express";
 import fs from "fs";
 import multer from "multer";
 import path from "path";
-import { fileURLToPath } from "url";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PHOTOS_DIR = path.resolve(__dirname, "../../../uploads/employee-photos");
+// Must resolve identically to app.ts (`/api/files/employee-photos/:filename`) and
+// files.routes.ts (UPLOADS_ROOT), which both use process.cwd(). Resolving from
+// __dirname instead put writes in backend/dist/uploads/ once compiled, while reads
+// still came from backend/uploads/ — every uploaded photo 404'd after a refresh.
+const PHOTOS_DIR = path.resolve(process.cwd(), "uploads", "employee-photos");
 fs.mkdirSync(PHOTOS_DIR, { recursive: true });
 
 const ALLOWED_IMAGE_TYPES = new Map<string, string>([

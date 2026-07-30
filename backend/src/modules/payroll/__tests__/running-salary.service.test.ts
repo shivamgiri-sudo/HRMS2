@@ -114,10 +114,16 @@ describe("computeRunningSalary", () => {
     expect(result.eligible_weekoff_till_date).toBe(1);
     expect(result.eligible_holiday_till_date).toBe(0);
     expect(result.earned_salary_till_date).toBe(4354.84);
-    expect(result.projected_payable_days).toBe(6.5);
-    expect(result.projected_salary).toBe(6290.32);
+
+    // Projection figures updated for the roster-free projection (19990a4b,
+    // 2026-07-28). Remaining days now come from the calendar instead of the
+    // roster rows mocked above, so the projected base is 5 future days rather
+    // than the single "Rostered" row: 2.5 present + 1 paid leave + 2 week-off
+    // + 5 future = 10.5, and 30000/31 x 10.5 = 10161.29.
+    expect(result.projected_payable_days).toBe(10.5);
+    expect(result.projected_salary).toBe(10161.29);
     expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(1, "emp-1", 3.5, "2026-07-01");
-    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 4.5, "2026-07-01");
+    expect(calculateWeekoffEligibility).toHaveBeenNthCalledWith(2, "emp-1", 8.5, "2026-07-01");
   });
 
   it("treats locked night-shift half day in ADR as payroll-visible half day instead of splitting the post-midnight date", async () => {
@@ -188,8 +194,12 @@ describe("computeRunningSalary", () => {
     const { computeRunningSalary } = await import("../running-salary.service.js");
     const result = await computeRunningSalary("emp-1", "2026-07-01", "2026-07-25");
 
+    // The assertion this test exists for: the locked night-shift half day counts
+    // as 0.5 payable on its own record_date, not split across midnight.
     expect(result.earned_payable_days).toBe(0.5);
-    expect(result.projected_payable_days).toBe(0.5);
     expect(result.earned_salary_till_date).toBe(483.87);
+
+    // Roster-free projection (19990a4b): 0.5 earned + 5 remaining calendar days.
+    expect(result.projected_payable_days).toBe(5.5);
   });
 });
