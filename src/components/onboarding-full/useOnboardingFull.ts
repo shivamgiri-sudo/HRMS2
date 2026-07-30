@@ -109,6 +109,21 @@ export type StatutoryForm = {
   internationalWorker: boolean; declarationAccepted: boolean;
 };
 
+// Raw PAN/Aadhaar/account numbers are never returned to the browser — the server
+// only sends masked forms ("XXXXXXXX0118"). Some legacy rows hold a literal "0",
+// which must not count as a saved value.
+function hasSavedMaskedValue(masked: unknown): boolean {
+  const s = String(masked ?? "").trim();
+  return s.length > 1 && s !== "0";
+}
+
+// Recover the last 4 digits from a masked value so a candidate who resumes the
+// form does not have to re-type their Aadhaar just to trigger verification.
+function last4FromMasked(masked: unknown): string {
+  const digits = String(masked ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : "";
+}
+
 // Extract the most useful message from a BGV API error response
 function extractBgvError(e: any, fallback: string): string {
   const status = e?.response?.status;
@@ -328,7 +343,9 @@ export function useOnboardingFull(token: string) {
       // Build section-level completion map from saved data
       const sc: Record<number, boolean> = {};
       sc[2] = !!(sp.employee_name && sp.mobile_number && sp.personal_email_id && sp.date_of_birth);
-      sc[3] = !!(sp.permanent_address && sp.pan_number && sp.aadhaar_number);
+      // candidate_onboarding_profile has no pan_number / aadhaar_number column —
+      // only masked and hashed forms — so this step could never be marked complete.
+      sc[3] = !!(sp.permanent_address && hasSavedMaskedValue(sp.pan_number_masked) && hasSavedMaskedValue(sp.aadhaar_number_masked));
       sc[4] = (s?.documents?.length ?? 0) > 0;
       sc[5] = bgvConsent;
       sc[6] = !!(s.bank?.bank_name && s.bank?.ifsc_code);
@@ -584,7 +601,15 @@ export function useOnboardingFull(token: string) {
       setError("✓ Aadhaar already verified via DigiLocker in Step 3 — no additional verification needed.");
       return;
     }
-    if (!employee.aadhaarNumber || employee.aadhaarNumber.trim().length !== 12) {
+    // The Aadhaar field is deliberately blanked on every load, so a candidate who
+    // resumes has nothing in local state even though the server holds their number.
+    // Fall back to the last 4 digits of the saved masked value.
+    const savedProfile: any = (status as any)?.saved_profile ?? (status as any)?.token?.saved_profile ?? {};
+    const typedAadhaar = employee.aadhaarNumber.replace(/\D/g, "");
+    const aadhaarLast4 = typedAadhaar.length === 12
+      ? typedAadhaar.slice(-4)
+      : last4FromMasked(savedProfile.aadhaar_number_masked);
+    if (!aadhaarLast4) {
       setError("Please enter your 12-digit Aadhaar number in Step 3 (DigiLocker & KYC) before verification.");
       return;
     }
@@ -598,7 +623,7 @@ export function useOnboardingFull(token: string) {
       await hrmsApi.post(`${BGV}/verify/aadhaar-offline`, {
         token,
         documentId: doc?.id,
-        aadhaarLast4: employee.aadhaarNumber.slice(-4)
+        aadhaarLast4,
       });
       await load();
       setError(""); // Clear error on success

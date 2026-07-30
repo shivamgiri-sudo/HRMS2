@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Camera, CheckCircle2, RefreshCw, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -32,10 +32,6 @@ export function LiveSelfieCapture({ onCapture, captured, disabled }: LiveSelfieC
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
       setStreaming(true);
     } catch (e: any) {
       if (e.name === "NotAllowedError") {
@@ -50,6 +46,28 @@ export function LiveSelfieCapture({ onCapture, captured, disabled }: LiveSelfieC
     }
   }, []);
 
+  // The <video> element is only mounted once `streaming` is true, so the stream
+  // has to be attached after that render. Assigning srcObject inside startCamera
+  // ran while videoRef was still null, which left the preview permanently black.
+  useEffect(() => {
+    if (!streaming) return;
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+    video.srcObject = stream;
+    video.play().catch(() => {
+      setError("Could not start the camera preview. Please try again, or use a different browser.");
+    });
+  }, [streaming]);
+
+  // Release the camera if the candidate leaves the step mid-capture.
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
@@ -60,6 +78,12 @@ export function LiveSelfieCapture({ onCapture, captured, disabled }: LiveSelfieC
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
+    // Without this the canvas can be 0x0 before the first frame arrives and we
+    // would silently upload a blank selfie.
+    if (!video.videoWidth || !video.videoHeight) {
+      setError("Camera is still starting. Please wait a moment and tap Capture again.");
+      return;
+    }
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");

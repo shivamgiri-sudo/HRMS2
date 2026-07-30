@@ -102,6 +102,19 @@ async function getCandidateIdentity(candidateId: string) {
   return rows[0];
 }
 
+/**
+ * Resolve the Aadhaar last-4 for an offline check. Prefers what the client sent,
+ * then the raw number on the candidate row, then the stored masked value
+ * ("XXXXXXXX0118"). Legacy rows hold a literal "0" and must not match.
+ */
+function resolveAadhaarLast4(supplied: string | undefined, candidate: RowDataPacket): string | undefined {
+  for (const value of [supplied, candidate.aadhar_number, candidate.aadhaar_number_masked]) {
+    const digits = String(value ?? "").replace(/\D/g, "");
+    if (digits.length >= 4 && digits !== "0") return digits.slice(-4);
+  }
+  return undefined;
+}
+
 async function createOrUpdateCheck(candidateId: string, checkType: string, status: string, input: Record<string, unknown>) {
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
@@ -555,10 +568,14 @@ export async function verifyAadhaarOfflineForCandidate(candidateId: string, inpu
     return getBgvStatusForCandidate(candidateId);
   }
   const candidate = await getCandidateIdentity(candidateId);
+  // The candidate form never holds the raw Aadhaar after a page reload, so the
+  // client may legitimately omit aadhaarLast4. Derive it from what is already
+  // stored rather than failing the check.
+  const aadhaarLast4 = resolveAadhaarLast4(input.aadhaarLast4, candidate);
   const adapter = await getConfiguredBgvProviderAdapter();
   const result = await withProviderFailureLogged(
     { candidateId, endpointKey: "AADHAAR_OFFLINE_VERIFY", providerKey: adapter.providerKey },
-    () => adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4: input.aadhaarLast4, documentId: input.documentId }),
+    () => adapter.verifyAadhaarOffline({ candidateName: candidate.employee_name ?? candidate.full_name, aadhaarLast4, documentId: input.documentId }),
   );
   const checkId = await createOrUpdateCheck(candidateId, "aadhaar", result.status, {
     sourceDocumentId: input.documentId ?? null,

@@ -836,6 +836,16 @@ async function storeBgvCheckResult(
   }
 }
 
+/** Candidate-facing names for each BGV check type. */
+const CHECK_LABELS: Record<string, string> = {
+  pan: "PAN verification",
+  aadhaar: "Aadhaar verification",
+  aadhaar_offline: "Aadhaar verification",
+  bank: "Bank account verification",
+  employment: "Employment / UAN verification",
+  criminal: "Criminal record check",
+};
+
 /**
  * Store a BGV check that errored — marks as manual_review
  */
@@ -853,21 +863,25 @@ async function storeBgvCheckError(
     [candidateId, checkType]
   );
 
-  const errorSummary = `Check failed - manual review required: ${errMsg.slice(0, 200)}`;
+  // result_summary is rendered to the candidate on Step 5, so it must not carry raw
+  // provider text (which has leaked credential and IP-whitelist errors verbatim).
+  // The technical detail is kept in result_json for HR and support.
+  const errorSummary = `${CHECK_LABELS[checkType] ?? "This check"} could not be completed automatically. HR will verify it manually — this does not block your onboarding.`;
+  const errorDetail = JSON.stringify({ mode: "provider_error", provider_key: providerKey, error_message: errMsg.slice(0, 500) });
 
   if ((existing as any[]).length > 0) {
     await db.execute(
       `UPDATE candidate_bgv_check
-       SET status = 'manual_review', provider_key = ?, result_summary = ?, is_auto_approved = 0, updated_at = NOW()
+       SET status = 'manual_review', provider_key = ?, result_summary = ?, result_json = ?, is_auto_approved = 0, updated_at = NOW()
        WHERE candidate_id = ? AND check_type = ?`,
-      [providerKey, errorSummary, candidateId, checkType]
+      [providerKey, errorSummary, errorDetail, candidateId, checkType]
     );
   } else {
     await db.execute(
       `INSERT INTO candidate_bgv_check
-         (id, candidate_id, check_type, provider_key, status, result_summary, is_auto_approved)
-       VALUES (?, ?, ?, ?, 'manual_review', ?, 0)`,
-      [randomUUID(), candidateId, checkType, providerKey, errorSummary]
+         (id, candidate_id, check_type, provider_key, status, result_summary, result_json, is_auto_approved)
+       VALUES (?, ?, ?, ?, 'manual_review', ?, ?, 0)`,
+      [randomUUID(), candidateId, checkType, providerKey, errorSummary, errorDetail]
     );
   }
 }
@@ -1604,7 +1618,8 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
   const params = scopeFilter?.params ?? [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT req.id, req.status, req.candidate_id,
-            p.profile_status,
+            req.created_at, req.updated_at,
+            p.profile_status, p.reviewed_at,
             c.candidate_code, c.full_name, c.mobile, c.email,
             c.applied_for_process,
             br.branch_name, pm.process_name,
@@ -1637,7 +1652,8 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
             LIMIT 1
          )
       ${whereSql}
-      GROUP BY req.id, req.status, req.candidate_id, p.profile_status,
+      GROUP BY req.id, req.status, req.candidate_id, req.created_at, req.updated_at,
+               p.profile_status, p.reviewed_at,
                c.candidate_code, c.full_name, c.mobile, c.email, c.applied_for_process,
                br.branch_name, pm.process_name, offer.id, offer.status, offer.offered_ctc,
                bank.verification_status

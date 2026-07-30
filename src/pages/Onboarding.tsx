@@ -33,7 +33,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { apiBaseUrl, apiUrl } from "@/lib/apiBase";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
-import { useOnboardingRequests, OnboardingRequest } from "@/hooks/useOnboardingRequests";
+import { useOnboardingRequests, OnboardingRequest, bucketOfRequest, hasEmployeeAlreadyCreated } from "@/hooks/useOnboardingRequests";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { format } from "date-fns";
@@ -258,12 +258,15 @@ const Onboarding = () => {
   const { requests, isLoading: loadingRequests, approveRequest, rejectRequest } = useOnboardingRequests();
   const { data: nextEmployeeCode, isLoading: loadingNextCode } = useNextEmployeeCode();
 
-  // Helper to check if an employee already exists for a user
-  const hasEmployeeRecord = (userId: string) => linkedUserIds.has(userId);
+  // These rows are ATS candidates, not user signups — they carry no user_id, so
+  // employee existence comes from the pipeline status itself.
+  const hasEmployeeRecord = (request: OnboardingRequest) => hasEmployeeAlreadyCreated(request.status);
 
-  const pendingRequests = requests.filter((r) => r.status === "pending");
-  const approvedRequests = requests.filter((r) => r.status === "approved");
-  const rejectedRequests = requests.filter((r) => r.status === "rejected");
+  // Bucket across the full lifecycle enum; mid-pipeline states (profile_submitted,
+  // hr_review, offer_submitted, …) count as pending rather than vanishing.
+  const pendingRequests = requests.filter((r) => bucketOfRequest(r.status) === "pending");
+  const approvedRequests = requests.filter((r) => bucketOfRequest(r.status) === "approved");
+  const rejectedRequests = requests.filter((r) => bucketOfRequest(r.status) === "rejected");
 
   // Get file URL for document viewing/download
   const getDocumentUrl = (filePath: string) => {
@@ -634,7 +637,7 @@ const Onboarding = () => {
       firstName,
       lastName,
       email: request.email,
-      linkedUserId: request.user_id,
+      phone: request.mobile ?? '',
     }));
     setActiveTab('add');
   };
@@ -798,9 +801,9 @@ const Onboarding = () => {
             <TabsTrigger value="pending" className="w-full justify-center">
               <span className="hidden sm:inline">Pending</span>
               <span className="sm:hidden">Pending</span>
-              {(onboardingEmployees.length + approvedRequests.filter(r => !hasEmployeeRecord(r.user_id)).length) > 0 && (
+              {(onboardingEmployees.length + approvedRequests.filter(r => !hasEmployeeRecord(r)).length) > 0 && (
                 <Badge variant="secondary" className="ml-2">
-                  {onboardingEmployees.length + approvedRequests.filter(r => !hasEmployeeRecord(r.user_id)).length}
+                  {onboardingEmployees.length + approvedRequests.filter(r => !hasEmployeeRecord(r)).length}
                 </Badge>
               )}
             </TabsTrigger>
@@ -1190,10 +1193,10 @@ const Onboarding = () => {
           <TabsContent value="pending" className="mt-6">
             <div className="space-y-4">
               {/* Approved requests awaiting employee creation */}
-              {approvedRequests.filter(r => !hasEmployeeRecord(r.user_id)).length > 0 && (
+              {approvedRequests.filter(r => !hasEmployeeRecord(r)).length > 0 && (
                 <>
                   <h3 className="text-sm font-medium text-muted-foreground">Approved Requests – Awaiting Employee Creation</h3>
-                  {approvedRequests.filter(r => !hasEmployeeRecord(r.user_id)).map((request) => (
+                  {approvedRequests.filter(r => !hasEmployeeRecord(r)).map((request) => (
                     <Card key={request.id}>
                       <CardContent className="p-6">
                         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1206,8 +1209,8 @@ const Onboarding = () => {
                               <p className="text-sm text-muted-foreground">
                                 {request.email} · Approved on {(request.reviewed_at || request.updated_at) ? formatISTDate(request.reviewed_at || request.updated_at) : "—"}
                               </p>
-                              {request.message && (
-                                <p className="text-xs text-muted-foreground mt-1 italic">"{request.message}"</p>
+                              {request.candidate_code && (
+                                <p className="text-xs text-muted-foreground mt-1">{request.candidate_code}{request.branch_name ? ` · ${request.branch_name}` : ""}</p>
                               )}
                             </div>
                           </div>
@@ -1296,7 +1299,7 @@ const Onboarding = () => {
                     Loading...
                   </CardContent>
                 </Card>
-              ) : onboardingEmployees.length === 0 && approvedRequests.filter(r => !hasEmployeeRecord(r.user_id)).length === 0 ? (
+              ) : onboardingEmployees.length === 0 && approvedRequests.filter(r => !hasEmployeeRecord(r)).length === 0 ? (
                 <Card>
                   <CardContent className="p-6 text-center text-muted-foreground">
                     No employees currently in onboarding
@@ -1373,7 +1376,7 @@ const Onboarding = () => {
                         <TableRow>
                           <TableHead>User</TableHead>
                           <TableHead>Email</TableHead>
-                          <TableHead className="hidden md:table-cell">Message</TableHead>
+                          <TableHead className="hidden md:table-cell">Branch / Process</TableHead>
                           <TableHead className="hidden sm:table-cell">Submitted</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
@@ -1392,7 +1395,7 @@ const Onboarding = () => {
                             </TableCell>
                             <TableCell className="text-muted-foreground">{request.email}</TableCell>
                             <TableCell className="hidden md:table-cell max-w-[200px] truncate text-muted-foreground">
-                              {request.message || "-"}
+                              {[request.branch_name, request.process_name].filter(Boolean).join(" · ") || "-"}
                             </TableCell>
                             <TableCell className="hidden sm:table-cell text-muted-foreground">
                               {request.created_at ? formatISTDate(request.created_at) : "—"}
@@ -1407,7 +1410,7 @@ const Onboarding = () => {
                                 >
                                   <Eye className="h-4 w-4" />
                                 </Button>
-                                {request.status === "pending" && (
+                                {bucketOfRequest(request.status) === "pending" && (
                                   <>
                                     <Button
                                       variant="outline"
@@ -1429,7 +1432,7 @@ const Onboarding = () => {
                                     </Button>
                                   </>
                                 )}
-                                {request.status === "approved" && !hasEmployeeRecord(request.user_id) && (
+                                {bucketOfRequest(request.status) === "approved" && !hasEmployeeRecord(request) && (
                                   <Button
                                     size="sm"
                                     onClick={() => handleCreateEmployeeFromRequest(request)}
@@ -1438,7 +1441,7 @@ const Onboarding = () => {
                                     <span className="hidden sm:inline">Create Employee</span>
                                   </Button>
                                 )}
-                                {request.status === "approved" && hasEmployeeRecord(request.user_id) && (
+                                {bucketOfRequest(request.status) === "approved" && hasEmployeeRecord(request) && (
                                   <Badge variant="secondary" className="text-xs">
                                     <CheckCircle2 className="mr-1 h-3 w-3" />
                                     Created
@@ -1972,7 +1975,7 @@ const Onboarding = () => {
                   </Button>
                 </>
               )}
-              {selectedRequest?.status === "approved" && (
+              {selectedRequest && bucketOfRequest(selectedRequest.status) === "approved" && (
                 <Button onClick={() => {
                   handleCreateEmployeeFromRequest(selectedRequest);
                   setSelectedRequest(null);
