@@ -109,6 +109,11 @@ type BudgetCapabilities = {
   canReviewAccountsStage: boolean;
 };
 
+/** The only statuses in which the plan builder may be edited; every later status is read-only
+ *  until a reviewer sends the budget back for revision. Mirrors the backend guard in
+ *  branch-budget.service.ts saveDraft(). */
+const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required"];
+
 function currentPeriod() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -297,10 +302,13 @@ export default function BranchBudgetManagementWorkspace() {
   });
   const budgets = budgetsQuery.data ?? [];
   const currentBudget = budgets[0];
-  const editableBudget = ["draft", "revision_required"].includes(currentBudget?.status ?? "")
+  const editableBudget = EDITABLE_BUDGET_STATUSES.includes(currentBudget?.status ?? "")
     ? currentBudget
     : undefined;
-  const detailId = savedBudgetId ?? editableBudget?.id ?? null;
+  // Fall back to the current budget even when it is not editable, so a reviewer can actually read the
+  // lines they are approving. Every line editor is gated on canEdit, which stays false while locked,
+  // so this loads the detail read-only rather than opening it for edit.
+  const detailId = savedBudgetId ?? editableBudget?.id ?? currentBudget?.id ?? null;
   const detailQuery = useBranchBudgetDetail(detailId);
   const { coverageQuery, saveCoverage } = useBudgetCoverage(detailId);
   const { mastersQuery, saveHead, saveSubHead } = useFinanceExpenseMasters(
@@ -410,7 +418,11 @@ export default function BranchBudgetManagementWorkspace() {
     [lines]
   );
 
-  const locked = Boolean(currentBudget && !editableBudget && !savedBudgetId);
+  // Lock on the status of the budget actually loaded in the builder. The previous form keyed off
+  // "no savedBudgetId", which the detail-load effect always sets — so once reviewers began loading
+  // the detail read-only, a submitted budget silently reported itself as unlocked.
+  const builderStatus = detailQuery.data?.status ?? currentBudget?.status ?? "";
+  const locked = Boolean(builderStatus) && !EDITABLE_BUDGET_STATUSES.includes(builderStatus);
   const canEdit = Boolean(capabilities?.canCreate) && !locked;
   const coverageItems = coverageQuery.data?.items ?? [];
   const filteredCoverage = coverageItems.filter((item) =>
@@ -618,7 +630,11 @@ export default function BranchBudgetManagementWorkspace() {
             </TabsList>
 
             <TabsContent value="plan" className="space-y-5">
-              <Card className="rounded-3xl border-slate-200 shadow-sm"><CardContent className="grid gap-4 p-5 md:grid-cols-3"><div className="space-y-2"><Label>Period *</Label><Input type="month" value={period} disabled={!capabilities?.canCreate || locked} onChange={(event) => { setPeriod(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="space-y-2"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked) || !capabilities?.canCreate || locked} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="space-y-2"><Label>Financial year</Label><Input value={financialYear(period)} readOnly /></div></CardContent></Card>
+              {/* Period and branch are navigation, not creation: reviewers (branch/finance/accounts head)
+                  have canCreate=false, so gating these on canCreate stranded them on the current month
+                  and they could never reach the budget awaiting their approval. Branch stays pinned for
+                  branch-scoped roles via branchLocked, which the backend enforces independently. */}
+              <Card className="rounded-3xl border-slate-200 shadow-sm"><CardContent className="grid gap-4 p-5 md:grid-cols-3"><div className="space-y-2"><Label>Period *</Label><Input type="month" value={period} onChange={(event) => { setPeriod(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="space-y-2"><Label>{capabilities?.branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={Boolean(capabilities?.branchLocked)} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="space-y-2"><Label>Financial year</Label><Input value={financialYear(period)} readOnly /></div></CardContent></Card>
               {locked && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{currentBudget?.budget_number} is {statusLabel(currentBudget?.status ?? "locked")}. It is read-only until revision is requested.</div>}
               {branchId && (
                 <Card className="rounded-3xl border-slate-200 shadow-sm">
