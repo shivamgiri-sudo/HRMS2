@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  AlertTriangle, BarChart2, CheckCircle2, Clock,
+  AlertTriangle, BarChart2, CheckCircle2, Clock, Cpu,
   RefreshCcw, Ticket, TrendingDown, Users, Zap,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -58,6 +58,43 @@ type AgingBuckets = {
 
 type RootCauseRow = { root_cause: string; total: number };
 
+type ItSubcategoryRow = {
+  subcategory: string;
+  total: number;
+  open: number;
+  breached: number;
+  total_downtime_minutes: number;
+  total_affected_seats: number;
+  avg_downtime_minutes: number | null;
+  avg_resolution_minutes: number | null;
+};
+type ItBranchRow = {
+  branch_name: string;
+  total_tickets: number;
+  open_tickets: number;
+  breached: number;
+  total_downtime_minutes: number;
+  total_affected_seats: number;
+  avg_resolution_minutes: number | null;
+};
+type ItRecurringRow = { issue_label: string; occurrences: number; total_downtime: number; last_seen: string };
+type ItSummary = {
+  total_it_tickets: number;
+  open_it_tickets: number;
+  sla_breached: number;
+  total_downtime_minutes: number;
+  total_seat_impacts: number;
+  avg_downtime_per_ticket: number | null;
+  avg_resolution_minutes: number | null;
+  branches_affected: number;
+};
+type ItAnalysisData = {
+  summary: ItSummary;
+  subcategory_breakdown: ItSubcategoryRow[];
+  branch_impact: ItBranchRow[];
+  recurring_issues: ItRecurringRow[];
+};
+
 type SupportCommandCenterData = {
   stats: DashboardStats;
   sla_summary: SlaPriorityRow[];
@@ -112,6 +149,10 @@ export default function NativeSupportCommandCenter() {
   const [rootCauses, setRootCauses] = useState<RootCauseRow[]>([]);
   const [lastRefresh, setLastRefresh] = useState<string>("");
 
+  // IT depth analysis
+  const [itAnalysis, setItAnalysis]       = useState<ItAnalysisData | null>(null);
+  const [itLoading, setItLoading]         = useState(false);
+
   // Ticket queue
   const [queueTickets, setQueueTickets]     = useState<QueueTicket[]>([]);
   const [queueLoading, setQueueLoading]     = useState(false);
@@ -157,6 +198,20 @@ export default function NativeSupportCommandCenter() {
   }, [from, to, category, priority, status]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadItAnalysis = useCallback(async () => {
+    setItLoading(true);
+    try {
+      const params = new URLSearchParams({ from, to });
+      const res = await hrmsApi.get<{ success: boolean; data: ItAnalysisData }>(
+        `/api/helpdesk/it-analysis?${params}`
+      );
+      if (res.data?.success) setItAnalysis(res.data.data);
+    } catch { /* non-fatal */ }
+    finally { setItLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { void loadItAnalysis(); }, [loadItAnalysis]);
 
   const loadQueue = useCallback(async () => {
     setQueueLoading(true);
@@ -402,6 +457,129 @@ export default function NativeSupportCommandCenter() {
             </div>
           </>
         )}
+
+        {/* ── IT Depth Analysis ────────────────────────────────────────────── */}
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Cpu size={16} className="text-blue-500" /> IT Ticket Depth Analysis
+            </h2>
+            <button
+              onClick={() => void loadItAnalysis()}
+              disabled={itLoading}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
+            >
+              <RefreshCcw size={12} className={itLoading ? "animate-spin" : ""} /> Refresh
+            </button>
+          </div>
+
+          {itLoading ? (
+            <div className="py-8 text-center text-gray-400 text-xs">Loading IT analysis…</div>
+          ) : !itAnalysis || itAnalysis.summary.total_it_tickets === 0 ? (
+            <div className="py-8 text-center text-gray-400 text-sm">No IT tickets in selected period.</div>
+          ) : (
+            <div className="space-y-6">
+              {/* IT Summary KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-3">
+                {[
+                  { label: "IT Tickets", value: itAnalysis.summary.total_it_tickets, color: "text-blue-600 bg-blue-50" },
+                  { label: "Total Downtime", value: `${Math.round((itAnalysis.summary.total_downtime_minutes ?? 0) / 60)}h ${(itAnalysis.summary.total_downtime_minutes ?? 0) % 60}m`, color: "text-red-600 bg-red-50" },
+                  { label: "Seat Impacts", value: itAnalysis.summary.total_seat_impacts ?? 0, color: "text-orange-600 bg-orange-50" },
+                  { label: "Branches Hit", value: itAnalysis.summary.branches_affected ?? 0, color: "text-purple-600 bg-purple-50" },
+                  { label: "Avg Downtime/Ticket", value: `${itAnalysis.summary.avg_downtime_per_ticket ?? 0}m`, color: "text-amber-600 bg-amber-50" },
+                  { label: "Avg Resolution", value: formatMinutes(itAnalysis.summary.avg_resolution_minutes), color: "text-green-600 bg-green-50" },
+                  { label: "SLA Breached", value: itAnalysis.summary.sla_breached ?? 0, color: (itAnalysis.summary.sla_breached ?? 0) > 0 ? "text-red-700 bg-red-100" : "text-gray-400 bg-gray-50" },
+                  { label: "Open IT Tickets", value: itAnalysis.summary.open_it_tickets ?? 0, color: (itAnalysis.summary.open_it_tickets ?? 0) > 0 ? "text-amber-700 bg-amber-50" : "text-gray-400 bg-gray-50" },
+                ].map(k => (
+                  <div key={k.label} className={`rounded-xl p-3 ${k.color}`}>
+                    <div className="text-lg font-bold">{k.value}</div>
+                    <div className="text-xs mt-0.5 opacity-70">{k.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Sub-category breakdown */}
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Sub-Category Impact</h3>
+                  <table className="w-full text-sm">
+                    <thead className="text-xs text-gray-400 uppercase border-b">
+                      <tr>
+                        <th className="pb-2 text-left">Sub-Category</th>
+                        <th className="pb-2 text-right">Tickets</th>
+                        <th className="pb-2 text-right">Downtime</th>
+                        <th className="pb-2 text-right">Seats</th>
+                        <th className="pb-2 text-right">Avg Res.</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {itAnalysis.subcategory_breakdown.map(r => (
+                        <tr key={r.subcategory}>
+                          <td className="py-2 text-gray-700 font-medium capitalize text-xs">
+                            {r.subcategory.replace(/_/g, " ")}
+                          </td>
+                          <td className="py-2 text-right text-gray-600">{r.total}</td>
+                          <td className="py-2 text-right text-red-600 font-semibold">{r.total_downtime_minutes ?? 0}m</td>
+                          <td className="py-2 text-right text-orange-600">{r.total_affected_seats ?? 0}</td>
+                          <td className="py-2 text-right text-gray-400">{formatMinutes(r.avg_resolution_minutes)}</td>
+                        </tr>
+                      ))}
+                      {itAnalysis.subcategory_breakdown.length === 0 && (
+                        <tr><td colSpan={5} className="py-3 text-center text-gray-300 text-xs">No sub-category data</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Branch impact */}
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Branch Impact</h3>
+                  <table className="w-full text-sm">
+                    <thead className="text-xs text-gray-400 uppercase border-b">
+                      <tr>
+                        <th className="pb-2 text-left">Branch</th>
+                        <th className="pb-2 text-right">Tickets</th>
+                        <th className="pb-2 text-right">Downtime</th>
+                        <th className="pb-2 text-right">Seats</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {itAnalysis.branch_impact.map(r => (
+                        <tr key={r.branch_name}>
+                          <td className="py-2 text-gray-700 font-medium text-xs">{r.branch_name}</td>
+                          <td className="py-2 text-right text-gray-600">{r.total_tickets}</td>
+                          <td className="py-2 text-right text-red-600 font-semibold">{r.total_downtime_minutes ?? 0}m</td>
+                          <td className="py-2 text-right text-orange-600">{r.total_affected_seats ?? 0}</td>
+                        </tr>
+                      ))}
+                      {itAnalysis.branch_impact.length === 0 && (
+                        <tr><td colSpan={4} className="py-3 text-center text-gray-300 text-xs">No branch data</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Recurring issues */}
+              {itAnalysis.recurring_issues.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Recurring Issues (Top 10)</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {itAnalysis.recurring_issues.map(r => (
+                      <div key={r.issue_label} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <span className="text-xs text-gray-700 font-medium capitalize truncate">{r.issue_label.replace(/_/g, " ")}</span>
+                        <div className="flex gap-3 ml-2 shrink-0">
+                          <span className="text-xs font-bold text-blue-600">{r.occurrences}×</span>
+                          <span className="text-xs text-red-500">{r.total_downtime ?? 0}m DT</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* ── Open Ticket Queue ─────────────────────────────────────────────── */}
         <div className="bg-white border border-gray-200 rounded-xl p-5">

@@ -35,7 +35,7 @@ type Ticket = {
   subject: string;
   description: string;
   priority: "low" | "medium" | "high" | "urgent";
-  status: "open" | "in_progress" | "on_hold" | "resolved" | "closed";
+  status: "open" | "in_progress" | "pending_info" | "on_hold" | "resolved" | "closed";
   assigned_to?: string;
   assigned_name?: string;
   created_by?: string;
@@ -50,6 +50,7 @@ type Ticket = {
   closure_rating?: number;
   escalation_level?: number;
   full_name?: string;
+  branch_id?: string;
   branch_name?: string;
   process_name?: string;
   employee_code?: string;
@@ -110,7 +111,7 @@ type KbArticle = {
   created_at: string;
 };
 
-type Agent = { id: string; full_name: string; email?: string };
+type Agent = { id: string; full_name: string; email?: string; branch_name?: string; role_key?: string };
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 
@@ -175,12 +176,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 type Tab = "tickets" | "grievances" | "kb";
 
 const STATUS_FILTER_TABS = [
-  { key: "all",         label: "All" },
-  { key: "open",        label: "Open" },
-  { key: "in_progress", label: "In Progress" },
-  { key: "on_hold",     label: "On Hold" },
-  { key: "resolved",    label: "Resolved" },
-  { key: "closed",      label: "Closed" },
+  { key: "all",          label: "All" },
+  { key: "open",         label: "Open" },
+  { key: "in_progress",  label: "In Progress" },
+  { key: "pending_info", label: "Pending Info" },
+  { key: "on_hold",      label: "On Hold" },
+  { key: "resolved",     label: "Resolved" },
+  { key: "closed",       label: "Closed" },
 ];
 
 export default function NativeHelpdesk() {
@@ -212,6 +214,8 @@ export default function NativeHelpdesk() {
   const [commentBusy, setCommentBusy] = useState(false);
   const [internalNoteTab, setInternalNoteTab] = useState<"public" | "internal">("public");
 
+  const [myTicketsOnly, setMyTicketsOnly] = useState(false);
+
   // Admin action state
   const [agents, setAgents] = useState<Agent[]>([]);
   const [assignToUserId, setAssignToUserId] = useState("");
@@ -221,6 +225,8 @@ export default function NativeHelpdesk() {
   const [showResolvePanel, setShowResolvePanel] = useState(false);
   const [resolveNote, setResolveNote] = useState("");
   const [resolveRootCause, setResolveRootCause] = useState("");
+  const [resolveDowntime, setResolveDowntime] = useState(0);
+  const [resolveSubcategory, setResolveSubcategory] = useState("");
 
   // CSAT
   const [csatRating, setCsatRating] = useState(0);
@@ -270,6 +276,7 @@ export default function NativeHelpdesk() {
       const res = await hrmsApi.get<{ data: TicketDetail }>(`/api/helpdesk/tickets/${id}`);
       setSelectedTicket(res.data);
       setCsatRating(res.data?.closure_rating ?? 0);
+      if (isAdminMode) void loadAgents((res.data as any)?.branch_id);
     } catch (err: unknown) {
       setMessage(err instanceof Error ? err.message : "Failed to load ticket");
     } finally {
@@ -277,10 +284,11 @@ export default function NativeHelpdesk() {
     }
   };
 
-  const loadAgents = useCallback(async () => {
+  const loadAgents = useCallback(async (branchId?: string) => {
     if (!isAdminMode) return;
     try {
-      const res = await hrmsApi.get<{ data: Agent[] }>("/api/helpdesk/agents");
+      const params = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      const res = await hrmsApi.get<{ data: Agent[] }>(`/api/helpdesk/agents${params}`);
       setAgents(res.data ?? []);
     } catch { /* non-fatal */ }
   }, [isAdminMode]);
@@ -411,8 +419,17 @@ export default function NativeHelpdesk() {
         resolution_note: resolveNote.trim(),
         root_cause: resolveRootCause.trim() || undefined,
       });
+      // Update IT-specific fields if changed
+      const itUpdates: Record<string, unknown> = {};
+      if (resolveSubcategory && resolveSubcategory !== selectedTicket.it_subcategory) itUpdates.it_subcategory = resolveSubcategory;
+      if (resolveDowntime > 0 && resolveDowntime !== selectedTicket.downtime_minutes) itUpdates.downtime_minutes = resolveDowntime;
+      if (Object.keys(itUpdates).length > 0) {
+        await hrmsApi.patch(`/api/helpdesk/tickets/${selectedTicket.id}`, itUpdates);
+      }
       setResolveNote("");
       setResolveRootCause("");
+      setResolveDowntime(0);
+      setResolveSubcategory("");
       setShowResolvePanel(false);
       setMessage("Ticket resolved.");
       await loadTicketDetail(selectedTicket.id);
@@ -522,11 +539,13 @@ export default function NativeHelpdesk() {
   const filteredTickets = tickets.filter((t) => {
     const q = ticketSearch.trim().toLowerCase();
     const statusMatch = statusFilter === "all" || t.status === statusFilter;
-    const text = [t.subject, t.category, t.status, t.priority, t.ticket_number, t.ticket_code].join(" ").toLowerCase();
-    return statusMatch && (!q || text.includes(q));
+    const assignedMatch = !myTicketsOnly || !!(t.assigned_to && t.assigned_name);
+    const text = [t.subject, t.category, t.it_subcategory, t.status, t.priority, t.ticket_number, t.ticket_code, t.full_name, t.branch_name].join(" ").toLowerCase();
+    return statusMatch && assignedMatch && (!q || text.includes(q));
   });
 
   const subLabel = BPO_IT_SUBCATEGORIES.find(s => s.value === selectedTicket?.it_subcategory)?.label;
+  const isItTicket = selectedTicket?.category?.toLowerCase() === "it";
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -629,24 +648,22 @@ export default function NativeHelpdesk() {
                           ) : null}
                         </div>
                         <h2 className="text-xl font-black text-slate-950">{selectedTicket.subject}</h2>
-                        <p className="text-sm text-slate-500 mt-1">
-                          {selectedTicket.category}
-                          {subLabel ? ` · ${subLabel}` : ""}
-                          {" · "}{formatISTDate(selectedTicket.created_at)}
-                          {selectedTicket.assigned_name ? ` · Assigned to: ${selectedTicket.assigned_name}` : " · Unassigned"}
-                        </p>
-                        {selectedTicket.branch_name && (
-                          <p className="text-xs text-slate-400 mt-0.5">{selectedTicket.full_name} · {selectedTicket.branch_name}</p>
-                        )}
+
+                        {/* Metadata grid */}
+                        <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                          <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Category</span><div className="font-semibold text-slate-700 mt-0.5">{selectedTicket.category}</div></div>
+                          {subLabel && <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Sub-Category</span><div className="font-semibold text-slate-700 mt-0.5">{subLabel}</div></div>}
+                          <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Raised On</span><div className="font-semibold text-slate-700 mt-0.5">{formatISTDate(selectedTicket.created_at)}</div></div>
+                          <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Assigned To</span><div className="font-semibold text-slate-700 mt-0.5">{selectedTicket.assigned_name ?? <span className="text-slate-400">Unassigned</span>}</div></div>
+                          {selectedTicket.full_name && <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Raised By</span><div className="font-semibold text-slate-700 mt-0.5">{selectedTicket.full_name}{selectedTicket.employee_code ? ` (${selectedTicket.employee_code})` : ""}</div></div>}
+                          {selectedTicket.branch_name && <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Branch / Process</span><div className="font-semibold text-slate-700 mt-0.5">{selectedTicket.branch_name}{selectedTicket.process_name ? ` · ${selectedTicket.process_name}` : ""}</div></div>}
+                          {isItTicket && <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Downtime</span><div className="font-semibold text-slate-700 mt-0.5">{selectedTicket.downtime_minutes ?? 0} min</div></div>}
+                          {isItTicket && <div><span className="text-slate-400 font-semibold uppercase tracking-wide">Affected Seats</span><div className="font-semibold text-slate-700 mt-0.5">{selectedTicket.affected_seats ?? 1}</div></div>}
+                        </div>
+
                         {selectedTicket.status === "on_hold" && selectedTicket.hold_reason && (
-                          <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 font-semibold">
+                          <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 font-semibold">
                             On Hold: {selectedTicket.hold_reason}
-                          </div>
-                        )}
-                        {(selectedTicket.downtime_minutes ?? 0) > 0 && (
-                          <div className="mt-2 flex gap-3 text-xs text-slate-500">
-                            <span>Downtime: <strong>{selectedTicket.downtime_minutes} min</strong></span>
-                            <span>Affected seats: <strong>{selectedTicket.affected_seats ?? 1}</strong></span>
                           </div>
                         )}
                       </div>
@@ -762,7 +779,9 @@ export default function NativeHelpdesk() {
                         >
                           <option value="">— Select agent —</option>
                           {agents.map(a => (
-                            <option key={a.id} value={a.id}>{a.full_name}</option>
+                            <option key={a.id} value={a.id}>
+                              {a.full_name}{a.branch_name ? ` (${a.branch_name})` : ""}
+                            </option>
                           ))}
                         </select>
                         <div className="flex gap-2">
@@ -796,6 +815,61 @@ export default function NativeHelpdesk() {
                           ))}
                         </select>
                       </div>
+
+                      {/* IT-specific inline controls */}
+                      {isItTicket && (
+                        <div className="space-y-2 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                          <label className="text-xs font-semibold text-blue-700 uppercase tracking-wide">IT Details</label>
+                          <div className="space-y-1.5">
+                            <label className="text-xs text-slate-500">Sub-Category</label>
+                            <select
+                              defaultValue={selectedTicket.it_subcategory ?? ""}
+                              onChange={async e => {
+                                if (selectedTicket) {
+                                  await hrmsApi.patch(`/api/helpdesk/tickets/${selectedTicket.id}`, { it_subcategory: e.target.value || null });
+                                  await loadTicketDetail(selectedTicket.id);
+                                }
+                              }}
+                              className={`${inputCls} bg-white`}
+                            >
+                              <option value="">— None —</option>
+                              {BPO_IT_SUBCATEGORIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-slate-500">Downtime (min)</label>
+                              <input
+                                type="number" min={0}
+                                defaultValue={selectedTicket.downtime_minutes ?? 0}
+                                onBlur={async e => {
+                                  const val = Math.max(0, Number(e.target.value));
+                                  if (val !== (selectedTicket.downtime_minutes ?? 0)) {
+                                    await hrmsApi.patch(`/api/helpdesk/tickets/${selectedTicket.id}`, { downtime_minutes: val });
+                                    await loadTicketDetail(selectedTicket.id);
+                                  }
+                                }}
+                                className={`${inputCls} bg-white`}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500">Affected Seats</label>
+                              <input
+                                type="number" min={1}
+                                defaultValue={selectedTicket.affected_seats ?? 1}
+                                onBlur={async e => {
+                                  const val = Math.max(1, Number(e.target.value));
+                                  if (val !== (selectedTicket.affected_seats ?? 1)) {
+                                    await hrmsApi.patch(`/api/helpdesk/tickets/${selectedTicket.id}`, { affected_seats: val });
+                                    await loadTicketDetail(selectedTicket.id);
+                                  }
+                                }}
+                                className={`${inputCls} bg-white`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Action buttons */}
                       <div className="space-y-2">
@@ -863,6 +937,25 @@ export default function NativeHelpdesk() {
                               placeholder="Root cause (optional)"
                               className={`${inputCls} bg-white`}
                             />
+                            {isItTicket && (
+                              <>
+                                <select
+                                  value={resolveSubcategory || selectedTicket.it_subcategory || ""}
+                                  onChange={e => setResolveSubcategory(e.target.value)}
+                                  className={`${inputCls} bg-white`}
+                                >
+                                  <option value="">— IT Sub-Category (confirm/correct) —</option>
+                                  {BPO_IT_SUBCATEGORIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                                </select>
+                                <input
+                                  type="number" min={0}
+                                  value={resolveDowntime || selectedTicket.downtime_minutes || 0}
+                                  onChange={e => setResolveDowntime(Math.max(0, Number(e.target.value)))}
+                                  placeholder="Final downtime (min)"
+                                  className={`${inputCls} bg-white`}
+                                />
+                              </>
+                            )}
                             <button
                               onClick={() => void doResolveAdmin()}
                               disabled={!resolveNote.trim() || adminActionBusy}
@@ -885,8 +978,8 @@ export default function NativeHelpdesk() {
               TICKET LIST
           ═════════════════════════════════════════════════════════════════════ */
           <div className="space-y-4">
-            {/* Status filter pills */}
-            <div className="flex flex-wrap gap-1.5">
+            {/* Status filter pills + My Tickets toggle */}
+            <div className="flex flex-wrap items-center gap-1.5">
               {STATUS_FILTER_TABS.map(s => (
                 <button
                   key={s.key}
@@ -896,6 +989,14 @@ export default function NativeHelpdesk() {
                   {s.label}
                 </button>
               ))}
+              {isAdminMode && (
+                <button
+                  onClick={() => setMyTicketsOnly(p => !p)}
+                  className={`ml-2 rounded-xl px-4 py-1.5 text-xs font-bold cursor-pointer transition-colors ${myTicketsOnly ? "bg-blue-600 text-white" : "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"}`}
+                >
+                  My Tickets
+                </button>
+              )}
             </div>
 
             {/* Search */}

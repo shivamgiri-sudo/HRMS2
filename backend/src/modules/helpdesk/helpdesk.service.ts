@@ -167,6 +167,7 @@ export const helpdeskService = {
     resolution_note?: string;
     priority?: string;
     root_cause?: string;
+    it_subcategory?: string;
     closure_rating?: number;
     escalation_level?: number;
     impact_type?: string;
@@ -196,6 +197,7 @@ export const helpdeskService = {
          resolution_note     = COALESCE(?, resolution_note),
          priority            = COALESCE(?, priority),
          root_cause          = COALESCE(?, root_cause),
+         it_subcategory      = COALESCE(?, it_subcategory),
          closure_rating      = COALESCE(?, closure_rating),
          escalation_level    = COALESCE(?, escalation_level),
          impact_type         = COALESCE(?, impact_type),
@@ -218,6 +220,7 @@ export const helpdeskService = {
         data.resolution_note ?? null,
         data.priority ?? null,
         data.root_cause ?? null,
+        data.it_subcategory ?? null,
         data.closure_rating ?? null,
         data.escalation_level ?? null,
         data.impact_type ?? null,
@@ -605,19 +608,42 @@ export const helpdeskService = {
 
   // ── Agents list (for assign dropdown) ─────────────────────────────────────
 
-  async listAgents() {
+  async listAgents(filters: { branch_id?: string } = {}) {
+    const conds: string[] = [
+      "ur.active_status = 1",
+      "ur.role_key IN ('admin','hr','super_admin','it','branch_it','it_admin')",
+      "(au.is_blocked IS NULL OR au.is_blocked = 0)",
+    ];
+    const params: unknown[] = [];
+
+    // Branch IT agents: prefer those assigned to the ticket's branch, still fall back to global admins
+    // We include all super_admin/admin/hr regardless of branch, but scope it/branch_it to the branch
+    if (filters.branch_id) {
+      conds.push(
+        "(ur.role_key IN ('admin','hr','super_admin','it_admin') OR " +
+        " (ur.role_key IN ('it','branch_it') AND e.branch_id = ?))"
+      );
+      params.push(filters.branch_id);
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT au.id, au.email,
               COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,''))), au.email) AS full_name,
-              e.employee_code
+              e.employee_code,
+              e.branch_id,
+              b.branch_name,
+              ur.role_key
          FROM auth_user au
-         JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
-           AND ur.role_key IN ('admin','hr','super_admin','it','branch_it','it_admin')
+         JOIN user_roles ur ON ur.user_id = au.id
          LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
-        WHERE (au.is_blocked IS NULL OR au.is_blocked = 0)
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE ${conds.join(" AND ")}
         GROUP BY au.id
-        ORDER BY COALESCE(NULLIF(e.full_name,''), au.email)
-        LIMIT 100`
+        ORDER BY
+          CASE WHEN e.branch_id = ? THEN 0 ELSE 1 END,
+          COALESCE(NULLIF(e.full_name,''), au.email)
+        LIMIT 100`,
+      [...params, filters.branch_id ?? null]
     );
     return rows as RowDataPacket[];
   },

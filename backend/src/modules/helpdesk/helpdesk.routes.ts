@@ -15,6 +15,7 @@ import {
   getGrievanceDashboard,
   getGrievanceCommandCenter,
   getSupportCommandCenter,
+  getItDepthAnalysis,
   refreshSlaBreachFlags,
 } from "./helpdesk-sla.service.js";
 
@@ -29,7 +30,7 @@ router.use(requireAuth);
 
 // ── Support Command Center APIs ───────────────────────────────────────────────
 
-router.get("/command-center", requireRole("admin", "hr", "super_admin", "manager", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/command-center", requireRole("admin", "hr", "super_admin", "manager", "process_manager", "it", "branch_it", "it_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const data = await getSupportCommandCenter(req.query as any);
   return res.json({ success: true, data });
 }));
@@ -65,6 +66,11 @@ router.get("/root-causes", requireRole("admin", "hr", "super_admin"), h(async (r
   return res.json({ success: true, data });
 }));
 
+router.get("/it-analysis", requireRole("admin", "hr", "super_admin", "it", "branch_it", "it_admin", "manager", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getItDepthAnalysis(req.query as any);
+  return res.json({ success: true, data });
+}));
+
 // ── Tickets ───────────────────────────────────────────────────────────────────
 
 router.get("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
@@ -81,9 +87,9 @@ router.post("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   let employeeId: string;
 
-  if (await hasRole(userId, "admin", "hr")) {
+  if (await hasRole(userId, ...HELPDESK_ADMIN_ROLES)) {
     employeeId = req.body.employee_id;
-    if (!employeeId) return res.status(400).json({ error: "employee_id required for admin/hr ticket creation" });
+    if (!employeeId) return res.status(400).json({ error: "employee_id required for admin/IT ticket creation on behalf of employee" });
   } else {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, message: "No employee record linked to your account" });
@@ -165,7 +171,7 @@ router.post("/tickets/:id/reopen", h(async (req: AuthenticatedRequest, res: Resp
   const ticket = await helpdeskService.getTicket(req.params.id) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, "admin", "hr");
+  const isAdminHr = await hasRole(userId, ...HELPDESK_ADMIN_ROLES);
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
@@ -404,8 +410,9 @@ router.post("/grievances/:id/evidence", requireRole("admin", "hr"), h(async (req
 
 // ── Agents list (for assign dropdown) ─────────────────────────────────────────
 
-router.get("/agents", requireRole(...HELPDESK_ADMIN_ROLES), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const data = await helpdeskService.listAgents();
+router.get("/agents", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { branch_id } = req.query as { branch_id?: string };
+  const data = await helpdeskService.listAgents({ branch_id });
   return res.json({ success: true, data });
 }));
 

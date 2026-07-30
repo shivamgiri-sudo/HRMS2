@@ -296,6 +296,95 @@ export async function getGrievanceCommandCenter(filters: {
   };
 }
 
+// ── IT depth analysis ─────────────────────────────────────────────────────────
+export async function getItDepthAnalysis(filters: { from?: string; to?: string; branch_id?: string }) {
+  const conds: string[] = ["t.category IN ('IT','it')"];
+  const params: unknown[] = [];
+  if (filters.from)      { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)        { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id) { conds.push("e.branch_id = ?");   params.push(filters.branch_id); }
+  const where = `WHERE ${conds.join(" AND ")}`;
+  const joinClause = filters.branch_id
+    ? "JOIN employees e ON e.id = t.employee_id"
+    : "LEFT JOIN employees e ON e.id = t.employee_id";
+
+  // Sub-category breakdown with downtime and seat impact
+  const [subCatRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(t.it_subcategory, 'unclassified') AS subcategory,
+       COUNT(*) AS total,
+       SUM(t.status NOT IN ('resolved','closed','cancelled')) AS open,
+       SUM(t.sla_breached = 1) AS breached,
+       SUM(t.downtime_minutes) AS total_downtime_minutes,
+       SUM(t.affected_seats) AS total_affected_seats,
+       ROUND(AVG(t.downtime_minutes), 0) AS avg_downtime_minutes,
+       ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
+     FROM helpdesk_ticket t ${joinClause}
+     ${where}
+     GROUP BY COALESCE(t.it_subcategory, 'unclassified')
+     ORDER BY total_downtime_minutes DESC`,
+    params
+  );
+
+  // Branch-level impact
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(b.branch_name, 'Unknown') AS branch_name,
+       COUNT(*) AS total_tickets,
+       SUM(t.status NOT IN ('resolved','closed','cancelled')) AS open_tickets,
+       SUM(t.sla_breached = 1) AS breached,
+       SUM(t.downtime_minutes) AS total_downtime_minutes,
+       SUM(t.affected_seats) AS total_affected_seats,
+       ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
+     FROM helpdesk_ticket t
+     LEFT JOIN employees e ON e.id = t.employee_id
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     ${where.replace("WHERE t.category", "WHERE t.category")}
+     GROUP BY b.id, b.branch_name
+     ORDER BY total_downtime_minutes DESC
+     LIMIT 20`,
+    params
+  );
+
+  // Top recurring IT issues (by root_cause or subject keyword)
+  const [recurringRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(t.root_cause, t.it_subcategory, 'unknown') AS issue_label,
+       COUNT(*) AS occurrences,
+       SUM(t.downtime_minutes) AS total_downtime,
+       MAX(t.created_at) AS last_seen
+     FROM helpdesk_ticket t ${joinClause}
+     ${where}
+     GROUP BY COALESCE(t.root_cause, t.it_subcategory, 'unknown')
+     ORDER BY occurrences DESC
+     LIMIT 10`,
+    params
+  );
+
+  // Overall IT summary
+  const [summaryRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_it_tickets,
+       SUM(t.status NOT IN ('resolved','closed','cancelled')) AS open_it_tickets,
+       SUM(t.sla_breached = 1) AS sla_breached,
+       SUM(t.downtime_minutes) AS total_downtime_minutes,
+       SUM(t.affected_seats) AS total_seat_impacts,
+       ROUND(AVG(t.downtime_minutes), 0) AS avg_downtime_per_ticket,
+       ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes,
+       COUNT(DISTINCT e.branch_id) AS branches_affected
+     FROM helpdesk_ticket t ${joinClause}
+     ${where}`,
+    params
+  );
+
+  return {
+    summary: summaryRows[0] ?? {},
+    subcategory_breakdown: subCatRows,
+    branch_impact: branchRows,
+    recurring_issues: recurringRows,
+  };
+}
+
 // Sync sla_breached flag for open tickets (called on dashboard fetch)
 export async function refreshSlaBreachFlags() {
   await db.execute(
