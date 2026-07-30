@@ -139,9 +139,14 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
       fakeExecutor(THREE_COST_CENTRES)
     );
     expect(sumOf(rows, "grossAmount")).toBe(72500);
-    // 72500 / 3 = 24166.66... — largest-remainder method must still reconcile exactly.
+    // 72500 / 3 = 24166.66..., which cannot be paid in whole rupees. Budget allocation runs at
+    // rupee granularity so the grid's visible column adds up, so largest remainder hands out the
+    // odd rupees: 24167 + 24167 + 24166. Every share is a whole rupee, none is more than a rupee
+    // from the ideal, and the three still reconcile to the line exactly.
+    expect(rows.every((row) => Number.isInteger(row.grossAmount))).toBe(true);
+    expect(rows.reduce((sum, row) => sum + row.grossAmount, 0)).toBe(72500);
     for (const row of rows) {
-      expect(Math.abs(row.grossAmount - 72500 / 3)).toBeLessThan(0.01);
+      expect(Math.abs(row.grossAmount - 72500 / 3)).toBeLessThan(1);
     }
   });
 
