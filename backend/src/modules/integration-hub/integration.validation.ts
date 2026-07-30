@@ -38,11 +38,7 @@ export const confirmFieldMapSchema = z.object({
 
 export const upsertTableMapSchema = z.object({
   sourceTable: z.string().trim().min(1).max(255),
-  targetTable: z.enum([
-    "dialer_session_log",
-    "integration_call_daily",
-    "integration_biometric_daily",
-  ]),
+  targetTable: z.string().trim().min(1).max(255),
   syncMode: z.enum(["daily_aggregate"]).default("daily_aggregate"),
 });
 

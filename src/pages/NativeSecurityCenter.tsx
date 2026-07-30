@@ -77,6 +77,10 @@ export default function NativeSecurityCenter() {
   const [severity, setSeverity] = useState("all");
   const [eventType, setEventType] = useState("all");
   const [query, setQuery] = useState("");
+  const today = new Date().toISOString().slice(0, 10);
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(thirtyDaysAgo);
+  const [dateTo, setDateTo] = useState(today);
 
   const load = async () => {
     setLoading(true);
@@ -85,6 +89,8 @@ export default function NativeSecurityCenter() {
       const params = new URLSearchParams({ limit: "200" });
       if (severity !== "all") params.set("severity", severity);
       if (eventType !== "all") params.set("eventType", eventType);
+      if (dateFrom) params.set("from", dateFrom);
+      if (dateTo) params.set("to", dateTo);
       const [summaryRes, eventsRes] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: SecuritySummary }>("/api/security-center/summary"),
         hrmsApi.get<{ success: boolean; data: SecurityEvent[] }>(`/api/security-center/events?${params}`),
@@ -98,7 +104,7 @@ export default function NativeSecurityCenter() {
     }
   };
 
-  useEffect(() => { void load(); }, [severity, eventType]);
+  useEffect(() => { void load(); }, [severity, eventType, dateFrom, dateTo]);
 
   const eventTypes = useMemo(() => Array.from(new Set(events.map((event) => event.event_type))).sort(), [events]);
   const filteredEvents = useMemo(() => {
@@ -112,11 +118,14 @@ export default function NativeSecurityCenter() {
     const lines = [header, ...filteredEvents.map((event) => [event.created_at, event.severity, event.event_type, event.module_key ?? "", event.actor_user_id ?? "", event.actor_role ?? "", event.title, event.ip_address ?? "", event.reason ?? ""])]
       .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
       .join("\n");
+    const url = URL.createObjectURL(new Blob([lines], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([lines], { type: "text/csv;charset=utf-8" }));
-    a.download = `security-events-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.href = url;
+    a.download = `security-events-${dateFrom}-to-${dateTo}.csv`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const s = summary ?? { securityScore: 100, loginsToday: 0, failedLoginsToday: 0, passwordResetsToday: 0, roleChangesToday: 0, exportsToday: 0, sensitiveViewsToday: 0, highRiskToday: 0, activeUsers: 0, inactiveUsers: 0 };
@@ -141,24 +150,32 @@ export default function NativeSecurityCenter() {
 
         {message && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{message}</div>}
 
-        <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
           <div className={`rounded-3xl border p-5 shadow-sm ${scoreTone(s.securityScore)}`}>
             <p className="text-sm font-black uppercase tracking-wide">Security Score</p>
             <p className="mt-2 text-3xl font-black">{s.securityScore}%</p>
             <p className="mt-1 text-xs font-bold">{s.securityScore >= 85 ? "Green" : s.securityScore >= 65 ? "Amber" : "Red"}</p>
           </div>
+          <StatCard title="Active Users" value={s.activeUsers} icon={<Users className="h-5 w-5" />} tone="bg-emerald-50 text-emerald-700" sub="in system" />
+          <StatCard title="Inactive Users" value={s.inactiveUsers} icon={<Lock className="h-5 w-5" />} tone="bg-slate-100 text-slate-600" sub="in system" />
+          <StatCard title="High Risk Events" value={s.highRiskToday} icon={<AlertTriangle className="h-5 w-5" />} tone="bg-red-50 text-red-700" sub="today" />
+          <StatCard title="Failed Logins" value={s.failedLoginsToday} icon={<ShieldAlert className="h-5 w-5" />} tone="bg-red-50 text-red-700" sub="today" />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
           <StatCard title="Logins" value={s.loginsToday} icon={<Users className="h-5 w-5" />} tone="bg-blue-50 text-blue-700" sub="today" />
-          <StatCard title="Failed" value={s.failedLoginsToday} icon={<ShieldAlert className="h-5 w-5" />} tone="bg-red-50 text-red-700" sub="today" />
-          <StatCard title="Resets" value={s.passwordResetsToday} icon={<KeyRound className="h-5 w-5" />} tone="bg-amber-50 text-amber-700" sub="today" />
           <StatCard title="Role Changes" value={s.roleChangesToday} icon={<UserCog className="h-5 w-5" />} tone="bg-violet-50 text-violet-700" sub="today" />
           <StatCard title="Exports" value={s.exportsToday} icon={<Download className="h-5 w-5" />} tone="bg-orange-50 text-orange-700" sub="today" />
           <StatCard title="PII Views" value={s.sensitiveViewsToday} icon={<Eye className="h-5 w-5" />} tone="bg-cyan-50 text-cyan-700" sub="today" />
-          <StatCard title="High Risk" value={s.highRiskToday} icon={<AlertTriangle className="h-5 w-5" />} tone="bg-red-50 text-red-700" sub="today" />
         </div>
 
         <div className="rounded-3xl border bg-white p-4 shadow-sm">
-          <div className="grid gap-3 lg:grid-cols-[1fr_170px_220px_auto]">
+          <div className="grid gap-3 lg:grid-cols-[1fr_150px_150px_180px_220px_auto]">
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search events, actor, module, IP..." className="h-11 rounded-2xl border bg-white px-4 text-sm text-slate-900 outline-none focus:border-blue-400" />
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+              className="h-11 rounded-2xl border bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-400" />
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+              className="h-11 rounded-2xl border bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-400" />
             <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="h-11 rounded-2xl border bg-white px-4 text-sm font-semibold text-slate-900 outline-none focus:border-blue-400">
               {['all','critical','high','medium','low','info'].map((v) => <option key={v} value={v}>{v === 'all' ? 'All severity' : v}</option>)}
             </select>
@@ -204,15 +221,6 @@ export default function NativeSecurityCenter() {
           )}
         </div>
 
-        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-          <div className="flex gap-3">
-            <Lock className="mt-0.5 h-5 w-5 flex-shrink-0" />
-            <div>
-              <p className="font-black">Next governance hooks to connect</p>
-              <p className="mt-1">Wire salary view, bank view, PAN/Aadhaar view, role changes, payroll exports, and employee exports to POST /api/security-center/events or /export-audit.</p>
-            </div>
-          </div>
-        </div>
       </div>
     </DashboardLayout>
   );

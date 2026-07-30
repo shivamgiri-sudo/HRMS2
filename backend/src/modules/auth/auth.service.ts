@@ -300,7 +300,7 @@ export const authService = {
       const valid = await bcrypt.compare(password, user.password_hash as string);
       if (!valid) {
         // Increment failed attempts; lock for 15 minutes after 5 consecutive failures
-        await db.execute(
+        const [updateResult] = await db.execute<any>(
           `UPDATE auth_user
               SET failed_login_attempts = failed_login_attempts + 1,
                   locked_until = IF(failed_login_attempts + 1 >= 5,
@@ -309,6 +309,21 @@ export const authService = {
             WHERE id = ?`,
           [user.id]
         );
+        // Emit ACCOUNT_LOCKED event when 5th failure triggers the lockout
+        const [checkRows] = await db.execute<any>(
+          'SELECT failed_login_attempts FROM auth_user WHERE id = ? LIMIT 1',
+          [user.id]
+        );
+        if (checkRows[0]?.failed_login_attempts >= 5 && req) {
+          writeSecurityEvent({
+            event_type: 'ACCOUNT_LOCKED',
+            severity: 'high',
+            actor_user_id: user.id as string,
+            title: `Account locked: ${trimmed}`,
+            description: 'Account locked after 5 consecutive failed login attempts',
+            ip_address: req.ip ?? null,
+          });
+        }
         throw new Error('Invalid credentials');
       }
 
@@ -542,7 +557,7 @@ export const authService = {
         }).catch(() => {}); // Non-blocking
         writeSecurityEvent({
           event_type: 'LOGIN_FAILED',
-          severity: 'warning',
+          severity: 'medium',
           actor_user_id: null,
           title: `Failed login attempt: ${trimmed}`,
           description: error instanceof Error ? error.message : String(error),

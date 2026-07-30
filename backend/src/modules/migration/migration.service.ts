@@ -1,5 +1,10 @@
+import { readdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface ModuleStatus {
   module: string;
@@ -10,12 +15,16 @@ export interface ModuleStatus {
 export const migrationService = {
   async getModuleStatus(): Promise<ModuleStatus[]> {
     const modules = [
-      { module: "employees",   table: "employees" },
-      { module: "attendance",  table: "wfm_attendance_session" },
-      { module: "wfm",         table: "wfm_roster_assignment" },
-      { module: "leave",       table: "leave_request" },
-      { module: "ats",         table: "ats_candidate" },
-      { module: "payroll",     table: "salary_prep_run" },
+      { module: "employees",          table: "employees" },
+      { module: "attendance",         table: "wfm_attendance_session" },
+      { module: "wfm",                table: "wfm_roster_assignment" },
+      { module: "leave",              table: "leave_request" },
+      { module: "ats",                table: "ats_candidate" },
+      { module: "payroll",            table: "salary_prep_run" },
+      { module: "departments",        table: "department_master" },
+      { module: "leave_types",        table: "leave_type_master" },
+      { module: "user_roles",         table: "auth_user" },
+      { module: "assets",             table: "asset_master" },
     ];
 
     const results: ModuleStatus[] = [];
@@ -60,5 +69,34 @@ export const migrationService = {
       counts['employees_migrated'] = 0;
     }
     return counts;
+  },
+
+  async getPendingMigrations(): Promise<{ filename: string; pending: boolean }[]> {
+    // Get all executed migrations from DB
+    const executedSet = new Set<string>();
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        'SELECT migration_file FROM schema_migrations ORDER BY executed_at ASC'
+      );
+      for (const r of rows) executedSet.add(r.migration_file as string);
+    } catch {
+      // schema_migrations table may not exist in all environments
+    }
+
+    // Scan the migrations directory
+    const migrationsDir = join(__dirname, "../../../sql/migrations");
+    let files: string[] = [];
+    try {
+      files = readdirSync(migrationsDir)
+        .filter(f => f.endsWith(".sql"))
+        .sort();
+    } catch {
+      return [];
+    }
+
+    return files.map(filename => ({
+      filename,
+      pending: !executedSet.has(filename),
+    }));
   },
 };

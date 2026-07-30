@@ -1061,8 +1061,9 @@ function BreachLogTab({
       const res = await hrmsApi.get<{ success: boolean; data: BreachRecord[] }>("/api/privacy/breaches");
       const data = res.data ?? [];
       setBreaches(data);
-      const pending = data.filter((b) => !b.notified_authority_at && hoursAgo(b.detected_at) <= 72).length;
-      onPendingCount(pending);
+      // Badge count: all breaches without authority notification (overdue + pending)
+      const alertCount = data.filter((b) => !b.notified_authority_at).length;
+      onPendingCount(alertCount);
     } catch (err: unknown) {
       showMsg((err as Error)?.message || "Failed to load breach log", "error");
     } finally {
@@ -1148,6 +1149,9 @@ function BreachLogTab({
     }
   };
 
+  // Overdue: past 72h with no notification — must be PROMINENT (these are the most critical)
+  const overdueAlerts = breaches.filter((b) => !b.notified_authority_at && hoursAgo(b.detected_at) > 72);
+  // Pending: within 72h window, notification still required
   const pendingAlerts = breaches.filter((b) => !b.notified_authority_at && hoursAgo(b.detected_at) <= 72);
   const stats = {
     total: breaches.length,
@@ -1158,13 +1162,33 @@ function BreachLogTab({
 
   return (
     <div className="space-y-6">
-      {/* 72-hour DPDP notification alerts */}
+      {/* OVERDUE: past 72h with no authority notification — most critical, prominently red */}
+      {overdueAlerts.length > 0 && (
+        <div className="rounded-3xl border-2 border-red-500 bg-red-50 p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 flex-shrink-0 text-red-700" />
+            <p className="text-sm font-black text-red-800 uppercase tracking-wide">
+              {overdueAlerts.length} OVERDUE Breach Notification{overdueAlerts.length > 1 ? "s" : ""} — SLA Breached
+            </p>
+          </div>
+          {overdueAlerts.map((b) => (
+            <div key={b.id} className="rounded-2xl bg-red-100 border border-red-300 px-4 py-3">
+              <p className="text-sm font-bold text-red-900">
+                {b.breach_ref} — {hoursAgo(b.detected_at)} hours since detection (SLA: 72h)
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">Severity: {b.severity} · {b.affected_records_count} records · Authority NOT notified</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* PENDING: within 72h window — warning */}
       {pendingAlerts.map((b) => (
-        <div key={b.id} className="flex items-start gap-3 rounded-2xl border border-red-300 bg-red-50 p-4">
-          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600" />
-          <p className="text-sm font-semibold text-red-800">
+        <div key={b.id} className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" />
+          <p className="text-sm font-semibold text-amber-800">
             DPDP Alert: Breach <span className="font-black">{b.breach_ref}</span> detected{" "}
-            {hoursAgo(b.detected_at)} hours ago — authority notification required within 72 hours.
+            {hoursAgo(b.detected_at)} hours ago — authority notification required within 72 hours ({72 - hoursAgo(b.detected_at)}h remaining).
           </p>
         </div>
       ))}
@@ -1512,19 +1536,38 @@ function PrivacyConfigTab({ showMsg }: { showMsg: (t: string, type?: "info" | "e
     setEditValue(val(key));
   };
 
-  // Compliance checklist logic
-  const officerName = val("grievance_officer_name");
-  const policyUrl = val("privacy_policy_url");
-  const officerDesignated = officerName !== "" && officerName !== "To be configured";
-  const policyPublished = policyUrl !== "" && policyUrl !== "/privacy-policy";
+  // Compliance checklist — loaded from live backend endpoint
+  const [complianceChecks, setComplianceChecks] = useState<{ label: string; pass: boolean; detail?: string }[]>([]);
+  const [complianceLoading, setComplianceLoading] = useState(false);
 
-  const checks: { label: string; pass: boolean }[] = [
-    { label: "Grievance Officer designated", pass: officerDesignated },
-    { label: "Privacy Policy published", pass: policyPublished },
-    { label: "Consent mechanism available", pass: true },
-    { label: "Retention policies configured", pass: true },
-    { label: "Data Rights mechanism available", pass: true },
-  ];
+  const loadComplianceScore = async () => {
+    setComplianceLoading(true);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: { checks: { label: string; pass: boolean; detail?: string }[]; score: number } }>("/api/privacy/compliance-score");
+      if (res.data?.checks?.length) {
+        setComplianceChecks(res.data.checks);
+        return;
+      }
+    } catch { /* fall through to config-based checks */ } finally {
+      setComplianceLoading(false);
+    }
+    // Fallback: derive from config values only (avoids hardcoded trues)
+    const officerName = val("grievance_officer_name");
+    const policyUrl = val("privacy_policy_url");
+    const retentionConfigured = config.some((c) => c.config_key.startsWith("retention_"));
+    setComplianceChecks([
+      { label: "Grievance Officer designated", pass: officerName !== "" && officerName !== "To be configured" },
+      { label: "Privacy Policy published", pass: policyUrl !== "" && policyUrl !== "/privacy-policy" },
+      { label: "Retention policies configured", pass: retentionConfigured },
+    ]);
+  };
+
+  useEffect(() => {
+    if (!loading && config.length > 0) void loadComplianceScore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  const checks = complianceChecks;
 
   const ConfigCard = ({
     title, keys,
@@ -1627,48 +1670,68 @@ function PrivacyConfigTab({ showMsg }: { showMsg: (t: string, type?: "info" | "e
 
             {/* Compliance Checklist */}
             <div className="rounded-3xl border bg-white shadow-sm">
-              <div className="border-b p-5">
-                <h3 className="font-black text-slate-950">DPDP Compliance Checklist</h3>
-                <p className="text-sm text-slate-500">Key requirements under the Digital Personal Data Protection Act 2023</p>
-              </div>
-              <div className="divide-y">
-                {checks.map((c) => (
-                  <div key={c.label} className="flex items-center gap-3 px-5 py-4">
-                    {c.pass ? (
-                      <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-emerald-500" />
-                    ) : (
-                      <XCircle className="h-5 w-5 flex-shrink-0 text-red-400" />
-                    )}
-                    <span className={`text-sm font-semibold ${c.pass ? "text-slate-800" : "text-slate-500"}`}>
-                      {c.label}
-                    </span>
-                    {!c.pass && (
-                      <span className="ml-auto rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">
-                        Action needed
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="border-t p-5">
-                <div className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${
-                  checks.every((c) => c.pass)
-                    ? "bg-emerald-50 text-emerald-800"
-                    : "bg-amber-50 text-amber-800"
-                }`}>
-                  {checks.every((c) => c.pass) ? (
-                    <ShieldCheck className="h-5 w-5 flex-shrink-0" />
-                  ) : (
-                    <ShieldAlert className="h-5 w-5 flex-shrink-0" />
-                  )}
-                  <p className="text-sm font-bold">
-                    {checks.filter((c) => c.pass).length}/{checks.length} requirements met
-                    {checks.every((c) => c.pass)
-                      ? " — Fully compliant"
-                      : " — Complete remaining items to achieve compliance"}
-                  </p>
+              <div className="border-b p-5 flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-slate-950">DPDP Compliance Checklist</h3>
+                  <p className="text-sm text-slate-500">Key requirements under the Digital Personal Data Protection Act 2023</p>
                 </div>
+                <button onClick={() => void loadComplianceScore()} disabled={complianceLoading}
+                  className="inline-flex items-center gap-1.5 cursor-pointer rounded-2xl border px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                  <RefreshCcw className={`h-3.5 w-3.5 ${complianceLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </button>
               </div>
+              {complianceLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader className="h-6 w-6 animate-spin text-slate-400" />
+                </div>
+              ) : checks.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-400">Checklist loading…</div>
+              ) : (
+                <div className="divide-y">
+                  {checks.map((c) => (
+                    <div key={c.label} className="flex items-start gap-3 px-5 py-4">
+                      {c.pass ? (
+                        <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-500" />
+                      ) : (
+                        <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-400" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm font-semibold ${c.pass ? "text-slate-800" : "text-slate-700"}`}>
+                          {c.label}
+                        </span>
+                        {c.detail && <p className="text-xs text-slate-400 mt-0.5">{c.detail}</p>}
+                      </div>
+                      {!c.pass && (
+                        <span className="ml-auto flex-shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">
+                          Action needed
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {checks.length > 0 && (
+                <div className="border-t p-5">
+                  <div className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${
+                    checks.every((c) => c.pass)
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-amber-50 text-amber-800"
+                  }`}>
+                    {checks.every((c) => c.pass) ? (
+                      <ShieldCheck className="h-5 w-5 flex-shrink-0" />
+                    ) : (
+                      <ShieldAlert className="h-5 w-5 flex-shrink-0" />
+                    )}
+                    <p className="text-sm font-bold">
+                      {checks.filter((c) => c.pass).length}/{checks.length} requirements met
+                      {checks.every((c) => c.pass)
+                        ? " — Fully compliant"
+                        : " — Complete remaining items to achieve compliance"}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

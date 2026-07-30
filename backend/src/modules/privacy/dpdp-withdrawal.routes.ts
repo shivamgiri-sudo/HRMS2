@@ -33,7 +33,8 @@ dpdpWithdrawalRouter.post(
       requester_type ?? "employee",
       scope_json ?? null,
       reason,
-      channel ?? "self"
+      channel ?? "self",
+      { requester_ip: req.ip, requester_ua: req.headers['user-agent'] }
     );
 
     return res.status(201).json({ success: true, data });
@@ -54,11 +55,13 @@ dpdpWithdrawalRouter.get(
 dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal",
   requireAuth,
-  requireRole("hr", "admin", "dpo", "compliance"),
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await svc.listAll({
       status: req.query.status as string | undefined,
       branchId: req.query.branch_id as string | undefined,
+      dateFrom: req.query.date_from as string | undefined,
+      dateTo: req.query.date_to as string | undefined,
     });
     return res.json({ success: true, data });
   })
@@ -134,7 +137,7 @@ dpdpWithdrawalRouter.get(
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
-    const isHr = ["admin", "hr", "compliance", "dpo"].includes(role);
+    const isHr = ["admin", "hr", "compliance", "dpo", "super_admin"].includes(role);
     // Anyone can see audit for their own request; HR can see all
     const record = await svc.getById(req.params.id, req.authUser!.id, isHr);
     if (!record) {
@@ -142,5 +145,69 @@ dpdpWithdrawalRouter.get(
     }
     const data = await svc.getAudit(req.params.id);
     return res.json({ success: true, data });
+  })
+);
+
+// GET /dpdp-withdrawal/stats — aggregate stats for dashboard
+dpdpWithdrawalRouter.get(
+  "/dpdp-withdrawal/stats",
+  requireAuth,
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data = await svc.getStats();
+    return res.json({ success: true, data });
+  })
+);
+
+// GET /dpdp-withdrawal/:id/tasks — implementation tasks
+dpdpWithdrawalRouter.get(
+  "/dpdp-withdrawal/:id/tasks",
+  requireAuth,
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await svc.getTasksForWithdrawal(req.params.id);
+    return res.json({ success: true, data });
+  })
+);
+
+// PATCH /dpdp-withdrawal/:id/tasks/:taskId — complete a task
+dpdpWithdrawalRouter.patch(
+  "/dpdp-withdrawal/:id/tasks/:taskId",
+  requireAuth,
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { notes } = req.body as { notes?: string };
+    await svc.completeTask(req.params.taskId, req.authUser!.id, notes);
+    return res.json({ success: true, message: "Task marked complete" });
+  })
+);
+
+// GET /dpdp-withdrawal/:id/evidence — list evidence
+dpdpWithdrawalRouter.get(
+  "/dpdp-withdrawal/:id/evidence",
+  requireAuth,
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await svc.getEvidenceForWithdrawal(req.params.id);
+    return res.json({ success: true, data });
+  })
+);
+
+// POST /dpdp-withdrawal/:id/evidence — add evidence record
+dpdpWithdrawalRouter.post(
+  "/dpdp-withdrawal/:id/evidence",
+  requireAuth,
+  requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { evidence_type, description, file_ref } = req.body as {
+      evidence_type: string;
+      description: string;
+      file_ref?: string;
+    };
+    if (!evidence_type?.trim() || !description?.trim()) {
+      return res.status(400).json({ success: false, message: "evidence_type and description required" });
+    }
+    await svc.addEvidence(req.params.id, evidence_type, description, req.authUser!.id, file_ref);
+    return res.status(201).json({ success: true, message: "Evidence recorded" });
   })
 );

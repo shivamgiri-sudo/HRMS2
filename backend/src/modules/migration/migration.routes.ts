@@ -35,3 +35,8 @@ migrationRouter.post("/create-legacy-checklists", requireRole("admin", "super_ad
   const result = await createLegacyJoiningChecklists();
   return res.json({ success: true, data: result });
 }));
+
+migrationRouter.get("/pending", requireRole("admin", "super_admin"), h(async (_req: any, res: any) => {
+  const data = await migrationService.getPendingMigrations();
+  return res.json({ success: true, data });
+}));

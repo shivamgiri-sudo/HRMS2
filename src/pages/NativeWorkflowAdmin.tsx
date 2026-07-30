@@ -1,26 +1,25 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import {
   AlertTriangle, CheckCircle2, Clock, ClipboardList,
   Loader, RefreshCcw, ThumbsUp, ThumbsDown, X,
-  Settings2, User, Calendar, Tag, Inbox,
+  Settings2, User, Calendar, Tag, Inbox, History,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
-import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface WorkflowDefinition {
   id: string | number;
-  code: string;
-  name?: string;
+  code: string;       // aliased from workflow_code
+  name?: string;      // aliased from workflow_name
   description?: string;
-  steps?: WorkflowStep[] | number;
+  steps?: WorkflowStep[] | string | null;
   config?: Record<string, unknown>;
-  is_active?: boolean;
-  active?: boolean;
+  is_active?: boolean; // aliased from active_status
   created_at?: string;
 }
 
@@ -35,12 +34,17 @@ interface ApprovalRequest {
   id: string;
   entity_type?: string;
   entity_id?: string;
-  summary?: string;
+  summary?: string;          // aliased by backend from summary_text
+  summary_text?: string;     // raw field fallback
   requested_by?: string;
   requested_by_name?: string;
   status?: string;
   created_at?: string;
   workflow_code?: string;
+  workflow_name?: string;
+  step_name?: string;
+  approver_role?: string;
+  sla_hours?: number;
   remarks?: string;
 }
 
@@ -77,10 +81,27 @@ function entityTypePill(type: string | undefined) {
   );
 }
 
-function stepsLabel(steps: WorkflowStep[] | number | undefined) {
-  if (typeof steps === "number") return `${steps} steps`;
-  if (Array.isArray(steps)) return `${steps.length} steps`;
+function stepsLabel(steps: WorkflowStep[] | string | null | undefined) {
+  if (!steps) return "–";
+  if (typeof steps === "string") {
+    try {
+      const parsed = JSON.parse(steps) as unknown[];
+      // JSON_ARRAYAGG returns [null] when there are no steps
+      const valid = parsed.filter(s => s !== null);
+      return valid.length > 0 ? `${valid.length} step${valid.length !== 1 ? "s" : ""}` : "–";
+    } catch { return "–"; }
+  }
+  if (Array.isArray(steps)) return `${steps.length} step${steps.length !== 1 ? "s" : ""}`;
   return "–";
+}
+
+function parseSteps(steps: WorkflowStep[] | string | null | undefined): WorkflowStep[] {
+  if (!steps) return [];
+  if (typeof steps === "string") {
+    try { return (JSON.parse(steps) as WorkflowStep[]).filter(s => s !== null); }
+    catch { return []; }
+  }
+  return Array.isArray(steps) ? steps.filter(s => s !== null) : [];
 }
 
 // ── Pending Approvals (inbox) ────────────────────────────────────────────────
@@ -125,7 +146,7 @@ function ActModal({ request, onClose, onSubmit, defaultAction }: ActModalProps) 
         </div>
         <div className="space-y-4 p-6">
           <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-700">{request.summary ?? "Approval request"}</p>
+            <p className="text-sm font-semibold text-slate-700">{request.summary ?? request.summary_text ?? "Approval request"}</p>
             {request.entity_type && (
               <div className="mt-1">{entityTypePill(request.entity_type)}</div>
             )}
@@ -289,7 +310,7 @@ function PendingInbox() {
                     )}
                   </div>
                   <p className="font-semibold text-slate-900 truncate">
-                    {req.summary ?? "Approval request"}
+                    {req.summary ?? req.summary_text ?? "Approval request"}
                   </p>
                   <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-400">
                     {req.requested_by_name && (
@@ -435,20 +456,88 @@ function WorkflowDefinitions() {
   );
 }
 
+// ── My Requests tab ──────────────────────────────────────────────────────────
+
+function MyRequests() {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["workflow-my-requests"],
+    queryFn: () => hrmsApi.get<{ data: ApprovalRequest[] } | ApprovalRequest[]>("/api/workflow/requests/my"),
+    staleTime: 30_000,
+  });
+
+  const requests: ApprovalRequest[] = Array.isArray(data)
+    ? data
+    : (data as { data: ApprovalRequest[] })?.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-500">{requests.length} request{requests.length !== 1 ? "s" : ""} submitted by you</p>
+        <button onClick={() => void refetch()} disabled={isLoading}
+          className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50">
+          <RefreshCcw className="h-4 w-4" /> Refresh
+        </button>
+      </div>
+      {error && (
+        <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">
+          <AlertTriangle className="h-4 w-4" />
+          {error instanceof Error ? error.message : "Failed to load requests"}
+        </div>
+      )}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-16"><Loader className="h-8 w-8 animate-spin text-slate-400" /></div>
+      ) : requests.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-3xl border bg-white py-20 shadow-sm text-slate-400">
+          <History className="mb-4 h-12 w-12 opacity-20" />
+          <p className="font-semibold">No requests submitted yet</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {requests.map((req) => (
+            <div key={req.id} className="rounded-3xl border bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {entityTypePill(req.entity_type)}
+                    {statusBadge(req.status)}
+                    {req.workflow_code && (
+                      <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-mono text-slate-500">{req.workflow_code}</span>
+                    )}
+                  </div>
+                  <p className="font-semibold text-slate-900">{req.summary ?? req.summary_text ?? "Request"}</p>
+                  {req.created_at && (
+                    <p className="mt-1.5 flex items-center gap-1 text-xs text-slate-400">
+                      <Calendar className="h-3 w-3" /> {formatISTDate(req.created_at)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
-type MainTab = "inbox" | "definitions";
+type MainTab = "inbox" | "my-requests" | "definitions";
 
 export default function NativeWorkflowAdmin() {
-  const { isAdminOrHR, roles } = useIsAdminOrHR();
-  const hasApproverAccess = isAdminOrHR || roles.includes("manager") || roles.includes("tl");
+  const { isAdminOrHR } = useIsAdminOrHR();
+  const { roleKeys } = useWorkforceAccess();
+  // Use expanded roleKeys for alias resolution (e.g. tl → team_leader)
+  const hasApproverAccess = isAdminOrHR
+    || roleKeys.some(r => ["manager", "team_leader", "tl", "coo", "super_admin"].includes(r));
 
-  const [activeTab, setActiveTab] = useState<MainTab>(hasApproverAccess ? "inbox" : "definitions");
+  const [activeTab, setActiveTab] = useState<MainTab>(hasApproverAccess ? "inbox" : "my-requests");
 
   const tabs: { key: MainTab; label: string; icon: React.ReactNode }[] = [
     ...(hasApproverAccess
       ? [{ key: "inbox" as MainTab, label: "Pending Approvals", icon: <Inbox className="h-4 w-4" /> }]
       : []),
+    { key: "my-requests" as MainTab, label: "My Requests", icon: <History className="h-4 w-4" /> },
     ...(isAdminOrHR
       ? [{ key: "definitions" as MainTab, label: "Workflow Definitions", icon: <Settings2 className="h-4 w-4" /> }]
       : []),
@@ -469,7 +558,7 @@ export default function NativeWorkflowAdmin() {
         {/* Role indicator */}
         {hasApproverAccess && (
           <div className="flex flex-wrap gap-2">
-            {[...roles].filter((r) => ["admin", "hr", "manager", "tl"].includes(r)).map((r) => (
+            {roleKeys.filter((r) => ["admin", "hr", "manager", "team_leader", "tl", "super_admin", "coo"].includes(r)).map((r) => (
               <span
                 key={r}
                 className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 border border-violet-200 px-3 py-1 text-xs font-bold text-violet-700 capitalize"
@@ -510,6 +599,7 @@ export default function NativeWorkflowAdmin() {
             )}
 
             {activeTab === "inbox" && <PendingInbox />}
+            {activeTab === "my-requests" && <MyRequests />}
             {activeTab === "definitions" && <WorkflowDefinitions />}
           </>
         )}

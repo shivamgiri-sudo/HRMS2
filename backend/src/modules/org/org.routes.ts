@@ -140,7 +140,7 @@ router.get("/", h(async (_req: Request, res: Response) => {
 // Call Centre Code: register GET before buildCrud to avoid /:id swallowing the static segment
 router.get("/branches/cc-code-map",
   requireAuth,
-  requireRole("admin", "hr"),
+  requireRole("admin", "hr", "super_admin"),
   h(async (_req: any, res: any) => {
     const data = await branchService.getCallCentreCodeMap();
     res.json({ data });
@@ -274,7 +274,7 @@ router.get("/employees-by-branch", h(async (req: Request, res: Response) => {
 // Call Centre Code: PATCH can safely follow buildCrud (different HTTP method, no collision)
 router.patch("/branches/:id/call-centre-code",
   requireAuth,
-  requireRole("admin", "hr"),
+  requireRole("admin", "hr", "super_admin"),
   h(async (req: any, res: any) => {
     const { ccCode } = req.body;
     if (!ccCode || typeof ccCode !== "string" || ccCode.trim().length === 0) {
