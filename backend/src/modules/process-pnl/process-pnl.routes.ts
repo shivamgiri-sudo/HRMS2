@@ -189,14 +189,54 @@ router.post(
       currentStatus: String(budget.status ?? ""),
       workflow: "budget",
     });
+    const rawCorrections = Array.isArray(req.body?.lineCorrections)
+      ? req.body.lineCorrections
+      : [];
+    const lineCorrections = rawCorrections.map((entry: Record<string, unknown>) => ({
+      lineId: entry.lineId ? String(entry.lineId) : null,
+      head: String(entry.head ?? ""),
+      subHead: entry.subHead ? String(entry.subHead) : null,
+      itemName: entry.itemName ? String(entry.itemName) : null,
+      note: String(entry.note ?? ""),
+    }));
     const data = await branchBudgetService.review(
       req.params.id,
       decision,
       user.id,
       effectiveRole,
-      req.body?.remarks ? String(req.body.remarks) : undefined
+      req.body?.remarks ? String(req.body.remarks) : undefined,
+      lineCorrections
     );
     res.json({ success: true, data });
+  })
+);
+
+// A reviewer correcting the lines in place at their own stage, rather than sending the whole budget
+// back for a small fix. Status is unchanged by this call — the reviewer must still Approve — so it
+// cannot be used to bypass a stage. Same review roles and row scope as the review endpoint.
+router.post(
+  "/pnl/budgets/:id/reviewer-revise",
+  requireWriteAccess,
+  requireRole(...BUDGET_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const budget = await scopedBudget(req, req.params.id);
+    const effectiveRole = resolveFinanceStageRole({
+      primaryRole: user.role,
+      userRoles: user.roles,
+      currentStatus: String(budget.status ?? ""),
+      workflow: "budget",
+    });
+    const data = await branchBudgetService.reviewerRevise(
+      req.params.id,
+      Array.isArray(req.body?.lines) ? req.body.lines : [],
+      user.id,
+      effectiveRole,
+      String(req.body?.reason ?? "")
+    );
+    // Keep head/sub-head coverage in step with the edited line set, exactly as the create path does.
+    await budgetCoverageService.syncPlannedFromLines(req.params.id, user.id);
+    res.json({ success: true, data: await branchBudgetService.get(req.params.id) });
   })
 );
 

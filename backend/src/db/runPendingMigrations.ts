@@ -375,6 +375,7 @@ const MIGRATION_MANIFEST: string[] = [
   "430_finance_grade_headcount_driver.sql",
   "431_branch_master_seq_fix.sql",
   "432_master_close_date.sql",
+  "433_budget_line_corrections.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
   "502_designation_bgv_requirements.sql",

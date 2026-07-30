@@ -40,6 +40,8 @@ import {
   type BranchBudgetLineInput,
   type BranchBudgetSummary,
   type BudgetAttributionScope,
+  type BudgetLineCorrectionInput,
+  type BudgetLineCorrectionRecord,
   type CostCentreOption,
   type MonthlyDriverInput,
   useBranchBudgetAllocations,
@@ -113,6 +115,24 @@ type BudgetCapabilities = {
  *  until a reviewer sends the budget back for revision. Mirrors the backend guard in
  *  branch-budget.service.ts saveDraft(). */
 const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required"];
+
+/** Identity a correction note is anchored to. Deliberately head/sub-head/item rather than line id:
+ *  saving a draft replaces the whole line set with fresh ids, so a note keyed by id would come
+ *  unstuck from its line the moment the branch admin saved the very fix it asked for. */
+function correctionKey(line: { head?: string | null; subHead?: string | null; itemName?: string | null }) {
+  return [line.head ?? "", line.subHead ?? "", line.itemName ?? ""]
+    .map((part) => part.trim().toLowerCase())
+    .join("||");
+}
+
+/** Same key from a persisted correction row, whose columns are snake_case. */
+function correctionRecordKey(record: BudgetLineCorrectionRecord) {
+  return correctionKey({
+    head: record.head,
+    subHead: record.sub_head,
+    itemName: record.item_name,
+  });
+}
 
 function currentPeriod() {
   const now = new Date();
@@ -279,6 +299,8 @@ export default function BranchBudgetManagementWorkspace() {
   const [coverageSearch, setCoverageSearch] = useState("");
   const [expandedHeads, setExpandedHeads] = useState<Set<string>>(new Set());
   const [reviewRemarks, setReviewRemarks] = useState("");
+  /** Reviewer's per head/sub-head correction notes, keyed by correctionKey(line). */
+  const [correctionNotes, setCorrectionNotes] = useState<Record<string, string>>({});
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [expandedGradeCostCentres, setExpandedGradeCostCentres] = useState<Set<string>>(new Set());
 
@@ -296,7 +318,7 @@ export default function BranchBudgetManagementWorkspace() {
     if (capabilities?.scopedBranchId) setBranchId(capabilities.scopedBranchId);
   }, [capabilities?.scopedBranchId]);
 
-  const { budgetsQuery, saveBudget, submitBudget, reviewBudget } = useBranchBudgets({
+  const { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget } = useBranchBudgets({
     period,
     branchId: branchId || undefined,
   });
@@ -423,7 +445,41 @@ export default function BranchBudgetManagementWorkspace() {
   // the detail read-only, a submitted budget silently reported itself as unlocked.
   const builderStatus = detailQuery.data?.status ?? currentBudget?.status ?? "";
   const locked = Boolean(builderStatus) && !EDITABLE_BUDGET_STATUSES.includes(builderStatus);
-  const canEdit = Boolean(capabilities?.canCreate) && !locked;
+
+  /** True when the signed-in user is the reviewer for the stage this budget is actually sitting at.
+   *  Such a reviewer may correct the lines in place and annotate them, without the budget first
+   *  having to travel back to the branch admin. */
+  const canReviewCurrent = Boolean(currentBudget) && (
+    builderStatus === "submitted"
+      ? Boolean(capabilities?.canReviewBranchStage)
+      : builderStatus === "branch_head_approved"
+        ? Boolean(capabilities?.canReviewFinanceStage)
+        : builderStatus === "finance_head_approved"
+          ? Boolean(capabilities?.canReviewAccountsStage)
+          : false
+  );
+  /** Monthly drivers and coverage stay with the branch admin who owns the plan; a reviewer's
+   *  in-place edit is scoped to the budget lines themselves. */
+  const canEditDrivers = Boolean(capabilities?.canCreate) && !locked;
+  const canEdit = canEditDrivers || canReviewCurrent;
+
+  /** Unresolved correction notes grouped by the head/sub-head/item they were raised against. */
+  const openCorrectionsByKey = useMemo(() => {
+    const map = new Map<string, BudgetLineCorrectionRecord[]>();
+    for (const record of detailQuery.data?.corrections ?? []) {
+      if (record.resolved_at) continue;
+      const key = correctionRecordKey(record);
+      map.set(key, [...(map.get(key) ?? []), record]);
+    }
+    return map;
+  }, [detailQuery.data?.corrections]);
+
+  const openCorrectionsFor = (line: BranchBudgetLineInput) =>
+    openCorrectionsByKey.get(correctionKey(line)) ?? [];
+  const openCorrectionCount = [...openCorrectionsByKey.values()].reduce(
+    (total, group) => total + group.length,
+    0
+  );
   const coverageItems = coverageQuery.data?.items ?? [];
   const filteredCoverage = coverageItems.filter((item) =>
     `${item.head_name} ${item.sub_head_name}`.toLowerCase().includes(coverageSearch.toLowerCase())
@@ -576,14 +632,66 @@ export default function BranchBudgetManagementWorkspace() {
     toast.success(`${item.sub_head_name} added to Plan Builder`);
   }
 
+  /** Notes the reviewer has typed against individual lines, ready to travel with a Revision. */
+  function collectLineCorrections(): BudgetLineCorrectionInput[] {
+    return lines
+      .map((line) => ({
+        lineId: line.id ?? null,
+        head: line.head,
+        subHead: line.subHead ?? null,
+        itemName: line.itemName ?? null,
+        note: (correctionNotes[correctionKey(line)] ?? "").trim(),
+      }))
+      .filter((entry) => entry.note && entry.head?.trim());
+  }
+
   async function review(budget: BranchBudgetSummary, decision: "approve" | "reject" | "revision") {
     try {
       if (decision !== "approve" && !reviewRemarks.trim()) throw new Error("Remarks are mandatory");
-      await reviewBudget.mutateAsync({ id: budget.id, decision, remarks: reviewRemarks.trim() || undefined });
-      toast.success(decision === "approve" ? "Budget advanced" : "Budget decision recorded");
+      const lineCorrections = decision === "revision" ? collectLineCorrections() : undefined;
+      if (decision === "revision" && !lineCorrections?.length) {
+        throw new Error(
+          "Add a correction note against at least one head/sub-head on the Plan Builder tab, so the branch admin knows exactly what to fix"
+        );
+      }
+      await reviewBudget.mutateAsync({
+        id: budget.id,
+        decision,
+        remarks: reviewRemarks.trim() || undefined,
+        lineCorrections,
+      });
+      toast.success(
+        decision === "approve"
+          ? "Budget advanced"
+          : decision === "revision"
+            ? `Sent back to branch admin with ${lineCorrections?.length} correction note(s)`
+            : "Budget decision recorded"
+      );
       setReviewRemarks("");
+      setCorrectionNotes({});
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Budget review failed");
+    }
+  }
+
+  /** A reviewer correcting the lines themselves rather than sending the budget back. The budget
+   *  stays at this reviewer's stage: they still have to Approve it afterwards. */
+  async function saveReviewerEdit() {
+    const budgetId = currentBudget?.id;
+    if (!budgetId) return;
+    try {
+      if (!reviewRemarks.trim()) {
+        throw new Error("Enter a reason for the edit in the remarks box on the Approval tab");
+      }
+      await reviewerReviseBudget.mutateAsync({
+        id: budgetId,
+        lines,
+        reason: reviewRemarks.trim(),
+      });
+      toast.success("Budget lines corrected — approve to send it to the next stage");
+      setReviewRemarks("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save the correction");
     }
   }
 
@@ -610,6 +718,9 @@ export default function BranchBudgetManagementWorkspace() {
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">Create detailed tax-aware lines, classify every active Sub-head and control all downstream GRNs and P&L costs from one approved source.</p>
                 <div className="mt-6 flex flex-wrap gap-3">
                   {capabilities?.canCreate && <><Button onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-2 h-4 w-4" />Save draft</Button><Button variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-2 h-4 w-4" />Submit to Branch Head</Button></>}
+                  {/* The stage reviewer can correct the lines in place instead of bouncing the whole
+                      budget back. The budget does not move: they still have to Approve. */}
+                  {canReviewCurrent && <Button onClick={() => void saveReviewerEdit()} disabled={reviewerReviseBudget.isPending}><Save className="mr-2 h-4 w-4" />Save my corrections</Button>}
                   <Button asChild variant="outline" className="border-white/15 bg-white/5 text-white hover:bg-white/10"><Link to="/finance/grn">Open Smart GRN</Link></Button>
                 </div>
               </div>
@@ -653,8 +764,8 @@ export default function BranchBudgetManagementWorkspace() {
                                 <Fragment key={cc.id}>
                                   <tr className="border-b border-slate-100 last:border-0">
                                     <td className="py-2 pr-3 font-medium text-slate-700">{cc.costCentreName}</td>
-                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEdit} value={draft.plannedHeadcount} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, plannedHeadcount: Number(event.target.value) } }))} /></td>
-                                    <td className="py-2 pr-3"><Input type="number" min="0" step="0.01" className="h-9 w-32" disabled={!canEdit} value={draft.revenueRatePerHead} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, revenueRatePerHead: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="1" className="h-9 w-28" disabled={!canEditDrivers} value={draft.plannedHeadcount} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, plannedHeadcount: Number(event.target.value) } }))} /></td>
+                                    <td className="py-2 pr-3"><Input type="number" min="0" step="0.01" className="h-9 w-32" disabled={!canEditDrivers} value={draft.revenueRatePerHead} onChange={(event) => setDriverDraft((current) => ({ ...current, [cc.id]: { ...draft, revenueRatePerHead: Number(event.target.value) } }))} /></td>
                                     <td className="py-2 pr-3 text-slate-600">{money(calculatedRevenue)}</td>
                                     <td className="py-2 pr-3">
                                       <Button type="button" size="sm" variant="ghost" onClick={() => setExpandedGradeCostCentres((current) => { const next = new Set(current); if (next.has(cc.id)) next.delete(cc.id); else next.add(cc.id); return next; })}>
@@ -665,7 +776,7 @@ export default function BranchBudgetManagementWorkspace() {
                                   {expanded && (
                                     <tr className="border-b border-slate-100 last:border-0 bg-slate-50/40">
                                       <td colSpan={5} className="p-3">
-                                        <GradeBreakdownPanel branchId={branchId} costCentreId={cc.id} period={period} canEdit={canEdit} />
+                                        <GradeBreakdownPanel branchId={branchId} costCentreId={cc.id} period={period} canEdit={canEditDrivers} />
                                       </td>
                                     </tr>
                                   )}
@@ -676,7 +787,7 @@ export default function BranchBudgetManagementWorkspace() {
                         </table>
                       </div>
                     )}
-                    {canEdit && Boolean(activeCostCentres.length) && <Button size="sm" variant="outline" disabled={saveMonthlyDrivers.isPending} onClick={() => void saveDrivers()}>{saveMonthlyDrivers.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save monthly drivers</Button>}
+                    {canEditDrivers && Boolean(activeCostCentres.length) && <Button size="sm" variant="outline" disabled={saveMonthlyDrivers.isPending} onClick={() => void saveDrivers()}>{saveMonthlyDrivers.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save monthly drivers</Button>}
                   </CardContent>
                 </Card>
               )}
@@ -685,9 +796,47 @@ export default function BranchBudgetManagementWorkspace() {
                 const head = activeMasters.find((entry) => entry.headName === line.head);
                 const subHeads = head?.subHeads.filter((entry) => entry.activeStatus) ?? [];
                 const amount = calculateBudgetLine(line);
+                const openNotes = openCorrectionsFor(line);
                 return (
                   <Card key={line.id ?? index} className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
                     <CardHeader className="flex flex-row items-start justify-between border-b border-slate-100 bg-slate-50/70"><div><CardTitle className="text-base">Budget line {index + 1}</CardTitle><p className="mt-1 text-xs text-slate-500">All factual, commercial, allocation and tax fields are mandatory.</p></div><Button variant="ghost" size="icon" disabled={!canEdit || lines.length === 1} onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}><Trash2 className="h-4 w-4 text-rose-500" /></Button></CardHeader>
+                    {/* Corrections a reviewer raised against this exact head/sub-head, so the branch
+                        admin fixing the budget sees the instruction on the line it belongs to. */}
+                    {Boolean(openNotes.length) && (
+                      <div className="border-b border-amber-200 bg-amber-50 px-5 py-3">
+                        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                          <AlertTriangle className="h-3.5 w-3.5" />Correction requested
+                        </p>
+                        {openNotes.map((note) => (
+                          <p key={note.id} className="mt-1.5 text-sm text-amber-900">
+                            {note.correction_note}
+                            <span className="ml-2 text-xs text-amber-700">
+                              — {note.raised_by_name?.trim() || statusLabel(note.raised_by_role)}
+                              {note.raised_by_name?.trim() ? ` (${statusLabel(note.raised_by_role)})` : ""}
+                            </span>
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {/* The reviewer at this budget's current stage annotates the lines they want
+                        changed; the notes travel with the Revision decision. */}
+                    {canReviewCurrent && (
+                      <div className="border-b border-slate-200 bg-slate-50/60 px-5 py-3">
+                        <Label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          Correction note for {line.head || "this head"}{line.subHead ? ` / ${line.subHead}` : ""}
+                        </Label>
+                        <Textarea
+                          className="mt-1.5 bg-white"
+                          rows={2}
+                          placeholder="Leave blank if this line is fine. Anything written here is sent to the branch admin with a Revision decision."
+                          value={correctionNotes[correctionKey(line)] ?? ""}
+                          onChange={(event) => setCorrectionNotes((current) => ({
+                            ...current,
+                            [correctionKey(line)]: event.target.value,
+                          }))}
+                        />
+                      </div>
+                    )}
                     <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-4">
                       <Field label="Attribution scope *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={scope} disabled={!canEdit} onChange={(event) => setScope(index, event.target.value as BudgetAttributionScope)}><option value="branch_common">Branch common</option><option value="cost_centre">Direct to cost centre</option><option value="process">Direct to process</option></select></Field>
                       <Field label={`Cost centre ${scope === "cost_centre" ? "*" : ""}`}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.costCentreId ?? ""} disabled={!canEdit || scope !== "cost_centre"} onChange={(event) => { const selected = costCentres.find((item) => item.id === event.target.value); updateLine(index, { attributionScope: "cost_centre", costCentreId: event.target.value || null, processId: selected?.process_id ?? null }); }}><option value="">Select cost centre</option>{costCentres.map((item) => <option key={item.id} value={item.id}>{item.cost_centre_name ?? item.name}</option>)}</select></Field>
@@ -897,7 +1046,10 @@ export default function BranchBudgetManagementWorkspace() {
               )}
             </TabsContent>
 
-            <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />{budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
+            <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />
+              {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
+              {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
+              {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />{canReview(budget) && <div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}</CardContent></Card></TabsContent>
 
             <TabsContent value="master"><ExpenseMasterPanel masters={masters} canManage={Boolean(capabilities?.canManageExpenseMaster)} loading={mastersQuery.isLoading} onSaveHead={async (payload) => { await saveHead.mutateAsync(payload); toast.success("Expense Head saved"); }} onSaveSubHead={async (payload) => { await saveSubHead.mutateAsync(payload); toast.success("Expense Sub-head saved"); }} /></TabsContent>
           </Tabs>

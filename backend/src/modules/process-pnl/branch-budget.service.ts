@@ -63,6 +63,17 @@ export interface SaveBudgetInput {
   lines: BudgetLineInput[];
 }
 
+/** A reviewer's correction note against one head/sub-head of a budget being sent back.
+ *  Anchored on head/sub-head/item rather than lineId because saveDraft() replaces the line set
+ *  wholesale, so lineId goes stale as soon as the branch admin saves the requested fix. */
+export interface BudgetLineCorrectionInput {
+  lineId?: string | null;
+  head: string;
+  subHead?: string | null;
+  itemName?: string | null;
+  note: string;
+}
+
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
@@ -496,6 +507,124 @@ export async function getCompanyBudgetConsolidation(
   }));
 }
 
+/** What db.getConnection() actually hands back: a PoolConnection whose execute() accepts the
+ *  loosely-typed param arrays used throughout this module. Annotating helpers as plain
+ *  PoolConnection is too strict — computeLineAllocations() would reject it. */
+type BudgetConnection = Awaited<ReturnType<typeof db.getConnection>>;
+
+/** One budget line with its derived money values and resolved attribution. */
+type CalculatedBudgetLine = {
+  line: BudgetLineInput;
+  values: ReturnType<typeof calculateBudgetLine>;
+  attribution: { processId: string | null; costCentreId: string | null };
+};
+
+/** Cost every line and resolve its attribution against the branch. Shared by the branch-admin
+ *  draft path and the reviewer-edit path so both compute money the same way. */
+async function calculateBudgetLines(
+  connection: BudgetConnection,
+  branchId: string,
+  lines: BudgetLineInput[]
+): Promise<{ calculated: CalculatedBudgetLine[]; totals: { base: number; tax: number; gross: number; pnl: number } }> {
+  const calculated: CalculatedBudgetLine[] = [];
+  for (const line of lines) {
+    calculated.push({
+      line,
+      values: calculateBudgetLine(line),
+      attribution: await validateAttribution(connection, branchId, line),
+    });
+  }
+  const totals = calculated.reduce(
+    (total, item) => ({
+      base: roundMoney(total.base + item.values.baseAmount),
+      tax: roundMoney(total.tax + item.values.taxAmount),
+      gross: roundMoney(total.gross + item.values.grossAmount),
+      pnl: roundMoney(total.pnl + item.values.pnlCostAmount),
+    }),
+    { base: 0, tax: 0, gross: 0, pnl: 0 }
+  );
+  return { calculated, totals };
+}
+
+/** Replace a budget's entire line set, re-deriving cost-centre allocations for branch-common lines.
+ *  The DELETE is a no-op for a freshly created budget, so both callers can share one path. */
+async function replaceBudgetLines(
+  connection: BudgetConnection,
+  budgetId: string,
+  branchId: string,
+  periodCode: string,
+  calculated: CalculatedBudgetLine[],
+  actorId: string
+) {
+  await connection.execute(
+    `DELETE FROM finance_budget_line WHERE budget_id = ?`,
+    [budgetId]
+  );
+
+  for (const item of calculated) {
+    const line = item.line;
+    const value = item.values;
+    const lineId = line.id || randomUUID();
+    const planningLevel: BudgetPlanningLevel = line.planningLevel === "branch" ? "branch" : "cost_centre";
+    await connection.execute(
+      `INSERT INTO finance_budget_line
+       (id, budget_id, cost_centre_id, planning_level, process_id, head, sub_head,
+        item_name, item_description, quantity, unit, unit_rate,
+        tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
+        cgst_amount, sgst_amount, igst_amount, base_amount, tax_amount,
+        gross_amount, recoverable_tax_amount, pnl_cost_amount,
+        preferred_vendor_id, allocation_driver, justification)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        lineId,
+        budgetId,
+        item.attribution.costCentreId,
+        planningLevel,
+        item.attribution.processId,
+        line.head.trim(),
+        line.subHead?.trim() || null,
+        line.itemName.trim(),
+        line.itemDescription?.trim() || null,
+        Number(line.quantity),
+        line.unit.trim(),
+        Number(line.unitRate),
+        line.taxTreatment,
+        Number(line.gstRate),
+        value.gstType,
+        value.recoverablePct,
+        value.cgstAmount,
+        value.sgstAmount,
+        value.igstAmount,
+        value.baseAmount,
+        value.taxAmount,
+        value.grossAmount,
+        value.recoverableTaxAmount,
+        value.pnlCostAmount,
+        line.preferredVendorId ?? null,
+        line.allocationDriver ?? null,
+        line.justification.trim(),
+      ]
+    );
+
+    if (planningLevel === "branch") {
+      const allocations = await computeLineAllocations(
+        branchId,
+        periodCode,
+        line.allocationDriver,
+        {
+          baseAmount: value.baseAmount,
+          taxAmount: value.taxAmount,
+          grossAmount: value.grossAmount,
+          pnlCostAmount: value.pnlCostAmount,
+        },
+        line.manualAllocations,
+        connection
+      );
+      await replaceLineAllocations(connection, lineId, allocations, actorId);
+    }
+  }
+}
+
 export const branchBudgetService = {
   async list(filters: { period?: string; branchId?: string; status?: string }) {
     const where: string[] = [];
@@ -567,6 +696,18 @@ export const branchBudgetService = {
       [id]
     );
 
+    // Per head/sub-head correction notes raised by a reviewer sending the budget back. Ordered
+    // newest-first so the branch admin reads the current round before earlier history.
+    const [corrections] = await db.execute<RowDataPacket[]>(
+      `SELECT c.*,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS raised_by_name
+         FROM finance_budget_line_correction c
+         LEFT JOIN employees e ON e.id = c.raised_by
+        WHERE c.budget_id = ?
+        ORDER BY c.raised_at DESC, c.id`,
+      [id]
+    );
+
     const linesWithAllocations = await Promise.all(
       lines.map(async (line) => {
         if (String(line.planning_level) !== "branch") return line;
@@ -579,6 +720,7 @@ export const branchBudgetService = {
       ...headers[0],
       lines: linesWithAllocations,
       approvals,
+      corrections,
       costCentreConsolidation: buildCostCentreConsolidation(lines),
     };
   },
@@ -646,27 +788,10 @@ export const branchBudgetService = {
         );
       }
 
-      const calculated: Array<{
-        line: BudgetLineInput;
-        values: ReturnType<typeof calculateBudgetLine>;
-        attribution: { processId: string | null; costCentreId: string | null };
-      }> = [];
-      for (const line of input.lines) {
-        calculated.push({
-          line,
-          values: calculateBudgetLine(line),
-          attribution: await validateAttribution(connection, input.branchId, line),
-        });
-      }
-
-      const totals = calculated.reduce(
-        (total, item) => ({
-          base: roundMoney(total.base + item.values.baseAmount),
-          tax: roundMoney(total.tax + item.values.taxAmount),
-          gross: roundMoney(total.gross + item.values.grossAmount),
-          pnl: roundMoney(total.pnl + item.values.pnlCostAmount),
-        }),
-        { base: 0, tax: 0, gross: 0, pnl: 0 }
+      const { calculated, totals } = await calculateBudgetLines(
+        connection,
+        input.branchId,
+        input.lines
       );
 
       let auditAction = "SAVE_DRAFT";
@@ -731,76 +856,18 @@ export const branchBudgetService = {
             budgetId,
           ]
         );
-        await connection.execute(
-          `DELETE FROM finance_budget_line WHERE budget_id = ?`,
-          [budgetId]
-        );
         auditAction = wasRevision ? "START_REVISION" : "SAVE_DRAFT";
         auditFromStatus = String(existing.status);
       }
 
-      for (const item of calculated) {
-        const line = item.line;
-        const value = item.values;
-        const lineId = line.id || randomUUID();
-        const planningLevel: BudgetPlanningLevel = line.planningLevel === "branch" ? "branch" : "cost_centre";
-        await connection.execute(
-          `INSERT INTO finance_budget_line
-           (id, budget_id, cost_centre_id, planning_level, process_id, head, sub_head,
-            item_name, item_description, quantity, unit, unit_rate,
-            tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
-            cgst_amount, sgst_amount, igst_amount, base_amount, tax_amount,
-            gross_amount, recoverable_tax_amount, pnl_cost_amount,
-            preferred_vendor_id, allocation_driver, justification)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [
-            lineId,
-            budgetId,
-            item.attribution.costCentreId,
-            planningLevel,
-            item.attribution.processId,
-            line.head.trim(),
-            line.subHead?.trim() || null,
-            line.itemName.trim(),
-            line.itemDescription?.trim() || null,
-            Number(line.quantity),
-            line.unit.trim(),
-            Number(line.unitRate),
-            line.taxTreatment,
-            Number(line.gstRate),
-            value.gstType,
-            value.recoverablePct,
-            value.cgstAmount,
-            value.sgstAmount,
-            value.igstAmount,
-            value.baseAmount,
-            value.taxAmount,
-            value.grossAmount,
-            value.recoverableTaxAmount,
-            value.pnlCostAmount,
-            line.preferredVendorId ?? null,
-            line.allocationDriver ?? null,
-            line.justification.trim(),
-          ]
-        );
-
-        if (planningLevel === "branch") {
-          const allocations = await computeLineAllocations(
-            input.branchId,
-            input.periodCode,
-            line.allocationDriver,
-            {
-              baseAmount: value.baseAmount,
-              taxAmount: value.taxAmount,
-              grossAmount: value.grossAmount,
-              pnlCostAmount: value.pnlCostAmount,
-            },
-            line.manualAllocations,
-            connection
-          );
-          await replaceLineAllocations(connection, lineId, allocations, actorId);
-        }
-      }
+      await replaceBudgetLines(
+        connection,
+        budgetId,
+        input.branchId,
+        input.periodCode,
+        calculated,
+        actorId
+      );
 
       await auditInTransaction(
         connection,
@@ -848,6 +915,15 @@ export const branchBudgetService = {
       if (result.affectedRows !== 1) {
         throw new Error("Budget status changed before submission; refresh and retry");
       }
+      // Close any outstanding correction notes: they stay open (and visible) for the whole time the
+      // branch admin is editing, and are marked resolved only once the budget goes back for review.
+      // The rows are kept, not deleted, so repeated round trips remain auditable.
+      await connection.execute(
+        `UPDATE finance_budget_line_correction
+            SET resolved_at = NOW(), resolved_by = ?
+          WHERE budget_id = ? AND resolved_at IS NULL`,
+        [actorId, id]
+      );
       await auditInTransaction(
         connection,
         id,
@@ -867,12 +943,96 @@ export const branchBudgetService = {
     return this.get(id);
   },
 
+  /** Let the reviewer whose stage a budget is sitting at correct the lines in place, instead of
+   *  bouncing the whole budget back to the branch admin for a small fix. Status is deliberately
+   *  left untouched: the reviewer still has to Approve afterwards, so the edit cannot be used to
+   *  skip their own stage or anyone else's. Recorded as REVIEWER_EDIT with a mandatory reason. */
+  async reviewerRevise(
+    id: string,
+    lines: BudgetLineInput[],
+    actorId: string,
+    actorRole: string,
+    reason: string
+  ) {
+    const role = actorRole.toLowerCase();
+    const expectedStatus = role === "branch_head"
+      ? "submitted"
+      : role === "finance_head"
+        ? "branch_head_approved"
+        : role === "accounts_head"
+          ? "finance_head_approved"
+          : null;
+    if (!expectedStatus) {
+      throw new Error(`Role ${actorRole} cannot revise branch budgets`);
+    }
+    if (!reason?.trim()) {
+      throw new Error("A reason is required when a reviewer edits budget lines");
+    }
+    if (!lines?.length) {
+      throw new Error("At least one budget line is required");
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT status, branch_id, period_code
+           FROM finance_budget_header
+          WHERE id = ?
+          FOR UPDATE`,
+        [id]
+      );
+      if (!rows[0]) throw new Error("Budget not found");
+      const currentStatus = String(rows[0].status);
+      if (currentStatus !== expectedStatus) {
+        throw new Error(
+          `Role ${actorRole} cannot revise a budget in status ${currentStatus}`
+        );
+      }
+      const branchId = String(rows[0].branch_id);
+      const periodCode = String(rows[0].period_code);
+
+      const { calculated, totals } = await calculateBudgetLines(connection, branchId, lines);
+      await connection.execute(
+        `UPDATE finance_budget_header
+            SET base_budget_amount = ?,
+                tax_budget_amount = ?,
+                gross_budget_amount = ?,
+                pnl_budget_amount = ?
+          WHERE id = ? AND status = ?`,
+        [totals.base, totals.tax, totals.gross, totals.pnl, id, expectedStatus]
+      );
+      await replaceBudgetLines(connection, id, branchId, periodCode, calculated, actorId);
+
+      await auditInTransaction(
+        connection,
+        id,
+        "REVIEWER_EDIT",
+        currentStatus,
+        currentStatus,
+        actorId,
+        actorRole,
+        `${reason.trim()} — ${calculated.length} line(s); gross ${totals.gross}`
+      );
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+    return this.get(id);
+  },
+
   async review(
     id: string,
     decision: "approve" | "reject" | "revision",
     actorId: string,
     actorRole: string,
-    remarks?: string
+    remarks?: string,
+    /** Per head/sub-head correction notes. Only meaningful when sending a budget back, so the
+     *  branch admin is told which head/sub-head to fix rather than just "revise this budget". */
+    lineCorrections?: BudgetLineCorrectionInput[]
   ) {
     const role = actorRole.toLowerCase();
     const expectedStatus = role === "branch_head"
@@ -888,12 +1048,23 @@ export const branchBudgetService = {
     if (decision !== "approve" && !remarks?.trim()) {
       throw new Error("Remarks are required for rejection or revision");
     }
+    const corrections = (lineCorrections ?? []).filter((entry) => entry.note?.trim());
+    if (decision === "revision" && !corrections.length) {
+      throw new Error(
+        "At least one head/sub-head correction note is required when sending a budget back for revision"
+      );
+    }
+    for (const entry of corrections) {
+      if (!entry.head?.trim()) {
+        throw new Error("Every correction note must name the head it applies to");
+      }
+    }
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
-        `SELECT status
+        `SELECT status, revision_no
            FROM finance_budget_header
           WHERE id = ?
           FOR UPDATE`,
@@ -901,6 +1072,7 @@ export const branchBudgetService = {
       );
       if (!rows[0]) throw new Error("Budget not found");
       const currentStatus = String(rows[0].status) as BudgetStatus;
+      const currentRevision = Number(rows[0].revision_no ?? 0);
       if (currentStatus !== expectedStatus) {
         throw new Error(
           `Role ${actorRole} cannot review budget in status ${currentStatus}`
@@ -940,6 +1112,28 @@ export const branchBudgetService = {
       if (result.affectedRows !== 1) {
         throw new Error("Budget status changed during review; refresh and retry");
       }
+
+      for (const entry of corrections) {
+        await connection.execute(
+          `INSERT INTO finance_budget_line_correction
+           (id, budget_id, line_id, head, sub_head, item_name, correction_note,
+            raised_by_role, raised_by, raised_at, revision_no)
+           VALUES (?,?,?,?,?,?,?,?,?,NOW(),?)`,
+          [
+            randomUUID(),
+            id,
+            entry.lineId ?? null,
+            entry.head.trim(),
+            entry.subHead?.trim() || null,
+            entry.itemName?.trim() || null,
+            entry.note.trim(),
+            role,
+            actorId,
+            currentRevision,
+          ]
+        );
+      }
+
       await auditInTransaction(
         connection,
         id,
@@ -948,7 +1142,9 @@ export const branchBudgetService = {
         nextStatus,
         actorId,
         actorRole,
-        remarks
+        corrections.length
+          ? `${remarks ?? ""} (${corrections.length} head/sub-head correction note(s))`.trim()
+          : remarks
       );
       await connection.commit();
     } catch (error) {

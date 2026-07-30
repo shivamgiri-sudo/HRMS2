@@ -178,9 +178,37 @@ export interface BudgetException {
   message: string;
 }
 
+/** A reviewer's correction note against one head/sub-head, sent back with a revision request. */
+export interface BudgetLineCorrectionInput {
+  lineId?: string | null;
+  head: string;
+  subHead?: string | null;
+  itemName?: string | null;
+  note: string;
+}
+
+export interface BudgetLineCorrectionRecord {
+  id: string;
+  budget_id: string;
+  line_id: string | null;
+  head: string;
+  sub_head: string | null;
+  item_name: string | null;
+  correction_note: string;
+  raised_by_role: string;
+  raised_by: string;
+  raised_by_name: string | null;
+  raised_at: string;
+  revision_no: number;
+  resolved_at: string | null;
+}
+
 export interface BranchBudgetDetail extends BranchBudgetSummary {
   lines: BranchBudgetLineRecord[];
   approvals: BranchBudgetApprovalRecord[];
+  /** Per head/sub-head correction notes raised by reviewers. Open notes (resolved_at null) are the
+   *  current round's instructions to the branch admin; resolved ones are kept as history. */
+  corrections: BudgetLineCorrectionRecord[];
   /** Cost-centre-first consolidation (spec 6.2/7.2): cost-centre-planned lines sharing a
    *  head/sub-head/item, rolled up into a branch total. See buildCostCentreConsolidation()
    *  (branch-budget.service.ts) — computed server-side, read-only. */
@@ -330,15 +358,19 @@ export function useBranchBudgets(filters: {
       id,
       decision,
       remarks,
+      lineCorrections,
     }: {
       id: string;
       decision: "approve" | "reject" | "revision";
       remarks?: string;
+      /** Per head/sub-head notes telling the branch admin exactly what to fix. The backend
+       *  requires at least one of these when the decision is "revision". */
+      lineCorrections?: BudgetLineCorrectionInput[];
     }) => {
       const response = await hrmsApi.post<{
         success: boolean;
         data: BranchBudgetDetail;
-      }>(`/api/finance/pnl/budgets/${id}/review`, { decision, remarks });
+      }>(`/api/finance/pnl/budgets/${id}/review`, { decision, remarks, lineCorrections });
       return response.data;
     },
     onSuccess: (data) => {
@@ -347,7 +379,31 @@ export function useBranchBudgets(filters: {
     },
   });
 
-  return { budgetsQuery, saveBudget, submitBudget, reviewBudget };
+  /** A reviewer correcting the lines in place at their own stage. Does not move the budget — the
+   *  reviewer still has to approve afterwards. */
+  const reviewerReviseBudget = useMutation({
+    mutationFn: async ({
+      id,
+      lines,
+      reason,
+    }: {
+      id: string;
+      lines: BranchBudgetLineInput[];
+      reason: string;
+    }) => {
+      const response = await hrmsApi.post<{
+        success: boolean;
+        data: BranchBudgetDetail;
+      }>(`/api/finance/pnl/budgets/${id}/reviewer-revise`, { lines, reason });
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["branch-budget-detail", data.id], data);
+      return queryClient.invalidateQueries({ queryKey: ["branch-budgets"] });
+    },
+  });
+
+  return { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget };
 }
 
 export function useBranchBudgetDetail(id?: string | null) {

@@ -287,6 +287,16 @@ export const budgetCoverageService = {
       if (result.affectedRows !== 1) {
         throw new Error("Budget status changed before submission; refresh and retry");
       }
+      // Close any correction notes a reviewer raised against this budget's heads/sub-heads. They
+      // stay open — and visible on their line — for as long as the branch admin is editing, and
+      // are marked resolved only when the budget goes back for review. Rows are kept, not deleted,
+      // so repeated round trips stay auditable.
+      await connection.execute(
+        `UPDATE finance_budget_line_correction
+            SET resolved_at = NOW(), resolved_by = ?
+          WHERE budget_id = ? AND resolved_at IS NULL`,
+        [actorUserId, budgetId]
+      );
       await connection.execute(
         `INSERT INTO finance_budget_approval_log
          (id, budget_id, action, from_status, to_status,
