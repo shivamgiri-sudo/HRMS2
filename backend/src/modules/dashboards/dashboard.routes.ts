@@ -200,12 +200,48 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   const totalGross = Number(salaryBill?.total_gross ?? 0);
   const totalNet = Number(salaryBill?.total_net ?? 0);
 
-  // Net exceeding gross is arithmetically impossible and is present in the finalized
-  // runs today. Surface it rather than rendering it as a fact the viewer will trust.
+  // A previous version of this check warned whenever net exceeded gross, calling it
+  // "arithmetically impossible". That was wrong, and it fired on ~1,983 lines across
+  // eight runs.
+  //
+  // salary_prep_line.gross_salary holds the employee's CONTRACTUAL monthly gross — it
+  // equals employees.gross_salary on 267 of 279 sampled lines. net_salary is computed
+  // from the actual component rows, which include INCENTIVE (Rs 15.4M) and PORTFOLIO
+  // (Rs 6.5M) earnings that are not part of contractual gross. Verified on the largest
+  // outlier: components sum to 62,247 earnings less 528 deductions = 61,719, exactly the
+  // stored net, against a contractual gross of 20,801. Comparing the two compares
+  // different things, so the warning was noise that would train viewers to ignore it.
+  //
+  // What IS worth surfacing is the opposite direction: a line whose net is LOWER than its
+  // own components, i.e. an employee with recorded earnings who is being paid nothing.
+  // Every one of the 649 mismatches in the sampled run was this case, and 56 of them
+  // belong to ACTIVE employees — 49 of whom have no attendance record for the month at
+  // all, while 692 of 712 paid active employees do.
   const dataIntegrity: string[] = [];
-  if (salaryBill && totalNet > totalGross) {
+  const unpaidActive = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS unpaid_lines,
+            COALESCE(ROUND(SUM(agg.earn), 2), 0) AS earnings_recorded
+       FROM salary_prep_line l
+       JOIN employees e ON e.id = l.employee_id
+       JOIN (SELECT line_id,
+                    SUM(CASE WHEN component_type = 'earning' THEN amount ELSE 0 END) AS earn
+               FROM salary_prep_line_component
+              GROUP BY line_id) agg ON agg.line_id = l.id
+      WHERE l.run_id = ?
+        AND l.net_salary = 0
+        AND agg.earn > 0
+        AND e.active_status = 1
+        AND ${salaryScope.sql}`,
+    [currentRun.id, ...salaryScope.params],
+  ).then(([rows]) => (rows as any[])[0] ?? null);
+
+  const unpaidLines = Number(unpaidActive?.unpaid_lines ?? 0);
+  if (unpaidLines > 0) {
     dataIntegrity.push(
-      `Net pay (${totalNet}) exceeds gross pay (${totalGross}) for this run — the salary lines are inconsistent and these totals should not be relied on.`,
+      `${unpaidLines} active employee(s) in this run have earning components totalling ` +
+        `${unpaidActive.earnings_recorded} but a net pay of zero. Most have no attendance ` +
+        `record for the period, so this is likely the attendance-exception backlog ` +
+        `reaching payroll — check the attendance exceptions panel before approving.`,
     );
   }
 
