@@ -21,12 +21,18 @@ let _running = false;
 const RUN_AT_HOUR_IST = 2; // 02:00 IST, after the nightly attendance reconciliation.
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
+export function istHourOf(instant: Date): number {
+  // getTime() is already a UTC epoch, so IST is a flat +5:30 from it. An earlier version
+  // also added getTimezoneOffset(), which double-counted the shift and moved the window by
+  // 5.5 hours on an IST host — the job would have run at 20:30 IST instead of 02:00, i.e.
+  // during the working day and before the nightly reconciliation it is meant to follow.
+  // Exported so the window is testable without waiting for a real 02:00.
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  return new Date(instant.getTime() + IST_OFFSET_MS).getUTCHours();
+}
+
 function istHour(): number {
-  // Same approach as getIstDateString: shift to IST rather than trusting server local time,
-  // which differs between the deploy host and developer machines.
-  const now = new Date();
-  const ist = new Date(now.getTime() + (5.5 * 60 - now.getTimezoneOffset()) * 60 * 1000);
-  return ist.getUTCHours();
+  return istHourOf(new Date());
 }
 
 export async function runDashboardSnapshot(): Promise<void> {

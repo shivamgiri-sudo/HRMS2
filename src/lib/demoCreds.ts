@@ -39,6 +39,9 @@ const ALL_PAGES = [
   "LEAVE_TYPES","RTA_BOARD",
   "MY_PROFILE","ATTENDANCE_REGULARIZATION","MY_EXPENSES","EXPENSE_CREATE","MY_KPI",
   "RESIGNATION_MY_REQUEST","DPDP_WITHDRAWAL",
+  // Routed and referenced but previously absent here and from page_catalog (see 604), so
+  // no role could be granted them and the routes were unreachable.
+  "EMPLOYEE_STAT_CARD","WFM_BRANCH_SPOC_CONFIG",
 ];
 
 const ADMIN_DEMO_PAGES = getRolePageCodes("admin", ALL_PAGES);

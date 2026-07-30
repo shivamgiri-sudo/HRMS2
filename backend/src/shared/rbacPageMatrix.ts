@@ -352,6 +352,12 @@ export function uniquePageCodes(pageCodes: readonly string[]): string[] {
 }
 
 export function getRolePageCodes(roleKey: string, allPageCodes: readonly string[] = []): string[] {
+  // super_admin receives exactly the pages the caller says are active — no union with
+  // COMMON_USER_PAGE_CODES. That is deliberate: page_catalog decides which pages exist, and
+  // granting a code that is not active there would hand out a page the platform does not
+  // have. When EMPLOYEE_STAT_CARD went missing for super admin the cause was upstream —
+  // the code was absent from the caller's list AND from page_catalog entirely (see
+  // migration 604) — so it is fixed there rather than by widening this function.
   if (roleKey === "super_admin") return uniquePageCodes(allPageCodes);
 
   return uniquePageCodes([

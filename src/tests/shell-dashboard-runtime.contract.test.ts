@@ -55,6 +55,12 @@ describe("shared shell and dashboard runtime contracts", () => {
 
     expect(commandBarSource).toContain("<AmbientStrip");
     expect(commandBarSource).not.toContain("{showStrip &&");
-    expect(stripSource).toContain("PeopleOS Copilot");
+    // The assistant was renamed from "PeopleOS Copilot" to "Mira" when the secure voice
+    // assistant shipped, and the literal brand check failed on the rename alone. What this
+    // test exists to protect is that the entry point stays visible and labelled on
+    // authenticated pages — not what it is called this quarter — so it asserts a rendered
+    // label and an accessible name instead of a product name that will change again.
+    expect(stripSource).toMatch(/Ask \w+ about your HRMS account/);
+    expect(stripSource).toMatch(/aria-label="Open \w+/);
   });
 });
