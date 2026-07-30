@@ -54,6 +54,7 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
   const reason = metricUnavailableReason(m, "att");
   const expected = metricDetail(m, "att", "expectedToWork");
   const rate = metricDetail(m, "att", "attendanceRate");
+  const noSource = metricDetail(m, "att", "noAttendanceSource");
 
   return (
     <ReferencePanel
@@ -79,6 +80,23 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
           <ReferenceListRow icon={TriangleAlert} title="Missing Punch" subtitle="Needs punch correction" value={metricDetail(m, "att", "missedPunch")} tone="red" href="/wfm/attendance-exceptions" />
           <ReferenceListRow icon={Users} title="Absent" subtitle="No attendance recorded" value={metricDetail(m, "att", "absent")} tone="red" />
           <ReferenceListRow icon={CalendarClock} title="On Approved Leave" subtitle="Excluded from the attendance rate" value={metricDetail(m, "att", "onLeave")} tone="blue" href="/leave" />
+          {/*
+            Distinguishes "cannot register a punch" from "did not attend". 352 of 1,344
+            active employees have produced no biometric minute in 30 days, so a quarter of
+            the denominator can never be marked present — which is why the org rate reads
+            far lower than the workforce actually behaves. Without this row the rate looks
+            like an attendance collapse rather than an enrolment gap.
+          */}
+          {noSource !== null && noSource > 0 ? (
+            <ReferenceListRow
+              icon={TriangleAlert}
+              title="No Attendance Source"
+              subtitle="Active employees with no biometric punch in 30 days — they cannot be marked present"
+              value={noSource}
+              tone="amber"
+              href="/wfm/mismatch-queue"
+            />
+          ) : null}
         </div>
       )}
     </ReferencePanel>

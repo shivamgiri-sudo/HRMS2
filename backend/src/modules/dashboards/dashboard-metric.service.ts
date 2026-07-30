@@ -307,6 +307,40 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
     const denominator = expectedToWork > 0 ? expectedToWork : totalRecords;
     const attendanceRate = denominator > 0 ? Math.round((attendedDays / denominator) * 100) : null;
 
+    // Employees who cannot register a punch at all, as opposed to those who did not attend.
+    //
+    // 352 of 1,344 active employees have never produced a single biometric minute in 30
+    // days — concentrated at branches that are now closed (Delhi Office 52, KARNAL 51,
+    // AHEMDABAD HOUSE 46) plus AHMEDABAD-JALDARSHAN 40 and HEAD OFFICE 16. The attendance
+    // engine correctly marks them missing_punch, because they genuinely have no punch data.
+    //
+    // Without this figure the rate is uninterpretable: org attendance reads 28% on a day
+    // like 2026-07-30 and looks like a workforce that stopped showing up, when a quarter of
+    // the denominator is people with no attendance source enrolled. It is reported rather
+    // than removed from the denominator — excluding them would quietly flatter the number
+    // and hide the enrolment gap, which is the thing actually worth fixing.
+    let noAttendanceSource: number | null = null;
+    try {
+      const employeeScope = buildScopeWhereEmployees(scope, "e");
+      const [coverageRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS uncovered
+           FROM employees e
+          WHERE e.active_status = 1
+            AND NOT EXISTS (
+                  SELECT 1 FROM integration_biometric_daily i
+                   WHERE (i.employee_code = e.employee_code OR i.employee_code = e.biometric_code)
+                     AND i.biometric_minutes > 0
+                     AND i.activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY))
+            AND ${employeeScope.sql}`,
+        [...employeeScope.params],
+      );
+      noAttendanceSource = Number((coverageRows[0] as any)?.uncovered ?? 0);
+    } catch (err) {
+      // Left null rather than 0: "nobody is unenrolled" is the reassuring answer, and
+      // reporting it on a failed query would hide the very gap this figure exists to show.
+      logSourceFailure("dashboard-metric.attendance-coverage", err, { metricCode: "ATTENDANCE" });
+    }
+
     const status: MetricResult["status"] =
       attendanceRate === null ? "unknown" : attendanceRate < 70 ? "critical" : attendanceRate < 85 ? "warn" : "ok";
 
@@ -321,6 +355,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       expectedToWork: denominator,
       totalRecords,
       attendanceRate,
+      noAttendanceSource,
     }, status, true, scope.branchIds[0], scope.processIds[0], totalRecords);
   } catch (err) {
     return nullResult("ATTENDANCE", err);
