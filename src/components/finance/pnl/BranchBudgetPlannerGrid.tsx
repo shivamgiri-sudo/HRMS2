@@ -108,12 +108,21 @@ export interface BranchBudgetPlannerGridProps {
   onSaveDrivers?: () => void;
   onSaveDraft?: () => void;
   saving?: boolean;
+  /** Last month's gross per "head|subHead". Matched by NAME, not line id, because saveDraft
+   *  replaces the line set with fresh UUIDs every save. */
+  priorByKey?: Map<string, number>;
+  priorLabel?: string;
+  onCopyForward?: () => void;
+  dirtyCount?: number;
+  canUndo?: boolean;
+  onUndo?: () => void;
 }
 
 export function BranchBudgetPlannerGrid({
   lines, masters, costCentres, drivers, canEdit, period,
   onUpdateLine, onAddLine, onRemoveLine, onDriverChange,
   onSaveDrivers, onSaveDraft, saving,
+  priorByKey, priorLabel, onCopyForward, dirtyCount = 0, canUndo, onUndo,
 }: BranchBudgetPlannerGridProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [pickerHead, setPickerHead] = useState<string | null>(null);
@@ -253,6 +262,34 @@ export function BranchBudgetPlannerGrid({
     <div className={fullPage
       ? "fixed inset-0 z-[70] flex flex-col overflow-hidden border-0 bg-white"
       : "overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"}>
+      {(() => {
+        // What actually blocks a save, said before the save fails rather than after.
+        const known = new Set(activeHeads.map((h) => h.headName));
+        const orphans = lines.filter((l) => !known.has(l.head || "")).length;
+        const unbalanced = lines.filter((l, i) =>
+          l.planningLevel === "branch" && l.allocationDriver === "manual"
+          && Math.abs(preview.get(i)?.unallocated ?? 0) > 0.009).length;
+        const plannedSubHeads = new Set(
+          lines.filter((l, i) => (preview.get(i)?.amount ?? 0) > 0).map((l) => `${l.head}|${l.subHead ?? ""}`)
+        );
+        const totalSubHeads = activeHeads.reduce((a, h) => a + h.subHeads.length, 0);
+        const undecided = Math.max(0, totalSubHeads - plannedSubHeads.size);
+        const bits: string[] = [];
+        if (orphans) bits.push(`${orphans} line${orphans > 1 ? "s" : ""} with no recognised head`);
+        if (unbalanced) bits.push(`${unbalanced} manual split${unbalanced > 1 ? "s" : ""} not adding up`);
+        const blocking = orphans + unbalanced;
+        return (
+          <div className={`flex flex-wrap items-center gap-3 border-b px-3 py-1.5 text-[13px] ${
+            blocking ? "border-rose-200 bg-rose-50 text-rose-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+            {blocking
+              ? <><strong>{bits.join(" · ")}</strong><span>— these block the save.</span></>
+              : <><strong>Nothing blocking.</strong><span>{undecided ? `${undecided} of ${totalSubHeads} sub-heads still have no amount.` : `All ${totalSubHeads} sub-heads carry an amount.`}</span></>}
+            {Boolean(unbalanced) && (
+              <button type="button" className="underline" onClick={() => setFilter("all")}>Show rows</button>
+            )}
+          </div>
+        );
+      })()}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-[13px] text-slate-600">
         <input value={query} onChange={(e) => setQuery(e.target.value)} type="search"
           placeholder="Find a head or sub-head…" aria-label="Find a head or sub-head"
@@ -276,7 +313,26 @@ export function BranchBudgetPlannerGrid({
         </button>
         <span className="ml-2 flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-white" />Type here</span>
         <span className="flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-slate-100" />Calculated</span>
-        <span className="ml-auto font-medium text-blue-700">{hint}</span>
+        {onCopyForward && (
+          <button type="button" disabled={!canEdit || !priorByKey?.size}
+            title={priorByKey?.size ? "Fill every empty sub-head from last month's budget" : "No previous month budget to copy from"}
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 hover:bg-slate-100 disabled:opacity-40"
+            onClick={onCopyForward}>Copy {priorLabel ?? "previous"} →</button>
+        )}
+        {onUndo && (
+          <button type="button" disabled={!canUndo} title="Undo the last change"
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 hover:bg-slate-100 disabled:opacity-40"
+            onClick={onUndo}>Undo</button>
+        )}
+        <span className="ml-auto flex items-center gap-2 font-medium text-blue-700">
+          {dirtyCount > 0 && (
+            <span className="flex items-center gap-1.5 text-amber-800">
+              <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+              Unsaved edits on {dirtyCount} line{dirtyCount > 1 ? "s" : ""}
+            </span>
+          )}
+          {hint}
+        </span>
         {onSaveDrivers && (
           <button type="button" disabled={!canEdit || saving}
             className="h-8 rounded-md border border-slate-300 bg-white px-2.5 font-medium hover:bg-slate-100 disabled:opacity-50"
@@ -294,7 +350,7 @@ export function BranchBudgetPlannerGrid({
           <colgroup>
             <col style={{ width: 250 }} /><col style={{ width: 160 }} />
             <col style={{ width: 70 }} /><col style={{ width: 88 }} /><col style={{ width: 96 }} />
-            <col style={{ width: 112 }} /><col style={{ width: 140 }} /><col style={{ width: 30 }} />
+            <col style={{ width: 96 }} /><col style={{ width: 66 }} /><col style={{ width: 112 }} /><col style={{ width: 140 }} /><col style={{ width: 30 }} />
             {/* Units and Amount must alternate PER cost centre, so each pair sits under its own
                 column-group header. Emitting all the Units first produced a header reading
                 "UNITS UNITS ... AMOUNT AMOUNT" with nothing lining up. */}
@@ -313,7 +369,7 @@ export function BranchBudgetPlannerGrid({
                   columns it describes. */}
               <th className="sticky left-0 top-0 z-40 border-b border-r border-slate-200 bg-slate-50 px-2 py-2 text-left">Total branch budget</th>
               <th className="sticky top-0 z-40 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-2 text-left" style={{ left: 250 }}>&nbsp;</th>
-              <th className="sticky top-0 z-20 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-2 text-left" colSpan={6}>&nbsp;</th>
+              <th className="sticky top-0 z-20 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-2 text-left" colSpan={8}>&nbsp;</th>
               {costCentres.map((cc) => (
                 <th key={cc.id} className="sticky top-0 z-30 border-b border-l border-r border-slate-200 bg-slate-50 px-2 py-2 text-center" colSpan={2}>
                   {/* The process name is real data on cost_centre_master, so show it. Only a cost
@@ -333,6 +389,8 @@ export function BranchBudgetPlannerGrid({
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-left" style={{ top: 42 }}>Unit</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-right" style={{ top: 42 }}>Rate</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-right" style={{ top: 42 }}>Amount</th>
+              <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-right" style={{ top: 42 }} title="Last month's budget for the same sub-head">{priorLabel ?? "Prev"}</th>
+              <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-right" style={{ top: 42 }}>Var</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-left" style={{ top: 42 }}>Sharing</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5" style={{ top: 42 }} title="Direction the arithmetic runs">⇅</th>
               {costCentres.flatMap((cc) => [
@@ -345,12 +403,12 @@ export function BranchBudgetPlannerGrid({
           <tbody>
             <tr>
               <td className="sticky left-0 z-20 border-b border-r border-slate-200 bg-blue-50 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-blue-700">Drivers · {period}</td>
-              <td className="border-b border-slate-200 bg-blue-50" colSpan={7 + costCentres.length * 2} />
+              <td className="border-b border-slate-200 bg-blue-50" colSpan={9 + costCentres.length * 2} />
             </tr>
             {DRIVER_ROWS.map((row) => (
               <tr key={row.key} className="hover:bg-blue-50/60">
                 <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-blue-50/50 px-2 py-1 font-medium text-slate-700">{row.label}</td>
-                <td className="border-b border-r-2 border-slate-300 bg-blue-50/50" colSpan={7} />
+                <td className="border-b border-r-2 border-slate-300 bg-blue-50/50" colSpan={9} />
                 {costCentres.flatMap((cc) => [
                   <td key={`${row.key}-u-${cc.id}`} className="border-b border-l border-slate-200 bg-blue-50/50 p-0">
                     {row.column === "units" && (
@@ -388,7 +446,7 @@ export function BranchBudgetPlannerGrid({
                     <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-amber-50 px-2 py-1.5 font-semibold text-amber-900">
                       Not on the Finance master
                     </td>
-                    <td className="border-b border-slate-200 bg-amber-50 px-2 py-1.5 text-amber-800" colSpan={7 + costCentres.length * 2}>
+                    <td className="border-b border-slate-200 bg-amber-50 px-2 py-1.5 text-amber-800" colSpan={9 + costCentres.length * 2}>
                       {orphans.length} line{orphans.length === 1 ? "" : "s"} with no recognised head. They block the save — remove them or set a head in the detailed line editor.
                     </td>
                   </tr>
@@ -404,7 +462,7 @@ export function BranchBudgetPlannerGrid({
                           )}
                         </span>
                       </td>
-                      <td className="border-b border-slate-200 bg-white px-2 py-1 text-slate-500" colSpan={7 + costCentres.length * 2}>
+                      <td className="border-b border-slate-200 bg-white px-2 py-1 text-slate-500" colSpan={9 + costCentres.length * 2}>
                         {line.itemName || "(no item)"}
                       </td>
                     </tr>
@@ -459,6 +517,7 @@ export function BranchBudgetPlannerGrid({
                     <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={3} />
                     <td className={`border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 ${num}`}>{headTotal ? money(headTotal) : "—"}</td>
                     <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={2} />
+                    <td className="border-b border-r border-slate-200 bg-slate-50" colSpan={4} />
                     {costCentres.flatMap((cc, ci) => {
                       const v = rows.reduce((a, r) => a + (preview.get(r.index)?.cells[ci]?.amount ?? 0), 0);
                       return [
@@ -582,6 +641,22 @@ export function BranchBudgetPlannerGrid({
                           onClick={up ? explain("Amount is the sum of the cost-centre cells on this row.") : undefined}>
                           {planned ? money(p!.amount) : "—"}
                         </td>
+                        {(() => {
+                          const prior = priorByKey?.get(`${line.head}|${line.subHead ?? ""}`) ?? 0;
+                          const varPct = prior > 0 ? (((p?.amount ?? 0) - prior) / prior) * 100 : null;
+                          return (
+                            <>
+                              <td className={`border-b border-r border-slate-200 px-2 py-1 ${num} ${calcCell}`}
+                                title="Last month's budget for this sub-head — reference only.">
+                                {prior ? money(prior) : "—"}
+                              </td>
+                              <td className={`border-b border-r border-slate-200 px-2 py-1 ${num} ${calcCell} ${varPct !== null && Math.abs(varPct) > 25 ? "text-rose-700 font-semibold" : ""}`}
+                                title="Change against last month.">
+                                {varPct === null ? "—" : `${varPct > 0 ? "+" : ""}${varPct.toFixed(1)}%`}
+                              </td>
+                            </>
+                          );
+                        })()}
                         <td className="border-b border-r border-slate-200 bg-white p-0">
                           <select disabled={!canEdit} aria-label="Sharing method"
                             className="w-full bg-transparent px-1.5 py-1 text-[13px] font-medium text-slate-800 outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30"
@@ -678,7 +753,7 @@ export function BranchBudgetPlannerGrid({
                       // rather than letting the save fail with a message about a row you cannot see.
                       <tr key={`warn-${r.index}`}>
                         <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-rose-50" />
-                        <td className="border-b border-r-2 border-slate-300 bg-rose-50 px-2 py-1 text-rose-700" colSpan={7 + costCentres.length * 2}>
+                        <td className="border-b border-r-2 border-slate-300 bg-rose-50 px-2 py-1 text-rose-700" colSpan={9 + costCentres.length * 2}>
                           <span className="font-semibold">{r.line.subHead}</span>: the cost-centre
                           amounts are Rs {money(Math.abs(preview.get(r.index)?.unallocated ?? 0))}{" "}
                           {(preview.get(r.index)?.unallocated ?? 0) > 0 ? "short of" : "over"} the row
@@ -697,7 +772,7 @@ export function BranchBudgetPlannerGrid({
                 <tr>
                   <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-white" />
                   <td className="border-b border-slate-200 bg-white px-3 py-6 text-center text-slate-600"
-                    colSpan={7 + costCentres.length * 2}>
+                    colSpan={9 + costCentres.length * 2}>
                     Nothing matches{query.trim() ? ` "${query.trim()}"` : ""}
                     {filter !== "all" ? ` in ${filter === "planned" ? "planned" : "not planned"} rows` : ""}.
                     <button type="button" className="ml-2 text-blue-700 underline"
@@ -715,6 +790,7 @@ export function BranchBudgetPlannerGrid({
               <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={3} />
               <td className={`sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100 px-2 py-2 ${num}`}>{money(branchTotal)}</td>
               <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={2} />
+              <td className="sticky bottom-0 z-30 border-r border-t-2 border-slate-300 bg-slate-100" colSpan={4} />
               {costCentres.flatMap((cc, ci) => {
                 const pct = branchTotal ? (columnTotal(ci) / branchTotal) * 100 : 0;
                 return [

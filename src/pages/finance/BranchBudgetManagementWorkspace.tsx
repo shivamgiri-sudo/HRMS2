@@ -152,6 +152,14 @@ function correctionRecordKey(record: BudgetLineCorrectionRecord) {
   });
 }
 
+/** The month before a YYYY-MM period, for the prior-month comparison columns. */
+function previousPeriod(period: string) {
+  const [y, m] = period.split("-").map(Number);
+  if (!y || !m) return "";
+  const d = new Date(Date.UTC(y, m - 2, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function currentPeriod() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -323,6 +331,10 @@ export default function BranchBudgetManagementWorkspace() {
   /** The table planner is the fast path and therefore the default; the card editor stays one click
    *  away for the fields the table has no room for. */
   const [plannerMode, setPlannerMode] = useState<"table" | "cards">("table");
+  /** Snapshots of `lines` for Undo, and the last-saved set so "unsaved edits" counts real changes
+   *  rather than every keystroke. */
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [savedSnapshot, setSavedSnapshot] = useState<string>("[]");
   const [expandedGradeCostCentres, setExpandedGradeCostCentres] = useState<Set<string>>(new Set());
 
   const capabilitiesQuery = useQuery({
@@ -353,6 +365,20 @@ export default function BranchBudgetManagementWorkspace() {
   // so this loads the detail read-only rather than opening it for edit.
   const detailId = savedBudgetId ?? editableBudget?.id ?? currentBudget?.id ?? null;
   const detailQuery = useBranchBudgetDetail(detailId);
+  // Last month's budget, for the Prev/Var columns and Copy-forward. Matched by head+sub-head NAME
+  // because saveDraft replaces the line set with fresh UUIDs on every save.
+  const priorPeriod = previousPeriod(period);
+  const priorList = useBranchBudgets({ period: priorPeriod, branchId: branchId || undefined });
+  const priorBudgetId = priorList.budgetsQuery.data?.[0]?.id ?? null;
+  const priorDetail = useBranchBudgetDetail(priorBudgetId);
+  const priorByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    (priorDetail.data?.lines ?? []).forEach((l) => {
+      const key = `${l.head}|${l.sub_head ?? ""}`;
+      map.set(key, (map.get(key) ?? 0) + Number(l.gross_amount ?? 0));
+    });
+    return map;
+  }, [priorDetail.data]);
   const { coverageQuery, saveCoverage } = useBudgetCoverage(detailId);
   const { mastersQuery, saveHead, saveSubHead, deleteHead, deleteSubHead } =
     useFinanceExpenseMasters(Boolean(capabilities?.canManageExpenseMaster));
@@ -405,6 +431,8 @@ export default function BranchBudgetManagementWorkspace() {
         : [blankLine()]
     );
     setLoadedDetailId(detailQuery.data.id);
+    setSavedSnapshot(JSON.stringify(detailQuery.data.lines.map(budgetLineRecordToInput)));
+    setUndoStack([]);
   }, [detailQuery.data, loadedDetailId]);
 
   useEffect(() => {
@@ -517,7 +545,39 @@ export default function BranchBudgetManagementWorkspace() {
     }, new Map<string, { id: string; name: string; items: BudgetCoverageItem[] }>()).values()
   );
 
+  /** Keep the last 50 states so Undo can step back without holding the whole session. */
+  function pushUndo() {
+    setUndoStack((stack) => [...stack, JSON.stringify(lines)].slice(-50));
+  }
+
+  /** Lines that differ from what was last saved — a real change count, not a keystroke count. */
+  const dirtyCount = useMemo(() => {
+    let saved: BranchBudgetLineInput[] = [];
+    try { saved = JSON.parse(savedSnapshot); } catch { saved = []; }
+    const key = (l: BranchBudgetLineInput) => JSON.stringify([
+      l.head, l.subHead, l.itemDescription, l.quantity, l.unitRate, l.unit,
+      l.allocationDriver, l.planningLevel, l.costCentreId, l.includedCostCentreIds, l.manualAllocations,
+    ]);
+    const before = new Map<string, number>();
+    saved.forEach((l) => before.set(key(l), (before.get(key(l)) ?? 0) + 1));
+    let changed = 0;
+    lines.forEach((l) => {
+      const k = key(l);
+      const n = before.get(k) ?? 0;
+      if (n > 0) before.set(k, n - 1); else changed++;
+    });
+    return changed;
+  }, [lines, savedSnapshot]);
+
+  /** Edits that reshape a line rather than nudge a number. Undo snapshots these, so one Undo steps
+   *  back a whole decision instead of a single keystroke. */
+  const STRUCTURAL_FIELDS = new Set([
+    "allocationDriver", "planningLevel", "attributionScope", "costCentreId",
+    "includedCostCentreIds", "manualAllocations", "head", "subHead", "unit",
+  ]);
+
   function updateLine(index: number, patch: Partial<BranchBudgetLineInput>) {
+    if (Object.keys(patch).some((key) => STRUCTURAL_FIELDS.has(key))) pushUndo();
     setLines((current) => current.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line));
   }
 
@@ -599,6 +659,9 @@ export default function BranchBudgetManagementWorkspace() {
         lines,
       });
       setSavedBudgetId(result.id);
+      // The save is now the baseline: nothing is "unsaved" until the next edit.
+      setSavedSnapshot(JSON.stringify(lines));
+      setUndoStack([]);
       setLoadedDetailId(result.id);
       const response = await hrmsApi.get<{ success: boolean; data: typeof coverageQuery.data }>(
         `/api/finance/pnl/budgets/${result.id}/coverage`
@@ -877,8 +940,8 @@ Reason:`
                   canEdit={canEdit}
                   period={period}
                   onUpdateLine={updateLine}
-                  onRemoveLine={(index) => setLines((current) => current.filter((_, i) => i !== index))}
-                  onAddLine={(head, subHead, unit, method) => setLines((current) => [
+                  onRemoveLine={(index) => { pushUndo(); setLines((current) => current.filter((_, i) => i !== index)); }}
+                  onAddLine={(head, subHead, unit, method) => { pushUndo(); setLines((current) => [
                     ...current,
                     blankLine({
                       head, subHead, unit,
@@ -890,7 +953,25 @@ Reason:`
                       taxTreatment: "non_gst", gstRate: 0, gstType: "none", recoverableTaxPct: 0,
                       justification: `${subHead} for ${period}`,
                     }),
-                  ])}
+                  ]); }}
+                  priorByKey={priorByKey}
+                  priorLabel={priorPeriod ? new Date(`${priorPeriod}-01T00:00:00Z`).toLocaleString("en-IN", { month: "short", timeZone: "UTC" }) : undefined}
+                  dirtyCount={dirtyCount}
+                  canUndo={undoStack.length > 0}
+                  onUndo={() => setUndoStack((stack) => {
+                    if (!stack.length) return stack;
+                    setLines(JSON.parse(stack[stack.length - 1]));
+                    return stack.slice(0, -1);
+                  })}
+                  onCopyForward={() => {
+                    pushUndo();
+                    setLines((current) => current.map((l) => {
+                      const prior = priorByKey.get(`${l.head}|${l.subHead ?? ""}`) ?? 0;
+                      const already = (Number(l.quantity) || 0) * (Number(l.unitRate) || 0);
+                      // Only fill what is still empty — never overwrite a figure already planned.
+                      return prior > 0 && already === 0 ? { ...l, quantity: 1, unitRate: prior } : l;
+                    }));
+                  }}
                   onSaveDrivers={() => void saveDrivers()}
                   onSaveDraft={() => void save(false)}
                   saving={saveBudget.isPending || saveMonthlyDrivers.isPending}
