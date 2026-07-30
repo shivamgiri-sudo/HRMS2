@@ -52,3 +52,18 @@ export function buildPayslipQrData(employeeCode: string, monthYear: string): str
 export function buildEmployeeIdQrData(employeeCode: string, _employeeId: string): string {
   return `${APP_BASE_URL}/verify/emp/${encodeURIComponent(employeeCode)}`;
 }
+
+/**
+ * Visitor entry QR → opens the public self-registration form.
+ * This is what reception prints or shows on a screen so an arriving visitor can
+ * scan straight into the form instead of being told a URL to type.
+ */
+export function buildVisitorRegisterQrData(branchId?: string): string {
+  const base = `${APP_BASE_URL}/visitor-register`;
+  return branchId ? `${base}?branch=${encodeURIComponent(branchId)}` : base;
+}
+
+/** Visitor status QR → opens that visitor's own tracking page */
+export function buildVisitorStatusQrData(trackingToken: string): string {
+  return `${APP_BASE_URL}/visitor-status/${encodeURIComponent(trackingToken)}`;
+}

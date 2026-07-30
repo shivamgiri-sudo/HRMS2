@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BadgeCheck, Clock3, DoorOpen, Loader2, LogOut, RefreshCcw, Search, ShieldAlert, UserRoundPlus } from "lucide-react";
+import { BadgeCheck, Clock3, DoorOpen, Loader2, LogOut, QrCode, RefreshCcw, Search, ShieldAlert, UserRoundPlus } from "lucide-react";
 import { VisitorRegistrationDialog } from "@/components/visitor/VisitorRegistrationDialog";
+import { VisitorQrPoster } from "@/components/visitor/VisitorQrPoster";
 import { VisitorEmpty, VisitorShell, VisitorStat, VisitorStatusBadge } from "@/components/visitor/VisitorShell";
 import { visitorApi, visitorDateTime, type VisitorVisit } from "@/features/visitor/visitorApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -16,6 +17,7 @@ export default function VisitorDesk() {
   const [success, setSuccess] = useState("");
   const [search, setSearch] = useState("");
   const [showRegister, setShowRegister] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const [gateAction, setGateAction] = useState<GateAction | null>(null);
   const [gateCode, setGateCode] = useState("MAIN-GATE");
   const [badgeNumber, setBadgeNumber] = useState("");
@@ -69,7 +71,7 @@ export default function VisitorDesk() {
       eyebrow="Reception & front desk"
       title="Guard desk"
       description="Register walk-ins, find expected visitors, issue badges, and record every entry and exit against a named gate."
-      action={canOperate ? <><button onClick={load} disabled={loading} className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-sm font-bold text-white hover:bg-white/20"><RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button><button onClick={() => setShowRegister(true)} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#ed1c24] px-5 text-sm font-black text-white"><UserRoundPlus className="h-4 w-4" />Register walk-in</button></> : undefined}
+      action={canOperate ? <><button onClick={load} disabled={loading} className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-sm font-bold text-white hover:bg-white/20"><RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button><button onClick={() => setShowQr(true)} className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-sm font-bold text-white hover:bg-white/20"><QrCode className="h-4 w-4" />Visitor QR</button><button onClick={() => setShowRegister(true)} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#ed1c24] px-5 text-sm font-black text-white"><UserRoundPlus className="h-4 w-4" />Register walk-in</button></> : undefined}
     >
       {!accessLoading && !canOperate ? <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6"><div className="flex items-start gap-4"><div className="rounded-2xl bg-amber-100 p-3 text-amber-700"><ShieldAlert className="h-6 w-6" /></div><div><h2 className="text-lg font-black text-amber-950">Reception access is required</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-amber-800">This workspace is limited to visitor reception, security, branch HR, branch heads, and administrators. Ask your HRMS administrator to assign the visitor reception role for your branch.</p></div></div></div> : <>
         <div className="grid gap-4 sm:grid-cols-3"><VisitorStat label="Inside now" value={inside} hint="Awaiting check-out" icon={<DoorOpen className="h-5 w-5" />} /><VisitorStat label="Expected at gate" value={expected} hint="Approved and ready" icon={<BadgeCheck className="h-5 w-5" />} /><VisitorStat label="Host approval pending" value={pending} hint="Cannot check in yet" icon={<Clock3 className="h-5 w-5" />} /></div>
@@ -81,6 +83,7 @@ export default function VisitorDesk() {
         </section>
       </>}
 
+      {showQr && <VisitorQrPoster onClose={() => setShowQr(false)} />}
       {showRegister && <VisitorRegistrationDialog mode="desk" onClose={() => setShowRegister(false)} onCreated={(result) => { setShowRegister(false); setSuccess(`Walk-in ${result.visit_number} registered and sent to the host for approval.`); void load(); }} />}
       {gateAction && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/60 p-5 backdrop-blur-sm" role="dialog" aria-modal="true"><div className="w-full max-w-md rounded-[2rem] bg-white p-6 shadow-2xl"><h2 className="text-xl font-black text-slate-950">{gateAction.event === "check_in" ? "Check in" : "Check out"} {gateAction.visit.visitor_name}</h2><p className="mt-2 text-sm text-slate-500">{gateAction.visit.visit_number} · {gateAction.visit.branch_name}</p><div className="mt-5 space-y-4"><label className="block"><span className="text-xs font-black uppercase tracking-wide text-slate-500">Gate code *</span><input value={gateCode} onChange={(e) => setGateCode(e.target.value)} maxLength={80} className="mt-2 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-blue-400" placeholder="MAIN-GATE" /></label>{gateAction.event === "check_in" && <label className="block"><span className="text-xs font-black uppercase tracking-wide text-slate-500">Badge number</span><input value={badgeNumber} onChange={(e) => setBadgeNumber(e.target.value.toUpperCase())} maxLength={80} className="mt-2 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-blue-400" placeholder="VIS-001 (optional)" /></label>}<label className="block"><span className="text-xs font-black uppercase tracking-wide text-slate-500">Security notes</span><textarea value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={1000} className="mt-2 h-24 w-full resize-none rounded-xl border border-slate-200 p-3 text-sm outline-none focus:border-blue-400" placeholder={gateAction.event === "check_out" ? "Confirm returned badge and belongings" : "Optional entry notes"} /></label></div><div className="mt-5 flex justify-end gap-3"><button onClick={() => setGateAction(null)} className="h-11 rounded-xl border border-slate-200 px-5 text-sm font-bold text-slate-700">Cancel</button><button onClick={() => void processGate()} disabled={working} className={`inline-flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-black text-white disabled:opacity-50 ${gateAction.event === "check_in" ? "bg-emerald-600" : "bg-slate-950"}`}>{working && <Loader2 className="h-4 w-4 animate-spin" />}{gateAction.event === "check_in" ? "Confirm check-in" : "Confirm check-out"}</button></div></div></div>}
     </VisitorShell>

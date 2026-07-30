@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { Building2, CheckCircle2, Clock, LogOut, ShieldCheck, ThumbsDown, Loader2, AlertCircle, RefreshCcw } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import { Building2, CheckCircle2, Clock, LogOut, ShieldCheck, ThumbsDown, Loader2, AlertCircle, RefreshCcw, Search } from "lucide-react";
 import { visitorApi, visitorDateTime, type PublicVisitStatus } from "@/features/visitor/visitorApi";
 
 const STATUS_CONFIG: Record<string, { icon: React.ReactNode; label: string; color: string; bg: string; message: string }> = {
@@ -11,9 +11,9 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; label: string; colo
     message: "Your visit request has been sent to your host. Please wait for their approval before proceeding to security.",
   },
   approved: {
-    icon: <CheckCircle2 className="h-8 w-8 text-teal-600" />,
+    icon: <CheckCircle2 className="h-8 w-8 text-[#3BAD49]" />,
     label: "Approved",
-    color: "text-teal-700", bg: "bg-teal-50 border-teal-200",
+    color: "text-[#2b7d35]", bg: "bg-[#3BAD49]/[0.08] border-[#3BAD49]/30",
     message: "Your visit is approved! Please proceed to the security desk and present this visit number.",
   },
   checked_in: {
@@ -48,16 +48,27 @@ const STATUS_CONFIG: Record<string, { icon: React.ReactNode; label: string; colo
   },
 };
 
+/** Accepts a bare token or a full tracking URL pasted from the visitor's phone. */
+export function extractToken(raw: string): string {
+  const value = raw.trim();
+  const fromUrl = value.match(/visitor-status\/([A-Za-z0-9]+)/);
+  return (fromUrl ? fromUrl[1] : value).trim();
+}
+
 export default function VisitorStatusPage() {
   const { token } = useParams<{ token: string }>();
+  const navigate = useNavigate();
   const [visit, setVisit] = useState<PublicVisitStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [requesting, setRequesting] = useState(false);
   const [checkoutRequested, setCheckoutRequested] = useState(false);
+  const [lookup, setLookup] = useState("");
 
   const load = async (showLoader = true) => {
-    if (!token) { setError("Invalid link — no tracking token found."); setLoading(false); return; }
+    // No token means the visitor reached /visitor-status directly (the register
+    // page links here). Show the lookup form rather than a dead "invalid link".
+    if (!token) { setLoading(false); return; }
     if (showLoader) setLoading(true);
     setError("");
     try {
@@ -93,20 +104,50 @@ export default function VisitorStatusPage() {
   const cfg = visit ? (STATUS_CONFIG[visit.status] ?? STATUS_CONFIG.expired) : null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 to-slate-50 flex items-center justify-center py-8 px-4">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center py-8 px-4">
       <div className="w-full max-w-md space-y-4">
         {/* Header */}
         <div className="text-center mb-2">
-          <div className="mx-auto mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-600">
-            <Building2 className="h-6 w-6 text-white" />
+          <div className="mx-auto mb-3 inline-flex items-center justify-center rounded-2xl bg-white px-3.5 py-2 shadow-md">
+            <img src="/mcn-logo.png" alt="MAS Callnet" className="h-7 w-auto" />
           </div>
           <h1 className="text-xl font-black text-slate-900">Visit Status</h1>
-          <p className="text-xs text-slate-400 mt-1">Auto-refreshes every 30 seconds</p>
+          {token && <p className="text-xs text-slate-400 mt-1">Auto-refreshes every 30 seconds</p>}
         </div>
+
+        {/* No token: let the visitor look their visit up instead of dead-ending */}
+        {!token && !loading && (
+          <form
+            onSubmit={(e) => { e.preventDefault(); const t = extractToken(lookup); if (t) navigate(`/visitor-status/${t}`); }}
+            className="rounded-3xl bg-white shadow-sm p-6"
+          >
+            <div className="mx-auto mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1B6AB5]/10 text-[#1B6AB5]">
+              <Search className="h-5 w-5" />
+            </div>
+            <p className="font-black text-slate-900">Find your visit</p>
+            <p className="mt-1 text-sm text-slate-500 leading-relaxed">
+              Paste the tracking link you received after registering, or scan the QR code shown on your confirmation.
+            </p>
+            <input
+              value={lookup}
+              onChange={(e) => setLookup(e.target.value)}
+              placeholder="Paste your tracking link"
+              aria-label="Tracking link or token"
+              className="mt-4 h-11 w-full rounded-xl border border-slate-200 px-3.5 text-sm font-medium text-slate-900 outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-[#1B6AB5] focus:ring-4 focus:ring-[#1B6AB5]/12"
+            />
+            <button
+              type="submit"
+              disabled={!extractToken(lookup)}
+              className="mt-3 inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#1B6AB5] text-sm font-black text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <Search className="h-4 w-4" />Check status
+            </button>
+          </form>
+        )}
 
         {loading && (
           <div className="rounded-3xl bg-white shadow-sm p-10 flex flex-col items-center gap-3">
-            <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+            <Loader2 className="h-8 w-8 animate-spin text-[#1B6AB5]" />
             <p className="text-sm text-slate-500">Loading visit status…</p>
           </div>
         )}
@@ -193,7 +234,7 @@ export default function VisitorStatusPage() {
 
         <p className="text-center text-xs text-slate-400">
           New visit?{" "}
-          <a href="/visitor-register" className="font-bold text-teal-700 underline">Register here</a>
+          <a href="/visitor-register" className="font-bold text-[#1B6AB5] underline">Register here</a>
         </p>
       </div>
     </div>

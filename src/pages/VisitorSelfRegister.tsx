@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { CompanyLogo } from "@/components/CompanyLogo";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import {
+  Building2, CalendarClock, CheckCircle2, ClipboardCheck, Copy, Loader2, MapPin,
+  PartyPopper, Search, ShieldCheck, UserRound, UserSearch, X, Zap,
+} from "lucide-react";
+import { buildQrCodeUrl, buildVisitorStatusQrData } from "@/integrations/apis/qrCode.api";
 import {
   toIso, toLocalInputValue, visitorApi,
   type VisitorBranch, type PublicHost, type PublicRegistrationInput,
@@ -7,97 +12,85 @@ import {
 
 const CONSENT_VERSION = "1.0";
 
-/* ─── Shared input style ─────────────────────────────── */
-const ic: React.CSSProperties = {
-  width: "100%", height: 44, borderRadius: 12, border: "1.5px solid #e2e8f0",
-  background: "#fff", padding: "0 14px", fontSize: 14, fontWeight: 500,
-  color: "#0f172a", outline: "none", transition: "border .15s,box-shadow .15s",
-  boxSizing: "border-box",
-};
-const icFocus = { border: "1.5px solid #0d9488", boxShadow: "0 0 0 4px rgba(13,148,136,.1)" };
+/* MAS Callnet brand — taken from the logo: red wordmark, blue/green ring.
+   Mirrors --brand-500 / --accent-500 / --success-500 in hrms-design-system.css. */
+const MAS_BLUE = "#1B6AB5";
+const MAS_BLUE_DEEP = "#062b52";
+const MAS_RED = "#E8231A";
 
-function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <input
-      {...props}
-      style={{ ...ic, ...(focused ? icFocus : {}), ...props.style }}
-      onFocus={e => { setFocused(true); props.onFocus?.(e); }}
-      onBlur={e => { setFocused(false); props.onBlur?.(e); }}
-    />
-  );
-}
+const VISIT_TYPES = [
+  { value: "business", label: "Business meeting" },
+  { value: "interview", label: "Interview" },
+  { value: "vendor", label: "Vendor / delivery" },
+  { value: "audit", label: "Audit / compliance" },
+  { value: "training", label: "Training / event" },
+  { value: "personal", label: "Personal visit" },
+];
 
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <select
-      {...props}
-      style={{ ...ic, ...props.style, ...(focused ? icFocus : {}), appearance: "none", cursor: "pointer" }}
-      onFocus={e => { setFocused(true); props.onFocus?.(e); }}
-      onBlur={e => { setFocused(false); props.onBlur?.(e); }}
-    />
-  );
-}
-
-function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <textarea
-      {...props}
-      style={{ ...ic, height: 96, padding: "10px 14px", resize: "none", lineHeight: 1.5, ...props.style, ...(focused ? icFocus : {}) }}
-      onFocus={e => { setFocused(true); props.onFocus?.(e); }}
-      onBlur={e => { setFocused(false); props.onBlur?.(e); }}
-    />
-  );
-}
+const inputClass =
+  "h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-900 outline-none transition " +
+  "placeholder:font-normal placeholder:text-slate-400 focus:border-[#1B6AB5] focus:ring-4 focus:ring-[#1B6AB5]/12 disabled:bg-slate-50 disabled:text-slate-400";
 
 function Label({ children, required }: { children: React.ReactNode; required?: boolean }) {
   return (
-    <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", color: "#64748b", marginBottom: 6 }}>
-      {children}{required && <span style={{ color: "#e11d48", marginLeft: 2 }}>*</span>}
-    </div>
-  );
-}
-
-function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <div style={{ background: "#fff", borderRadius: 20, padding: 24, boxShadow: "0 2px 16px rgba(15,23,42,.06)", border: "1px solid #f1f5f9", ...style }}>
+    <span className="mb-1.5 block text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
       {children}
-    </div>
+      {required && <span className="ml-0.5 text-[#E8231A]">*</span>}
+    </span>
   );
 }
 
-function SectionTitle({ icon, title, subtitle }: { icon: string; title: string; subtitle?: string }) {
+function Section({
+  step, icon, title, subtitle, children, tint,
+}: {
+  step: string; icon: React.ReactNode; title: string; subtitle: string;
+  children: React.ReactNode; tint?: boolean;
+}) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0d9488,#0f766e)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>
-        {icon}
+    <section
+      className={`rounded-2xl border p-5 shadow-sm sm:p-6 ${
+        tint ? "border-[#1B6AB5]/20 bg-[#1B6AB5]/[0.04]" : "border-slate-200/80 bg-white"
+      }`}
+    >
+      <div className="mb-5 flex items-start gap-3.5">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm"
+          style={{ background: `linear-gradient(135deg, ${MAS_BLUE}, ${MAS_BLUE_DEEP})` }}
+          aria-hidden
+        >
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[11px] font-black tabular-nums text-[#1B6AB5]">{step}</span>
+            <h2 className="text-[15px] font-extrabold text-slate-900">{title}</h2>
+          </div>
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{subtitle}</p>
+        </div>
       </div>
-      <div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{subtitle}</div>}
-      </div>
-    </div>
+      {children}
+    </section>
   );
-}
-
-function Grid2({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>{children}</div>;
 }
 
 export default function VisitorSelfRegister() {
   const now = useMemo(() => new Date(), []);
+  const [params] = useSearchParams();
+  const branchFromQr = params.get("branch") ?? "";
+
   const [branches, setBranches] = useState<VisitorBranch[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(true);
   const [hostSearch, setHostSearch] = useState("");
   const [hosts, setHosts] = useState<PublicHost[]>([]);
   const [searchingHosts, setSearchingHosts] = useState(false);
+  const [hostTouched, setHostTouched] = useState(false);
   const [selectedHost, setSelectedHost] = useState<PublicHost | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{ visit_number: string; tracking_token: string } | null>(null);
   const [consent, setConsent] = useState(false);
+  const [statusQr, setStatusQr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const [form, setForm] = useState({
     full_name: "", mobile: "", email: "", company_name: "",
@@ -110,24 +103,45 @@ export default function VisitorSelfRegister() {
 
   const up = (key: keyof typeof form, v: string) => {
     setForm(f => ({ ...f, [key]: v }));
-    if (key === "branch_id") { setSelectedHost(null); setHosts([]); setHostSearch(""); }
+    if (key === "branch_id") { setSelectedHost(null); setHosts([]); setHostSearch(""); setHostTouched(false); }
   };
 
   useEffect(() => {
     visitorApi.branches()
-      .then(d => { setBranches(d); if (d.length === 1) setForm(f => ({ ...f, branch_id: d[0].id })); })
-      .catch(() => setError("Unable to load branches. Please refresh."))
+      .then(d => {
+        setBranches(d);
+        // A QR printed for one reception desk pre-selects that branch; otherwise
+        // auto-select when there is only one to pick from.
+        const preset = d.find(b => b.id === branchFromQr)?.id ?? (d.length === 1 ? d[0].id : "");
+        if (preset) setForm(f => ({ ...f, branch_id: preset }));
+      })
+      .catch(() => setError("Unable to load branches. Please refresh the page."))
       .finally(() => setLoadingBranches(false));
-  }, []);
+  }, [branchFromQr]);
 
-  const searchHosts = async () => {
-    if (hostSearch.trim().length < 2) { setError("Enter at least 2 characters."); return; }
-    if (!form.branch_id) { setError("Please select a branch first."); return; }
-    setSearchingHosts(true); setError("");
-    try { setHosts(await visitorApi.publicHosts(form.branch_id, hostSearch.trim())); }
-    catch { setError("Unable to search hosts. Please try again."); }
-    finally { setSearchingHosts(false); }
-  };
+  // Live host search. Previously this sat behind a Search button, which meant a
+  // visitor could type a name, see nothing happen, and submit with no host.
+  const searchSeq = useRef(0);
+  useEffect(() => {
+    const q = hostSearch.trim();
+    if (!form.branch_id || q.length < 2 || selectedHost) { setHosts([]); setSearchingHosts(false); return; }
+    const seq = ++searchSeq.current;
+    setSearchingHosts(true);
+    const t = setTimeout(() => {
+      visitorApi.publicHosts(form.branch_id, q)
+        .then(r => { if (seq === searchSeq.current) { setHosts(r); setHostTouched(true); } })
+        .catch(() => { if (seq === searchSeq.current) setHosts([]); })
+        .finally(() => { if (seq === searchSeq.current) setSearchingHosts(false); });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [hostSearch, form.branch_id, selectedHost]);
+
+  useEffect(() => {
+    if (!success) return;
+    void buildQrCodeUrl(buildVisitorStatusQrData(success.tracking_token), 512)
+      .then(setStatusQr)
+      .catch(() => setStatusQr(null));
+  }, [success]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setError("");
@@ -136,14 +150,21 @@ export default function VisitorSelfRegister() {
       setError("Visit end time must be after the start time."); return;
     }
     const input: PublicRegistrationInput = {
-      visitor: { full_name: form.full_name.trim(), mobile: form.mobile.trim(), email: form.email.trim() || undefined, company_name: form.company_name.trim() || undefined },
+      visitor: {
+        full_name: form.full_name.trim(), mobile: form.mobile.trim(),
+        email: form.email.trim() || undefined, company_name: form.company_name.trim() || undefined,
+      },
       branch_id: form.branch_id,
       host_employee_code: selectedHost?.employee_code,
       visit_type: form.visit_type, purpose: form.purpose.trim(),
       scheduled_start: toIso(form.scheduled_start), scheduled_end: toIso(form.scheduled_end),
       consent: { accepted: true, consent_type: "visitor_privacy", consent_version: CONSENT_VERSION },
-      vehicle: form.vehicle_number.trim() ? { vehicle_number: form.vehicle_number.trim().toUpperCase(), vehicle_type: form.vehicle_type } : undefined,
-      belongings: form.item_type.trim() ? [{ item_type: form.item_type.trim(), description: form.item_description.trim() || undefined, serial_number: form.serial_number.trim() || undefined }] : undefined,
+      vehicle: form.vehicle_number.trim()
+        ? { vehicle_number: form.vehicle_number.trim().toUpperCase(), vehicle_type: form.vehicle_type }
+        : undefined,
+      belongings: form.item_type.trim()
+        ? [{ item_type: form.item_type.trim(), description: form.item_description.trim() || undefined, serial_number: form.serial_number.trim() || undefined }]
+        : undefined,
     };
     setSaving(true);
     try { setSuccess(await visitorApi.registerPublic(input)); }
@@ -151,209 +172,282 @@ export default function VisitorSelfRegister() {
     finally { setSaving(false); }
   };
 
-  /* ─── Success screen ──────────────────────────────────── */
+  /* ─── Success ────────────────────────────────────────── */
   if (success) {
-    const statusUrl = `${window.location.origin}/visitor-status/${success.tracking_token}`;
+    const statusUrl = buildVisitorStatusQrData(success.tracking_token);
     return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#f0fdfa 0%,#e0f2fe 50%,#f8fafc 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-        <div style={{ width: "100%", maxWidth: 440 }}>
-          <Card style={{ textAlign: "center", padding: 36 }}>
-            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#0d9488,#0f766e)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", fontSize: 32 }}>✓</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: "#0f172a" }}>Visit Registered!</div>
-            <div style={{ fontSize: 14, color: "#64748b", marginTop: 6, lineHeight: 1.5 }}>Your visit request is awaiting host approval. You'll be notified once approved.</div>
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-md">
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl">
+            <div className="px-7 pb-7 pt-8 text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#3BAD49]/12 text-[#3BAD49]">
+                <PartyPopper className="h-8 w-8" />
+              </div>
+              <h1 className="text-xl font-black text-slate-900">You're registered</h1>
+              <p className="mx-auto mt-1.5 max-w-xs text-sm leading-relaxed text-slate-500">
+                {selectedHost
+                  ? <>We've notified <span className="font-semibold text-slate-700">{selectedHost.full_name}</span> to approve your visit.</>
+                  : "Our reception team will review and approve your visit shortly."}
+              </p>
 
-            <div style={{ margin: "20px 0 0", padding: 16, borderRadius: 14, background: "linear-gradient(135deg,#0d9488,#0f766e)", color: "#fff" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, opacity: .8, textTransform: "uppercase", letterSpacing: "0.1em" }}>Visit Number</div>
-              <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: "0.05em", marginTop: 4 }}>{success.visit_number}</div>
+              <div
+                className="mt-6 rounded-2xl px-5 py-4 text-white"
+                style={{ background: `linear-gradient(135deg, ${MAS_BLUE}, ${MAS_BLUE_DEEP})` }}
+              >
+                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/70">Your visit number</div>
+                <div className="mt-1 text-3xl font-black tracking-wide tabular-nums">{success.visit_number}</div>
+              </div>
+
+              {/* The QR is the point: the visitor scans it with their own phone and
+                  keeps the tracking link, instead of copying a 70-character URL. */}
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-500">
+                  Scan to track your visit
+                </div>
+                <div className="mt-3 flex justify-center">
+                  {statusQr ? (
+                    <img
+                      src={statusQr}
+                      alt="QR code linking to your visit status page"
+                      className="h-40 w-40 rounded-xl border border-slate-200 bg-white p-2"
+                    />
+                  ) : (
+                    <div className="flex h-40 w-40 items-center justify-center rounded-xl border border-dashed border-slate-300">
+                      <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+                    </div>
+                  )}
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-slate-500">
+                  Point your phone camera at this code to save your status link and request check-out later.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(statusUrl).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    });
+                  }}
+                  className="mt-3 inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                >
+                  {copied ? <CheckCircle2 className="h-3.5 w-3.5 text-[#3BAD49]" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? "Link copied" : "Copy link instead"}
+                </button>
+              </div>
+
+              <a
+                href={statusUrl}
+                className="mt-5 flex h-12 cursor-pointer items-center justify-center gap-2 rounded-xl text-sm font-black text-white transition hover:brightness-110"
+                style={{ background: MAS_RED }}
+              >
+                <ClipboardCheck className="h-4 w-4" /> Track my visit
+              </a>
+              <a href="/visitor-register" className="mt-3 inline-block cursor-pointer text-xs font-bold text-[#1B6AB5] hover:underline">
+                Register another visit
+              </a>
             </div>
-
-            <div style={{ marginTop: 16, padding: 14, borderRadius: 12, background: "#f0fdfa", border: "1px solid #99f6e4" }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f766e", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>Your Status Tracking Link</div>
-              <a href={statusUrl} style={{ display: "block", fontSize: 12, color: "#0d9488", wordBreak: "break-all", textDecoration: "underline" }}>{statusUrl}</a>
-            </div>
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10 }}>Save this link to check your visit status and request check-out.</div>
-
-            <a href={statusUrl} style={{ display: "flex", alignItems: "center", justifyContent: "center", marginTop: 20, height: 48, borderRadius: 14, background: "linear-gradient(135deg,#0d9488,#0f766e)", color: "#fff", fontWeight: 800, fontSize: 14, textDecoration: "none", gap: 8 }}>
-              🔍 Track My Visit
-            </a>
-            <a href="/visitor-register" style={{ display: "block", marginTop: 10, fontSize: 12, color: "#0d9488", textDecoration: "underline" }}>Register another visit</a>
-          </Card>
+          </div>
         </div>
       </div>
     );
   }
 
-  /* ─── Registration form ───────────────────────────────── */
+  /* ─── Form ───────────────────────────────────────────── */
+  const selectedBranch = branches.find(b => b.id === form.branch_id);
+
   return (
-    <>
-      <style>{`
-        @keyframes vsrFadeUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
-        .vsr-card { animation: vsrFadeUp .35s ease forwards; }
-        .vsr-btn-primary { background:linear-gradient(135deg,#0d9488,#0f766e); color:#fff; border:none; border-radius:14px; height:50px; font-size:15px; font-weight:900; cursor:pointer; transition:opacity .15s,transform .1s; box-shadow:0 6px 20px rgba(13,148,136,.3); width:100%; }
-        .vsr-btn-primary:hover:not(:disabled) { opacity:.92; transform:translateY(-1px); }
-        .vsr-btn-primary:disabled { opacity:.5; cursor:not-allowed; transform:none; }
-        .vsr-host-card { border-radius:12px; border:1.5px solid #e2e8f0; background:#fff; padding:12px 14px; cursor:pointer; transition:border .15s,background .15s; text-align:left; width:100%; }
-        .vsr-host-card:hover { border-color:#0d9488; background:#f0fdfa; }
-        input[type="checkbox"].vsr-check { width:18px; height:18px; accent-color:#0d9488; cursor:pointer; margin-top:2px; flex-shrink:0; }
-      `}</style>
-
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#f0fdfa 0%,#e0f2fe 60%,#f8fafc 100%)" }}>
-
-        {/* Hero header */}
-        <div style={{ background: "linear-gradient(130deg,#0f172a 0%,#0d9488 60%,#0e7490 100%)", padding: "28px 16px 32px", textAlign: "center" }}>
-          <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-            <CompanyLogo size="lg" />
+    <div className="min-h-screen bg-slate-50">
+      {/* Hero */}
+      <header className="relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${MAS_BLUE_DEEP} 0%, ${MAS_BLUE} 55%, #2784c4 100%)` }}>
+        {/* Echoes the ring in the MAS mark without competing with the logo itself */}
+        <div aria-hidden className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full border-[28px] border-white/[0.07]" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-28 -left-10 h-56 w-56 rounded-full border-[22px] border-white/[0.05]" />
+        <div className="relative mx-auto max-w-2xl px-4 pb-9 pt-8 text-center">
+          <div className="inline-flex items-center justify-center rounded-2xl bg-white px-4 py-2.5 shadow-lg">
+            <img src="/mcn-logo.png" alt="MAS Callnet" className="h-9 w-auto" />
           </div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", marginTop: 4 }}>MAS Callnet — Visitor Registration</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,.75)", marginTop: 4 }}>Please fill in your details. Your host will receive an approval notification.</div>
-          <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 16 }}>
-            {["🆔 Identity verified", "🔒 Secure & private", "⚡ Instant notification"].map(t => (
-              <div key={t} style={{ background: "rgba(255,255,255,.12)", borderRadius: 20, padding: "5px 12px", fontSize: 11, color: "#fff", fontWeight: 600 }}>{t}</div>
+          <h1 className="mt-4 text-[26px] font-black leading-tight text-white sm:text-3xl">Visitor Registration</h1>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-white/75">
+            Welcome to MAS Callnet. Register below and your host will be notified straight away.
+          </p>
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            {[
+              { icon: <ShieldCheck className="h-3.5 w-3.5" />, label: "DPDP Act compliant" },
+              { icon: <Zap className="h-3.5 w-3.5" />, label: "Instant host alert" },
+              { icon: <ClipboardCheck className="h-3.5 w-3.5" />, label: "Takes under 2 minutes" },
+            ].map(chip => (
+              <span key={chip.label} className="inline-flex items-center gap-1.5 rounded-full bg-white/12 px-3 py-1.5 text-[11px] font-bold text-white ring-1 ring-inset ring-white/15">
+                {chip.icon}{chip.label}
+              </span>
             ))}
           </div>
         </div>
+      </header>
 
-        <div style={{ maxWidth: 680, margin: "0 auto", padding: "24px 16px 40px" }}>
-          <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-            {error && (
-              <div className="vsr-card" style={{ padding: "12px 16px", borderRadius: 12, background: "linear-gradient(135deg,#fef2f2,#fee2e2)", border: "1px solid #fca5a5", color: "#b91c1c", fontSize: 13, fontWeight: 600 }}>
-                ⚠️ {error}
-              </div>
-            )}
-
-            {/* Your Details */}
-            <Card className="vsr-card">
-              <SectionTitle icon="👤" title="Your Details" subtitle="We'll use this to identify you at the gate" />
-              <Grid2>
-                <div><Label required>Full Name</Label><Input value={form.full_name} onChange={e => up("full_name", e.target.value)} minLength={2} maxLength={200} required placeholder="Your full legal name" /></div>
-                <div><Label required>Mobile Number</Label><Input value={form.mobile} onChange={e => up("mobile", e.target.value)} minLength={8} maxLength={20} required inputMode="tel" placeholder="e.g. 9876543210" /></div>
-                <div><Label>Work Email</Label><Input value={form.email} onChange={e => up("email", e.target.value)} type="email" maxLength={255} placeholder="your@company.com" /></div>
-                <div><Label>Company / Organisation</Label><Input value={form.company_name} onChange={e => up("company_name", e.target.value)} maxLength={255} placeholder="Your company name" /></div>
-              </Grid2>
-            </Card>
-
-            {/* Visit Details */}
-            <Card className="vsr-card">
-              <SectionTitle icon="🏢" title="Visit Details" subtitle="Tell us when and why you are visiting" />
-              <Grid2>
-                <div>
-                  <Label required>MAS Branch</Label>
-                  <Select value={form.branch_id} onChange={e => up("branch_id", e.target.value)} required disabled={loadingBranches}>
-                    <option value="">{loadingBranches ? "Loading branches…" : "Select branch"}</option>
-                    {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}{b.city ? ` · ${b.city}` : ""}</option>)}
-                  </Select>
-                </div>
-                <div>
-                  <Label required>Visit Type</Label>
-                  <Select value={form.visit_type} onChange={e => up("visit_type", e.target.value)} required>
-                    <option value="business">💼 Business Meeting</option>
-                    <option value="interview">📋 Interview</option>
-                    <option value="vendor">📦 Vendor / Delivery</option>
-                    <option value="audit">🔍 Audit / Compliance</option>
-                    <option value="training">🎓 Training / Event</option>
-                    <option value="personal">🤝 Personal Visit</option>
-                  </Select>
-                </div>
-                <div>
-                  <Label required>Visit Start</Label>
-                  <Input type="datetime-local" value={form.scheduled_start} onChange={e => up("scheduled_start", e.target.value)} required />
-                </div>
-                <div>
-                  <Label required>Visit End</Label>
-                  <Input type="datetime-local" value={form.scheduled_end} onChange={e => up("scheduled_end", e.target.value)} required />
-                </div>
-              </Grid2>
-              <div style={{ marginTop: 14 }}>
-                <Label required>Purpose of Visit</Label>
-                <TextArea value={form.purpose} onChange={e => up("purpose", e.target.value)} minLength={5} maxLength={500} required placeholder="Briefly describe why you are visiting MAS Callnet today" />
-              </div>
-            </Card>
-
-            {/* Host Search */}
-            <Card className="vsr-card" style={{ background: "linear-gradient(135deg,#f0fdfa,#fff)" }}>
-              <SectionTitle icon="🔍" title="Find Your Host" subtitle="Search the employee you are here to meet" />
-              <div style={{ display: "flex", gap: 10 }}>
-                <Input
-                  value={hostSearch}
-                  onChange={e => setHostSearch(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void searchHosts(); } }}
-                  placeholder="Enter name or employee code (min 2 chars)"
-                  disabled={!form.branch_id}
-                  style={{ flex: 1 }}
-                />
-                <button
-                  type="button"
-                  onClick={searchHosts}
-                  disabled={searchingHosts || !form.branch_id}
-                  style={{ height: 44, padding: "0 18px", borderRadius: 12, background: "linear-gradient(135deg,#0f172a,#1e293b)", color: "#fff", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0, opacity: (!form.branch_id || searchingHosts) ? .4 : 1 }}
-                >
-                  {searchingHosts ? "⏳" : "🔍"} Search
-                </button>
-              </div>
-              {!form.branch_id && <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>Select a branch first to search for a host.</div>}
-
-              {hosts.length > 0 && !selectedHost && (
-                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8, maxHeight: 180, overflowY: "auto" }}>
-                  {hosts.map(h => (
-                    <button key={h.employee_code} type="button" className="vsr-host-card" onClick={() => { setSelectedHost(h); setHosts([]); }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>{h.full_name}</div>
-                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{h.employee_code}{h.designation_name ? ` · ${h.designation_name}` : ""}</div>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {selectedHost && (
-                <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderRadius: 12, background: "linear-gradient(135deg,#ecfdf5,#d1fae5)", border: "1.5px solid #6ee7b7" }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: "#065f46" }}>✅ {selectedHost.full_name}</div>
-                    <div style={{ fontSize: 11, color: "#047857", marginTop: 1 }}>{selectedHost.employee_code}{selectedHost.designation_name ? ` · ${selectedHost.designation_name}` : ""}</div>
-                  </div>
-                  <button type="button" onClick={() => setSelectedHost(null)} style={{ fontSize: 11, fontWeight: 800, color: "#047857", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>Change</button>
-                </div>
-              )}
-            </Card>
-
-            {/* Security Details */}
-            <Card className="vsr-card">
-              <SectionTitle icon="🛡️" title="Security Details" subtitle="Optional — vehicle and carried items for gate verification" />
-              <Grid2>
-                <div><Label>Vehicle Number</Label><Input value={form.vehicle_number} onChange={e => up("vehicle_number", e.target.value.toUpperCase())} maxLength={30} placeholder="e.g. DL 01 AB 1234" /></div>
-                <div>
-                  <Label>Vehicle Type</Label>
-                  <Select value={form.vehicle_type} onChange={e => up("vehicle_type", e.target.value)}>
-                    <option>Car</option><option>Motorcycle</option><option>Commercial vehicle</option><option>Other</option>
-                  </Select>
-                </div>
-                <div><Label>Carried Item</Label><Input value={form.item_type} onChange={e => up("item_type", e.target.value)} maxLength={80} placeholder="Laptop, camera, equipment…" /></div>
-                <div><Label>Serial Number</Label><Input value={form.serial_number} onChange={e => up("serial_number", e.target.value)} maxLength={150} placeholder="Optional asset serial" /></div>
-              </Grid2>
-            </Card>
-
-            {/* Privacy Consent */}
-            <Card className="vsr-card" style={{ background: "linear-gradient(135deg,#fefce8,#fef9c3)", border: "1px solid #fde047" }}>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer" }}>
-                <input type="checkbox" className="vsr-check" checked={consent} onChange={e => setConsent(e.target.checked)} />
-                <span style={{ fontSize: 13, color: "#713f12", lineHeight: 1.6 }}>
-                  I agree that <strong>MAS Callnet</strong> may record and process my visit details for security and access management purposes under the{" "}
-                  <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" style={{ color: "#0d9488", fontWeight: 700 }}>Privacy Policy</a>
-                  {" "}(Digital Personal Data Protection Act 2023 compliant). My data will be retained only as required by law.
-                </span>
-              </label>
-            </Card>
-
-            <button type="submit" className="vsr-btn-primary" disabled={saving || loadingBranches || !consent}>
-              {saving ? "⏳ Submitting your visit request…" : "✅ Register My Visit →"}
-            </button>
-
-            <div style={{ textAlign: "center", fontSize: 12, color: "#94a3b8" }}>
-              Already registered?{" "}
-              <a href="/visitor-status" style={{ color: "#0d9488", fontWeight: 700, textDecoration: "underline" }}>Check your visit status</a>
+      <main className="mx-auto max-w-2xl px-4 pb-16 pt-6">
+        <form onSubmit={submit} className="flex flex-col gap-4">
+          {error && (
+            <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">
+              <X className="mt-0.5 h-4 w-4 shrink-0" />{error}
             </div>
-          </form>
-        </div>
-      </div>
-    </>
+          )}
+
+          <Section step="01" icon={<UserRound className="h-5 w-5" />} title="Your details" subtitle="Used to identify you at the security gate.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block"><Label required>Full name</Label>
+                <input className={inputClass} value={form.full_name} onChange={e => up("full_name", e.target.value)} minLength={2} maxLength={200} required autoComplete="name" placeholder="Your full legal name" />
+              </label>
+              <label className="block"><Label required>Mobile number</Label>
+                <input className={inputClass} value={form.mobile} onChange={e => up("mobile", e.target.value)} minLength={8} maxLength={20} required inputMode="tel" autoComplete="tel" placeholder="9876543210" />
+              </label>
+              <label className="block"><Label>Work email</Label>
+                <input className={inputClass} value={form.email} onChange={e => up("email", e.target.value)} type="email" maxLength={255} autoComplete="email" placeholder="you@company.com" />
+              </label>
+              <label className="block"><Label>Company / organisation</Label>
+                <input className={inputClass} value={form.company_name} onChange={e => up("company_name", e.target.value)} maxLength={255} autoComplete="organization" placeholder="Your company name" />
+              </label>
+            </div>
+          </Section>
+
+          <Section step="02" icon={<Building2 className="h-5 w-5" />} title="Visit details" subtitle="Where you're going and why.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block"><Label required>MAS branch</Label>
+                <select className={`${inputClass} cursor-pointer appearance-none`} value={form.branch_id} onChange={e => up("branch_id", e.target.value)} required disabled={loadingBranches}>
+                  <option value="">{loadingBranches ? "Loading branches…" : "Select a branch"}</option>
+                  {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}{b.city ? ` · ${b.city}` : ""}</option>)}
+                </select>
+                {selectedBranch?.state && (
+                  <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                    <MapPin className="h-3 w-3" />{selectedBranch.state}
+                  </span>
+                )}
+              </label>
+              <label className="block"><Label required>Visit type</Label>
+                <select className={`${inputClass} cursor-pointer appearance-none`} value={form.visit_type} onChange={e => up("visit_type", e.target.value)} required>
+                  {VISIT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </label>
+              <label className="block"><Label required>Visit start</Label>
+                <input className={`${inputClass} cursor-pointer`} type="datetime-local" value={form.scheduled_start} onChange={e => up("scheduled_start", e.target.value)} required />
+              </label>
+              <label className="block"><Label required>Visit end</Label>
+                <input className={`${inputClass} cursor-pointer`} type="datetime-local" value={form.scheduled_end} onChange={e => up("scheduled_end", e.target.value)} required />
+              </label>
+            </div>
+            <label className="mt-4 block"><Label required>Purpose of visit</Label>
+              <textarea
+                className={`${inputClass} h-24 resize-none py-2.5 leading-relaxed`}
+                value={form.purpose} onChange={e => up("purpose", e.target.value)}
+                minLength={5} maxLength={500} required
+                placeholder="Briefly describe why you're visiting MAS Callnet today"
+              />
+              <span className="mt-1 block text-right text-[11px] tabular-nums text-slate-400">{form.purpose.length}/500</span>
+            </label>
+          </Section>
+
+          <Section step="03" icon={<UserSearch className="h-5 w-5" />} title="Who are you meeting?" subtitle="Search your host by name or employee code." tint>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                className={`${inputClass} pl-10`}
+                value={selectedHost ? selectedHost.full_name : hostSearch}
+                onChange={e => { setSelectedHost(null); setHostSearch(e.target.value); }}
+                disabled={!form.branch_id}
+                placeholder={form.branch_id ? "Start typing a name or code…" : "Select a branch first"}
+                aria-label="Search for your host"
+              />
+              {searchingHosts && <Loader2 className="absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[#1B6AB5]" />}
+              {selectedHost && !searchingHosts && (
+                <button type="button" onClick={() => { setSelectedHost(null); setHostSearch(""); }} aria-label="Clear selected host"
+                  className="absolute right-3 top-1/2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-slate-200 text-slate-600 transition hover:bg-slate-300">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {selectedHost ? (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-[#3BAD49]/30 bg-[#3BAD49]/[0.07] px-4 py-3">
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#3BAD49]" />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-extrabold text-slate-900">{selectedHost.full_name}</div>
+                  <div className="truncate text-[11px] font-medium text-slate-500">
+                    {selectedHost.employee_code}{selectedHost.designation_name ? ` · ${selectedHost.designation_name}` : ""}
+                  </div>
+                </div>
+              </div>
+            ) : hosts.length > 0 ? (
+              <ul className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                {hosts.map(h => (
+                  <li key={h.employee_code}>
+                    <button type="button" onClick={() => { setSelectedHost(h); setHosts([]); }}
+                      className="flex w-full cursor-pointer items-center gap-3 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-0 hover:bg-[#1B6AB5]/[0.06]">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1B6AB5]/10 text-[11px] font-black text-[#1B6AB5]">
+                        {h.full_name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-bold text-slate-900">{h.full_name}</span>
+                        <span className="block truncate text-[11px] text-slate-500">
+                          {h.employee_code}{h.designation_name ? ` · ${h.designation_name}` : ""}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : hostTouched && !searchingHosts && hostSearch.trim().length >= 2 ? (
+              <p className="mt-2.5 text-xs text-slate-500">
+                No match at this branch. You can still continue — reception will route you.
+              </p>
+            ) : null}
+          </Section>
+
+          <Section step="04" icon={<CalendarClock className="h-5 w-5" />} title="Vehicle & belongings" subtitle="Optional, but speeds up your gate check.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block"><Label>Vehicle number</Label>
+                <input className={inputClass} value={form.vehicle_number} onChange={e => up("vehicle_number", e.target.value.toUpperCase())} maxLength={30} placeholder="DL 01 AB 1234" />
+              </label>
+              <label className="block"><Label>Vehicle type</Label>
+                <select className={`${inputClass} cursor-pointer appearance-none`} value={form.vehicle_type} onChange={e => up("vehicle_type", e.target.value)}>
+                  <option>Car</option><option>Motorcycle</option><option>Commercial vehicle</option><option>Other</option>
+                </select>
+              </label>
+              <label className="block"><Label>Carried item</Label>
+                <input className={inputClass} value={form.item_type} onChange={e => up("item_type", e.target.value)} maxLength={80} placeholder="Laptop, camera, equipment…" />
+              </label>
+              <label className="block"><Label>Serial number</Label>
+                <input className={inputClass} value={form.serial_number} onChange={e => up("serial_number", e.target.value)} maxLength={150} placeholder="Optional asset serial" />
+              </label>
+            </div>
+          </Section>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-white p-5">
+            <input
+              type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}
+              className="mt-0.5 h-[18px] w-[18px] shrink-0 cursor-pointer accent-[#1B6AB5]"
+            />
+            <span className="text-[13px] leading-relaxed text-slate-600">
+              I agree that <strong className="text-slate-900">MAS Callnet</strong> may record and process my visit details for
+              security and access management under the{" "}
+              <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-bold text-[#1B6AB5] hover:underline">Privacy Policy</a>
+              {" "}(Digital Personal Data Protection Act, 2023). My data is retained only as long as the law requires.
+            </span>
+          </label>
+
+          <button
+            type="submit"
+            disabled={saving || loadingBranches || !consent}
+            className="flex h-13 min-h-[52px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl text-[15px] font-black text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:brightness-100"
+            style={{ background: MAS_RED, boxShadow: "0 8px 22px rgba(232,35,26,.26)" }}
+          >
+            {saving ? <><Loader2 className="h-4 w-4 animate-spin" />Submitting your request…</> : <>Register my visit<CheckCircle2 className="h-4 w-4" /></>}
+          </button>
+
+          <p className="text-center text-xs text-slate-500">
+            Already registered?{" "}
+            <a href="/visitor-status" className="cursor-pointer font-bold text-[#1B6AB5] hover:underline">Check your visit status</a>
+          </p>
+        </form>
+      </main>
+    </div>
   );
 }
