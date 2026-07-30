@@ -196,24 +196,57 @@ async function branchesForProcesses(processIds: readonly string[]): Promise<stri
   return unique(rows.map((row) => row.branch_id));
 }
 
+/**
+ * Every employee reporting to a manager, directly or indirectly.
+ *
+ * Was a recursive CTE with UNION ALL. Five employees in this database have
+ * reporting_manager_id or manager_id pointing at themselves, and a self-edge under UNION ALL
+ * recurses until MySQL hits cte_max_recursion_depth (1000) rather than terminating — so the
+ * query took 16.5 seconds to return 600 rows for the busiest manager, and timed out audit
+ * runs entirely. The `OR` across two parent columns also prevents either index being used.
+ *
+ * The active population is ~1,344 rows, so one indexed read of the whole edge set and a walk
+ * in memory is both faster and simpler: 1.26s against 16.5s for the same 600 ids. The
+ * visited set makes cycles of any length harmless instead of merely bounded, and self-edges
+ * are dropped when the map is built — an employee is not their own subordinate.
+ *
+ * The 5 self-referencing rows remain a data defect worth correcting at source; this makes
+ * the resolver immune to them rather than dependent on that cleanup.
+ */
 async function resolveTeamEmployeeIds(managerEmployeeId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `WITH RECURSIVE reporting_tree AS (
-       SELECT id
-         FROM employees
-        WHERE (reporting_manager_id = ? OR manager_id = ?)
-          AND active_status = 1
-       UNION ALL
-       SELECT child.id
-         FROM employees child
-         JOIN reporting_tree parent
-           ON child.reporting_manager_id = parent.id OR child.manager_id = parent.id
-        WHERE child.active_status = 1
-     )
-     SELECT DISTINCT id FROM reporting_tree`,
-    [managerEmployeeId, managerEmployeeId],
-  );
-  return unique(rows.map((row) => row.id));
+    `SELECT id, reporting_manager_id, manager_id
+       FROM employees
+      WHERE active_status = 1`,
+  ).catch(emptyOnError("employees reporting edges", { site: "resolveTeamEmployeeIds" }));
+
+  const childrenOf = new Map<string, string[]>();
+  for (const row of rows as RowDataPacket[]) {
+    const childId = String(row.id ?? "").trim();
+    if (!childId) continue;
+    for (const parentId of [row.reporting_manager_id, row.manager_id]) {
+      const parent = String(parentId ?? "").trim();
+      // A self-edge is not a reporting relationship; it is the data defect above.
+      if (!parent || parent === childId) continue;
+      const bucket = childrenOf.get(parent);
+      if (bucket) bucket.push(childId);
+      else childrenOf.set(parent, [childId]);
+    }
+  }
+
+  const collected = new Set<string>();
+  const queue = [...(childrenOf.get(managerEmployeeId) ?? [])];
+  while (queue.length > 0) {
+    const employeeId = queue.pop()!;
+    if (collected.has(employeeId)) continue;
+    collected.add(employeeId);
+    for (const child of childrenOf.get(employeeId) ?? []) {
+      if (!collected.has(child)) queue.push(child);
+    }
+  }
+  // The manager is never a member of their own team, even if a self-edge suggests otherwise.
+  collected.delete(managerEmployeeId);
+  return [...collected];
 }
 
 export async function resolveDashboardScope(userId: string, _role: string): Promise<DashboardScope> {

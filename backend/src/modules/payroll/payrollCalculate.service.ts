@@ -273,6 +273,25 @@ export async function calculatePayrollRunScoped(
   const isTargetedRun = scopedEmployeeIds.length > 0;
   const empConds: string[] = ["esa.active_status = 1"];
   const empParams: unknown[] = [];
+
+  // Only people actually employed during the run month belong in the run.
+  //
+  // Selection was `employment_status = 'active'` alone, with no employment window, so every
+  // currently-active employee got a line in every run — including months before they were
+  // hired. 86 such lines in FINALIZED 2026-04, 129 in FINALIZED 2026-03, 90 in draft
+  // 2026-05. Nobody was mispaid: every one of those lines carries net_salary = 0, because
+  // the employee had no attendance to be paid for. But they inflate the register and its
+  // headcount, and they are indistinguishable at a glance from a real employee who was paid
+  // nothing — which is a genuine and separate problem worth being able to see.
+  //
+  // Both bounds are inclusive so mid-month movers keep their pro-rated pay: someone joining
+  // on the 20th is still in that month's run, and a leaver is paid for the days worked
+  // before date_of_leaving.
+  empConds.push("COALESCE(e.salary_start_date, e.date_of_joining) <= LAST_DAY(CONCAT(?, '-01'))");
+  empParams.push(run.run_month);
+  empConds.push("(e.date_of_leaving IS NULL OR e.date_of_leaving >= CONCAT(?, '-01'))");
+  empParams.push(run.run_month);
+
   if (run.process_filter) {
     empConds.push("(pm.process_name = ? OR e.process_id IN (SELECT id FROM process_master WHERE process_name = ?))");
     empParams.push(run.process_filter, run.process_filter);

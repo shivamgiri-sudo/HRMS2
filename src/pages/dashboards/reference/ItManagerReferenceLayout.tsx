@@ -134,20 +134,35 @@ function PriorityDot({ priority }: { priority: string }) {
 
 // ── Tab: Provisioning ─────────────────────────────────────────────────────────
 
-function ProvisioningTab({ it, itProv }: { it: Record<string, unknown>; itProv: Record<string, unknown> }) {
+/**
+ * `available` distinguishes "the provisioning source failed" from "there is nothing
+ * pending". Both render as an empty task list, and defaulting the counts to zero presents a
+ * failed fetch as a clean queue — the one reading an IT manager is most likely to act on by
+ * doing nothing. The distinction existed before the comprehensive-IT-dashboard rewrite
+ * dropped it; role-dashboard-live-data.contract.test.ts has been failing on it since.
+ */
+function ProvisioningTab({ it, itProv, available }: {
+  it: Record<string, unknown>;
+  itProv: Record<string, unknown>;
+  available: boolean;
+}) {
+  // Left undefined rather than coerced, so a missing count is never rendered as a real 0.
   const taskBreakdown = [
-    { label: "Domain / Login",   value: asNumber(it.pending_domain)    ?? 0, color: "#3b82f6" },
-    { label: "Email Setup",      value: asNumber(it.pending_email)     ?? 0, color: "#8b5cf6" },
-    { label: "Asset Assignment", value: asNumber(it.pending_asset ?? itProv.pending_asset) ?? 0, color: "#f59e0b" },
-    { label: "Biometric Enroll", value: asNumber(it.pending_biometric ?? itProv.pending_biometric) ?? 0, color: "#06b6d4" },
-  ].filter(t => t.value > 0);
+    { label: "Domain / Login",   value: asNumber(it.pending_domain),    color: "#3b82f6" },
+    { label: "Email Setup",      value: asNumber(it.pending_email),     color: "#8b5cf6" },
+    { label: "Asset Assignment", value: asNumber(it.pending_asset ?? itProv.pending_asset), color: "#f59e0b" },
+    { label: "Biometric Enroll", value: asNumber(it.pending_biometric ?? itProv.pending_biometric), color: "#06b6d4" },
+  ].filter((t): t is { label: string; value: number; color: string } =>
+    typeof t.value === "number" && t.value > 0);
   const maxTask = Math.max(...taskBreakdown.map(t => t.value), 1);
   const pendingJoiners = arrayAt(it, "pending_joiners").slice(0, 10);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
       <ReferencePanel title="Task Breakdown" bodyClassName="p-4">
-        {taskBreakdown.length > 0 ? (
+        {!available ? (
+          <p className="py-6 text-center text-sm text-[#a0aec0]">Provisioning source unavailable</p>
+        ) : taskBreakdown.length > 0 ? (
           <div className="space-y-3">
             {taskBreakdown.map(task => (
               <div key={task.label} className="flex items-center gap-3">
@@ -195,23 +210,37 @@ function ProvisioningTab({ it, itProv }: { it: Record<string, unknown>; itProv: 
 function HelpdeskTab({ helpdesk }: { helpdesk: Record<string, unknown> }) {
   const stats   = asRecord(helpdesk.stats);
   const tickets = Array.isArray(helpdesk.tickets) ? helpdesk.tickets as Record<string, unknown>[] : [];
-  const total        = asNumber(stats.total_tickets) ?? 0;
-  const open         = asNumber(stats.open_tickets) ?? 0;
-  const urgent       = asNumber(stats.urgent_tickets) ?? 0;
-  const breachedOpen = asNumber(stats.sla_breached_open) ?? 0;
-  const resolvedOT   = asNumber(stats.resolved_on_time) ?? 0;
+  // Same distinction the provisioning tab makes: an absent helpdesk payload is not a
+  // helpdesk with zero tickets. Coercing each figure to 0 renders "0 open, 0 breached" — a
+  // perfectly healthy-looking queue — when the source simply did not answer. The tab reports
+  // that once, up front, rather than each tile inventing a zero.
+  const total        = asNumber(stats.total_tickets);
+  const open         = asNumber(stats.open_tickets);
+  const urgent       = asNumber(stats.urgent_tickets);
+  const breachedOpen = asNumber(stats.sla_breached_open);
+  const resolvedOT   = asNumber(stats.resolved_on_time);
   const avgMins      = asNumber(stats.avg_resolution_minutes);
-  const slaPct       = total > 0 ? Math.round((resolvedOT / total) * 100) : null;
+  const slaPct = total !== undefined && total > 0 && resolvedOT !== undefined
+    ? Math.round((resolvedOT / total) * 100)
+    : null;
+
+  // A tile with no figure shows a dash, and its colour stays neutral. Defaulting each of
+  // these to 0 rendered "0 open, 0 urgent, 0 breached" in confident green — a healthy queue
+  // — whenever the helpdesk payload was simply absent. Green-for-zero is only truthful when
+  // the zero was measured.
+  const countTone = (value: number | undefined, whenPositive: string) =>
+    value === undefined ? "text-[#a0aec0]" : value > 0 ? whenPositive : "text-emerald-600";
+  const show = (value: number | undefined) => (value === undefined ? "—" : value);
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         {[
-          { label: "Total Tickets",    value: total,        color: "text-[#0b1f44]" },
-          { label: "Open",             value: open,         color: open > 0 ? "text-amber-600" : "text-emerald-600" },
-          { label: "Urgent Open",      value: urgent,       color: urgent > 0 ? "text-red-600" : "text-emerald-600" },
-          { label: "SLA Breached",     value: breachedOpen, color: breachedOpen > 0 ? "text-red-600" : "text-emerald-600" },
-          { label: "Avg Resolution",   value: avgMins !== null ? `${(avgMins / 60).toFixed(1)}h` : "—", color: "text-[#0b1f44]" },
+          { label: "Total Tickets",    value: show(total),        color: total === undefined ? "text-[#a0aec0]" : "text-[#0b1f44]" },
+          { label: "Open",             value: show(open),         color: countTone(open, "text-amber-600") },
+          { label: "Urgent Open",      value: show(urgent),       color: countTone(urgent, "text-red-600") },
+          { label: "SLA Breached",     value: show(breachedOpen), color: countTone(breachedOpen, "text-red-600") },
+          { label: "Avg Resolution",   value: avgMins !== undefined ? `${(avgMins / 60).toFixed(1)}h` : "—", color: "text-[#0b1f44]" },
         ].map(s => (
           <div key={s.label} className="rounded-xl border border-[#edf1f6] bg-white p-3 text-center">
             <p className={`text-2xl font-bold ${s.color}`}>{typeof s.value === "number" ? formatValue(s.value) : s.value}</p>
@@ -467,7 +496,8 @@ function BulkUploadTab() {
     },
     onSuccess: (res: any) => {
       const r = res as { completed?: number; updated?: number; processed?: number; errors?: number; results?: SyncResult[] };
-      toast.success(`Sync complete: ${(r.completed ?? 0) + (r.updated ?? 0)} employees updated, ${r.errors ?? 0} errors`);
+      const updated = (Number(r.completed) || 0) + (Number(r.updated) || 0);
+      toast.success(`Sync complete: ${updated} employees updated, ${Number(r.errors) || 0} errors`);
       setResults(r.results ?? []);
       queryClient.invalidateQueries({ queryKey: ["reference-dashboard-it-full"] });
       queryClient.invalidateQueries({ queryKey: ["reference-dashboard-it-provisioning"] });
@@ -475,9 +505,9 @@ function BulkUploadTab() {
     onError: (err: any) => toast.error(err?.message ?? "Upload failed"),
   });
 
-  const resultCompleted = results?.filter(r => r.status === "task_completed").length ?? 0;
-  const resultUpdated   = results?.filter(r => r.status === "updated").length ?? 0;
-  const resultErrors    = results?.filter(r => r.status === "error").length ?? 0;
+  const resultCompleted = (results ?? []).filter(r => r.status === "task_completed").length;
+  const resultUpdated   = (results ?? []).filter(r => r.status === "updated").length;
+  const resultErrors    = (results ?? []).filter(r => r.status === "error").length;
 
   return (
     <div className="space-y-5">
@@ -823,7 +853,7 @@ export function ItManagerReferenceLayout({ data, filters }: { data: ReferenceDas
           ))}
         </div>
         <div className="p-4">
-          {activeTab === "provisioning" && <ProvisioningTab it={provData} itProv={itProv} />}
+          {activeTab === "provisioning" && <ProvisioningTab it={provData} itProv={itProv} available={data.itProvisioningAvailable !== false} />}
           {activeTab === "helpdesk"     && <HelpdeskTab helpdesk={helpdesk} />}
           {activeTab === "employees"    && <EmployeeDirectoryTab employees={employees} />}
           {activeTab === "bulk_upload"  && <BulkUploadTab />}

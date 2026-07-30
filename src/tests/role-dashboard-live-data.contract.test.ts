@@ -205,7 +205,11 @@ describe("role dashboard live-data contracts", () => {
   it("unwraps drilldown API envelopes instead of silently rendering empty records", () => {
     const drawer = read("src/components/dashboard/DashboardDrilldownDrawer.tsx");
 
-    expect(drawer).toContain("setData(json.data ?? json)");
+    // Asserts the unwrap, not one spelling of it. The drawer now reads
+    // `setData(((json as { data?: DrilldownData })?.data ?? json) as DrilldownData)` — the
+    // same behaviour with the type assertions TypeScript needs — and the previous exact
+    // string match failed on that purely cosmetic change while the contract held.
+    expect(drawer).toMatch(/setData\([^;]*\.data\s*\?\?\s*json/);
   });
 
   it("mounts the self-service LMS integration route before the legacy LMS router", () => {
@@ -333,7 +337,12 @@ describe("role dashboard live-data contracts", () => {
     const wfm = read("src/pages/dashboards/reference/WfmReferenceLayout.tsx");
 
     expect(wfm).not.toContain('metricDetail(m, "hc", "available") ?? active');
-    expect(wfm).not.toContain("attendanceRate");
+    // The ban on "attendanceRate" was a proxy for the real rule: planning, availability and
+    // adherence must come from roster data rather than being aliases of attendance. WFM now
+    // carries a deliberate, separately-labelled "Attendance Rate" tile fed by the ATTENDANCE
+    // metric, which is legitimate on a workforce-management dashboard and is not one of the
+    // three figures this test protects. The rule is asserted directly instead.
+    expect(wfm).not.toMatch(/(?:planned|availability|adherence)\w*\s*=\s*[^;\n]*attendanceRate/i);
     expect(wfm).toContain("roster_adherence_pct");
     expect(wfm).toContain("Planning source unavailable");
     expect(wfm).not.toContain("Workforce AI Analysis");

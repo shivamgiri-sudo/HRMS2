@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { navGroups } from "@/components/layout/navConfig";
 import type { NavItem } from "@/components/layout/SidebarNav";
 import { useAccessibleNavGroups } from "@/lib/navigationAccess";
+import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 import type { Tone } from "./reference-dashboard-model";
 import { formatValue } from "./reference-dashboard-model";
@@ -503,6 +504,7 @@ export function ReferenceQuickLink({
   tone?: Tone;
 }) {
   const accessibleGroups = useAccessibleNavGroups(navGroups);
+  const { data: roleData } = useUserRole();
   const targetPath = href.split("?")[0];
   const findItem = (items: NavItem[]): NavItem | undefined => {
     for (const item of items) {
@@ -516,6 +518,20 @@ export function ReferenceQuickLink({
     .map((item) => item.href.split("?")[0] === targetPath ? item : findItem(item.children ?? []))
     .find(Boolean);
   if (!navItem) return null;
+
+  // Nav-group accessibility is a coarser gate than page permission: a group can be visible
+  // while an individual page inside it is revoked for this user. Without this second check a
+  // dashboard offers a shortcut that lands on a 403, which reads as a broken dashboard
+  // rather than as an intentional restriction. role_page_access already drives the sidebar;
+  // quick links were the one surface still bypassing it.
+  const pageCode = navItem.pageCode;
+  const disabledPageCodes = roleData?.disabledPageCodes ?? [];
+  const page = roleData?.pages?.find((entry) => entry.page_code === pageCode);
+  const allowed = !pageCode
+    // A link with no page code has nothing to check against; nav accessibility stands.
+    ? true
+    : !disabledPageCodes.includes(pageCode) && page?.can_view !== false;
+  if (!allowed) return null;
 
   return (
     <Link to={href} className="reference-quick-link" aria-label={title}>

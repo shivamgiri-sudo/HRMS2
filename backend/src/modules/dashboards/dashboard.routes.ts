@@ -18,6 +18,7 @@ import { getDrilldown } from "./dashboard-drilldown.service.js";
 import { getUnifiedInboxSummary } from "../work-inbox/work-inbox.service.js";
 import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashboard-definition.service.js";
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
+import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   HALF_DAY_STATUS,
   LEAVE_STATUSES,
@@ -234,6 +235,61 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
         AND ${salaryScope.sql}`,
     [currentRun.id, ...salaryScope.params],
   ).then(([rows]) => (rows as any[])[0] ?? null);
+
+  // Forward-looking companion to the check below: employees who WOULD be zeroed by the next
+  // ADR-sourced run, before it is calculated.
+  //
+  // Traced from six employees (58150C, 59513C, 60021C, 60129C, 61297C, 61444C) who are paid
+  // whenever a run uses the legacy attendance path and paid nothing whenever it uses ADR.
+  // Their ADR rows hold only 'absent' and 'missing_punch' — never a present day — so the
+  // ADR path has nothing to pay them for. That is not specific to those six: it zeroes any
+  // payable employee whose attendance is not reaching ADR, and it does so silently.
+  //
+  // Restricted to ACTIVE branches on purpose. Most of the affected population sits at
+  // branches that are closed (Delhi Office, KARNAL, MOHALI, HYDERABAD, JAIPUR), where an
+  // employee still flagged active is a records-hygiene question rather than a payroll one.
+  // Counting those would bury the handful that would actually be mispaid.
+  //
+  // The failure is logged and surfaced in dataIntegrity rather than defaulted to zero.
+  // Defaulting would report "nobody at risk" — the most reassuring possible answer, and
+  // indistinguishable from a genuine zero — so an unanswered question would read as a clean
+  // bill of health. payroll-run-selection-contract.test.ts enforces this for the whole
+  // route by string search, which is also why the forbidden pattern is not quoted here.
+  let zeroAttendanceRisk: number | null = null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS at_risk
+         FROM employees e
+         JOIN employee_salary_assignment esa
+           ON esa.employee_id = e.id AND esa.active_status = 1
+         JOIN branch_master b ON b.id = e.branch_id AND b.active_status = 1
+        WHERE LOWER(e.employment_status) = 'active'
+          AND NOT EXISTS (
+                SELECT 1 FROM attendance_daily_record a
+                 WHERE a.employee_id = e.id
+                   AND a.record_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)
+                   AND a.attendance_status IN ('present', 'week_off_worked', 'half_day'))
+          AND ${salaryScope.sql}`,
+      [...salaryScope.params],
+    );
+    zeroAttendanceRisk = Number((rows as RowDataPacket[])[0]?.at_risk ?? 0);
+  } catch (err) {
+    logSourceFailure("dashboard.payroll-zero-attendance-risk", err, { runId: currentRun.id });
+  }
+
+  if (zeroAttendanceRisk === null) {
+    dataIntegrity.push(
+      "Could not determine how many payable employees have no attendance marked present. " +
+        "Treat this check as unanswered rather than clear.",
+    );
+  } else if (zeroAttendanceRisk > 0) {
+    dataIntegrity.push(
+      `${zeroAttendanceRisk} payable employee(s) at active branches have no attendance ` +
+        `marked present in the last 60 days. An ADR-sourced run pays them zero, which is ` +
+        `indistinguishable from a genuine nil payment — confirm their attendance is ` +
+        `reaching the system before calculating.`,
+    );
+  }
 
   const unpaidLines = Number(unpaidActive?.unpaid_lines ?? 0);
   if (unpaidLines > 0) {
