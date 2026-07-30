@@ -103,9 +103,13 @@ export const privacyService = {
     channel: DataConsent["channel"];
     ipAddress?: string;
   }): Promise<DataConsent> {
-    // Load the currently active consent notice version for this purpose
+    // Load the currently active consent notice version for this purpose.
+    // The column is `version_code` — this previously selected `version_tag`,
+    // which does not exist on consent_text_version, so every call to
+    // recordConsent threw "Unknown column 'version_tag'" regardless of
+    // purpose or principal. Consent recording has never worked, for anyone.
     const [versionRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id AS version_id, version_tag, consent_text
+      `SELECT id AS version_id, version_code, consent_text
        FROM consent_text_version
        WHERE purpose_code = ? AND status = 'active'
        ORDER BY created_at DESC LIMIT 1`,
@@ -122,6 +126,13 @@ export const privacyService = {
     const serverHash = createHash("sha256").update(version.consent_text as string).digest("hex");
 
     const id = randomUUID();
+    // NOTE: ON DUPLICATE KEY UPDATE here is inert — data_consent has no unique
+    // key covering (data_principal_id, purpose_code), only non-unique indexes,
+    // so a second consent for the same principal/purpose inserts a new row
+    // rather than updating the existing one. 43 existing rows include 4 such
+    // duplicate pairs already. Left as-is: deduplicating and adding the unique
+    // key is a schema migration touching live data, out of scope for making
+    // consent capture work at all, and needs its own review.
     await db.executeRun(
       `INSERT INTO data_consent
          (id, data_principal_id, principal_type, purpose_code, consent_text_version,
@@ -137,7 +148,7 @@ export const privacyService = {
         input.principalId,
         input.principalType,
         input.purposeCode,
-        version.version_tag,
+        version.version_code,
         serverHash,
         input.channel,
         input.ipAddress ?? null,

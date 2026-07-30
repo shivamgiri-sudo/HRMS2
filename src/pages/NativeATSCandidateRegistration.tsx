@@ -1013,15 +1013,15 @@ export default function NativeATSCandidateRegistration() {
         .then((health) => setAssessmentEnabled(health.data?.status === "enabled"))
         .catch(() => setAssessmentEnabled(false));
 
-      // Record DPDP consent (non-blocking)
+      // Record DPDP consent (non-blocking). This candidate has no login, so it
+      // goes through the narrow public endpoint scoped to exactly the id just
+      // returned — not the authenticated /api/privacy/consent, which this
+      // anonymous request could never reach (it 401s and was being silently
+      // swallowed here, so no walk-in's consent was ever actually recorded).
       try {
-        await hrmsApi.post("/api/privacy/consent", {
-          principal_type: "candidate",
-          purpose_code: "recruitment",
-          consent_text_version: "v1.0",
-          consent_text_hash: "candidate_registration_v1",
-          channel: "web",
-        });
+        if (res.candidateDbId) {
+          await hrmsApi.post(`/api/ats/registration/${res.candidateDbId}/consent`, {});
+        }
       } catch {
         // Consent logging failure must not block successful registration
       }

@@ -19,6 +19,7 @@ import {
   sendRecruiterNotificationEmail,
 } from "./ats.email.service.js";
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
+import { privacyService } from "../privacy/privacy.service.js";
 
 export const registrationEnhancedRouter = Router();
 
@@ -853,7 +854,61 @@ function extractFieldsFromText(
   return Object.fromEntries(Object.entries(fields).filter(([, v]) => v && v.trim()));
 }
 
-// ── 5. Parse-resume capability status ────────────────────────────────────────
+// ── 6. Record a walk-in's own DPDP consent ───────────────────────────────────
+//
+// The registration form shows a consent checkbox and blocks submission until
+// it is ticked, but the frontend's follow-up call to POST /api/privacy/consent
+// requires a login the anonymous candidate does not have — it 401s, and the
+// frontend's own `catch {}` around it swallows the failure. No consent has
+// ever been recorded for a walk-in.
+//
+// This is deliberately narrow rather than opening /api/privacy/consent itself
+// to anonymous callers: it can write exactly one purpose ('recruitment', never
+// client-supplied) for exactly the candidate id in the URL, and only within a
+// short window of that candidate being created — proof the caller is the
+// person who just registered, not someone who found or guessed an id later.
+// It cannot touch any other candidate's consent or any other purpose.
+const CONSENT_WINDOW_MINUTES = 60;
+
+registrationEnhancedRouter.post('/:candidateId/consent', async (req, res) => {
+  const candidateId = String(req.params.candidateId || '').trim();
+  if (!candidateId) {
+    return res.status(400).json({ success: false, message: 'candidateId is required' });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_candidate
+      WHERE id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+      LIMIT 1`,
+    [candidateId, CONSENT_WINDOW_MINUTES],
+  );
+  if (!(rows as RowDataPacket[]).length) {
+    // Either the id does not exist, or it is old enough that "just
+    // registered" is no longer a credible claim — refuse either way rather
+    // than distinguishing them, so this cannot be used to probe which ids
+    // exist.
+    return res.status(404).json({ success: false, message: 'Registration not found or no longer eligible for consent capture' });
+  }
+
+  try {
+    const data = await privacyService.recordConsent({
+      principalId: candidateId,
+      principalType: 'candidate',
+      purposeCode: 'recruitment',
+      channel: 'web',
+      ipAddress: req.ip,
+    });
+    return res.status(201).json({ success: true, data });
+  } catch (error: unknown) {
+    const statusCode = typeof error === 'object' && error !== null && 'statusCode' in error
+      ? Number((error as { statusCode?: unknown }).statusCode) || 500
+      : 500;
+    const message = error instanceof Error ? error.message : 'Failed to record consent';
+    return res.status(statusCode).json({ success: false, message });
+  }
+});
+
+// ── 7. Parse-resume capability status ────────────────────────────────────────
 registrationEnhancedRouter.get('/parse-resume/status', (_req, res) => {
   res.json({
     success: true,
