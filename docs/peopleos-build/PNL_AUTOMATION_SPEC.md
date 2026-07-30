@@ -99,7 +99,42 @@ August cost.
 3. GRN consumption → IDC, accrual at approval. This is the gap the end-to-end test proves, and the
    only one where money already exists and is being dropped.
 4. Revenue from monthly drivers → `recognized_revenue`.
-5. Salary split by designation into Agent / DSC / BMC. Confirm the designation → category rule
-   against the workbook's DSC and BMC sheets before coding it.
+5. Salary split into Agent / DSC / BMC — see "The DSC/BMC discriminator" below. BLOCKED on a
+   master-data decision.
 6. Reconciliation test: for one process and month, prove IDC equals the sum of approved GRN
    consumption, revenue equals driver-derived revenue, and Operating Profit = Revenue − Total Cost.
+
+
+## The DSC/BMC discriminator — and why it is blocked
+
+Designation cannot drive the split. BMC is non-operational staff — admin, HR, IT — and many of them
+carry the same titles as delivery staff. Measured from the workbook:
+
+```
+DSC   76 people   ALL on  BSS/BO/NOIDA-2/577      SME(22) Quality Auditor(15) Team Leader(14)
+                                                  RTM(6) Trainer(5) Asst. Manager(4) DM-Ops(2)
+BMC   22 people   ALL on  BSS/BO/NOIDA-2/577-BO   Executive(12) Executive-IT(3) Asst. Manager(2)
+                                                  Manager-IT(1) DGM(1) Sr. Executive-IT(1) VP(1)
+```
+
+`Asst. Manager` appears on BOTH sides, which settles it: designation alone cannot separate them.
+The actual discriminator is the **cost centre** — the `-BO` (Back Office) suffix marks the
+non-operational population.
+
+**The blocker:** HRMS has 19 NOIDA-2 cost centres and **none** with a `-BO` suffix. The 22 BMC
+people are therefore either folded into `BSS/BO/NOIDA-2/577` — indistinguishable from the 76 DSC
+staff — or unmapped. The split cannot be reproduced from HRMS as it stands.
+
+Three ways out, needing an owner decision before any code:
+
+1. **Create the `-BO` cost centres in HRMS and remap those employees.** Truest to how the business
+   already reports, and it makes the split fall out of the cost centre with no rule to maintain.
+   Costs a master-data exercise across every branch that has back-office staff.
+2. **Split by department instead** (`employees.department_id` → HR / IT / Admin / Finance = BMC,
+   Operations / Quality / Training = DSC). No new cost centres, but it depends on department being
+   populated and accurate, which has not been verified.
+3. **Designation + department rule.** Most flexible, most to maintain, and the easiest to get
+   quietly wrong — the `Asst. Manager` overlap above is exactly the case that would break it.
+
+Recommendation: option 1 if the `-BO` cost centres are real operational entities (they clearly are,
+since payroll already books to them), option 2 only as an interim if creating them is slow.
