@@ -11,10 +11,15 @@ interface FakeDriver {
   cost_centre_id: string;
   planned_headcount: number;
   revenue_rate_per_head: number;
-  remarks: string | null;
-  status: string;
-  updated_by: string | null;
-  updated_at: string | null;
+  /** Migration 434 columns, optional so existing fixtures stay untouched. */
+  seat_count?: number;
+  floor_area_sqft?: number;
+  device_count?: number;
+  hiring_volume?: number;
+  remarks?: string | null;
+  status?: string;
+  updated_by?: string | null;
+  updated_at?: string | null;
 }
 
 interface FakeMeter {
@@ -52,8 +57,17 @@ function fakeExecutor(
         return [drivers, []];
       }
       if (sql.includes("FROM finance_meter_master")) {
-        const costCentreId = params?.[0];
-        return [meters.filter((m) => m.cost_centre_id === costCentreId), []];
+        // Since migration 434 meters are resolved for the whole branch in one query, because a
+        // shared meter belongs to no single cost centre. Fixtures here are all dedicated
+        // electricity meters, which is how the live table defaults pre-434 rows.
+        return [meters.map((m) => ({
+          ...m,
+          branch_id: params?.[0] ?? "branch-1",
+          meter_type: "dedicated",
+          utility_type: "electricity",
+          parent_meter_id: null,
+          share_rule: null,
+        })), []];
       }
       if (sql.includes("FROM finance_meter_reading")) {
         const [meterId, , readingType] = params ?? [];
@@ -182,10 +196,42 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).rejects.toThrow(/planned headcount is missing/i);
   });
 
-  it("rejects an unsupported sharing method (e.g. floor_area) with a clear error, not a silent default", async () => {
+  it("rejects a genuinely unsupported sharing method with a clear error, not a silent default", async () => {
+    // floor_area used to be the example here, but migration 434 made it a real method: it is
+    // seeded as default_allocation_driver on several sub-heads, so rejecting it meant a sub-head's
+    // own default could not be applied. Something never seeded is used instead.
     await expect(
-      computeLineAllocations("branch-1", "2026-08", "floor_area", AMOUNTS, undefined, fakeExecutor(THREE_COST_CENTRES))
+      computeLineAllocations("branch-1", "2026-08", "phase_of_moon", AMOUNTS, undefined, fakeExecutor(THREE_COST_CENTRES))
     ).rejects.toThrow(/not yet supported/i);
+  });
+
+  it("splits floor_area by each cost centre's floor area, since it is a seeded sub-head default", async () => {
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 0, revenue_rate_per_head: 0, floor_area_sqft: 6000 },
+      { cost_centre_id: "cc2", planned_headcount: 0, revenue_rate_per_head: 0, floor_area_sqft: 3000 },
+      { cost_centre_id: "cc3", planned_headcount: 0, revenue_rate_per_head: 0, floor_area_sqft: 1000 },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "floor_area", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(AMOUNTS.grossAmount * 0.6);
+    expect(byId.cc2.grossAmount).toBe(AMOUNTS.grossAmount * 0.3);
+    expect(byId.cc3.grossAmount).toBe(AMOUNTS.grossAmount * 0.1);
+    expect(rows.reduce((a, r) => a + r.grossAmount, 0)).toBe(AMOUNTS.grossAmount);
+  });
+
+  it("names the missing driver correctly for a newly supported method", async () => {
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 10 },
+      { cost_centre_id: "cc2", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 0 },
+      { cost_centre_id: "cc3", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 5 },
+    ];
+    await expect(
+      computeLineAllocations("branch-1", "2026-08", "seat_count", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES, drivers))
+    ).rejects.toThrow(/seat count is missing/i);
   });
 
   it("rejects allocation when the branch has no active cost centres", async () => {
@@ -260,7 +306,11 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     expect(byId.cc1.grossAmount).toBe(75000); // uses the actual 7,500, not the estimated 6,000
   });
 
-  it("rejects meter_wise when a cost centre has no meter reading for the period", async () => {
+  it("allocates meter_wise across only the metered cost centres, leaving unmetered ones at zero", async () => {
+    // This used to throw. Requiring EVERY active cost centre to be metered rejected the ordinary
+    // real case — a dedicated meter on a few processes and none on the rest — which is precisely
+    // what meter-wise sharing exists for. An unmetered cost centre carries no share of a metered
+    // cost, so it gets zero rather than blocking the whole line.
     const meters: FakeMeter[] = [
       { id: "m1", cost_centre_id: "cc1" },
       { id: "m2", cost_centre_id: "cc2" },
@@ -268,14 +318,28 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ];
     const readings: FakeReading[] = [
       { meter_id: "m1", reading_type: "actual", consumption: 7500, amount: 75000 },
-      { meter_id: "m2", reading_type: "actual", consumption: 5000, amount: 50000 },
+      { meter_id: "m2", reading_type: "actual", consumption: 2500, amount: 25000 },
     ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "meter_wise", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, [], meters, readings)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(AMOUNTS.grossAmount * 0.75);
+    expect(byId.cc2.grossAmount).toBe(AMOUNTS.grossAmount * 0.25);
+    expect(byId.cc3.grossAmount).toBe(0);
+    // Still reconciles exactly to the line total.
+    expect(rows.reduce((a, r) => a + r.grossAmount, 0)).toBe(AMOUNTS.grossAmount);
+  });
+
+  it("still rejects meter_wise when the branch has no meter data anywhere", async () => {
+    // Nothing to apportion by at all is a real error — distinct from "some cost centres unmetered".
     await expect(
       computeLineAllocations(
         "branch-1", "2026-08", "meter_wise", AMOUNTS, undefined,
-        fakeExecutor(THREE_COST_CENTRES, [], meters, readings)
+        fakeExecutor(THREE_COST_CENTRES, [], [], [])
       )
-    ).rejects.toThrow(/Meter reading data is missing.*Customer Support/);
+    ).rejects.toThrow(/No meter reading exists/i);
   });
 
   it("splits grade_weighted_headcount proportional to blended grade cost, reconciling to the mandatory example", async () => {

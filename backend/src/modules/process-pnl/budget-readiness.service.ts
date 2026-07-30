@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { listActiveCostCentres, getMonthlyDrivers, type CostCentreOption } from "./branch-budget-allocation.service.js";
-import { getCostCentreMeterConsumption } from "./meter.service.js";
+import { getBranchMeterConsumption } from "./meter.service.js";
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 // Structurally identical to the Executor interfaces used across this session's other
@@ -60,11 +60,13 @@ export async function checkSharingMethodReadiness(
   const missingManpower = costCentres.filter((cc) => (driverByCostCentre.get(cc.id)?.plannedHeadcount ?? 0) <= 0);
   const missingRevenue = costCentres.filter((cc) => (driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0) <= 0);
 
-  const missingMeter: CostCentreOption[] = [];
-  for (const cc of costCentres) {
-    const consumption = await getCostCentreMeterConsumption(cc.id, periodCode, executor);
-    if (!consumption) missingMeter.push(cc);
-  }
+  // Meter-wise is ready as soon as ANY cost centre is metered: an unmetered cost centre simply
+  // carries no share of a metered cost. Reporting "not ready" while computeLineAllocations
+  // allocates the line happily would contradict the engine. The unmetered cost centres are still
+  // listed, as information rather than a blocker.
+  const meterConsumption = await getBranchMeterConsumption(branchId, periodCode, executor);
+  const unmetered = costCentres.filter((cc) => !meterConsumption.has(cc.id));
+  const meterReady = meterConsumption.size > 0;
 
   const missingGrade: CostCentreOption[] = [];
   for (const cc of costCentres) {
@@ -75,7 +77,7 @@ export async function checkSharingMethodReadiness(
   return [
     toReadiness("total_manpower", missingManpower),
     toReadiness("revenue_share", missingRevenue),
-    toReadiness("meter_wise", missingMeter),
+    { ...toReadiness("meter_wise", unmetered), ready: meterReady },
     toReadiness("grade_weighted_headcount", missingGrade),
   ];
 }

@@ -74,8 +74,11 @@ function fakeExecutor(options: {
       if (sql.includes("FROM cost_centre_master")) return [costCentres, []];
       if (sql.includes("FROM finance_cost_centre_monthly_driver")) return [drivers, []];
       if (sql.includes("FROM finance_meter_master")) {
-        const [costCentreId] = params ?? [];
-        return [meters.filter((m) => m.cost_centre_id === costCentreId), []];
+        // Branch-level since migration 434 — a shared meter belongs to no single cost centre.
+        return [meters.map((m) => ({
+          ...m, branch_id: params?.[0] ?? "branch-1", meter_type: "dedicated",
+          utility_type: "electricity", parent_meter_id: null, share_rule: null,
+        })), []];
       }
       if (sql.includes("FROM finance_meter_reading")) {
         const [meterId, , readingType] = params ?? [];
@@ -142,13 +145,25 @@ describe("checkSharingMethodReadiness", () => {
     expect(revenue.ready).toBe(false);
   });
 
-  it("flags meter_wise not ready when a cost centre has no meter reading", async () => {
+  it("reports meter_wise ready once any cost centre is metered, listing the rest as information", async () => {
+    // Previously this asserted not-ready whenever a single cost centre was unmetered. That
+    // contradicted the engine after migration 434: computeLineAllocations now allocates a
+    // partially-metered branch happily (unmetered cost centres take a zero share), so readiness
+    // reporting a blocker for a case that saves fine would just be wrong. The unmetered cost
+    // centres are still returned so the UI can show which ones they are.
     const meters: FakeMeter[] = [{ id: "m1", cost_centre_id: "cc1" }];
     const readings: FakeReading[] = [{ meter_id: "m1", reading_type: "actual", consumption: 100, amount: 1000 }];
     const result = await checkSharingMethodReadiness("branch-1", "2026-08", fakeExecutor({ costCentres: THREE_COST_CENTRES, meters, readings }));
     const meterReadiness = result.find((r) => r.method === "meter_wise")!;
+    expect(meterReadiness.ready).toBe(true);
+    expect(meterReadiness.missingCostCentres.map((c) => c.id).sort()).toEqual(["cc2", "cc3"]);
+  });
+
+  it("reports meter_wise not ready when the branch has no meter data at all", async () => {
+    const result = await checkSharingMethodReadiness("branch-1", "2026-08", fakeExecutor({ costCentres: THREE_COST_CENTRES }));
+    const meterReadiness = result.find((r) => r.method === "meter_wise")!;
     expect(meterReadiness.ready).toBe(false);
-    expect(meterReadiness.missingCostCentres).toHaveLength(2);
+    expect(meterReadiness.missingCostCentres).toHaveLength(3);
   });
 
   it("flags grade_weighted_headcount not ready when a cost centre has no grade drivers", async () => {

@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.js";
-import { getCostCentreMeterConsumption } from "./meter.service.js";
+import { getBranchMeterConsumption, type MeterUtilityType } from "./meter.service.js";
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 /**
@@ -28,7 +28,15 @@ export type SharingMethod =
   | "equal_split"
   | "manual"
   | "meter_wise"
-  | "grade_weighted_headcount";
+  | "grade_weighted_headcount"
+  // Added because finance_expense_sub_head_master seeds these four as
+  // default_allocation_driver on 26 of the 38 sub-heads, yet the engine rejected all of them:
+  // applying a sub-head's own seeded default threw "Sharing method ... is not yet supported".
+  // Their driver data lives on finance_cost_centre_monthly_driver (migration 434).
+  | "seat_count"
+  | "floor_area"
+  | "device_count"
+  | "hiring_volume";
 
 const SUPPORTED_SHARING_METHODS: SharingMethod[] = [
   "total_manpower",
@@ -38,7 +46,20 @@ const SUPPORTED_SHARING_METHODS: SharingMethod[] = [
   "manual",
   "meter_wise",
   "grade_weighted_headcount",
+  "seat_count",
+  "floor_area",
+  "device_count",
+  "hiring_volume",
 ];
+
+/** Sub-head defaults that name a concept rather than a driver. Mapped so a sub-head's seeded
+ *  default can be applied as-is instead of throwing:
+ *   - usage_units   -> meter_wise (metered consumption is what "usage" meant)
+ *   - direct_tagging-> not a branch-level split at all; the caller plans the line straight against
+ *                     one cost centre (planning_level 'cost_centre'), so it never reaches here. */
+export const SEEDED_DRIVER_ALIASES: Record<string, SharingMethod> = {
+  usage_units: "meter_wise",
+};
 
 export interface CostCentreOption {
   id: string;
@@ -50,6 +71,11 @@ export interface MonthlyDriverInput {
   costCentreId: string;
   plannedHeadcount: number;
   revenueRatePerHead: number;
+  /** Optional so existing callers that only send headcount/revenue keep working unchanged. */
+  seatCount?: number;
+  floorAreaSqft?: number;
+  deviceCount?: number;
+  hiringVolume?: number;
   remarks?: string | null;
 }
 
@@ -59,6 +85,10 @@ export interface MonthlyDriverRecord {
   plannedHeadcount: number;
   revenueRatePerHead: number;
   calculatedPlannedRevenue: number;
+  seatCount: number;
+  floorAreaSqft: number;
+  deviceCount: number;
+  hiringVolume: number;
   remarks: string | null;
   status: "draft" | "approved";
   updatedBy: string | null;
@@ -120,7 +150,8 @@ export async function getMonthlyDrivers(
 ): Promise<MonthlyDriverRecord[]> {
   const costCentres = await listActiveCostCentres(branchId, executor);
   const [driverRows] = await executor.execute<RowDataPacket[]>(
-    `SELECT cost_centre_id, planned_headcount, revenue_rate_per_head, remarks,
+    `SELECT cost_centre_id, planned_headcount, revenue_rate_per_head,
+            seat_count, floor_area_sqft, device_count, hiring_volume, remarks,
             status, updated_by, updated_at
        FROM finance_cost_centre_monthly_driver
       WHERE branch_id = ? AND period_code = ?`,
@@ -138,6 +169,10 @@ export async function getMonthlyDrivers(
       plannedHeadcount,
       revenueRatePerHead,
       calculatedPlannedRevenue: Math.round(plannedHeadcount * revenueRatePerHead * 100) / 100,
+      seatCount: Number(row?.seat_count ?? 0),
+      floorAreaSqft: Number(row?.floor_area_sqft ?? 0),
+      deviceCount: Number(row?.device_count ?? 0),
+      hiringVolume: Number(row?.hiring_volume ?? 0),
       remarks: row?.remarks ?? null,
       status: (row?.status as "draft" | "approved") ?? "draft",
       updatedBy: row?.updated_by ? String(row.updated_by) : null,
@@ -166,6 +201,16 @@ export async function saveMonthlyDrivers(
     if (!Number.isFinite(driver.revenueRatePerHead) || driver.revenueRatePerHead < 0) {
       throw new Error("Revenue rate per head cannot be negative");
     }
+    for (const [label, value] of [
+      ["Seat count", driver.seatCount],
+      ["Floor area", driver.floorAreaSqft],
+      ["Device count", driver.deviceCount],
+      ["Hiring volume", driver.hiringVolume],
+    ] as const) {
+      if (value != null && (!Number.isFinite(value) || value < 0)) {
+        throw new Error(`${label} cannot be negative`);
+      }
+    }
   }
 
   const connection = await db.getConnection();
@@ -175,11 +220,16 @@ export async function saveMonthlyDrivers(
       await connection.execute(
         `INSERT INTO finance_cost_centre_monthly_driver
            (id, branch_id, period_code, cost_centre_id, planned_headcount,
-            revenue_rate_per_head, remarks, status, updated_by)
-         VALUES (?,?,?,?,?,?,?,'draft',?)
+            revenue_rate_per_head, seat_count, floor_area_sqft, device_count,
+            hiring_volume, remarks, status, updated_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,'draft',?)
          ON DUPLICATE KEY UPDATE
            planned_headcount = VALUES(planned_headcount),
            revenue_rate_per_head = VALUES(revenue_rate_per_head),
+           seat_count = VALUES(seat_count),
+           floor_area_sqft = VALUES(floor_area_sqft),
+           device_count = VALUES(device_count),
+           hiring_volume = VALUES(hiring_volume),
            remarks = VALUES(remarks),
            updated_by = VALUES(updated_by)`,
         [
@@ -189,6 +239,10 @@ export async function saveMonthlyDrivers(
           driver.costCentreId,
           driver.plannedHeadcount,
           driver.revenueRatePerHead,
+          driver.seatCount ?? 0,
+          driver.floorAreaSqft ?? 0,
+          driver.deviceCount ?? 0,
+          driver.hiringVolume ?? 0,
           driver.remarks?.trim() || null,
           actorUserId,
         ]
@@ -204,24 +258,45 @@ export async function saveMonthlyDrivers(
   return getMonthlyDrivers(branchId, periodCode);
 }
 
+/** What to call each driver when telling the user which one is missing. */
+const DRIVER_LABELS: Partial<Record<SharingMethod, string>> = {
+  total_manpower: "planned headcount",
+  agent_headcount: "planned headcount",
+  revenue_share: "revenue rate",
+  seat_count: "seat count",
+  floor_area: "floor area",
+  device_count: "device count",
+  hiring_volume: "hiring volume",
+};
+
+/** The per-cost-centre quantity a method divides by. Kept in one place so driverWeight and
+ *  unitFor cannot drift apart — they returned different values for the same method before. */
+function driverQuantity(driverMethod: SharingMethod, driver: MonthlyDriverRecord): number | null {
+  switch (driverMethod) {
+    case "total_manpower":
+    case "agent_headcount":
+      return driver.plannedHeadcount;
+    case "revenue_share":
+      return driver.calculatedPlannedRevenue;
+    case "seat_count":
+      return driver.seatCount;
+    case "floor_area":
+      return driver.floorAreaSqft;
+    case "device_count":
+      return driver.deviceCount;
+    case "hiring_volume":
+      return driver.hiringVolume;
+    default:
+      return null; // equal_split, manual, meter_wise, grade_weighted_headcount
+  }
+}
+
 function driverWeight(driverMethod: SharingMethod, driver: MonthlyDriverRecord): number {
-  if (driverMethod === "total_manpower" || driverMethod === "agent_headcount") {
-    return driver.plannedHeadcount;
-  }
-  if (driverMethod === "revenue_share") {
-    return driver.calculatedPlannedRevenue;
-  }
-  return 1; // equal_split
+  return driverQuantity(driverMethod, driver) ?? 1; // equal_split
 }
 
 function unitFor(driverMethod: SharingMethod, driver: MonthlyDriverRecord): number {
-  if (driverMethod === "total_manpower" || driverMethod === "agent_headcount") {
-    return driver.plannedHeadcount;
-  }
-  if (driverMethod === "revenue_share") {
-    return driver.calculatedPlannedRevenue;
-  }
-  return 0;
+  return driverQuantity(driverMethod, driver) ?? 0;
 }
 
 /**
@@ -240,9 +315,14 @@ export async function computeLineAllocations(
   sharingMethod: string | null | undefined,
   amounts: LineAmounts,
   manualAllocations: ManualAllocationInput[] | undefined,
-  executor: Executor = db
+  executor: Executor = db,
+  /** Restricts meter-wise sharing to one kind of meter. Without it an electricity line would be
+   *  apportioned by kWh + litres + KL added together, which is not a quantity. Omit to use every
+   *  meter regardless of utility (the pre-434 behaviour). */
+  utilityType?: MeterUtilityType
 ): Promise<LineAllocationRow[]> {
-  const method = (sharingMethod ?? "").trim() as SharingMethod;
+  const method = (SEEDED_DRIVER_ALIASES[(sharingMethod ?? "").trim()]
+    ?? (sharingMethod ?? "").trim()) as SharingMethod;
   if (!SUPPORTED_SHARING_METHODS.includes(method)) {
     throw new Error(
       `Sharing method "${sharingMethod ?? ""}" is not yet supported for branch-level splitting. ` +
@@ -283,22 +363,32 @@ export async function computeLineAllocations(
     shares = costCentres.map((cc) => ({ key: cc.id, weight: 1 }));
     mode = "equal";
   } else if (method === "meter_wise") {
-    const consumptionByCostCentre = new Map<string, { consumption: number; amount: number }>();
-    for (const cc of costCentres) {
-      const consumption = await getCostCentreMeterConsumption(cc.id, periodCode, executor);
-      if (consumption) consumptionByCostCentre.set(cc.id, consumption);
-    }
-    const missingMeterData = costCentres.filter((cc) => !consumptionByCostCentre.has(cc.id));
-    if (missingMeterData.length > 0) {
+    // Resolved for the whole branch in one pass: a shared meter belongs to no single cost centre,
+    // so it cannot be found by asking each cost centre in turn.
+    const branchConsumption = await getBranchMeterConsumption(branchId, periodCode, executor, utilityType);
+    const consumptionByCostCentre = new Map(
+      costCentres
+        .filter((cc) => branchConsumption.has(cc.id))
+        .map((cc) => [cc.id, branchConsumption.get(cc.id)!])
+    );
+    // An unmetered cost centre carries no share of a metered cost, so it gets weight 0 rather
+    // than blocking the whole line. Requiring EVERY active cost centre to be metered rejected the
+    // ordinary real case — a dedicated meter on a few processes and none on the rest — which is
+    // exactly what meter-wise sharing exists for. Only a branch with no meter data anywhere is an
+    // error, because then there is nothing to apportion by.
+    if (consumptionByCostCentre.size === 0) {
       throw new Error(
-        `Meter reading data is missing for: ` +
-        missingMeterData.map((cc) => cc.costCentreName).join(", ") +
-        ". Record a meter reading for every active cost centre before using meter-wise sharing."
+        "No meter reading exists for this branch and period"
+        + (utilityType ? ` for ${utilityType}` : "")
+        + ". Record at least one meter reading before using meter-wise sharing."
       );
     }
-    shares = costCentres.map((cc) => ({ key: cc.id, weight: consumptionByCostCentre.get(cc.id)!.consumption }));
+    shares = costCentres.map((cc) => ({
+      key: cc.id,
+      weight: consumptionByCostCentre.get(cc.id)?.consumption ?? 0,
+    }));
     unitByCostCentre = new Map(
-      costCentres.map((cc) => [cc.id, consumptionByCostCentre.get(cc.id)!.consumption])
+      costCentres.map((cc) => [cc.id, consumptionByCostCentre.get(cc.id)?.consumption ?? 0])
     );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
@@ -331,7 +421,7 @@ export async function computeLineAllocations(
     });
     if (missingDrivers.length > 0) {
       throw new Error(
-        `Monthly ${method === "revenue_share" ? "revenue rate" : "planned headcount"} is missing for: ` +
+        `Monthly ${DRIVER_LABELS[method] ?? "driver data"} is missing for: ` +
         missingDrivers.map((cc) => cc.costCentreName).join(", ") +
         ". Set monthly drivers for every active cost centre before using this sharing method."
       );

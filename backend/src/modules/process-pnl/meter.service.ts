@@ -255,33 +255,195 @@ export async function saveReading(
  * for the period yet — callers must treat that as missing data, not a zero pool, matching the
  * "do not silently allocate" principle already established for the other sharing methods.
  */
-export async function getCostCentreMeterConsumption(
-  costCentreId: string,
-  periodCode: string,
-  executor: Executor = db
-): Promise<{ consumption: number; amount: number } | null> {
-  const [meterRows] = await executor.execute<RowDataPacket[]>(
-    `SELECT id FROM finance_meter_master
-      WHERE cost_centre_id = ? AND active_status = 1
-        AND (effective_to IS NULL OR effective_to >= CURDATE())`,
-    [costCentreId]
-  );
-  if (meterRows.length === 0) return null;
+export type MeterUtilityType = "electricity" | "diesel" | "water" | "gas" | "other";
+export type MeterShareRule = "fixed_pct" | "headcount" | "seats" | "floor_area" | "sub_meter_remainder";
 
-  let consumption = 0;
-  let amount = 0;
-  let hasAnyReading = false;
-  for (const meterRow of meterRows) {
-    const meterId = String(meterRow.id);
+type Usage = { consumption: number; amount: number };
+const addUsage = (map: Map<string, Usage>, ccId: string, consumption: number, amount: number) => {
+  const cur = map.get(ccId) ?? { consumption: 0, amount: 0 };
+  cur.consumption += consumption;
+  cur.amount += amount;
+  map.set(ccId, cur);
+};
+const roundUsage = (u: Usage): Usage => ({
+  consumption: Math.round(u.consumption * 10000) / 10000,
+  amount: Math.round(u.amount * 100) / 100,
+});
+
+/** Last day of a YYYY-MM period, for resolving effective-dated meter shares as at that month. */
+function periodEndDate(periodCode: string): string {
+  const [y, m] = periodCode.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * Every cost centre's metered consumption for a branch and period, keyed by cost centre id.
+ *
+ * A shared meter is not owned by any one cost centre, so it cannot be found by querying
+ * `WHERE cost_centre_id = ?`. This resolves the whole branch at once:
+ *
+ *  - a dedicated meter (also any legacy row, where meter_type defaults to 'dedicated') gives all
+ *    of its consumption to its own cost centre, exactly as before migration 434;
+ *  - a sub-meter charges its own cost centre with its actual reading;
+ *  - a shared meter shares only what its sub-meters did not already account for — its own reading
+ *    minus the sum of its sub-meters' readings — divided by its share_rule. Money follows the
+ *    same proportion as the units, so a partially sub-metered main meter cannot double-charge.
+ *
+ * `utilityType` matters: without it, an electricity line would be apportioned by kWh plus litres
+ * plus KL added together, which is not a quantity.
+ */
+export async function getBranchMeterConsumption(
+  branchId: string,
+  periodCode: string,
+  executor: Executor = db,
+  utilityType?: MeterUtilityType
+): Promise<Map<string, Usage>> {
+  const params: unknown[] = [branchId];
+  let utilityFilter = "";
+  if (utilityType) { utilityFilter = " AND utility_type = ?"; params.push(utilityType); }
+
+  const [meterRows] = await executor.execute<RowDataPacket[]>(
+    `SELECT id, cost_centre_id, meter_type, utility_type, parent_meter_id, share_rule
+       FROM finance_meter_master
+      WHERE branch_id = ? AND active_status = 1
+        AND (effective_to IS NULL OR effective_to >= CURDATE())${utilityFilter}`,
+    params
+  );
+  if (meterRows.length === 0) return new Map();
+
+  // Reading per meter: an actual always beats an estimate for the same month.
+  const usageByMeter = new Map<string, Usage>();
+  for (const row of meterRows) {
+    const meterId = String(row.id);
     const actual = await getReadingRow(meterId, periodCode, "actual", executor);
     const chosen = actual ?? (await getReadingRow(meterId, periodCode, "estimated", executor));
     if (!chosen) continue;
-    hasAnyReading = true;
-    consumption += Number(chosen.consumption);
-    amount += Number(chosen.amount);
+    usageByMeter.set(meterId, {
+      consumption: Number(chosen.consumption),
+      amount: Number(chosen.amount),
+    });
   }
-  if (!hasAnyReading) return null;
-  return { consumption: Math.round(consumption * 10000) / 10000, amount: Math.round(amount * 100) / 100 };
+  if (usageByMeter.size === 0) return new Map();
+
+  const subsByParent = new Map<string, RowDataPacket[]>();
+  for (const row of meterRows) {
+    if (!row.parent_meter_id) continue;
+    const key = String(row.parent_meter_id);
+    subsByParent.set(key, [...(subsByParent.get(key) ?? []), row]);
+  }
+
+  const out = new Map<string, Usage>();
+  for (const row of meterRows) {
+    const meterId = String(row.id);
+    const usage = usageByMeter.get(meterId);
+    if (!usage) continue;
+    const owner = String(row.cost_centre_id);
+    const shared = String(row.meter_type ?? "dedicated") === "shared";
+
+    if (!shared) { addUsage(out, owner, usage.consumption, usage.amount); continue; }
+
+    // Only the part no sub-meter has already claimed is shareable.
+    const subs = subsByParent.get(meterId) ?? [];
+    const subConsumption = subs.reduce((a, s) => a + (usageByMeter.get(String(s.id))?.consumption ?? 0), 0);
+    const shareable = Math.max(0, usage.consumption - subConsumption);
+    if (shareable <= 0) continue;
+    const amountRatio = usage.consumption > 0 ? shareable / usage.consumption : 0;
+    const shareableAmount = usage.amount * amountRatio;
+
+    const weights = await shareWeights(
+      row, subs, branchId, periodCode, executor
+    );
+    const totalWeight = [...weights.values()].reduce((a, b) => a + b, 0);
+    if (totalWeight <= 0) {
+      // Nothing to apportion by — attribute to the owning cost centre rather than lose the cost.
+      addUsage(out, owner, shareable, shareableAmount);
+      continue;
+    }
+    for (const [ccId, w] of weights) {
+      if (w <= 0) continue;
+      addUsage(out, ccId, shareable * (w / totalWeight), shareableAmount * (w / totalWeight));
+    }
+  }
+
+  const rounded = new Map<string, Usage>();
+  out.forEach((u, k) => rounded.set(k, roundUsage(u)));
+  return rounded;
+}
+
+/** How one shared meter divides, per its share_rule. */
+async function shareWeights(
+  meter: RowDataPacket,
+  subs: RowDataPacket[],
+  branchId: string,
+  periodCode: string,
+  executor: Executor
+): Promise<Map<string, number>> {
+  const rule = (meter.share_rule ?? "headcount") as MeterShareRule;
+  const weights = new Map<string, number>();
+
+  if (rule === "fixed_pct") {
+    const [shares] = await executor.execute<RowDataPacket[]>(
+      `SELECT cost_centre_id, share_pct
+         FROM finance_meter_cost_centre_share
+        WHERE meter_id = ?
+          AND effective_from <= ?
+          AND (effective_to IS NULL OR effective_to >= ?)`,
+      [String(meter.id), periodEndDate(periodCode), periodEndDate(periodCode)]
+    );
+    shares.forEach((s) => weights.set(String(s.cost_centre_id), Number(s.share_pct)));
+    return weights;
+  }
+
+  // Driver-based rules read finance_cost_centre_monthly_driver directly rather than going through
+  // branch-budget-allocation.service, which already imports this module — routing through it would
+  // create an import cycle.
+  const column = rule === "seats" ? "seat_count" : rule === "floor_area" ? "floor_area_sqft" : "planned_headcount";
+  const [drivers] = await executor.execute<RowDataPacket[]>(
+    `SELECT cost_centre_id, ${column} AS weight
+       FROM finance_cost_centre_monthly_driver
+      WHERE branch_id = ? AND period_code = ?`,
+    [branchId, periodCode]
+  );
+
+  // sub_meter_remainder: the leftover belongs to the cost centres that are NOT separately metered.
+  const metered = new Set(subs.map((s) => String(s.cost_centre_id)));
+  drivers.forEach((d) => {
+    const ccId = String(d.cost_centre_id);
+    if (rule === "sub_meter_remainder" && metered.has(ccId)) return;
+    weights.set(ccId, Number(d.weight ?? 0));
+  });
+  return weights;
+}
+
+/**
+ * One cost centre's metered consumption. Kept for callers that ask per cost centre
+ * (budget-readiness). Returns null when the cost centre has no metered usage at all, so callers
+ * can tell "no data" from a genuine zero — deliberately not 0.
+ */
+export async function getCostCentreMeterConsumption(
+  costCentreId: string,
+  periodCode: string,
+  executor: Executor = db,
+  utilityType?: MeterUtilityType
+): Promise<Usage | null> {
+  const [own] = await executor.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM finance_meter_master WHERE cost_centre_id = ? LIMIT 1`,
+    [costCentreId]
+  );
+  // Without a meter of its own the cost centre may still hold a share of a shared meter, so fall
+  // back to its branch via the cost-centre master.
+  let branchId = own[0]?.branch_id ? String(own[0].branch_id) : null;
+  if (!branchId) {
+    const [cc] = await executor.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+      [costCentreId]
+    );
+    branchId = cc[0]?.branch_id ? String(cc[0].branch_id) : null;
+  }
+  if (!branchId) return null;
+
+  const byCostCentre = await getBranchMeterConsumption(branchId, periodCode, executor, utilityType);
+  return byCostCentre.get(costCentreId) ?? null;
 }
 
 export const meterService = {
@@ -290,4 +452,5 @@ export const meterService = {
   listReadings,
   saveReading,
   getCostCentreMeterConsumption,
+  getBranchMeterConsumption,
 };
