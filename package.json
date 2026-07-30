@@ -26,6 +26,8 @@
     "phase2:smoke:static": "node scripts/phase2-smoke-static.mjs",
     "health:backend": "node -e \"fetch('http://localhost:5055/api/health').then(r=>r.text()).then(console.log).catch(e=>{console.error(e.message);process.exit(1)})\"",
     "test": "cd backend && npx vitest run",
+    "test:frontend": "node backend/node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "test:all": "npm run test:frontend && npm run test",
     "test:e2e:smoke": "playwright test --config=playwright.config.ts",
     "lms:backfill-identities": "cd backend && npm.cmd run lms:backfill-identities"
   },
