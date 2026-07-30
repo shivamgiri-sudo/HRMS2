@@ -656,20 +656,37 @@ export async function getMonthlyAttendanceFromNcosec(
     userConditions.push(`@u${i}`);
   }
   const dailyTable = env.NCOSEC_DAILY_TABLE || 'dbo.Mx_DATDTrn';
+  const eventTable = env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn';
+  const todayIST = nowIST().slice(0, 10);
 
+  // Mx_DATDTrn.OutPunch is populated by NCOSEC's end-of-day batch job, so it
+  // can be NULL for an ongoing or recently-completed shift on today's date.
+  // For today's date, fall back to MAX(Edatetime) from the raw event table so
+  // that the last swipe is always visible in the attendance page.
   const result = await request.query(`
     SELECT
-      CAST([UserID] AS NVARCHAR(100))       AS user_id,
-      CONVERT(CHAR(10), [PDate], 23)        AS attendance_date,
-      CONVERT(CHAR(19), [Punch1], 120)      AS first_punch,
-      CONVERT(CHAR(19), [OutPunch], 120)    AS last_punch,
-      ISNULL([WorkTime], 0)                 AS working_minutes
-    FROM ${dailyTable}
-    WHERE [PDate] >= @fromDate
-      AND [PDate] < DATEADD(DAY, 1, @toDate)
-      AND [UserID] IN (${userConditions.join(', ')})
-      AND [Punch1] IS NOT NULL
-    ORDER BY [UserID], [PDate]
+      CAST(d.[UserID] AS NVARCHAR(100))     AS user_id,
+      CONVERT(CHAR(10), d.[PDate], 23)      AS attendance_date,
+      CONVERT(CHAR(19), d.[Punch1], 120)    AS first_punch,
+      CASE
+        WHEN d.[OutPunch] IS NOT NULL
+          THEN CONVERT(CHAR(19), d.[OutPunch], 120)
+        WHEN CONVERT(CHAR(10), d.[PDate], 23) = '${todayIST}'
+          THEN (
+            SELECT CONVERT(CHAR(19), MAX(ev.[Edatetime]), 120)
+            FROM ${eventTable} ev
+            WHERE CAST(ev.[UserID] AS NVARCHAR(100)) = CAST(d.[UserID] AS NVARCHAR(100))
+              AND CAST(ev.[Edatetime] AS DATE) = CAST(d.[PDate] AS DATE)
+          )
+        ELSE NULL
+      END                                   AS last_punch,
+      ISNULL(d.[WorkTime], 0)               AS working_minutes
+    FROM ${dailyTable} d
+    WHERE d.[PDate] >= @fromDate
+      AND d.[PDate] < DATEADD(DAY, 1, @toDate)
+      AND CAST(d.[UserID] AS NVARCHAR(100)) IN (${userConditions.join(', ')})
+      AND d.[Punch1] IS NOT NULL
+    ORDER BY d.[UserID], d.[PDate]
   `);
 
   // Map to PunchGroup format for night-shift merge
