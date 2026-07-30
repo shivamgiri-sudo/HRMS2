@@ -1347,16 +1347,11 @@ export default function NativeITProvisioningTracker() {
                     </p>
                     <Button
                       type="button"
-                      onClick={() => {
-                        const employeeId = actionDialog.request?.employee_id;
-                        if (employeeId) {
-                          navigate(`/letters/appointment-esign?employeeId=${employeeId}`);
-                        }
-                      }}
+                      onClick={() => navigate(`/letters`)}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       <FileSignature className="h-4 w-4 mr-2" />
-                      Open e-Sign Page
+                      View Letters
                     </Button>
                   </div>
                   <p className="text-xs text-slate-500">

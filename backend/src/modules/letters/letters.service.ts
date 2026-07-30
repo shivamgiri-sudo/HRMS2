@@ -103,6 +103,20 @@ export const lettersService = {
     return { id, letter_type: template.letter_type as string, template_code: data.template_code };
   },
 
+  async listAll() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT gl.id, gl.letter_type, gl.issued_date, gl.acknowledged_at, gl.created_at,
+              lt.template_name, lt.template_code,
+              e.employee_code,
+              CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name
+       FROM generated_letter gl
+       JOIN letter_template lt ON lt.id = gl.template_id
+       JOIN employees e ON e.id = gl.employee_id
+       ORDER BY gl.created_at DESC`
+    );
+    return rows as RowDataPacket[];
+  },
+
   async listGenerated(employeeId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT gl.id, gl.letter_type, gl.issued_date, gl.acknowledged_at, gl.created_at,

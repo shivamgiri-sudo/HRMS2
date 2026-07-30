@@ -21,7 +21,6 @@ const NativeSupportCommandCenter    = lazy(() => import("@/pages/NativeSupportCo
 const NativeGrievanceCommandCenter  = lazy(() => import("@/pages/NativeGrievanceCommandCenter"));
 const NativeLetters                 = lazy(() => import("@/pages/NativeLetters"));
 const NativeLetterPreview           = lazy(() => import("@/pages/NativeLetterPreview"));
-const NativeAppointmentEsign        = lazy(() => import("@/pages/NativeAppointmentEsign"));
 const NativeDocumentVerification    = lazy(() => import("@/pages/NativeDocumentVerification"));
 const NativeOrgMasters              = lazy(() => import("@/pages/NativeOrgMasters"));
 const NativeLocationPolicyMasters   = lazy(() => import("@/pages/NativeLocationPolicyMasters"));
@@ -114,7 +113,6 @@ export const platformRouteElements = (
       {/* Letters */}
       <Route path="/letters"                   element={<ProtectedRoute><Gate pageCode="LETTERS"><NativeLetters /></Gate></ProtectedRoute>} />
       <Route path="/letters/:id/preview"       element={<ProtectedRoute><NativeLetterPreview /></ProtectedRoute>} />
-      <Route path="/letters/appointment-esign" element={<ProtectedRoute><Gate pageCode="APPOINTMENT_ESIGN"><NativeAppointmentEsign /></Gate></ProtectedRoute>} />
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
 
       {/* Helpdesk / Support */}

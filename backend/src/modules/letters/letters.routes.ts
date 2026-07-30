@@ -58,7 +58,12 @@ router.post("/generate", requireRole("admin", "hr", "super_admin"), h(async (req
   res.status(201).json({ data: letter });
 }));
 
-// ── List generated letters for an employee ────────────────────────────────────
+// ── List all generated letters (HR view) ─────────────────────────────────────
+router.get("/all", requireRole("admin", "hr", "super_admin"), h(async (req, res) => {
+  res.json({ data: await lettersService.listAll() });
+}));
+
+// ── List generated letters for a specific employee ────────────────────────────
 router.get("/employee/:employeeId", requireRole("admin", "hr", "super_admin"), h(async (req, res) => {
   res.json({ data: await lettersService.listGenerated(req.params.employeeId) });
 }));

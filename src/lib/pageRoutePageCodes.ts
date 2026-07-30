@@ -62,7 +62,6 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/kpi-master": "KPI_MASTER",
   "/leave-types": "LEAVE_TYPES",
   "/letters": "LETTERS",
-  "/letters/appointment-esign": "APPOINTMENT_ESIGN",
   "/lms/admin": "LMS_ADMIN",
   "/lms/coordinator": "LMS_COORDINATOR",
   "/lms/integration": "LMS_INTEGRATION",

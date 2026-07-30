@@ -361,7 +361,6 @@ export const navGroups: NavGroup[] = [
       { label: "Grievance",      href: "/support/grievance-command-center",  icon: ic(ClipboardList), pageCode: "GRIEVANCE_COMMAND_CENTER", description: "Grievances" },
       { label: "Benefits",       href: "/benefits",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","branch_head"], description: "Benefits" },
       { label: "Letters",        href: "/letters",                           icon: ic(FileText),    pageCode: "LETTERS", roles: ["admin","hr"], description: "HR letters" },
-      { label: "Appointment E-sign", href: "/letters/appointment-esign",     icon: ic(FileCheck),   pageCode: "APPOINTMENT_ESIGN", roles: ["admin","hr","super_admin"], description: "Appointment letter e-signature tracking" },
     ],
   },
 

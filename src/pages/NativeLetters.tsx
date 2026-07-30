@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle, CheckCircle2, FileText, Loader,
-  Plus, RefreshCcw, Search, Eye, Printer, Download,
+  Plus, RefreshCcw, Search, Eye, Download,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
@@ -150,7 +150,7 @@ export default function NativeLetters() {
     try {
       const path = employeeFilter.trim()
         ? `/api/letters/employee/${employeeFilter.trim()}`
-        : `/api/letters/employee/all`;
+        : `/api/letters/all`;
       const res = await hrmsApi.get<{ success: boolean; data: GeneratedLetter[] }>(path);
       setLetters(res.data ?? []);
     } catch (err: unknown) {
@@ -403,13 +403,6 @@ export default function NativeLetters() {
                               title="Preview"
                               className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer">
                               <Eye className="h-3.5 w-3.5" /> Preview
-                            </button>
-                            {/* Print */}
-                            <button
-                              onClick={() => navigate(`/letters/${lid}/preview`)}
-                              title="Print"
-                              className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer">
-                              <Printer className="h-3.5 w-3.5" /> Print
                             </button>
                             {/* Download */}
                             <button
