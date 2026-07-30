@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Twitter, MapPin, Megaphone } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Twitter, Youtube, MapPin, Megaphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ const SOCIAL_LINKS = [
   { label: "Instagram", href: "https://instagram.com/teammas9",                           icon: Instagram },
   { label: "X",         href: "https://x.com/MCallnet",                                   icon: Twitter },
   { label: "Facebook",  href: "https://facebook.com/TeamMas9",                            icon: Facebook },
+  { label: "YouTube",   href: "https://youtube.com/@MasCallnet",                          icon: Youtube },
 ];
 
 type ForgotPasswordChannel = 'email' | 'sms';
