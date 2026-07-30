@@ -56,7 +56,11 @@ export default function AuthClean() {
   useEffect(() => {
     fetch(`${import.meta.env.VITE_HRMS_API_URL?.replace(/\/$/, "") ?? ""}/api/public/login-info`)
       .then(r => r.json())
-      .then(d => setLoginInfo(d))
+      .then(d => setLoginInfo({
+        active_employees: d?.active_employees ?? 0,
+        branches: Array.isArray(d?.branches) ? d.branches : [],
+        announcements: Array.isArray(d?.announcements) ? d.announcements : [],
+      }))
       .catch(() => {});
   }, []);
 

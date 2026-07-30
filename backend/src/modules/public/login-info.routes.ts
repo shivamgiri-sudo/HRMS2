@@ -9,8 +9,7 @@ export const loginInfoRouter = Router();
 // Returns only safe aggregate counts and non-PII text. Rate-limited at mount.
 loginInfoRouter.get("/", async (_req, res) => {
   try {
-    const [[stats], [branches], [announcements]] = await Promise.all([
-      // Active employee count — aggregate only, no PII
+    const [statsResult, branchesResult, announcementsResult] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS active_employees
          FROM employees
@@ -18,16 +17,12 @@ loginInfoRouter.get("/", async (_req, res) => {
            AND employment_status NOT IN
              ('inactive','terminated','offboarded','absconded','resigned','left','separated')`
       ),
-
-      // Branch names — structural org data, no employee or payroll info
       db.execute<RowDataPacket[]>(
-        `SELECT branch_name, city
+        `SELECT branch_name
          FROM branch_master
          WHERE active_status = 1
          ORDER BY branch_name ASC`
       ),
-
-      // Active login announcements
       db.execute<RowDataPacket[]>(
         `SELECT id, message, pinned
          FROM login_announcement
@@ -35,17 +30,21 @@ loginInfoRouter.get("/", async (_req, res) => {
            AND (expires_at IS NULL OR expires_at > NOW())
          ORDER BY pinned DESC, created_at DESC
          LIMIT 10`
-      ).catch(() => [[]] as [RowDataPacket[], any]),   // graceful — table may not exist yet
+      ).catch(() => [[] as RowDataPacket[]]),   // graceful — table may not exist yet
     ]);
 
+    const stats        = statsResult[0]        as RowDataPacket[];
+    const branches     = branchesResult[0]     as RowDataPacket[];
+    const announcements = announcementsResult[0] as RowDataPacket[];
+
     res.json({
-      active_employees: (stats as RowDataPacket[])[0]?.active_employees ?? 0,
-      branches: (branches as RowDataPacket[]).map(b => b.branch_name as string),
-      announcements: (announcements as RowDataPacket[]).map(a => ({
-        id: a.id as string,
+      active_employees: stats[0]?.active_employees ?? 0,
+      branches: branches.map(b => b.branch_name as string),
+      announcements: Array.isArray(announcements) ? announcements.map(a => ({
+        id:      a.id      as string,
         message: a.message as string,
-        pinned: !!a.pinned,
-      })),
+        pinned:  !!a.pinned,
+      })) : [],
     });
   } catch (err) {
     // Never block login page load — return safe empty state on any error
