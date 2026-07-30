@@ -378,6 +378,7 @@ const MIGRATION_MANIFEST: string[] = [
   "433_budget_line_corrections.sql",
   "434_meter_sharing_and_cc_drivers.sql",
   "435_pnl_components_real_shape.sql",
+  "436_pnl_people_classification_seed.sql",
   "435_bgv_check_type_name_match.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
