@@ -441,6 +441,10 @@ export interface CostCentreOption {
   id: string;
   costCentreCode: string;
   costCentreName: string;
+  /** The process this cost centre serves, from cost_centre_master's text columns rather than a
+   *  process_id join — process_id is NULL on live rows whose process name IS recorded. */
+  processName?: string | null;
+  processMapped?: boolean;
 }
 
 export interface MonthlyDriverRecord {

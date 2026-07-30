@@ -65,6 +65,10 @@ export interface CostCentreOption {
   id: string;
   costCentreCode: string;
   costCentreName: string;
+  /** The process this cost centre serves, from cost_centre_master's text columns rather than a
+   *  process_id join — process_id is NULL on live rows whose process name IS recorded. */
+  processName?: string | null;
+  processMapped?: boolean;
 }
 
 export interface MonthlyDriverInput {
@@ -127,20 +131,42 @@ export async function listActiveCostCentres(
   // least one cost centre has active_status = 1 but a close_date years in the past (the flag was
   // never updated when it closed). Excluding closed/not-yet-live rows here prevents a stale or
   // future cost centre from silently appearing as an allocation/statement column.
+  // Which process a cost centre serves is NOT cost_centre_master.process_id — that column is NULL
+  // on every live row. The mapping that actually exists runs through the people: the process of the
+  // employees posted to the cost centre. This is the same derivation /api/org/cost-centres uses, so
+  // the planner's column labels agree with the Org Masters screen instead of contradicting it.
+  // The db_bill snapshot text is kept as a fallback for a cost centre with no staff mapped yet.
   const [rows] = await executor.execute<RowDataPacket[]>(
-    `SELECT id, cost_centre_code, cost_centre_name
-       FROM cost_centre_master
-      WHERE branch_id = ? AND active_status = 1
-        AND (close_date IS NULL OR close_date > CURDATE())
-        AND (go_live_date IS NULL OR go_live_date <= CURDATE())
-      ORDER BY cost_centre_name`,
+    `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name,
+            COALESCE(
+              (SELECT pm.process_name
+                 FROM employees e
+                 JOIN process_master pm ON pm.id = e.process_id
+                WHERE e.cost_centre_id = ccm.id AND e.active_status = 1
+                GROUP BY pm.id
+                ORDER BY COUNT(*) DESC
+                LIMIT 1),
+              NULLIF(TRIM(ccm.process_name_bill), ''),
+              NULLIF(TRIM(ccm.client_name), '')
+            ) AS resolved_process_name
+       FROM cost_centre_master ccm
+      WHERE ccm.branch_id = ? AND ccm.active_status = 1
+        AND (ccm.close_date IS NULL OR ccm.close_date > CURDATE())
+        AND (ccm.go_live_date IS NULL OR ccm.go_live_date <= CURDATE())
+      ORDER BY ccm.cost_centre_name`,
     [branchId]
   );
-  return rows.map((row) => ({
-    id: String(row.id),
-    costCentreCode: String(row.cost_centre_code ?? ""),
-    costCentreName: String(row.cost_centre_name ?? ""),
-  }));
+  return rows.map((row) => {
+    const processName = row.resolved_process_name ? String(row.resolved_process_name).trim() : null;
+    return {
+      id: String(row.id),
+      costCentreCode: String(row.cost_centre_code ?? ""),
+      costCentreName: String(row.cost_centre_name ?? ""),
+      processName,
+      // Surfaced so the UI can flag a genuine gap instead of asserting one.
+      processMapped: Boolean(processName),
+    };
+  });
 }
 
 export async function getMonthlyDrivers(

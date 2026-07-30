@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   BRANCH_SHARING_METHODS,
@@ -112,6 +112,10 @@ export function BranchBudgetPlannerGrid({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [pickerHead, setPickerHead] = useState<string | null>(null);
   const [hint, setHint] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "planned" | "gaps">("all");
+  /** Row index whose cost-centre scope popover is open. */
+  const [scopeRow, setScopeRow] = useState<number | null>(null);
 
   const activeHeads = useMemo(
     () => masters.filter((h) => h.activeStatus).map((h) => ({
@@ -186,13 +190,32 @@ export function BranchBudgetPlannerGrid({
   }, [lines, costCentres, drivers]);
 
   const rowsByHead = useMemo(() => {
+    const q = query.trim().toLowerCase();
     const map = new Map<string, PlannerRow[]>();
     lines.forEach((line, index) => {
       const key = line.head || "(no head)";
       map.set(key, [...(map.get(key) ?? []), { index, line }]);
     });
-    return map;
-  }, [lines]);
+    if (!q && filter === "all") return map;
+    const filtered = new Map<string, PlannerRow[]>();
+    map.forEach((rows, head) => {
+      const kept = rows.filter(({ index, line }) => {
+        const matches = !q
+          || head.toLowerCase().includes(q)
+          || (line.subHead ?? "").toLowerCase().includes(q)
+          || (line.itemDescription ?? "").toLowerCase().includes(q);
+        if (!matches) return false;
+        const planned = (preview.get(index)?.amount ?? 0) > 0;
+        return filter === "all" || (filter === "planned" ? planned : !planned);
+      });
+      if (kept.length) filtered.set(head, kept);
+    });
+    return filtered;
+  }, [lines, query, filter, preview]);
+
+  /** How many cost centres a line covers. An empty selection means all of them. */
+  const scopeCount = (line: BranchBudgetLineInput) =>
+    line.includedCostCentreIds?.length ? line.includedCostCentreIds.length : costCentres.length;
 
   const branchTotal = lines.reduce((a, _l, i) => a + (preview.get(i)?.amount ?? 0), 0);
   const columnTotal = (ccIndex: number) =>
@@ -203,40 +226,60 @@ export function BranchBudgetPlannerGrid({
 
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center gap-4 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
-        <span className="flex items-center gap-2"><span className="h-3.5 w-6 rounded border border-slate-300 bg-white" />Type here</span>
-        <span className="flex items-center gap-2"><span className="h-3.5 w-6 rounded border border-slate-300 bg-slate-100" />Calculated — click to see what drives it</span>
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} type="search"
+          placeholder="Find a head or sub-head…" aria-label="Find a head or sub-head"
+          className="h-7 w-48 rounded-md border border-slate-300 bg-white px-2 text-xs outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20" />
+        <div className="flex overflow-hidden rounded-md border border-slate-300">
+          {([["all", "All"], ["planned", "Planned"], ["gaps", "Not planned"]] as const).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setFilter(key)}
+              className={`border-r border-slate-300 px-2 py-1 last:border-r-0 ${filter === key ? "bg-blue-50 font-semibold text-blue-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="h-7 rounded-md border border-slate-300 bg-white px-2 hover:bg-slate-100"
+          onClick={() => setCollapsed((c) => (c.size ? new Set() : new Set(activeHeads.map((h) => h.id))))}>
+          {collapsed.size ? "Expand all" : "Collapse all"}
+        </button>
+        <span className="ml-2 flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-white" />Type here</span>
+        <span className="flex items-center gap-1.5"><span className="h-3 w-5 rounded border border-slate-300 bg-slate-100" />Calculated</span>
         <span className="ml-auto font-medium text-blue-700">{hint}</span>
       </div>
 
       <div className="max-h-[68vh] overflow-auto">
-        <table className="w-max table-fixed border-separate border-spacing-0 text-xs">
+        <table className="w-max table-fixed border-separate border-spacing-0 text-[13px]">
           <colgroup>
-            <col style={{ width: 230 }} /><col style={{ width: 150 }} />
-            <col style={{ width: 62 }} /><col style={{ width: 78 }} /><col style={{ width: 86 }} />
-            <col style={{ width: 100 }} /><col style={{ width: 130 }} /><col style={{ width: 28 }} />
+            <col style={{ width: 250 }} /><col style={{ width: 160 }} />
+            <col style={{ width: 70 }} /><col style={{ width: 88 }} /><col style={{ width: 96 }} />
+            <col style={{ width: 112 }} /><col style={{ width: 140 }} /><col style={{ width: 30 }} />
             {/* Units and Amount must alternate PER cost centre, so each pair sits under its own
                 column-group header. Emitting all the Units first produced a header reading
                 "UNITS UNITS ... AMOUNT AMOUNT" with nothing lining up. */}
             {costCentres.flatMap((cc) => [
-              <col key={`u-${cc.id}`} style={{ width: 66 }} />,
-              <col key={`a-${cc.id}`} style={{ width: 92 }} />,
+              <col key={`u-${cc.id}`} style={{ width: 74 }} />,
+              <col key={`a-${cc.id}`} style={{ width: 104 }} />,
             ])}
           </colgroup>
           <thead>
-            <tr className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            <tr className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               <th className="sticky left-0 top-0 z-40 border-b border-r border-slate-200 bg-slate-50 px-2 py-2 text-left">&nbsp;</th>
-              <th className="sticky top-0 z-40 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-2 text-left" colSpan={7} style={{ left: 230 }}>Total branch budget</th>
+              <th className="sticky top-0 z-40 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-2 text-left" colSpan={7} style={{ left: 250 }}>Total branch budget</th>
               {costCentres.map((cc) => (
                 <th key={cc.id} className="sticky top-0 z-30 border-b border-l border-r border-slate-200 bg-slate-50 px-2 py-2 text-center" colSpan={2}>
-                  <span className="block font-mono text-[11px] normal-case text-slate-700">{cc.costCentreCode}</span>
-                  <span className="block text-[10px] text-amber-700">process unmapped</span>
+                  {/* The process name is real data on cost_centre_master, so show it. Only a cost
+                      centre that genuinely has none is flagged — asserting "unmapped" for every
+                      column was wrong: all seven NOIDA-2 cost centres carry a process. */}
+                  <span className="block font-mono text-[12px] normal-case text-slate-700">{cc.costCentreCode}</span>
+                  {cc.processName
+                    ? <span className="block text-[11px] font-semibold normal-case text-blue-700">{cc.processName}</span>
+                    : <span className="block text-[11px] text-amber-700">process not recorded</span>}
                 </th>
               ))}
             </tr>
-            <tr className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            <tr className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               <th className="sticky left-0 z-40 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-left" style={{ top: 42 }}>Sub-header</th>
-              <th className="sticky z-40 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-1.5 text-left" style={{ top: 42, left: 230 }}>Detail</th>
+              <th className="sticky z-40 border-b border-r-2 border-slate-300 bg-slate-50 px-2 py-1.5 text-left" style={{ top: 42, left: 250 }}>Detail</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-right" style={{ top: 42 }}>Qty</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-left" style={{ top: 42 }}>Unit</th>
               <th className="sticky z-30 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5 text-right" style={{ top: 42 }}>Rate</th>
@@ -257,7 +300,7 @@ export function BranchBudgetPlannerGrid({
             </tr>
             {DRIVER_ROWS.map((row) => (
               <tr key={row.key} className="hover:bg-blue-50/60">
-                <td className="sticky left-0 z-20 border-b border-r border-slate-200 bg-blue-50/50 px-2 py-1 text-slate-600">{row.label}</td>
+                <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-blue-50/50 px-2 py-1 text-slate-600">{row.label}</td>
                 <td className="border-b border-r-2 border-slate-300 bg-blue-50/50" colSpan={7} />
                 {costCentres.flatMap((cc) => [
                   <td key={`${row.key}-u-${cc.id}`} className="border-b border-l border-slate-200 bg-blue-50/50 p-0">
@@ -285,9 +328,9 @@ export function BranchBudgetPlannerGrid({
               const open = !collapsed.has(head.id);
               const headTotal = rows.reduce((a, r) => a + (preview.get(r.index)?.amount ?? 0), 0);
               return (
-                <>
-                  <tr key={head.id} className="bg-slate-50 font-semibold">
-                    <td className="sticky left-0 z-20 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5">
+                <Fragment key={head.id}>
+                  <tr className="bg-slate-50 font-semibold">
+                    <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-2 py-1.5">
                       <button type="button" className="mr-1 text-slate-500"
                         onClick={() => setCollapsed((c) => { const n = new Set(c); n.has(head.id) ? n.delete(head.id) : n.add(head.id); return n; })}>
                         {open ? "▾" : "▸"}
@@ -343,8 +386,53 @@ export function BranchBudgetPlannerGrid({
                     return (
                       <tr key={`${index}-${line.head}-${line.subHead}`} className="hover:bg-slate-50">
                         <td className="sticky left-0 z-20 border-b border-r border-slate-200 bg-white px-2 py-1 text-slate-700">
-                          <span className="flex items-center gap-1.5">
+                          <span className="flex items-center gap-1">
                             <span className="flex-1 truncate" title={line.subHead ?? ""}>{line.subHead}</span>
+                            {/* Cost-centre scope. A branch-common line hits every cost centre unless
+                                you say otherwise — real costs are often partial, so this is where a
+                                cost centre gets unselected. */}
+                            {line.planningLevel === "branch" && costCentres.length > 0 && (
+                              <span className="relative">
+                                <button type="button" aria-label={`Cost centres for ${line.subHead}`}
+                                  title="Choose which cost centres this line applies to"
+                                  className={`rounded border px-1 font-mono text-[10px] ${scopeCount(line) < costCentres.length ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-300 text-slate-500 hover:bg-slate-100"}`}
+                                  onClick={() => setScopeRow(scopeRow === index ? null : index)}>
+                                  {scopeCount(line)}/{costCentres.length}
+                                </button>
+                                {scopeRow === index && (
+                                  <div className="absolute left-0 top-6 z-50 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+                                    <div className="mb-1 flex items-center justify-between">
+                                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Applies to</span>
+                                      <button type="button" className="text-[11px] text-blue-700 underline"
+                                        onClick={() => onUpdateLine(index, { includedCostCentreIds: null })}>Use all</button>
+                                    </div>
+                                    <div className="max-h-44 overflow-auto">
+                                      {costCentres.map((cc) => {
+                                        const selected = line.includedCostCentreIds ?? [];
+                                        const on = selected.length === 0 || selected.includes(cc.id);
+                                        return (
+                                          <label key={cc.id} className="flex items-center gap-1.5 py-0.5 text-[11px] text-slate-700">
+                                            <input type="checkbox" checked={on} disabled={!canEdit}
+                                              onChange={(e) => {
+                                                // Empty means "all", so the first unticking has to
+                                                // materialise the full set before removing one.
+                                                const base = selected.length ? selected : costCentres.map((c) => c.id);
+                                                const next = e.target.checked
+                                                  ? [...new Set([...base, cc.id])]
+                                                  : base.filter((id) => id !== cc.id);
+                                                onUpdateLine(index, { includedCostCentreIds: next.length === costCentres.length ? null : next });
+                                              }} />
+                                            <span className="truncate font-mono">{cc.costCentreCode}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                    <button type="button" className="mt-1 w-full rounded border border-slate-300 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                                      onClick={() => setScopeRow(null)}>Done</button>
+                                  </div>
+                                )}
+                              </span>
+                            )}
                             {canEdit && (
                               <button type="button" title="Remove this line" aria-label="Remove line"
                                 className="rounded px-1 text-slate-400 hover:bg-rose-50 hover:text-rose-700"
@@ -368,7 +456,7 @@ export function BranchBudgetPlannerGrid({
                         </td>
                         <td className="border-b border-r border-slate-200 bg-white p-0">
                           <select disabled={!canEdit} aria-label="Unit type"
-                            className="w-full bg-transparent px-1.5 py-1 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30"
+                            className="w-full bg-transparent px-1.5 py-1 text-[13px] outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30"
                             value={line.unit} onChange={(e) => onUpdateLine(index, { unit: e.target.value })}>
                             {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
                           </select>
@@ -385,7 +473,7 @@ export function BranchBudgetPlannerGrid({
                         </td>
                         <td className="border-b border-r border-slate-200 bg-white p-0">
                           <select disabled={!canEdit} aria-label="Sharing method"
-                            className="w-full bg-transparent px-1.5 py-1 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30"
+                            className="w-full bg-transparent px-1.5 py-1 text-[13px] outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30"
                             value={method} onChange={(e) => onUpdateLine(index, { allocationDriver: e.target.value })}>
                             {BRANCH_SHARING_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                           </select>
@@ -433,14 +521,14 @@ export function BranchBudgetPlannerGrid({
                       // The server refuses a manual split that is not exactly 100%, so say so here
                       // rather than letting the save fail with a message about a row you cannot see.
                       <tr key={`warn-${r.index}`}>
-                        <td className="sticky left-0 z-20 border-b border-r border-slate-200 bg-rose-50" />
+                        <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-rose-50" />
                         <td className="border-b border-r-2 border-slate-300 bg-rose-50 px-2 py-1 text-rose-700" colSpan={7 + costCentres.length * 2}>
                           <span className="font-semibold">{r.line.subHead}</span>: manual shares total{" "}
                           {(100 - (preview.get(r.index)?.unallocated ?? 0)).toFixed(2)}% — they must total exactly 100% before this budget can be saved.
                         </td>
                       </tr>
                   ))}
-                </>
+                </Fragment>
               );
             })}
           </tbody>
