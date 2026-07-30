@@ -88,10 +88,29 @@ export interface AgentQualityDataState {
  * Fetch CQ score data
  * Cache: 5 minutes
  */
-async function fetchCQScore(employeeId: string): Promise<CQScoreData> {
+/**
+ * Unwraps the `{ success, data }` envelope the /api/agent/* routes return.
+ *
+ * These four calls previously targeted `/api/quality-dashboard/{cq-score,weakness,
+ * calls,call}/:id`, none of which exist — the real routes are mounted at `/api/agent`
+ * (app.ts) and are SELF-SCOPED: `requireAgent` resolves the agent from the caller's
+ * token, so there is no employee id in the path. Every one of these requests 404'd and
+ * the hook swallowed it into an empty state, so the agent quality dashboard showed
+ * nothing with no error.
+ */
+function unwrapAgentPayload<T>(res: unknown): T | null {
+  const envelope = res as { success?: boolean; data?: T } | null;
+  if (envelope && typeof envelope === "object" && "data" in envelope) {
+    return (envelope.data ?? null) as T | null;
+  }
+  return (res ?? null) as T | null;
+}
+
+async function fetchCQScore(_employeeId: string, daysBack = 7): Promise<CQScoreData> {
   try {
-    const res = await hrmsApi.get<CQScoreData>(`/api/quality-dashboard/cq-score/${employeeId}`);
-    return res || getEmptyCQScore();
+    // Self-scoped: the server resolves the agent from the token, not from _employeeId.
+    const res = await hrmsApi.get<unknown>(`/api/agent/cq-score?daysBack=${daysBack}`);
+    return unwrapAgentPayload<CQScoreData>(res) ?? getEmptyCQScore();
   } catch (err) {
     console.error("Failed to fetch CQ score:", err);
     return getEmptyCQScore();
@@ -102,10 +121,10 @@ async function fetchCQScore(employeeId: string): Promise<CQScoreData> {
  * Fetch weakness details
  * Cache: 10 minutes
  */
-async function fetchWeaknessDetail(employeeId: string): Promise<{ weakness_areas: WeaknessArea[] }> {
+async function fetchWeaknessDetail(_employeeId: string): Promise<{ weakness_areas: WeaknessArea[] }> {
   try {
-    const res = await hrmsApi.get<{ weakness_areas: WeaknessArea[] }>(`/api/quality-dashboard/weakness/${employeeId}`);
-    return res || { weakness_areas: [] };
+    const res = await hrmsApi.get<unknown>(`/api/agent/weakness-detail`);
+    return unwrapAgentPayload<{ weakness_areas: WeaknessArea[] }>(res) ?? { weakness_areas: [] };
   } catch (err) {
     console.error("Failed to fetch weakness details:", err);
     return { weakness_areas: [] };
@@ -116,15 +135,15 @@ async function fetchWeaknessDetail(employeeId: string): Promise<{ weakness_areas
  * Fetch calls review list (first 10 calls)
  * Cache: 2 minutes
  */
-async function fetchCallsReview(employeeId: string, limit = 10, offset = 0): Promise<CallsReviewData> {
+async function fetchCallsReview(_employeeId: string, limit = 10, offset = 0): Promise<CallsReviewData> {
   try {
-    const res = await hrmsApi.get<CallsReviewData>(
-      `/api/quality-dashboard/calls/${employeeId}?limit=${limit}&offset=${offset}&sort=date`
+    const res = await hrmsApi.get<unknown>(
+      `/api/agent/calls-review?limit=${limit}&offset=${offset}&sort=date`
     );
-    return res || { total_calls: 0, page: { limit, offset, has_next: false }, calls: [] };
+    return unwrapAgentPayload<CallsReviewData>(res) ?? emptyCallsReview(limit, offset);
   } catch (err) {
     console.error("Failed to fetch calls review:", err);
-    return { total_calls: 0, page: { limit, offset, has_next: false }, calls: [] };
+    return emptyCallsReview(limit, offset);
   }
 }
 
@@ -134,12 +153,21 @@ async function fetchCallsReview(employeeId: string, limit = 10, offset = 0): Pro
  */
 async function fetchCallDetail(callId: string): Promise<CallDetailData | null> {
   try {
-    const res = await hrmsApi.get<CallDetailData>(`/api/quality-dashboard/call/${callId}`);
-    return res || null;
+    const res = await hrmsApi.get<unknown>(`/api/agent/call/${callId}/detail`);
+    return unwrapAgentPayload<CallDetailData>(res);
   } catch (err) {
     console.error("Failed to fetch call detail:", err);
     return null;
   }
+}
+
+function emptyCallsReview(limit: number, offset: number): CallsReviewData {
+  return {
+    total_calls: 0,
+    page: { limit, offset, has_next: false },
+    calls: [],
+    last_updated: new Date(),
+  };
 }
 
 function getEmptyCQScore(): CQScoreData {

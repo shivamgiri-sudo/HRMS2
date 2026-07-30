@@ -8,6 +8,7 @@ import {
   FileText,
   IndianRupee,
   ReceiptIndianRupee,
+  ShieldCheck,
   TriangleAlert,
   Users,
   WalletCards,
@@ -27,15 +28,22 @@ import {
   asNumber,
   formatCurrency,
   metricDetail,
+  metricUnavailableReason,
   metricValue,
   numberAt,
   read,
   stringAt,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import {
+  AttendanceExceptionPanel,
+  SalaryComponentPanel,
+} from "./ReferenceSharedPanels";
 
 export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
+  const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const salaryBill = (read(data.payroll, "salaryBill") ?? {}) as Record<string, unknown>;
   const currentRun = (read(data.payroll, "currentRun") ?? {}) as Record<string, unknown>;
   const totalGross = asNumber(salaryBill.totalGross ?? salaryBill.total_gross);
@@ -45,8 +53,32 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
   const payrollCost = totalGross;
   const currentMonth = String(data.payroll.currentMonth ?? currentRun.month ?? currentRun.run_month ?? "Current Cycle");
   const processed = asNumber(salaryBill.employeeCount ?? salaryBill.emp_count);
-  const total = processed;
-  const pending = null;
+  // `total` was `processed`, so "Total Employees" always equalled "Processed Payroll".
+  // The run header carries the real establishment count.
+  const total = asNumber(currentRun.totalEmployees ?? currentRun.total_employees) ?? processed;
+  const pending = total !== null && processed !== null ? Math.max(0, total - processed) : null;
+
+  // The PAYROLL_READINESS metric returns the blocker breakdown on every load and none of
+  // it was rendered — these four counts are the actionable part of the dashboard.
+  const readyCount = metricDetail(m, "payroll", "readyCount");
+  const blockerCount = metricDetail(m, "payroll", "blockerCount");
+  const readinessTotal = metricDetail(m, "payroll", "total");
+  const missingBank = metricDetail(m, "payroll", "missingBank");
+  const missingPan = metricDetail(m, "payroll", "missingPan");
+  const missingUan = metricDetail(m, "payroll", "missingUan");
+  const readinessPct = readinessTotal && readyCount !== null && readinessTotal > 0
+    ? Math.round((readyCount / readinessTotal) * 100)
+    : null;
+
+  // Incentive batch states, likewise fetched and discarded.
+  const incentivePending = metricDetail(m, "incentive", "pendingBatches");
+  const incentivePendingAmt = metricDetail(m, "incentive", "pendingAmount");
+  const incentiveApprovedAmt = metricDetail(m, "incentive", "approvedAmount");
+  const incentiveRejected = metricDetail(m, "incentive", "rejectedBatches");
+
+  // Surfaced by the backend when a run's net exceeds its gross — arithmetically
+  // impossible and true of the finalized runs today.
+  const dataIntegrity = arrayAt(data.payroll, "dataIntegrity");
   const statutoryRows = arrayAt(data.payroll, "statutoryFiling");
   const branchReadiness = arrayAt(data.payroll, "branchReadiness");
   const disbursement = (read(data.payroll, "disbursement") ?? {}) as Record<string, unknown>;
@@ -119,16 +151,66 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
         </ReferencePanel>
       ) : null}
 
+      {dataIntegrity.length > 0 ? (
+        <div className="rounded-lg border border-[#ffdadd] bg-[#fff7f7] px-4 py-3 text-sm text-[#b91c1c]">
+          {dataIntegrity.map((row, i) => <p key={i}>{String(row)}</p>)}
+        </div>
+      ) : null}
+
       <ReferenceMetricGrid
-        columns={4}
+        columns={5}
         loading={data.loading}
         metrics={[
-          { label: "Total Employees", value: total, helper: "Active payroll population", icon: Users, tone: "violet" },
-          { label: "Processed Payroll", value: processed, helper: "This Month", icon: FileCheck2, tone: "green" },
-          { label: "Pending Payroll", value: pending, helper: "This Month", icon: Clock3, tone: "amber" },
-          { label: `Payroll Cost (${currentMonth})`, value: formatCurrency(payrollCost), helper: "Total Cost", icon: IndianRupee, tone: "blue" },
+          { label: "Total Employees", value: total, helper: "Active payroll population", icon: Users, tone: "violet", href: "/employees" },
+          { label: "Processed Payroll", value: processed, helper: "This Month", icon: FileCheck2, tone: "green", href: "/payroll" },
+          { label: "Pending Payroll", value: pending, helper: total !== null && processed !== null ? `${total} establishment vs ${processed} processed` : "This Month", icon: Clock3, tone: pending ? "amber" : "green", href: "/payroll" },
+          { label: `Payroll Cost (${currentMonth})`, value: formatCurrency(payrollCost), helper: "Total Cost", icon: IndianRupee, tone: "blue", href: "/payroll" },
+          {
+            label: "Payroll Readiness",
+            value: readinessPct,
+            valueSuffix: "%",
+            helper: blockerCount ? `${blockerCount} employees blocked` : "All employees payroll-ready",
+            icon: ShieldCheck,
+            tone: readinessPct === null ? "slate" : readinessPct >= 95 ? "green" : readinessPct >= 80 ? "amber" : "red",
+            unavailableReason: metricUnavailableReason(m, "payroll"),
+            ...drill("payroll"),
+          },
         ]}
       />
+
+      {/* Payroll blockers: computed on every load and previously not rendered at all.
+          Counts only — no individual bank / PAN / UAN values are exposed here. */}
+      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <ReferencePanel
+          title="Payroll Blockers"
+          action={
+            <span className="text-xs text-[#61708a]">
+              {readyCount !== null && readinessTotal !== null ? `${readyCount} of ${readinessTotal} ready` : "readiness source unavailable"}
+            </span>
+          }
+          bodyClassName="p-0"
+        >
+          <div className="divide-y divide-[#edf1f6]">
+            <ReferenceListRow icon={WalletCards} title="Missing Bank Account" subtitle="Cannot be paid by NEFT" value={missingBank} tone="red" href="/employees" />
+            <ReferenceListRow icon={FileCheck2} title="Missing PAN" subtitle="Blocks TDS computation" value={missingPan} tone="red" href="/employees" />
+            <ReferenceListRow icon={ShieldCheck} title="Missing UAN" subtitle="Blocks PF filing" value={missingUan} tone="amber" href="/employees" />
+            <ReferenceListRow icon={Users} title="Total Blocked" subtitle="Not payroll-ready" value={blockerCount} tone="red" />
+          </div>
+        </ReferencePanel>
+
+        <ReferencePanel title="Incentive Batches" bodyClassName="p-0">
+          {metricUnavailableReason(m, "incentive") ? (
+            <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{metricUnavailableReason(m, "incentive")}</p>
+          ) : (
+            <div className="divide-y divide-[#edf1f6]">
+              <ReferenceListRow icon={Clock3} title="Pending Approval" value={incentivePending} tone="amber" />
+              <ReferenceListRow icon={IndianRupee} title="Pending Amount" value={formatCurrency(incentivePendingAmt)} tone="amber" />
+              <ReferenceListRow icon={IndianRupee} title="Approved Amount" value={formatCurrency(incentiveApprovedAmt)} tone="green" />
+              <ReferenceListRow icon={Clock3} title="Rejected Batches" value={incentiveRejected} tone="red" />
+            </div>
+          )}
+        </ReferencePanel>
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.05fr_1.05fr_0.9fr]">
         <ReferencePanel title={`Payroll Summary (${currentMonth})`}>
@@ -243,6 +325,9 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
             <ReferenceProgress label="Pending queues" value={asNumber(pendingQueues.total)} max={Math.max(1, total ?? 1)} tone="amber" />
           </div>
         </ReferencePanel>
+
+        <SalaryComponentPanel data={data} />
+        <AttendanceExceptionPanel data={data} />
       </div>
     </div>
   );

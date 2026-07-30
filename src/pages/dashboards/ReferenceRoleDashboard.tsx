@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ShieldX } from "lucide-react";
 
 import { ScopedFilterBar } from "@/components/dashboard";
+import { DashboardDrilldownDrawer } from "@/components/dashboard/DashboardDrilldownDrawer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useExecutiveQualitySummary } from "@/hooks/useExecutiveQuality";
 import { useOrgKpiSummary } from "@/hooks/useOrgKpiSummary";
@@ -106,6 +107,12 @@ function employeeAttendanceFallback(summaryPayload: unknown): JsonRecord {
     lateDays: asNumber(detail.late),
     missedPunch: asNumber(detail.missedPunch ?? detail.missed_punch),
     totalWorkingDays: asNumber(detail.totalWorkingDays ?? detail.total_working_days),
+    // The attendance metric also returns approved leave and the expected-to-work
+    // denominator. Both were dropped in this mapping, so an employee could not
+    // reconcile their own percentage: the denominator excludes approved leave, and
+    // without either number the figure is unverifiable from the page.
+    onLeaveDays: asNumber(detail.onLeave ?? detail.on_leave),
+    expectedToWork: asNumber(detail.expectedToWork ?? detail.expected_to_work),
     attendancePct: asNumber(attendanceMetric.value ?? detail.attendanceRate ?? detail.attendance_pct),
   };
 }
@@ -451,10 +458,32 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   // Show skeleton only until the primary query resolves; secondary cards render progressively.
   const primaryLoading = roleLoading || (variant !== "employee" ? summaryQuery.isLoading : employeeQuery.isLoading);
 
+  // Single drill-down owner for all twelve dashboards.
+  //
+  // Every metric already carries a drilldownUrl and all twelve backend drilldowns work,
+  // but no layout ever opened the drawer — so no tile on any dashboard was clickable
+  // through to the records behind its number. Owning the drawer here and passing a
+  // factory down through ReferenceDashboardData means each layout only has to spread
+  // `...drilldownFor("att")` onto a tile, and no layout needs its own drawer or state.
+  const [activeDrilldown, setActiveDrilldown] = useState<{ metricCode: string; metricName: string } | null>(null);
+
+  const drilldownFor = (metricKey: string): { onDrilldown?: () => void } => {
+    const metric = metrics[metricKey];
+    // Only offer a drill-down when the metric resolved and actually exposes a route.
+    if (!metric?.drilldownUrl || metric.available === false) return {};
+    return {
+      onDrilldown: () => setActiveDrilldown({
+        metricCode: metric.code,
+        metricName: metric.label ?? metricKey,
+      }),
+    };
+  };
+
   const data: ReferenceDashboardData = {
     variant,
     summary: summary ?? {} as DashboardSummary,
     metrics,
+    drilldownFor,
     employee: employeeData,
     ats,
     system: systemQuery.data ?? {},
@@ -549,8 +578,19 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "quality" ? <QualityReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "operations" ? <OperationsReferenceLayout data={data} filters={filterControl} /> : null}
-        {variant === "recruiter" ? <RecruiterReferenceLayout data={data} /> : null}
-        {variant === "it_manager" ? <ItManagerReferenceLayout data={data} /> : null}
+        {variant === "recruiter" ? <RecruiterReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "it_manager" ? <ItManagerReferenceLayout data={data} filters={filterControl} /> : null}
+
+        {/* One drawer serves every dashboard; tiles opt in via data.drilldownFor(key). */}
+        {activeDrilldown ? (
+          <DashboardDrilldownDrawer
+            open
+            onClose={() => setActiveDrilldown(null)}
+            dashboardCode={code}
+            metricCode={activeDrilldown.metricCode}
+            metricName={activeDrilldown.metricName}
+          />
+        ) : null}
       </main>
     </DashboardLayout>
   );

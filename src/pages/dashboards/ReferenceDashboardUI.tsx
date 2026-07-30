@@ -91,6 +91,17 @@ export interface ReferenceMetric {
    * instead of silently showing a dash. See metricUnavailableReason().
    */
   unavailableReason?: string | null;
+  /**
+   * Opens the drill-down drawer for this metric.
+   *
+   * Every metric already returns a `drilldownUrl`, and all twelve backend drilldowns
+   * work — but no layout ever opened the drawer, so nothing on any dashboard was
+   * clickable through to detail. Setting this makes the tile a button; it is threaded
+   * from ReferenceRoleDashboard so a single owner serves all twelve dashboards.
+   */
+  onDrilldown?: () => void;
+  /** Metric key this tile represents, used to resolve the drilldown route. */
+  metricKey?: string;
 }
 
 export interface ReferenceAction {
@@ -210,6 +221,21 @@ export function ReferenceMetricCard({ metric, loading = false }: { metric: Refer
       )}
     </div>
   );
+  // Drill-down takes precedence over navigation: seeing *which* records make up a number
+  // is the more useful action, and the destination page is reachable from the drawer.
+  if (metric.onDrilldown) {
+    return (
+      <button
+        type="button"
+        onClick={metric.onDrilldown}
+        aria-label={`${metric.label}: view contributing records`}
+        className="block h-full w-full cursor-pointer rounded-xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]/30"
+      >
+        {body}
+      </button>
+    );
+  }
+
   return metric.href ? (
     <Link to={metric.href} className="block h-full rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]/30">
       {body}
@@ -249,18 +275,36 @@ export function ReferencePanel({
   children,
   className,
   bodyClassName,
+  onDrilldown,
 }: {
   title: string;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
   bodyClassName?: string;
+  /**
+   * Opens the metric drill-down drawer. When set, the header gains a "View all" control
+   * so a whole breakdown panel is reachable, not just the individual KPI cards above it.
+   */
+  onDrilldown?: () => void;
 }) {
   return (
     <section className={cn("reference-panel", className)} aria-label={title}>
       <div className="reference-panel-header">
         <h2 className="text-[14px] font-bold text-[#0b1f44]">{title}</h2>
-        {action}
+        <div className="flex items-center gap-3">
+          {action}
+          {onDrilldown ? (
+            <button
+              type="button"
+              onClick={onDrilldown}
+              className="rounded border border-[#dbe7f8] bg-white px-2 py-1 text-xs font-semibold text-[#0b63e5] transition-colors hover:bg-[#f5f9ff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0b63e5]"
+              aria-label={`View all records behind ${title}`}
+            >
+              View all
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className={cn("reference-panel-body", bodyClassName)}>{children}</div>
     </section>

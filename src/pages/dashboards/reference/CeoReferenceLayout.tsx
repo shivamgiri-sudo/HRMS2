@@ -29,14 +29,24 @@ import {
   formatCurrency,
   formatValue,
   metricDetail,
+  metricUnavailableReason,
   metricValue,
   numberAt,
   read,
 } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import {
+  AttendanceBreakdownPanel,
+  LiveVsProcessedPanel,
+  OnboardingFunnelPanel,
+  PayrollBlockersPanel,
+  AttendanceExceptionPanel,
+  DocumentCompliancePanel,
+} from "./ReferenceSharedPanels";
 
 export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters: React.ReactNode }) {
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const active = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const attendance = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
   const shrinkage = numberAt(data.workforce, "summary", "shrinkage_pct");
@@ -72,14 +82,14 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
 
       <ReferenceActionStrip title="Today's Operations — Immediate Actions" items={[
         { label: "TAT Breached", value: tat, detail: "Tickets waiting beyond SLA", tone: "red", href: "/work-inbox" },
-        { label: "BGV Pending", value: bgv, detail: "Approvals pending", tone: "red", href: "/ats/bgv" },
-        { label: "Name Mismatch (Blocking)", value: mismatch, detail: "Requires immediate review", tone: "red", href: "/ats/name-consistency" },
+        { label: "BGV Pending", value: bgv, detail: "Approvals pending", tone: "red", href: "/ats/bgv", ...drill("bgv") },
+        { label: "Name Mismatch (Blocking)", value: mismatch, detail: "Requires immediate review", tone: "red", href: "/ats/name-consistency", ...drill("nm") },
         { label: "Incentive Pending", value: incentiveCount, detail: incentiveAmount === null ? "Approvals pending" : `${formatCurrency(incentiveAmount)} pending`, tone: "amber", href: "/payroll/incentives" },
         { label: "Payroll Readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, detail: "Complete pending items", tone: "amber", href: "/payroll/branch-readiness" },
       ]} />
 
       <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
-        { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.variancePct },
+        { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.variancePct, unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
         { label: "Avg Shrinkage", value: shrinkage, valueSuffix: "%", helper: "vs last 30 days", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
         { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`, icon: IndianRupee, tone: "violet" },
         { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },
@@ -130,6 +140,15 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
           <div className="grid grid-cols-3 gap-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Org Avg KPI Score</p><p className="mt-4 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(orgScore)}<span className="text-xs font-medium text-[#71809a]"> /100</span></p></div><div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4"><p className="text-xs text-[#71809a]">Best Process</p><p className="mt-4 text-[15px] font-bold text-[#16a34a]">{String(bestProcess?.name ?? bestProcess?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(bestProcess?.score)}</p></div><div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] p-4"><p className="text-xs text-[#71809a]">Needs Attention</p><p className="mt-4 text-[15px] font-bold text-[#f97316]">{String(needsAttention?.name ?? needsAttention?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(needsAttention?.score)}</p></div></div>
           <div className="mt-4"><ReferenceLineChart data={kpiTrend} height={135} /></div>
         </ReferencePanel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
+        <PayrollBlockersPanel data={data} />
+        <OnboardingFunnelPanel data={data} />
+        <LiveVsProcessedPanel data={data} />
+        <AttendanceExceptionPanel data={data} />
+        <DocumentCompliancePanel data={data} />
       </div>
     </div>
   );

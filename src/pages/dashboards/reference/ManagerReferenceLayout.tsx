@@ -36,10 +36,16 @@ import {
   statusCount,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import {
+  AttendanceBreakdownPanel,
+  TrainingProgressPanel,
+  LeaveApprovalPanel,
+} from "./ReferenceSharedPanels";
 
 export function ManagerReferenceLayout({ data, managerName, filters }: { data: ReferenceDashboardData; managerName: string; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const team = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const present = metricDetail(m, "att", "present");
   const absent = metricDetail(m, "att", "absent");
@@ -88,7 +94,8 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
         columns={6}
         loading={data.loading}
         metrics={[
-          { label: "Team Members", value: team, helper: "Total", icon: Users, tone: "blue" },
+          { label: "Team Members", value: team, helper: "Total", icon: Users, tone: "blue",
+            ...drill("hc"), },
           { label: "Present Today", value: present, helper: attendance === null ? "Live" : `${attendance}%`, icon: UserCheck, tone: "green" },
           { label: "On Leave", value: employeesOnLeaveToday, helper: team ? `${Math.round((employeesOnLeaveToday / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: CalendarDays, tone: "amber" },
           { label: "Absent", value: absent, helper: team && absent !== null ? `${Math.round((absent / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: UserMinus, tone: "red" },
@@ -216,6 +223,12 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
             {!accountabilityRows.length ? <div className="px-4 py-10 text-center text-xs text-[#94a3b8]">No accountable work items available</div> : null}
           </div>
         </ReferencePanel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
+        <TrainingProgressPanel data={data} />
+        <LeaveApprovalPanel data={data} />
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -35,8 +36,15 @@ import {
   asRecord,
   asString,
   formatValue,
+  metricDetail,
+  metricUnavailableReason,
+  metricValue,
 } from "../reference-dashboard-model";
 import { hrmsApi } from "@/lib/hrmsApi";
+import {
+  ExitPipelinePanel,
+  OnboardingFunnelPanel,
+} from "./ReferenceSharedPanels";
 
 type Tab = "provisioning" | "helpdesk" | "employees" | "bulk_upload";
 
@@ -688,7 +696,9 @@ function BulkUploadTab() {
 
 // ── Main Layout ───────────────────────────────────────────────────────────────
 
-export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+export function ItManagerReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
+  const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const [activeTab, setActiveTab] = useState<Tab>("provisioning");
 
   const itProv       = data.itProvisioning ?? {};
@@ -722,6 +732,7 @@ export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardDat
         title="IT Department Dashboard"
         subtitle="Provisioning queue · Helpdesk tickets · Employee IT directory · Bulk data upload"
         badge="IT Manager View"
+        right={filters}
       />
 
       <ReferenceMetricGrid
@@ -732,6 +743,45 @@ export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardDat
           { label: "SLA Overdue",          value: overdueCount,    helper: "provisioning tasks past SLA", icon: AlertTriangle, tone: overdueCount === null ? "slate" : overdueCount > 0 ? "red" : "green" },
           { label: "Open IT Tickets",      value: openTickets,     helper: "helpdesk tickets open",  icon: Ticket,      tone: openTickets === null ? "slate" : openTickets > 10 ? "red" : openTickets > 3 ? "amber" : "green" },
           { label: "SLA Breached",         value: slaBreachedOpen, helper: "IT tickets past SLA",    icon: ShieldX,     tone: slaBreachedOpen === null ? "slate" : slaBreachedOpen > 0 ? "red" : "green" },
+        ]}
+      />
+
+      {/* Provisioning demand: incoming joiners need accounts and assets, exits need
+          deprovisioning and asset recovery. Both come from the IT bundle's own metrics. */}
+      <ReferenceMetricGrid
+        columns={3}
+        loading={data.loading}
+        metrics={[
+          {
+            label: "Incoming Joiners",
+            value: metricDetail(m, "onb", "pending") ?? metricValue(m, "onb"),
+            helper: "accounts and assets to provision",
+            icon: Users,
+            tone: "amber",
+            href: "/ats/onboarding-requests",
+            unavailableReason: metricUnavailableReason(m, "onb"),
+            ...drill("onb"),
+          },
+          {
+            label: "Exits To Deprovision",
+            value: metricDetail(m, "resign", "totalActive") ?? metricValue(m, "resign"),
+            helper: "revoke access and recover assets",
+            icon: ShieldX,
+            tone: "red",
+            href: "/exit/command-center",
+            unavailableReason: metricUnavailableReason(m, "resign"),
+            ...drill("resign"),
+          },
+          {
+            label: "Active Headcount",
+            value: metricDetail(m, "hc", "active") ?? metricValue(m, "hc"),
+            helper: "accounts under management",
+            icon: HardDrive,
+            tone: "blue",
+            href: "/employees",
+            unavailableReason: metricUnavailableReason(m, "hc"),
+            ...drill("hc"),
+          },
         ]}
       />
 
@@ -787,6 +837,11 @@ export function ItManagerReferenceLayout({ data }: { data: ReferenceDashboardDat
         <ReferenceQuickLink href="/provisioning/admin" title="Admin Provisioning"    icon={UserPlus} />
         <ReferenceQuickLink href="/employees"          title="Employee Directory"     icon={Monitor} />
         <ReferenceQuickLink href="/settings"           title="Settings"              icon={ShieldCheck} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <OnboardingFunnelPanel data={data} />
+        <ExitPipelinePanel data={data} />
       </div>
     </div>
   );

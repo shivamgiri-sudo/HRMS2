@@ -24,9 +24,11 @@ import {
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asNumber, formatValue, stringAt } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
 
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
+  const drill = data.drilldownFor ?? (() => ({}));
   const attendance = data.employee.attendance;
   const onboarding = data.employee.onboarding;
   const lms = data.employee.lms;
@@ -89,10 +91,14 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
 
       <ReferencePanel title="My Attendance This Month" bodyClassName="p-3">
         <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
-          { label: "Present", value: present, helper: "Days", icon: UserCheck, tone: "green" },
-          { label: "Absent", value: absent, helper: "Day", icon: TriangleAlert, tone: absent && absent > 0 ? "red" : "green" },
-          { label: "Late", value: late, helper: "Days", icon: Clock3, tone: late && late > 0 ? "amber" : "blue" },
-          { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "This Month", icon: Target, tone: "blue" },
+          { label: "Present", value: present, helper: "Days", icon: UserCheck, tone: "green",
+            ...drill("att"), },
+          { label: "Absent", value: absent, helper: "Day", icon: TriangleAlert, tone: absent && absent > 0 ? "red" : "green",
+            ...drill("att"), },
+          { label: "Late", value: late, helper: "Days", icon: Clock3, tone: late && late > 0 ? "amber" : "blue",
+            ...drill("att"), },
+          { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "This Month", icon: Target, tone: "blue",
+            ...drill("att"), },
         ]} />
       </ReferencePanel>
 
@@ -169,6 +175,8 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
           ))}
         </div>
       </ReferencePanel>
+
+      <LeaveApprovalPanel data={data} />
 
       <ReferencePanel title="Quick Links" bodyClassName="p-3">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">

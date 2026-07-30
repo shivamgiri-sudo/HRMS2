@@ -14,12 +14,17 @@ import {
   ReferencePanel,
 } from "../ReferenceDashboardUI";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import {
+  AttendanceExceptionPanel,
+  BiometricCoveragePanel,
+} from "./ReferenceSharedPanels";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import {
   arrayAt,
   asNumber,
   formatValue,
   metricDetail,
+  metricUnavailableReason,
 } from "../reference-dashboard-model";
 
 export function WfmReferenceLayout({
@@ -30,6 +35,7 @@ export function WfmReferenceLayout({
   filters: React.ReactNode;
 }) {
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const required = metricDetail(m, "hc", "required");
   const available = metricDetail(m, "hc", "available");
   const missingPunch = metricDetail(m, "att", "missedPunch");
@@ -44,6 +50,31 @@ export function WfmReferenceLayout({
     high: asNumber(data.biometric.variance_4_plus ?? data.biometric.variance_bucket_4_plus),
   };
 
+  // The ATTENDANCE metric returns a full breakdown on every WFM load, of which only
+  // missedPunch was being read. The rest is the core of a WFM view.
+  const present = metricDetail(m, "att", "present");
+  const halfDay = metricDetail(m, "att", "halfDay");
+  const absent = metricDetail(m, "att", "absent");
+  const late = metricDetail(m, "att", "late");
+  const onLeave = metricDetail(m, "att", "onLeave");
+  const livePresent = metricDetail(m, "att", "livePresent");
+  const expectedToWork = metricDetail(m, "att", "expectedToWork");
+  const attendanceRate = metricDetail(m, "att", "attendanceRate");
+
+  // Live sessions versus processed attendance. A wide gap means the reconciliation
+  // engine is behind, which is exactly what a WFM owner needs to see.
+  const liveVsProcessed = livePresent !== null && present !== null ? livePresent - present : null;
+
+  // /api/integrations/cosec/sync-status returns { status, latest_run, data_confidence }.
+  // The response was fetched on every WFM load and discarded — the layout expected a
+  // device array that this endpoint has never returned.
+  const syncStatus = (data.devices as Record<string, unknown>)?.integrationStatus as
+    | Record<string, unknown>
+    | undefined;
+  const syncState = syncStatus?.status ? String(syncStatus.status) : null;
+  const syncConfidence = asNumber(syncStatus?.data_confidence);
+  const syncLatestRun = syncStatus?.latest_run as Record<string, unknown> | undefined;
+
   return (
     <div className="reference-dashboard-page">
       <ReferenceHeader
@@ -54,13 +85,15 @@ export function WfmReferenceLayout({
       />
 
       <ReferenceMetricGrid
-        columns={4}
+        columns={5}
         loading={data.loading}
         metrics={[
-          { label: "Required HC", value: required, helper: required === null ? "Planning source unavailable" : "Planned or mandated requirement", icon: Users, tone: required === null ? "slate" : "blue" },
+          { label: "Attendance Rate", value: attendanceRate, valueSuffix: "%", helper: "Latest processed attendance day", icon: UserCheck, tone: attendanceRate === null ? "slate" : attendanceRate >= 85 ? "green" : attendanceRate >= 70 ? "amber" : "red", unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
+          { label: "Active Headcount", value: metricDetail(m, "hc", "active"), helper: "employees on the books", icon: Users, tone: "blue", href: "/employees", unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc") },
+          { label: "Required HC", value: required, helper: required === null ? "Planning source unavailable" : "Planned or mandated requirement", icon: Users, tone: required === null ? "slate" : "blue", ...drill("hc") },
           { label: "Available HC", value: available, helper: available === null ? "Login-session source unavailable" : gap === null ? "Clocked-in workforce" : `${formatValue(gap)} net gap`, icon: UserCheck, tone: available === null || gap === null ? "slate" : gap > 0 ? "amber" : "green" },
           { label: "Roster Adherence", value: rosterAdherence, valueSuffix: "%", helper: "Rostered versus actual attendance", icon: Target, tone: rosterAdherence === null ? "slate" : "violet" },
-          { label: "Missing Punch", value: missingPunch, helper: "Attendance exceptions", icon: Clock3, tone: missingPunch && missingPunch > 0 ? "red" : "green" },
+          { label: "Missing Punch", value: missingPunch, helper: "Attendance exceptions", icon: Clock3, tone: missingPunch && missingPunch > 0 ? "red" : "green", ...drill("att") },
         ]}
       />
 
@@ -118,6 +151,77 @@ export function WfmReferenceLayout({
           </div>
         </ReferencePanel>
         <ReferenceWorkInbox maxItems={4} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <ReferencePanel
+          title="Processed Attendance Breakdown"
+          action={
+            <span className="text-xs text-[#61708a]">
+              {expectedToWork === null ? "source unavailable" : `${formatValue(expectedToWork)} expected to work`}
+            </span>
+          }
+          bodyClassName="p-0"
+        >
+          <div className="divide-y divide-[#edf1f6]">
+            <ReferenceListRow icon={UserCheck} title="Present" subtitle="Full day attended" value={present} tone="green" />
+            <ReferenceListRow icon={Clock3} title="Half Day" subtitle="Counted as 0.5 of a day" value={halfDay} tone="amber" />
+            <ReferenceListRow icon={Clock3} title="Late Marks" subtitle="Flagged late on arrival" value={late} tone="amber" />
+            <ReferenceListRow icon={Clock3} title="Missing Punch" subtitle="Requires punch correction" value={missingPunch} tone="red" />
+            <ReferenceListRow icon={Users} title="Absent" subtitle="No attendance recorded" value={absent} tone="red" />
+            <ReferenceListRow icon={CalendarClock} title="On Approved Leave" subtitle="Excluded from the attendance rate" value={onLeave} tone="blue" />
+          </div>
+        </ReferencePanel>
+
+        <div className="grid gap-4">
+          <ReferencePanel title="Live vs Processed">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-[#dbe7f8] bg-[#f5f9ff] p-4">
+                <p className="text-xs font-bold text-[#0b63e5]">Live sessions</p>
+                <p className="mt-2 text-[25px] font-extrabold leading-none text-[#0b1f44]">{formatValue(livePresent)}</p>
+                <p className="mt-2 text-xs text-[#71809a]">Currently logged in</p>
+              </div>
+              <div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4">
+                <p className="text-xs font-bold text-[#16a34a]">Processed present</p>
+                <p className="mt-2 text-[25px] font-extrabold leading-none text-[#0b1f44]">{formatValue(present)}</p>
+                <p className="mt-2 text-xs text-[#71809a]">Reconciled attendance</p>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-[#71809a]">
+              {liveVsProcessed === null
+                ? "One of the two sources is unavailable, so the gap cannot be computed."
+                : `${formatValue(Math.abs(liveVsProcessed))} ${liveVsProcessed >= 0 ? "more live than processed" : "more processed than live"} — a large gap means reconciliation is behind.`}
+            </p>
+          </ReferencePanel>
+
+          <ReferencePanel title="Biometric Sync Health">
+            {syncState === null ? (
+              <p className="py-6 text-center text-sm text-[#a0aec0]">Cosec sync status unavailable</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[#61708a]">Status</span>
+                  <span className={`font-bold ${syncState.toLowerCase().includes("ok") || syncState.toLowerCase().includes("health") ? "text-[#16a34a]" : "text-[#ef4444]"}`}>
+                    {syncState}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[#61708a]">Data confidence</span>
+                  <span className="font-bold text-[#0b1f44]">{formatValue(syncConfidence, "%")}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[#61708a]">Last run</span>
+                  <span className="font-semibold text-[#0b1f44]">
+                    {syncLatestRun?.started_at ? String(syncLatestRun.started_at) : "—"}
+                  </span>
+                </div>
+              </div>
+            )}
+          </ReferencePanel>
+
+          <AttendanceExceptionPanel data={data} />
+          <BiometricCoveragePanel data={data} />
+        </div>
       </div>
     </div>
   );

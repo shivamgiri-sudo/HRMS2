@@ -25,12 +25,23 @@ import {
   arrayAt,
   asNumber,
   formatValue,
+  metricDetail,
+  metricUnavailableReason,
   metricValue,
 } from "../reference-dashboard-model";
+import {
+  AttendanceBreakdownPanel,
+} from "./ReferenceSharedPanels";
 
 export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const quality = data.quality;
+
+  // Set when the upstream audit database is unreachable. Rendering dashes without this
+  // is indistinguishable from a genuinely quiet audit period.
+  const qualityUnavailable = quality.unavailable_reason ? String(quality.unavailable_reason) : null;
+  const sourceLatest = quality.source_latest_record ? String(quality.source_latest_record) : null;
 
   const auditScore = asNumber(quality.avg_score ?? quality.average_score ?? metricValue(m, "quality"));
   const auditsDone = asNumber(quality.total_audits ?? quality.audits_done);
@@ -65,6 +76,16 @@ export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashb
         right={filters}
       />
 
+      {qualityUnavailable ? (
+        <div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] px-4 py-3 text-sm text-[#b45309]">
+          {qualityUnavailable}
+        </div>
+      ) : sourceLatest ? (
+        <p className="text-xs text-[#71809a]">
+          Quality data as of {sourceLatest} · source db_audit.call_quality_assessment
+        </p>
+      ) : null}
+
       <ReferenceMetricGrid
         columns={4}
         loading={data.loading}
@@ -96,6 +117,35 @@ export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashb
             helper: "audits awaiting review",
             icon: AlertTriangle,
             tone: pendingAudits && pendingAudits > 20 ? "red" : "amber",
+          },
+        ]}
+      />
+
+      {/* Workforce context for the audited population. The QUALITY bundle gained hc/att
+          in the metric-bundle fix; without these tiles the data was fetched and dropped. */}
+      <ReferenceMetricGrid
+        columns={2}
+        loading={data.loading}
+        metrics={[
+          {
+            label: "Agents In Scope",
+            value: metricDetail(m, "hc", "active") ?? metricValue(m, "hc"),
+            helper: "active headcount for this scope",
+            icon: Users,
+            tone: "blue",
+            href: "/employees",
+            unavailableReason: metricUnavailableReason(m, "hc"),
+            ...drill("hc"),
+          },
+          {
+            label: "Attendance Rate",
+            value: metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att"),
+            valueSuffix: "%",
+            helper: "latest processed attendance day",
+            icon: CheckCircle2,
+            tone: "green",
+            unavailableReason: metricUnavailableReason(m, "att"),
+            ...drill("att"),
           },
         ]}
       />
@@ -175,6 +225,10 @@ export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashb
         <ReferenceQuickLink href="/quality/team" title="Team Scorecards" icon={Star} />
         <ReferenceQuickLink href="/quality/executive" title="Executive Quality" icon={Target} />
         <ReferenceQuickLink href="/quality/my-dashboard" title="My Quality" icon={Users} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
       </div>
     </div>
   );

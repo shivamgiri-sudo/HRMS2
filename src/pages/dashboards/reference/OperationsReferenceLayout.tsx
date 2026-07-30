@@ -26,9 +26,14 @@ import {
   metricDetail,
   metricValue,
 } from "../reference-dashboard-model";
+import {
+  AttendanceBreakdownPanel,
+  LiveVsProcessedPanel,
+} from "./ReferenceSharedPanels";
 
 export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const opsPulse = data.opsPulse;
 
   // Field names from /api/bi/daily-operations-pulse: total_calls, avg_aht_seconds, agents_logged_in, login_adherence_pct
@@ -98,6 +103,7 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
             helper: "agents on floor",
             icon: Users,
             tone: "violet",
+            ...drill("hc"),
           },
         ]}
       />
@@ -186,6 +192,11 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
         <ReferenceQuickLink href="/operations-kpi" title="Operations KPI" icon={TrendingUp} />
         <ReferenceQuickLink href="/quality/dashboard" title="QA Queue" icon={AlertOctagon} />
         <ReferenceQuickLink href="/wfm/roster" title="Roster" icon={Users} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
+        <LiveVsProcessedPanel data={data} />
       </div>
     </div>
   );

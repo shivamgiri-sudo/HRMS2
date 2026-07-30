@@ -118,6 +118,15 @@ export function normalizeQualityDashboardData(
 ): JsonRecord {
   const summaryEnvelope = asRecord(summaryPayload);
   const summary = asRecord(summaryEnvelope.summary ?? summaryEnvelope.data ?? summaryEnvelope);
+  // The backend now returns summary:null plus unavailableSources when the upstream audit
+  // database is down, instead of a full set of zeros that read as "0% quality". Carry the
+  // reason through so the layout states it rather than showing dashes with no explanation.
+  const unavailableReason = summaryEnvelope.unavailableSources
+    ? String(asRecord(summaryEnvelope.unavailableSources).quality ?? "Quality source unavailable")
+    : null;
+  const sourceLatest = summaryEnvelope.source
+    ? (asRecord(summaryEnvelope.source).latest_record ?? null)
+    : null;
   const totalCalls = asNumber(summary.total_calls);
   const auditedCalls = asNumber(summary.audited_calls ?? summary.total_audits);
   const failedAudits = asNumber(summary.failed_audits ?? summary.failed_count);
@@ -146,6 +155,8 @@ export function normalizeQualityDashboardData(
     .sort((left, right) => (left.score ?? Number.POSITIVE_INFINITY) - (right.score ?? Number.POSITIVE_INFINITY));
 
   return {
+    unavailable_reason: unavailableReason,
+    source_latest_record: sourceLatest,
     avg_score: asNumber(summary.avg_quality_score ?? summary.avg_score ?? summary.average_score),
     total_audits: auditedCalls,
     fail_rate: failRate,

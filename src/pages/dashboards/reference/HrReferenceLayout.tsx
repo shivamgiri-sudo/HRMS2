@@ -15,9 +15,19 @@ import {
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asNumber, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import {
+  AttendanceBreakdownPanel,
+  EsignVerificationPanel,
+  ExitPipelinePanel,
+  OnboardingFunnelPanel,
+  DocumentCompliancePanel,
+  TrainingProgressPanel,
+  LeaveApprovalPanel,
+} from "./ReferenceSharedPanels";
 
 export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: React.ReactNode }) {
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const selected = asNumber(data.ats.selected_candidates ?? data.ats.selectedCandidates ?? data.ats.total_selected);
   const submitted = metricDetail(m, "onb", "submitted");
   const pending = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
@@ -28,6 +38,18 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   // Several HR sources (DPDP withdrawals, name-match, TAT) hold no rows in production.
   // Those tiles must say so rather than rendering a confident "0".
   const onbReason = metricUnavailableReason(m, "onb");
+
+  // These four were already fetched on every HR dashboard load and then discarded, so
+  // the request was paid for and the panel stayed thin. All are backed by rows in
+  // production: appointment letters, joining-document checklists, headcount, attendance.
+  const headcount = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
+  const attendanceRate = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
+  const appointmentEsign = metricDetail(m, "appointmentEsign", "pending") ?? metricValue(m, "appointmentEsign");
+  const joiningDocs = metricDetail(m, "joiningDocEsign", "pending") ?? metricValue(m, "joiningDocEsign");
+  const joiningDocsOverdue = metricDetail(m, "joiningDocEsign", "overdue");
+  const nameMismatch = metricDetail(m, "nm", "blocking") ?? metricValue(m, "nm");
+  const tatOpen = metricDetail(m, "tat", "open") ?? metricValue(m, "tat");
+  const tatOverdue = metricDetail(m, "tat", "overdue");
   const previousSelected = asNumber(data.ats.previous_selected ?? data.ats.last_30_selected);
   const previousSubmitted = asNumber(data.ats.previous_submitted ?? data.ats.last_30_submitted);
 
@@ -43,15 +65,24 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
       <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
         { label: "Selected Candidates", value: selected, helper: previousSelected === null ? "Current reporting window" : "Vs Last 30 Days", icon: UserCheck, tone: "blue", trend: variance(selected, previousSelected), href: "/ats/dashboard" },
         { label: "Onboarding Submitted", value: submitted, helper: previousSubmitted === null ? "Current reporting window" : "Vs Last 30 Days", icon: FileCheck2, tone: "green", trend: variance(submitted, previousSubmitted), href: "/onboarding" },
-        { label: "Onboarding Pending", value: pending, helper: "Awaiting completion or review", icon: Hourglass, tone: "amber", href: "/onboarding", unavailableReason: onbReason },
-        { label: "Onboarding Stuck", value: stuck, helper: "Requires intervention", icon: TriangleAlert, tone: "red", href: "/onboarding", unavailableReason: onbReason },
-        { label: "BGV Pending", value: bgv, helper: "Verification cases open", icon: ShieldCheck, tone: "red", href: "/ats/bgv", unavailableReason: metricUnavailableReason(m, "bgv") },
+        { label: "Onboarding Pending", value: pending, helper: "Awaiting completion or review", icon: Hourglass, tone: "amber", href: "/onboarding", unavailableReason: onbReason, ...drill("onb") },
+        { label: "Onboarding Stuck", value: stuck, helper: "Requires intervention", icon: TriangleAlert, tone: "red", href: "/onboarding", unavailableReason: onbReason, ...drill("onb") },
+        { label: "BGV Pending", value: bgv, helper: "Verification cases open", icon: ShieldCheck, tone: "red", href: "/ats/bgv", unavailableReason: metricUnavailableReason(m, "bgv"), ...drill("bgv") },
       ]} />
 
-      <div className="grid max-w-[760px] gap-3 sm:grid-cols-2">
-        <ReferenceMetricGrid columns={2} loading={data.loading} metrics={[
+      <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
+        { label: "Active Headcount", value: headcount, helper: "Employees currently active", icon: UsersRound, tone: "blue", href: "/employees", unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc") },
+        { label: "Attendance Rate", value: attendanceRate, valueSuffix: "%", helper: "Latest processed attendance day", icon: UserCheck, tone: attendanceRate !== null && attendanceRate >= 85 ? "green" : "amber", unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
+        { label: "Appointment eSign Pending", value: appointmentEsign, helper: "Awaiting candidate or company signature", icon: FileCheck2, tone: "amber", unavailableReason: metricUnavailableReason(m, "appointmentEsign"), ...drill("appointmentEsign") },
+        { label: "Joining Docs Pending", value: joiningDocs, helper: joiningDocsOverdue ? `${joiningDocsOverdue} overdue` : "Checklist items outstanding", icon: FileCheck2, tone: joiningDocsOverdue ? "red" : "amber", href: "/ats/joining-documents-tracker", unavailableReason: metricUnavailableReason(m, "joiningDocEsign") },
+        { label: "Resignation Discussions", value: resignation, helper: "Manager discussions pending", icon: UsersRound, tone: "amber", href: "/exit/command-center", unavailableReason: metricUnavailableReason(m, "resign"), ...drill("resign") },
+      ]} />
+
+      <div className="grid max-w-[1140px] gap-3 sm:grid-cols-3">
+        <ReferenceMetricGrid columns={3} loading={data.loading} metrics={[
           { label: "DPDP Withdrawal Requests", value: dpdp, helper: "Privacy requests pending", icon: FileX2, tone: "violet", href: "/compliance/dpdp-withdrawal-admin", unavailableReason: metricUnavailableReason(m, "dpdp") },
-          { label: "Resignation Discussions Pending", value: resignation, helper: "Manager discussions pending", icon: UsersRound, tone: "amber", href: "/exit/command-center", unavailableReason: metricUnavailableReason(m, "resign") },
+          { label: "Name Mismatches Blocking", value: nameMismatch, helper: "Blocking employee-code generation", icon: TriangleAlert, tone: "red", href: "/ats/name-consistency", unavailableReason: metricUnavailableReason(m, "nm") },
+          { label: "Open TAT Items", value: tatOpen, helper: tatOverdue ? `${tatOverdue} overdue` : "Governance tasks open", icon: Hourglass, tone: tatOverdue ? "red" : "amber", unavailableReason: metricUnavailableReason(m, "tat") },
         ]} />
       </div>
 
@@ -71,6 +102,16 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
           ]}
         />
         <ReferenceWorkInbox maxItems={5} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <OnboardingFunnelPanel data={data} />
+        <AttendanceBreakdownPanel data={data} />
+        <ExitPipelinePanel data={data} />
+        <EsignVerificationPanel data={data} />
+        <DocumentCompliancePanel data={data} />
+        <TrainingProgressPanel data={data} />
+        <LeaveApprovalPanel data={data} />
       </div>
     </div>
   );

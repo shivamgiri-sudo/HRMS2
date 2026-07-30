@@ -24,6 +24,13 @@ export interface ReferenceDashboardData {
   variant: RoleDashboardVariant;
   summary: DashboardSummary;
   metrics: Record<string, MetricResult>;
+  /**
+   * Returns the props that make a metric tile open the drill-down drawer, or `{}` when
+   * the metric has no usable drilldown route. Spread onto a ReferenceMetric:
+   *   { label: "Headcount", value: hc, ...data.drilldownFor("hc") }
+   * The drawer itself is owned once by ReferenceRoleDashboard.
+   */
+  drilldownFor?: (metricKey: string) => { onDrilldown?: () => void };
   employee: EmployeeDashboardData;
   ats: JsonRecord;
   system: JsonRecord;

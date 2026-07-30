@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Briefcase,
   Calendar,
@@ -26,9 +27,14 @@ import {
   formatValue,
   metricValue,
 } from "../reference-dashboard-model";
+import {
+  OnboardingFunnelPanel,
+  RecruiterFunnelPanel,
+} from "./ReferenceSharedPanels";
 
-export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardData }) {
+export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const ats = data.ats;
 
   // /api/ats/stats returns: total_candidates, by_stage (Record<string,number>), by_source, conversion_rate,
@@ -59,6 +65,7 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
         title="Recruitment Dashboard"
         subtitle="ATS pipeline, walk-ins, offers and joining funnel"
         badge="Recruiter View"
+        right={filters}
       />
 
       <ReferenceMetricGrid
@@ -72,6 +79,7 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
             icon: FileUser,
             tone: "blue",
             trend: m.ats?.variancePct,
+            ...drill("onb"),
           },
           {
             label: "Walk-ins Today",
@@ -93,6 +101,7 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
             helper: "offer to onboarding converted",
             icon: CheckCircle2,
             tone: "green",
+            ...drill("onb"),
           },
         ]}
       />
@@ -177,6 +186,11 @@ export function RecruiterReferenceLayout({ data }: { data: ReferenceDashboardDat
         <ReferenceQuickLink href="/ats/walkin-queue" title="Walk-in Registry" icon={Calendar} />
         <ReferenceQuickLink href="/ats/offer-approvals" title="Offer Approvals" icon={Briefcase} />
         <ReferenceQuickLink href="/ats/sourcing-analysis" title="ATS Reports" icon={TrendingUp} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <OnboardingFunnelPanel data={data} />
+        <RecruiterFunnelPanel data={data} />
       </div>
     </div>
   );

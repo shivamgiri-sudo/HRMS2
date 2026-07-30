@@ -34,15 +34,25 @@ import {
   asNumber,
   formatValue,
   metricDetail,
+  metricUnavailableReason,
   metricValue,
   numberAt,
   read,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import {
+  AttendanceBreakdownPanel,
+  ExitPipelinePanel,
+  OnboardingFunnelPanel,
+  PayrollBlockersPanel,
+  AttendanceExceptionPanel,
+  DocumentCompliancePanel,
+} from "./ReferenceSharedPanels";
 
 export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const systemMetrics = (read(data.system, "metrics") ?? {}) as Record<string, unknown>;
   const active = asNumber(systemMetrics.activeEmployees) ?? metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const present = metricDetail(m, "att", "present");
@@ -68,10 +78,10 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
       <ReferenceHeader title="Super Admin Dashboard 👋" subtitle="Monitor your entire HR ecosystem and system health" right={filters ?? productHeaderControls} />
 
       <ReferenceMetricGrid columns={7} loading={data.loading} metrics={[
-        { label: "Total Employees", value: active, helper: "vs last month", icon: Users, tone: "blue" },
+        { label: "Total Employees", value: active, helper: "vs last month", icon: Users, tone: "blue", unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc") },
         { label: "Present Today", value: present, helper: attendance === null ? "Today" : `${attendance}%`, icon: UserCheck, tone: "green" },
-        { label: "On Leave Today", value: onLeave, helper: "Approved leave", icon: CalendarDays, tone: "red" },
-        { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red" },
+        { label: "On Leave Today", value: onLeave, helper: "Approved leave", icon: CalendarDays, tone: "red", ...drill("att") },
+        { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red", ...drill("att") },
         { label: "Total Branches", value: branches, helper: "Active", icon: Building2, tone: "green" },
         { label: "Open Positions", value: openPositions, helper: "Across departments", icon: Network, tone: "blue" },
         { label: "System Uptime", value: uptime, helper: uptime === "—" ? "Source unavailable" : "Reported by system health", icon: Activity, tone: uptime === "—" ? "slate" : "green" },
@@ -166,6 +176,15 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
             ))}
           </div>
         </ReferencePanel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
+        <PayrollBlockersPanel data={data} />
+        <OnboardingFunnelPanel data={data} />
+        <ExitPipelinePanel data={data} />
+        <AttendanceExceptionPanel data={data} />
+        <DocumentCompliancePanel data={data} />
       </div>
     </div>
   );

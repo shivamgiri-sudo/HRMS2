@@ -31,10 +31,17 @@ import {
   read,
 } from "../reference-dashboard-model";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
+import {
+  AttendanceBreakdownPanel,
+  LiveVsProcessedPanel,
+  AttendanceExceptionPanel,
+  BiometricCoveragePanel,
+} from "./ReferenceSharedPanels";
 
 export function WfmAttendanceReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: React.ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
   const m = data.metrics;
+  const drill = data.drilldownFor ?? (() => ({}));
   const active = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const present = metricDetail(m, "att", "present");
   const absent = metricDetail(m, "att", "absent");
@@ -72,11 +79,14 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
         columns={6}
         loading={data.loading}
         metrics={[
-          { label: "Total Employees", value: active, helper: "In selected scope", icon: Users, tone: "blue" },
+          { label: "Total Employees", value: active, helper: "In selected scope", icon: Users, tone: "blue",
+            ...drill("hc"), },
           { label: "Present Today", value: present, helper: attendanceRate === null ? "Live" : `${attendanceRate}%`, icon: UserCheck, tone: "green" },
           { label: "Late Arrivals", value: late, helper: latePct === null ? "Today" : `${latePct}%`, icon: Clock3, tone: "amber" },
-          { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red" },
-          { label: "On Leave", value: onLeave, helper: "Approved leave", icon: CalendarClock, tone: "blue" },
+          { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red",
+            ...drill("att"), },
+          { label: "On Leave", value: onLeave, helper: "Approved leave", icon: CalendarClock, tone: "blue",
+            ...drill("att"), },
           { label: "Working Remotely", value: workingRemotely, helper: "WFH / remote", icon: Network, tone: "violet" },
         ]}
       />
@@ -204,6 +214,13 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
             <ReferenceQuickLink icon={CalendarClock} title="View My Schedule" href="/my-roster" tone="blue" />
           </div>
         </ReferencePanel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AttendanceBreakdownPanel data={data} />
+        <LiveVsProcessedPanel data={data} />
+        <AttendanceExceptionPanel data={data} />
+        <BiometricCoveragePanel data={data} />
       </div>
     </div>
   );
