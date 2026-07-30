@@ -58,13 +58,22 @@ export class MiraDataUnavailableError extends Error {
 const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   // Listed first so "coach my attendance" reaches the coach rather than the
   // single-number attendance intent.
-  { intent: 'coach', patterns: [/\bcoach\b/i, /\bhow am i doing\b/i, /\bmy performance\b/i, /\bperformance review\b/i, /\bmotivate\b/i, /\bmotivation\b/i, /\bmy progress\b/i, /\banaly[sz]e (?:me|my (?:data|performance|work|record))\b/i, /\bhow can i improve\b/i, /\bwhere (?:do i stand|am i lagging)\b/i, /\bmeri performance\b/i, /\bkaisa (?:kaam )?kar raha hoon\b/i, /\bmujhe guide karo\b/i] },
+  // "highlight ... low light" is speech-to-text for "highlights and lowlights",
+  // which is exactly the report the coach produces. "status of my team" reaches
+  // the same place: the coach is scope-enforced, so a manager gets their team and
+  // anyone else gets only themselves.
+  { intent: 'coach', patterns: [/\bcoach\b/i, /\bhow am i doing\b/i, /\bmy performance\b/i, /\bperformance review\b/i, /\bmotivate\b/i, /\bmotivation\b/i, /\bmy progress\b/i, /\banaly[sz]e (?:me|my (?:data|performance|work|record|team))\b/i, /\bhow can i improve\b/i, /\bwhere (?:do i stand|am i lagging)\b/i, /\bhigh ?lights?\b/i, /\blow ?lights?\b/i, /\bstatus of (?:my|the) team\b/i, /\bmy team(?:'s)? (?:status|performance|summary)\b/i, /\bhow is my team\b/i, /\bteam summary\b/i, /\bmeri performance\b/i, /\bkaisa (?:kaam )?kar raha hoon\b/i, /\bmujhe guide karo\b/i] },
   { intent: 'salary', patterns: [/\bsalary\b/i, /\bpayslip\b/i, /\bpay slip\b/i, /\bnet pay\b/i, /\bgross pay\b/i, /\btake[ -]?home\b/i, /\bctc\b/i, /\bearnings?\b/i, /\bdeductions?\b/i, /meri salary/i, /mera payslip/i, /kitna pay/i] },
   { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i, /meri leave/i, /kitni chhutti/i, /chhutti (?:baki|remaining)/i] },
   { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i, /how many days (?:was i|did i) (?:present|attend)/i, /meri attendance/i, /mera punch/i, /kitne din (?:present|attend)/i, /aaj (?:ka )?punch/i, /aaj present/i, /kal (?:ka )?attendance/i] },
-  { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i, /meri shift/i, /mera roster/i, /kal ki shift/i, /week off kab/i] },
+  // "end time" and "start time" are how people ask about their shift without
+  // using the word shift at all.
+  { intent: 'roster', patterns: [/\broster\b/i, /\bmy shift\b/i, /\bshift timing\b/i, /\b(?:start|end|log ?out|sign ?off|closing) time\b/i, /\bwhat time (?:do i|does my shift) (?:end|finish|start|begin)\b/i, /\bwhen (?:do i|does my shift) (?:end|finish|start)\b/i, /\bweek(?:ly)? off\b/i, /\btomorrow(?:'s)? shift\b/i, /\bholiday\b/i, /meri shift/i, /mera roster/i, /kal ki shift/i, /week off kab/i, /chhutti kab/i] },
   { intent: 'documents', patterns: [/\bdocuments?\b/i, /\bdoc status\b/i, /\bkyc\b/i, /\bmissing docs?\b/i, /\bverified docs?\b/i] },
-  { intent: 'pending_actions', patterns: [/\bpending actions?\b/i, /\bpending tasks?\b/i, /\bmy inbox\b/i, /\bwork inbox\b/i, /\bapprovals? pending\b/i, /\bwhat do i need to do\b/i, /\bactions? (?:are )?pending (?:from|for) my side\b/i] },
+  // "in box" as two words is what speech-to-text does with "inbox", and "inbox"
+  // on its own is how people actually ask — the old patterns needed "my" or
+  // "work" in front of it.
+  { intent: 'pending_actions', patterns: [/\bpending actions?\b/i, /\bpending tasks?\b/i, /\bin ?box\b/i, /\bunread\b/i, /\bapprovals? pending\b/i, /\bpending approvals?\b/i, /\bwhat do i need to do\b/i, /\bactions? (?:are )?pending (?:from|for) my side\b/i, /\bawaiting my\b/i] },
   { intent: 'support', patterns: [/\bhelpdesk\b/i, /\bsupport tickets?\b/i, /\bmy tickets?\b/i, /\bgrievances?\b/i, /\bcomplaints?\b/i] },
   { intent: 'payroll_readiness', patterns: [/\bpayroll readiness\b/i, /\bpayroll blocked\b/i, /\bsalary hold\b/i, /\bpayroll status\b/i] },
   { intent: 'loans', patterns: [/\bloan\b/i, /\badvance recovery\b/i, /\binstallments?\b/i, /\bemi\b/i] },
