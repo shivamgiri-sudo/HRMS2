@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Youtube, MapPin, Megaphone } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Twitter, MapPin, Megaphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -18,13 +18,12 @@ const FEATURES = [
   { icon: CheckCircle2, label: "Leave & Payroll", desc: "Streamlined approvals and payroll processing" },
 ];
 
-// Update these URLs with the real MAS Callnet social profile links
 const SOCIAL_LINKS = [
-  { label: "Website",   href: "https://YOUR_COMPANY_WEBSITE",  icon: Globe },
-  { label: "LinkedIn",  href: "https://YOUR_LINKEDIN_URL",      icon: Linkedin },
-  { label: "Instagram", href: "https://YOUR_INSTAGRAM_URL",     icon: Instagram },
-  { label: "Facebook",  href: "https://YOUR_FACEBOOK_URL",      icon: Facebook },
-  { label: "YouTube",   href: "https://YOUR_YOUTUBE_URL",       icon: Youtube },
+  { label: "Website",   href: "https://mascallnet.ai",                                    icon: Globe },
+  { label: "LinkedIn",  href: "https://in.linkedin.com/company/mas-callnet-pvt-ltd",      icon: Linkedin },
+  { label: "Instagram", href: "https://instagram.com/teammas9",                           icon: Instagram },
+  { label: "X",         href: "https://x.com/MCallnet",                                   icon: Twitter },
+  { label: "Facebook",  href: "https://facebook.com/TeamMas9",                            icon: Facebook },
 ];
 
 type ForgotPasswordChannel = 'email' | 'sms';
