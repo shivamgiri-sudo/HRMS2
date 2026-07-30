@@ -95,6 +95,61 @@ Treat these as protected unless the user explicitly approves replacement:
 10. No mock metrics in production flows. Demo tenants/data must be isolated and labelled.
 11. Do not push, merge, deploy or update production without user approval.
 
+## Concurrent Agent Rule — More Than One Claude Works Here
+
+Several Claude sessions edit this repository at the same time, often the same
+files within the same minute. Treat every change you did not make as another
+agent's work in progress, and never as noise to be tidied away.
+
+### Never do these
+
+1. **Never revert, overwrite or discard another session's code.** Not their
+   commits, not their uncommitted working-tree changes. If their change looks
+   wrong, say so in your report and leave it alone — you cannot tell a mistake
+   from work that is half-finished.
+2. **Never force-push any shared branch**, `main` above all. A force-push here
+   has already destroyed merged work; see the log below.
+3. **Never use `git add -A`, `git add .`, `git commit -a`, or `git checkout --`
+   across the tree.** Stage your own files by explicit path, every time. A broad
+   add sweeps another agent's in-flight edits into your commit, where they are
+   attributed to the wrong change and impossible to find later.
+4. **Never `git stash` to "clean up"** before your own work. The stash you drop
+   may not be yours.
+5. **Never copy a server-side directory over the repository** to "sync
+   production". A server copy is a snapshot of one moment and silently deletes
+   anything merged since; see the log below.
+
+### Always do these
+
+1. `git fetch` and re-read `git log origin/main` immediately before you commit.
+   `main` moves several times an hour.
+2. `git status --porcelain` before staging. Anything dirty that is not yours,
+   leave dirty, and do not include it.
+3. After committing, confirm what actually landed with
+   `git show --stat HEAD` — verify your files are in it and nothing else is.
+4. After pushing, confirm your commit is an ancestor of `origin/main`
+   (`git merge-base --is-ancestor <sha> origin/main`). A push can report success
+   while your work sits outside the branch.
+5. Prefer a scratch worktree for anything long-running, so a concurrent commit
+   cannot absorb your half-finished files.
+6. If another agent's process holds a port, a lock or a dev server, work around
+   it — a different port, a different worktree. Do not kill it.
+
+### What went wrong on 2026-07-29, so it is not repeated
+
+- A **force-push of `main`** (`805392a` → `d465e44`) dropped four already-merged
+  commits: the Mira feature, its 500-error hotfix, a deploy fix and an auth fix.
+  They survived only because an unrelated branch still referenced them.
+- A **"sync server-side production patches" commit** replaced `db/mysql.ts` with
+  an older server copy, silently removing connection-pool idle bounds and leaving
+  `main` failing its own test.
+- A **broad `git add`** absorbed three in-progress backend files into an
+  unrelated RBAC commit, so a streaming feature is recorded under a role-model
+  change and its own commit contains only tests.
+
+None of these were malicious. All three came from treating the repository as
+though one agent owned it.
+
 ## Database Boundary Rule (Charter v1.0, 2026-05-29)
 
 ### MySQL First — Permanent Direction
