@@ -169,9 +169,12 @@ export function BranchBudgetPlannerGrid({
         byLine.set(index, {
           amount,
           qty: Number(line.quantity) || null,
-          cells: costCentres.map((cc) => ({ units: pctById.get(cc.id) ?? null, amount: byCc.get(cc.id) ?? 0 })),
-          // Surfaced live, because the server refuses a manual split that is not exactly 100%.
-          unallocated: Math.round((100 - pctTotal) * 100) / 100,
+          // units carries the rupee share the user types; amount is the same figure, so the
+          // Amount column always agrees with what was entered.
+          cells: costCentres.map((cc) => ({ units: byCc.get(cc.id) ?? null, amount: byCc.get(cc.id) ?? 0 })),
+          // In rupees, because that is what the user is typing. The server still needs the
+          // percentages to total 100, which is the same condition as the amounts totalling the row.
+          unallocated: Math.round(amount - scope.reduce((a, cc) => a + (byCc.get(cc.id) ?? 0), 0)),
         });
         return;
       }
@@ -403,13 +406,18 @@ export function BranchBudgetPlannerGrid({
                             {/* Cost-centre scope. A branch-common line hits every cost centre unless
                                 you say otherwise — real costs are often partial, so this is where a
                                 cost centre gets unselected. */}
-                            {line.planningLevel === "branch" && costCentres.length > 0 && (
+                            {costCentres.length > 0 && (
                               <span className="relative">
                                 <button type="button" aria-label={`Cost centres for ${line.subHead}`}
                                   title="Choose which cost centres this line applies to"
-                                  className={`rounded border px-1 font-mono text-[10px] ${scopeCount(line) < costCentres.length ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-300 text-slate-500 hover:bg-slate-100"}`}
+                                  className={`rounded border px-1.5 font-mono text-[11px] font-semibold ${
+                                    line.planningLevel !== "branch"
+                                      ? "border-blue-300 bg-blue-50 text-blue-800"
+                                      : scopeCount(line) < costCentres.length
+                                        ? "border-amber-400 bg-amber-50 text-amber-900"
+                                        : "border-slate-400 bg-white text-slate-700 hover:bg-slate-100"}`}
                                   onClick={() => setScopeRow(scopeRow === index ? null : index)}>
-                                  {scopeCount(line)}/{costCentres.length}
+                                  {line.planningLevel === "branch" ? `${scopeCount(line)}/${costCentres.length} CC` : "1 CC"}
                                 </button>
                                 {scopeRow === index && (
                                   <div className="absolute left-0 top-6 z-50 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
@@ -420,10 +428,22 @@ export function BranchBudgetPlannerGrid({
                                     </div>
                                     <div className="max-h-44 overflow-auto">
                                       {costCentres.map((cc) => {
+                                        const direct = line.planningLevel !== "branch";
                                         const selected = line.includedCostCentreIds ?? [];
-                                        const on = selected.length === 0 || selected.includes(cc.id);
+                                        const on = direct
+                                          ? line.costCentreId === cc.id
+                                          : selected.length === 0 || selected.includes(cc.id);
+                                        if (direct) {
+                                          return (
+                                            <label key={cc.id} className="flex items-center gap-1.5 py-0.5 text-[12px] text-slate-700">
+                                              <input type="radio" name={`cc-${index}`} checked={on} disabled={!canEdit}
+                                                onChange={() => onUpdateLine(index, { costCentreId: cc.id })} />
+                                              <span className="truncate font-mono">{cc.costCentreCode}</span>
+                                            </label>
+                                          );
+                                        }
                                         return (
-                                          <label key={cc.id} className="flex items-center gap-1.5 py-0.5 text-[11px] text-slate-700">
+                                          <label key={cc.id} className="flex items-center gap-1.5 py-0.5 text-[12px] text-slate-700">
                                             <input type="checkbox" checked={on} disabled={!canEdit}
                                               onChange={(e) => {
                                                 // Empty means "all", so the first unticking has to
@@ -486,8 +506,31 @@ export function BranchBudgetPlannerGrid({
                         <td className="border-b border-r border-slate-200 bg-white p-0">
                           <select disabled={!canEdit} aria-label="Sharing method"
                             className="w-full bg-transparent px-1.5 py-1 text-[13px] font-medium text-slate-800 outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30"
-                            value={method} onChange={(e) => onUpdateLine(index, { allocationDriver: e.target.value })}>
+                            value={line.planningLevel === "branch" ? method : "__direct"}
+                            onChange={(e) => {
+                              if (e.target.value === "__direct") {
+                                onUpdateLine(index, {
+                                  planningLevel: "cost_centre",
+                                  attributionScope: "cost_centre",
+                                  costCentreId: line.costCentreId ?? costCentres[0]?.id ?? null,
+                                  allocationDriver: "direct_tagging",
+                                  includedCostCentreIds: null,
+                                });
+                                return;
+                              }
+                              onUpdateLine(index, {
+                                planningLevel: "branch",
+                                attributionScope: "branch_common",
+                                costCentreId: null,
+                                allocationDriver: e.target.value,
+                              });
+                            }}>
                             {BRANCH_SHARING_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                            {/* Not a branch-level sharing method: it drops the line to
+                                planning_level 'cost_centre' so it sits on one cost centre and is
+                                never spread. Kept in the same dropdown because that is where a
+                                planner looks for it. */}
+                            <option value="__direct">Direct to one cost centre</option>
                           </select>
                         </td>
                         <td className={`border-b border-r border-slate-200 px-1 text-center font-mono font-bold ${calcCell} ${up ? "text-emerald-700" : "text-blue-700"}`}
@@ -499,14 +542,19 @@ export function BranchBudgetPlannerGrid({
                             because no other method takes a per-cost-centre figure from the user. */}
                         {costCentres.flatMap((cc, ci) => [
                           <td key={`u-${index}-${cc.id}`} className={`border-b border-l border-slate-200 p-0 ${isManual ? "bg-white" : calcCell}`}
-                            title={isManual ? "Share of this line, in percent. Must total 100." : `${method || "This method"} derives each cost centre's share from its driver, so there is nothing to type here.`}
+                            title={isManual ? "This cost centre's share in rupees. The shares must add up to the row Amount." : `${method || "This method"} derives each cost centre's share from its driver, so there is nothing to type here.`}
                             onClick={isManual ? undefined : explain(`${method || "This method"} derives each share from its driver — switch the row to Manual % to type shares.`)}>
                             {isManual ? (
-                              <input type="number" min="0" max="100" step="0.01" disabled={!canEdit} aria-label={`${cc.costCentreCode} share percent`}
+                              <input type="number" min="0" step="1" disabled={!canEdit} aria-label={`${cc.costCentreCode} share amount`}
                                 className={`w-full bg-transparent px-2 py-1 ${num} outline-none focus:bg-white focus:ring-2 focus:ring-blue-600/30 ${unbalanced ? "bg-rose-50" : ""}`}
-                                value={line.manualAllocations?.find((m) => m.costCentreId === cc.id)?.percentage ?? ""}
+                                value={p?.cells[ci]?.units ?? ""}
                                 onChange={(e) => {
-                                  const pct = Number(e.target.value);
+                                  // Typed in rupees because that is how a branch admin thinks
+                                  // ("rent is 4,50,000 of which Onfido takes 2,00,000"), but the
+                                  // engine stores manual splits as percentages, so convert here.
+                                  const amount = Number(e.target.value) || 0;
+                                  const total = p?.amount ?? 0;
+                                  const pct = total > 0 ? (amount / total) * 100 : 0;
                                   const rest = (line.manualAllocations ?? []).filter((m) => m.costCentreId !== cc.id);
                                   onUpdateLine(index, { manualAllocations: [...rest, { costCentreId: cc.id, percentage: pct }] });
                                 }} />
@@ -543,6 +591,23 @@ export function BranchBudgetPlannerGrid({
                 </Fragment>
               );
             })}
+            {(() => {
+              const shown = activeHeads.reduce((a, h) => a + (rowsByHead.get(h.headName)?.length ?? 0), 0);
+              const filtering = Boolean(query.trim()) || filter !== "all";
+              if (!filtering || shown > 0) return null;
+              return (
+                <tr>
+                  <td className="sticky left-0 z-10 border-b border-r border-slate-200 bg-white" />
+                  <td className="border-b border-slate-200 bg-white px-3 py-6 text-center text-slate-600"
+                    colSpan={7 + costCentres.length * 2}>
+                    Nothing matches{query.trim() ? ` "${query.trim()}"` : ""}
+                    {filter !== "all" ? ` in ${filter === "planned" ? "planned" : "not planned"} rows` : ""}.
+                    <button type="button" className="ml-2 text-blue-700 underline"
+                      onClick={() => { setQuery(""); setFilter("all"); }}>Clear</button>
+                  </td>
+                </tr>
+              );
+            })()}
           </tbody>
 
           <tfoot>
