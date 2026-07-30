@@ -1,21 +1,20 @@
--- 436_pnl_people_classification_seed.sql
+-- 438_pnl_people_classification_seed_v2.sql
 --
--- Seeds pnl_cost_classification_rule so payroll splits into Agent / DSC / BMC the way the business
--- defines them. The table, the buckets and the matching engine all already existed; nothing was
--- ever seeded, so every person fell through to the fallback in bpo-pnl.service.ts:
+-- Supersedes 436, which FAILED on "Field 'rule_name' doesn't have a default value" and could not
+-- be retried: the migration runner had already written its filename into schema_migrations, so a
+-- re-run hit a duplicate primary key. Tracking is by filename, so the corrected statement ships
+-- under a new name rather than by editing a file the runner considers spent.
 --
---   bucket = person.process_id
---     ? (isSupportRole(person) ? 'dsc_people' : 'agent_salary')
---     : 'bmc_people'
+-- Also folds in the WFM decision that 437 expressed as a DELETE: DIALER & WFM gets NO blanket
+-- rule. WFM is not shared-by-nature the way HR, IT, Administration and Finance are — a WFM person
+-- mapped to a process is that process's own support (DSC), and one who is not is working across
+-- branches (BMC). The fallback in bpo-pnl.service.ts already expresses exactly that:
 --
--- That fallback has two problems against the real definition:
+--   bucket = process_id ? (isSupportRole(person) ? 'dsc_people' : 'agent_salary')
+--                       : 'bmc_people'
 --
---   1. BMC can only ever happen when process_id is NULL. An HR, IT or Admin person attached to a
---      process — which is common — is classified DSC or Agent, never BMC.
---   2. isSupportRole() treats quality, training, WFM, MIS, HR, admin, IT and finance as one
---      "support" class. They are not: Quality and Training are process-specific support and belong
---      to DSC, while HR, IT, Admin, Finance and Management are shared across branches and belong
---      to BMC.
+-- isSupportRole() already matches wfm/workforce, so leaving WFM unseeded gives the right answer in
+-- both directions. 437 remains applied and is now a harmless no-op.
 --
 -- The definition being encoded:
 --   Agent  — the front-line agents of a process.
@@ -48,7 +47,6 @@ SELECT UUID(),
     UNION ALL SELECT 'MANAGEMENT',                    'bmc_people'
     UNION ALL SELECT 'PROJECTS & COMPLIANCE',         'bmc_people'
     UNION ALL SELECT 'SALES & MARKETING',             'bmc_people'
-    UNION ALL SELECT 'DIALER & WFM',                  'bmc_people'
     -- Process-specific support -> DSC. Operations is deliberately absent: within it the split
     -- between agent and support is a designation question, which the existing fallback handles.
     UNION ALL SELECT 'TRAINING AND QUALITY',          'dsc_people'

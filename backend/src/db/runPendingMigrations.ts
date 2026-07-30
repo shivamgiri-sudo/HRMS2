@@ -378,7 +378,12 @@ const MIGRATION_MANIFEST: string[] = [
   "433_budget_line_corrections.sql",
   "434_meter_sharing_and_cc_drivers.sql",
   "435_pnl_components_real_shape.sql",
-  "436_pnl_people_classification_seed.sql",
+  // 436 is deliberately NOT listed. It failed on a missing rule_name, and the runner had already
+  // written its filename into schema_migrations, so every retry hits a duplicate primary key and
+  // STOP_ON_FIRST_FAILURE then blocks every migration after it. The file is kept for history and
+  // superseded by 438, which carries the corrected statement.
+  "437_pnl_wfm_follows_process_mapping.sql",
+  "438_pnl_people_classification_seed_v2.sql",
   "435_bgv_check_type_name_match.sql",
   "500_ai_provider_foundation.sql",
   "501_lifecycle_consolidation_phase1.sql",
