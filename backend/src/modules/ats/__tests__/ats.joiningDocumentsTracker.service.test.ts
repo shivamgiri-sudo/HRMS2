@@ -71,6 +71,9 @@ vi.mock('../ats.email.service.js', () => ({
 
 vi.mock('../../employees/employeeJoiningDocuments.service.js', () => ({
   generateJoiningDocumentChecklist: vi.fn(),
+  // The canonical completion writer. bulkVerifyDocuments now defers to it
+  // instead of computing a rival percentage of its own.
+  recalculateDocumentProgress: vi.fn(),
 }));
 
 // Hoisted mock state — accessible inside vi.mock factory AND in test bodies
@@ -330,6 +333,7 @@ describe('bulkGenerateChecklists', () => {
 // ─── Task 5: bulkAssignHR tests ───────────────────────────────────────────────
 
 import { bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip } from '../ats.joiningDocumentsTracker.service';
+import { recalculateDocumentProgress } from '../../employees/employeeJoiningDocuments.service.js';
 import type { ResultSetHeader } from 'mysql2';
 
 describe('bulkAssignHR', () => {
@@ -458,9 +462,7 @@ describe('bulkVerifyDocuments', () => {
     // emp-1: UPDATE → 3 affected, audit log, stats SELECT, employees UPDATE
     mocks.mockConnectionExecute
       .mockResolvedValueOnce([updateResult, []])      // UPDATE checklist
-      .mockResolvedValueOnce([{}, []])                 // INSERT audit log
-      .mockResolvedValueOnce([statsResult, []])        // SELECT stats
-      .mockResolvedValueOnce([{}, []]);                // UPDATE employees
+      .mockResolvedValueOnce([{}, []]);                // INSERT audit log
 
     const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
@@ -469,24 +471,35 @@ describe('bulkVerifyDocuments', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('should update employees table with correct completion % after verification', async () => {
+  /**
+   * This previously asserted that bulkVerifyDocuments wrote its own completion
+   * percentage — the behaviour that made the figure flip. It computed over all
+   * documents rather than mandatory ones, wrote status strings
+   * ('verified_complete' / 'pending_verification') that are in no consumer's
+   * vocabulary, and updated `employees` without `ats_onboarding_bridge`. HR saw
+   * 100%, then the next person to open the pack triggered the real
+   * recalculation and the number fell again. The test encoded the bug, so it now
+   * asserts the opposite.
+   */
+  it('defers completion to the canonical writer instead of computing its own', async () => {
     const updateResult = { affectedRows: 2 } as ResultSetHeader;
-    const statsResult = [{ total: 10, verified_count: 10 }]; // 100% complete
 
     mocks.mockConnectionExecute
       .mockResolvedValueOnce([updateResult, []])
-      .mockResolvedValueOnce([{}, []])
-      .mockResolvedValueOnce([statsResult, []])
       .mockResolvedValueOnce([{}, []]);
 
     await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
-    // The employees UPDATE should set pct=100 and status='verified_complete'
-    const empUpdateCall = mocks.mockConnectionExecute.mock.calls[3];
-    expect(empUpdateCall[0]).toMatch(/UPDATE employees/i);
-    expect(empUpdateCall[0]).toMatch(/joining_document_completion_pct/i);
-    expect(empUpdateCall[1]).toContain(100);
-    expect(empUpdateCall[1]).toContain('verified_complete');
+    const statements = mocks.mockConnectionExecute.mock.calls.map((call) => String(call[0]));
+    expect(
+      statements.some((sql) => /UPDATE employees/i.test(sql) && /joining_document_completion_pct/i.test(sql)),
+      'bulkVerifyDocuments is still writing its own completion percentage',
+    ).toBe(false);
+
+    // Verifying must move `status`, not only verification_status, or the
+    // canonical recalculation still counts the row as incomplete.
+    expect(statements[0]).toMatch(/SET\s+status\s*=\s*'verified'/i);
+    expect(recalculateDocumentProgress).toHaveBeenCalledWith('emp-1');
   });
 
   it('should skip employees with no pending documents (0 affected rows)', async () => {
@@ -511,12 +524,8 @@ describe('bulkVerifyDocuments', () => {
       // emp-1
       .mockResolvedValueOnce([updateResult1, []])
       .mockResolvedValueOnce([{}, []])
-      .mockResolvedValueOnce([statsResult, []])
-      .mockResolvedValueOnce([{}, []])
       // emp-2
       .mockResolvedValueOnce([updateResult2, []])
-      .mockResolvedValueOnce([{}, []])
-      .mockResolvedValueOnce([statsResult, []])
       .mockResolvedValueOnce([{}, []]);
 
     const result = await bulkVerifyDocuments(['emp-1', 'emp-2'], 'actor-user-1');
@@ -551,8 +560,6 @@ describe('bulkVerifyDocuments', () => {
 
     mocks.mockConnectionExecute
       .mockResolvedValueOnce([updateResult, []])
-      .mockResolvedValueOnce([{}, []])
-      .mockResolvedValueOnce([statsResult, []])
       .mockResolvedValueOnce([{}, []]);
 
     await bulkVerifyDocuments(['emp-1'], 'actor-user-1');

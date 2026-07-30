@@ -3,7 +3,7 @@ import { db } from '../../db/mysql.js';
 import { getUserRoleKeys } from '../../shared/scopeAccess.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import { sendJoiningDocReminderEmail } from './ats.email.service.js';
-import { generateJoiningDocumentChecklist } from '../employees/employeeJoiningDocuments.service.js';
+import { generateJoiningDocumentChecklist, recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
 // archiver ships a CJS default; @types/archiver only declares named exports so we
 // need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -524,14 +524,28 @@ export async function bulkVerifyDocuments(
     errors: [],
   };
 
+  // Completion is recalculated by the canonical writer once each employee's
+  // transaction has committed. This used to compute its own percentage here,
+  // over a different denominator (all documents rather than mandatory ones) and
+  // writing status strings — 'verified_complete' / 'pending_verification' —
+  // that are not in the vocabulary every consumer switches on, and only to
+  // `employees`, never `ats_onboarding_bridge`. HR saw 100%, then the next
+  // person to open that employee's pack triggered the real recalculation and
+  // the number dropped again.
+  const recalcNeeded: string[] = [];
+
   for (const employeeId of employeeIds) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
 
       const [updateResult] = (await connection.execute(
+        // `status` has to move as well. Setting only verification_status left
+        // the row at 'uploaded_pending_review', which recalculateDocumentProgress
+        // — the canonical writer — still counts as incomplete.
         `UPDATE employee_joining_document_checklist
-         SET verification_status = 'verified', verified_at = NOW(), verified_by = ?, updated_at = NOW()
+         SET status = 'verified', verification_status = 'verified',
+             verified_at = NOW(), verified_by = ?, updated_at = NOW()
          WHERE employee_id = ? AND status = 'uploaded_pending_review'`,
         [actorUserId, employeeId]
       )) as [ResultSetHeader, unknown];
@@ -546,24 +560,7 @@ export async function bulkVerifyDocuments(
           [employeeId, actorUserId]
         );
 
-        const [stats] = (await connection.execute(
-          `SELECT COUNT(*) AS total,
-                  SUM(CASE WHEN verification_status = 'verified' THEN 1 ELSE 0 END) AS verified_count
-           FROM employee_joining_document_checklist WHERE employee_id = ?`,
-          [employeeId]
-        )) as [RowDataPacket[], unknown];
-
-        const total = Number((stats[0] as any)?.total ?? 0);
-        const verifiedCount = Number((stats[0] as any)?.verified_count ?? 0);
-        const pct = total > 0 ? Math.round((verifiedCount / total) * 100) : 0;
-        const docStatus = pct === 100 ? 'verified_complete' : 'pending_verification';
-
-        await connection.execute(
-          `UPDATE employees
-           SET joining_document_completion_pct = ?, joining_document_status = ?, updated_at = NOW()
-           WHERE id = ?`,
-          [pct, docStatus, employeeId]
-        );
+        recalcNeeded.push(employeeId);
       }
 
       await connection.commit();
@@ -580,6 +577,17 @@ export async function bulkVerifyDocuments(
       });
     } finally {
       connection.release();
+    }
+  }
+
+  for (const employeeId of recalcNeeded) {
+    try {
+      await recalculateDocumentProgress(employeeId);
+    } catch (error: unknown) {
+      // The verification itself is committed; a failed recalculation only means
+      // the percentage is stale until the pack is next opened, which recomputes
+      // it anyway. Do not fail the bulk action for it.
+      console.error('[bulkVerifyDocuments] progress recalculation failed', employeeId, error);
     }
   }
 

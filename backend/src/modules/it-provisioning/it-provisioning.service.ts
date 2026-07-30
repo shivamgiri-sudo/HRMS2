@@ -187,6 +187,22 @@ async function createRequest(params: {
     slaDeadline = new Date(joining.getTime() + 24 * 60 * 60 * 1000); // +24 hours
   }
 
+  // An open task for this employee and code already covers the work. The table
+  // has no unique key on (employee_id, task_code, request_type), and this is
+  // called from both the joining path and the hourly retry job, so without this
+  // check a re-dispatch silently stacks duplicate rows — each with its own inbox
+  // item and outbound email to every resolved role-holder.
+  const [[existing]] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM it_provisioning_request
+      WHERE employee_id = ? AND task_code = ? AND request_type = ?
+        AND status NOT IN ('confirmed', 'waived')
+      LIMIT 1`,
+    [params.employeeId, params.taskCode, params.requestType],
+  );
+  if (existing?.id) {
+    return String(existing.id);
+  }
+
   const [result] = await db.execute(
     `INSERT INTO it_provisioning_request
        (employee_id, request_type, task_code, assigned_role, assigned_user_id,
@@ -199,7 +215,12 @@ async function createRequest(params: {
       params.assignedRole,
       params.assignedUserId ?? null,
       params.triggerEventId ?? null,
-      params.assignmentException ? 'pending_unassigned' : 'pending', // Different status for unassigned
+      // 'pending_unassigned' is not a member of the status ENUM
+      // ('pending','actioned','confirmed','waived'), so it was rejected under
+      // strict mode and aborted the dispatch loop, leaving every later task
+      // uncreated. The unassigned state is already carried by
+      // assignment_exception and locked, which the dashboards read.
+      'pending',
       params.assignmentException ? 1 : 0,
       slaDeadline,
     ],

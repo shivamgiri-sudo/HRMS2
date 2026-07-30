@@ -39,10 +39,16 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
      JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
      WHERE e.active_status = 0
        AND e.created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
+       -- Match on task_code. request_type is ENUM('join','exit'); comparing it
+       -- to a task code never matches, so NOT EXISTS was always true and this
+       -- job re-dispatched every eligible employee on every run — hourly, plus
+       -- once on boot. It has not bitten yet only because no employee has ever
+       -- been created through the ATS path for it to select; that changes as
+       -- soon as conversion works, and createRequest has no idempotency key.
        AND NOT EXISTS (
          SELECT 1 FROM it_provisioning_request pr
          WHERE pr.employee_id = e.id
-           AND pr.request_type = 'IT_EMAIL_DOMAIN_ASSET'
+           AND pr.task_code = 'IT_EMAIL_DOMAIN_ASSET'
        )
      LIMIT 50`,
     []

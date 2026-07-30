@@ -504,8 +504,14 @@ export async function getReconciliationSummary() {
          WHERE pr.sla_due_at IS NOT NULL AND pr.sla_due_at < NOW()
            AND pr.status NOT IN ('actioned','verified','waived','cancelled'))
          AS sla_overdue_employees,
+       -- assignment_exception is the flag that records "no user resolved for
+       -- this role". The status filter used to also require 'pending_unassigned',
+       -- which is not a member of the status ENUM and so never existed — this
+       -- count was structurally always zero, and unassigned tasks never showed
+       -- up in reconciliation.
        (SELECT COUNT(DISTINCT pr.employee_id) FROM it_provisioning_request pr
-         WHERE pr.assignment_exception = 1 AND pr.status = 'pending_unassigned')
+         WHERE pr.assignment_exception = 1
+           AND pr.status NOT IN ('confirmed', 'waived'))
          AS employees_with_unassigned_tasks,
 
        -- Official email sync gap

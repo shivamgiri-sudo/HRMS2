@@ -129,8 +129,23 @@ export async function runDailyActivationJob(): Promise<ActivationReport> {
        e.date_of_joining,
        e.employment_status
      FROM employees e
+     -- Excludes leavers rather than listing the states that may activate.
+     --
+     -- The whitelist never matched anything: employees.employment_status is
+     -- VARCHAR(50) DEFAULT 'Active' (migration 501's ENUM conversion is guarded
+     -- by IF column_exists = 0 and is always skipped, because 002 created the
+     -- column first), and the creation paths did not set it. A future-dated
+     -- joiner was therefore stranded at active_status = 0 indefinitely, unable
+     -- to log in and invisible to payroll and rosters.
+     --
+     -- Inverting the test makes activation independent of which path created
+     -- the employee. Measured on live data: the whitelist selects 0, a naive
+     -- blacklist would select 57,308 — every ex-employee, since active_status = 0
+     -- overwhelmingly means "left" — and this form selects 0 today, admitting
+     -- only genuine pre-joiners once they exist.
      WHERE e.active_status = 0
-       AND e.employment_status IN ('preboarding', 'provisioning_pending', 'ready_to_join')
+       AND LOWER(COALESCE(e.employment_status, '')) NOT IN
+           ('resigned', 'terminated', 'inactive', 'exited', 'absconding')
        AND e.date_of_joining <= CURDATE()`,
     []
   );
@@ -181,9 +196,13 @@ async function checkProvisioningSlaWarnings(employeeId: string): Promise<string[
     `SELECT
        request_type, task_code, status, sla_due_at, assignment_exception
      FROM it_provisioning_request
+     -- These are task codes. Matching them against request_type — ENUM('join',
+     -- 'exit') — returned nothing, so the per-employee SLA warnings were always
+     -- empty and an employee could be activated with no email, no biometric and
+     -- no ID card while the activation record asserted nothing was outstanding.
      WHERE employee_id = ?
-       AND request_type IN ('WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET',
-                            'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
+       AND task_code IN ('WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET',
+                         'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
     [employeeId]
   );
 

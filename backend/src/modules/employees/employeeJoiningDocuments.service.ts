@@ -382,13 +382,22 @@ async function ensureChecklistRows(target: EmployeeDocumentTarget, actorUserId?:
   }
 }
 
-async function recalculateDocumentProgress(employeeId: string) {
+/**
+ * The single writer of joining-document completion. Exported so the bulk
+ * tracker actions defer to it instead of computing a rival figure.
+ */
+export async function recalculateDocumentProgress(employeeId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         COUNT(*) AS total_count,
         SUM(CASE WHEN mandatory = 1 THEN 1 ELSE 0 END) AS mandatory_count,
-        SUM(CASE WHEN mandatory = 1 AND status IN ('verified', 'signed_verified', 'completed') THEN 1 ELSE 0 END) AS mandatory_completed,
-        SUM(CASE WHEN status IN ('verified', 'signed_verified', 'completed') THEN 1 ELSE 0 END) AS completed_count
+        -- Must agree with isChecklistTerminalStatus below. It omitted
+        -- 'esign_completed' and 'wet_signed_uploaded', so a joiner who Aadhaar
+        -- e-signed every mandatory document still showed under 100% and stayed
+        -- 'in_progress' for ever, unless HR additionally opened each item and
+        -- pressed Verify. Three other consumers already use the wider set.
+        SUM(CASE WHEN mandatory = 1 AND status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded') THEN 1 ELSE 0 END) AS mandatory_completed,
+        SUM(CASE WHEN status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded') THEN 1 ELSE 0 END) AS completed_count
        FROM employee_joining_document_checklist
       WHERE employee_id = ?`,
     [employeeId],
