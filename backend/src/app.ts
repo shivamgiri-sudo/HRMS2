@@ -174,6 +174,7 @@ import { businessActionsRouter } from "./modules/business-actions/business-actio
 import { auditLogRouter } from "./modules/audit/audit.log.routes.js";
 import { workInboxRouter } from "./modules/work-inbox/work-inbox.routes.js";
 import { dashboardRouter } from "./modules/dashboards/dashboard.routes.js";
+import dashboardTargetRouter from "./modules/dashboards/dashboard-target.routes.js";
 import { tatRouter } from "./modules/governance/tat.routes.js";
 import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
@@ -487,6 +488,7 @@ app.use("/api/performance-dashboard", performanceDashboardRouter);
 app.use("/api/legacy", legacyRouter);
 app.use("/api/expenses", expenseRouter);
 app.use("/api/work-inbox", workInboxRouter);
+app.use("/api/dashboards/targets", dashboardTargetRouter);
 app.use("/api/dashboards", dashboardRouter);
 app.use("/api/governance/tat", tatRouter);
 app.use("/api/ats/name-consistency", nameConsistencyRouter);

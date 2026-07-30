@@ -33,7 +33,11 @@ export const dashboardMetricSchema = z.object({
   denominator: z.number().nullable(),
   target: z.number().nullable(),
   previousValue: z.number().nullable(),
+  // Distance from TARGET. Null when no target is configured.
   variancePct: z.number().nullable(),
+  // Change from the PREVIOUS snapshot. Null until the snapshot writer has two days of
+  // history. Distinct from variancePct: a tile labelled "vs last period" must read this.
+  changePct: z.number().nullable(),
   trend: z.enum(["up", "down", "stable"]).nullable(),
   status: z.enum(["healthy", "warning", "critical", "unknown"]),
   drilldownUrl: z.string().nullable(),

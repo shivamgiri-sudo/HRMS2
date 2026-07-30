@@ -78,7 +78,10 @@ export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDas
             helper: "in active pipeline",
             icon: FileUser,
             tone: "blue",
-            trend: m.ats?.variancePct,
+            // changePct (movement since the last snapshot), not variancePct (distance from
+            // target). The arrow sits next to "in active pipeline", so it must describe
+            // movement; variancePct here would have shown target shortfall as if it were.
+            trend: m.ats?.changePct,
             ...drill("onb"),
           },
           {

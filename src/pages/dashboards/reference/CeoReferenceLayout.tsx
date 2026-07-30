@@ -89,7 +89,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
       ]} />
 
       <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
-        { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.variancePct, unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
+        { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.changePct, unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
         { label: "Avg Shrinkage", value: shrinkage, valueSuffix: "%", helper: "vs last 30 days", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
         { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`, icon: IndianRupee, tone: "violet" },
         { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },

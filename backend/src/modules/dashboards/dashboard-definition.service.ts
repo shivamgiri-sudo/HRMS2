@@ -53,29 +53,40 @@ type MetricDefinition = {
   sourceTable: string | null;
   numeratorKey?: string;
   denominatorKey?: string;
+  /**
+   * Direction of goodness, used to seed dashboard_metric_catalog.higher_is_better and to
+   * decide whether a value above its target reads as good or critical.
+   *
+   * This must equal the flag the metric passes to wrapEnriched; the two are different
+   * expressions of one fact and drifting them would make a tile show "good" for a rising
+   * backlog. dashboard-metric-code-contract.test.ts pins them together.
+   */
+  higherIsBetter: boolean;
+  /** Owning module, for grouping in the catalog. */
+  moduleCode: string;
   execute: (scope: DashboardScope) => Promise<MetricResult>;
 };
 
 const METRICS: Readonly<Record<MetricKey, MetricDefinition>> = {
-  hc: { code: "HEADCOUNT", label: "Active headcount", unit: "employees", source: "Employee master", sourceTable: "employees", execute: getHeadcountMetrics },
-  onb: { code: "ONBOARDING", label: "Onboarding pipeline", unit: "candidates", source: "ATS onboarding", sourceTable: "ats_onboarding_bridge", execute: getOnboardingMetrics },
-  att: { code: "ATTENDANCE", label: "Processed attendance rate", unit: "percent", source: "Processed attendance", sourceTable: "attendance_daily_record", numeratorKey: "present", denominatorKey: "expectedToWork", execute: getAttendanceMetrics },
-  payroll: { code: "PAYROLL_READINESS", label: "Payroll readiness", unit: "employees", source: "Employee payroll master", sourceTable: "employees", numeratorKey: "readyCount", denominatorKey: "total", execute: getPayrollReadinessMetrics },
-  incentive: { code: "INCENTIVE", label: "Pending incentive batches", unit: "batches", source: "Incentive upload", sourceTable: "incentive_upload_batch", execute: getIncentiveMetrics },
-  tat: { code: "TAT", label: "Open TAT items", unit: "items", source: "TAT governance", sourceTable: "task_tat_instance", execute: getTatMetrics },
-  resign: { code: "RESIGNATION", label: "Active exits", unit: "requests", source: "Exit management", sourceTable: "exit_request", execute: getResignationMetrics },
-  dpdp: { code: "DPDP", label: "Pending DPDP requests", unit: "requests", source: "DPDP consent withdrawal", sourceTable: "dpdp_consent_withdrawal", execute: getDpdpWithdrawalMetrics },
-  appointmentEsign: { code: "APPOINTMENT_ESIGN", label: "Appointment eSign pending", unit: "requests", source: "Appointment letters", sourceTable: "appointment_letter_request", execute: getAppointmentEsignMetrics },
-  bgv: { code: "BGV", label: "BGV pending", unit: "candidates", source: "Candidate BGV", sourceTable: "candidate_bgv_check", execute: getBgvMetrics },
-  nm: { code: "NAME_MISMATCH", label: "Name mismatches", unit: "candidates", source: "Name match summary", sourceTable: "candidate_name_match_summary", execute: getNameMismatchMetrics },
-  joiningDocEsign: { code: "JOINING_DOC_ESIGN", label: "Joining document eSign pending", unit: "documents", source: "Joining documents", sourceTable: "employee_joining_document_checklist", execute: getJoiningDocEsignMetrics },
-  attException: { code: "ATTENDANCE_EXCEPTIONS", label: "Open attendance exceptions", unit: "issues", source: "Attendance reconciliation", sourceTable: "attendance_reconciliation_issue", numeratorKey: "blockers", denominatorKey: "openTotal", execute: getAttendanceExceptionMetrics },
-  docCompliance: { code: "DOC_COMPLIANCE", label: "Employees with no documents", unit: "employees", source: "Employee documents", sourceTable: "employee_documents", numeratorKey: "employeesWithDocs", denominatorKey: "activeEmployees", execute: getDocumentComplianceMetrics },
-  biometric: { code: "BIOMETRIC_ACTIVITY", label: "Biometric punch coverage", unit: "employees", source: "Biometric daily activity", sourceTable: "integration_biometric_daily", numeratorKey: "completePunchPairs", denominatorKey: "employees", execute: getBiometricActivityMetrics },
-  salaryComponents: { code: "SALARY_COMPONENTS", label: "Payroll components in latest run", unit: "components", source: "Salary component lines", sourceTable: "salary_prep_line_component", execute: getSalaryComponentMetrics },
-  recruiterActivity: { code: "RECRUITER_ACTIVITY", label: "Recruiter pipeline (30d)", unit: "leads", source: "Recruiter hiring activity", sourceTable: "ats_recruiter_hiring_activity", numeratorKey: "selected", denominatorKey: "leads", execute: getRecruiterActivityMetrics },
-  training: { code: "TRAINING_PROGRESS", label: "Training completion rate", unit: "percent", source: "LMS progress snapshot", sourceTable: "lms_learning_progress_snapshot", numeratorKey: "completed", denominatorKey: "assignments", execute: getTrainingProgressMetrics },
-  leaveApprovals: { code: "LEAVE_APPROVALS", label: "Pending leave approvals", unit: "requests", source: "Leave requests", sourceTable: "leave_request", execute: getLeaveApprovalMetrics },
+  hc: { code: "HEADCOUNT", label: "Active headcount", unit: "employees", source: "Employee master", sourceTable: "employees", higherIsBetter: true, moduleCode: "hrms", execute: getHeadcountMetrics },
+  onb: { code: "ONBOARDING", label: "Onboarding pipeline", unit: "candidates", source: "ATS onboarding", sourceTable: "ats_onboarding_bridge", higherIsBetter: true, moduleCode: "ats", execute: getOnboardingMetrics },
+  att: { code: "ATTENDANCE", label: "Processed attendance rate", unit: "percent", source: "Processed attendance", sourceTable: "attendance_daily_record", numeratorKey: "present", denominatorKey: "expectedToWork", higherIsBetter: true, moduleCode: "attendance", execute: getAttendanceMetrics },
+  payroll: { code: "PAYROLL_READINESS", label: "Payroll readiness", unit: "employees", source: "Employee payroll master", sourceTable: "employees", numeratorKey: "readyCount", denominatorKey: "total", higherIsBetter: true, moduleCode: "payroll", execute: getPayrollReadinessMetrics },
+  incentive: { code: "INCENTIVE", label: "Pending incentive batches", unit: "batches", source: "Incentive upload", sourceTable: "incentive_upload_batch", higherIsBetter: false, moduleCode: "payroll", execute: getIncentiveMetrics },
+  tat: { code: "TAT", label: "Open TAT items", unit: "items", source: "TAT governance", sourceTable: "task_tat_instance", higherIsBetter: false, moduleCode: "governance", execute: getTatMetrics },
+  resign: { code: "RESIGNATION", label: "Active exits", unit: "requests", source: "Exit management", sourceTable: "exit_request", higherIsBetter: false, moduleCode: "exit", execute: getResignationMetrics },
+  dpdp: { code: "DPDP", label: "Pending DPDP requests", unit: "requests", source: "DPDP consent withdrawal", sourceTable: "dpdp_consent_withdrawal", higherIsBetter: false, moduleCode: "compliance", execute: getDpdpWithdrawalMetrics },
+  appointmentEsign: { code: "APPOINTMENT_ESIGN", label: "Appointment eSign pending", unit: "requests", source: "Appointment letters", sourceTable: "appointment_letter_request", higherIsBetter: false, moduleCode: "onboarding", execute: getAppointmentEsignMetrics },
+  bgv: { code: "BGV", label: "BGV pending", unit: "candidates", source: "Candidate BGV", sourceTable: "candidate_bgv_check", higherIsBetter: false, moduleCode: "ats", execute: getBgvMetrics },
+  nm: { code: "NAME_MISMATCH", label: "Name mismatches", unit: "candidates", source: "Name match summary", sourceTable: "candidate_name_match_summary", higherIsBetter: false, moduleCode: "ats", execute: getNameMismatchMetrics },
+  joiningDocEsign: { code: "JOINING_DOC_ESIGN", label: "Joining document eSign pending", unit: "documents", source: "Joining documents", sourceTable: "employee_joining_document_checklist", higherIsBetter: false, moduleCode: "onboarding", execute: getJoiningDocEsignMetrics },
+  attException: { code: "ATTENDANCE_EXCEPTIONS", label: "Open attendance exceptions", unit: "issues", source: "Attendance reconciliation", sourceTable: "attendance_reconciliation_issue", numeratorKey: "blockers", denominatorKey: "openTotal", higherIsBetter: false, moduleCode: "attendance", execute: getAttendanceExceptionMetrics },
+  docCompliance: { code: "DOC_COMPLIANCE", label: "Employees with no documents", unit: "employees", source: "Employee documents", sourceTable: "employee_documents", numeratorKey: "employeesWithDocs", denominatorKey: "activeEmployees", higherIsBetter: false, moduleCode: "hrms", execute: getDocumentComplianceMetrics },
+  biometric: { code: "BIOMETRIC_ACTIVITY", label: "Biometric punch coverage", unit: "employees", source: "Biometric daily activity", sourceTable: "integration_biometric_daily", numeratorKey: "completePunchPairs", denominatorKey: "employees", higherIsBetter: true, moduleCode: "attendance", execute: getBiometricActivityMetrics },
+  salaryComponents: { code: "SALARY_COMPONENTS", label: "Payroll components in latest run", unit: "components", source: "Salary component lines", sourceTable: "salary_prep_line_component", higherIsBetter: true, moduleCode: "payroll", execute: getSalaryComponentMetrics },
+  recruiterActivity: { code: "RECRUITER_ACTIVITY", label: "Recruiter pipeline (30d)", unit: "leads", source: "Recruiter hiring activity", sourceTable: "ats_recruiter_hiring_activity", numeratorKey: "selected", denominatorKey: "leads", higherIsBetter: true, moduleCode: "ats", execute: getRecruiterActivityMetrics },
+  training: { code: "TRAINING_PROGRESS", label: "Training completion rate", unit: "percent", source: "LMS progress snapshot", sourceTable: "lms_learning_progress_snapshot", numeratorKey: "completed", denominatorKey: "assignments", higherIsBetter: true, moduleCode: "lms", execute: getTrainingProgressMetrics },
+  leaveApprovals: { code: "LEAVE_APPROVALS", label: "Pending leave approvals", unit: "requests", source: "Leave requests", sourceTable: "leave_request", higherIsBetter: false, moduleCode: "leave", execute: getLeaveApprovalMetrics },
 };
 
 /**
@@ -180,6 +191,7 @@ export function adaptLegacyMetric(
     target: result.target,
     previousValue: result.previousValue,
     variancePct: result.variancePct,
+    changePct: result.changePct,
     trend: result.trend,
     status: available ? statusMap[result.status] : "unknown",
     drilldownUrl: result.drilldownApi || null,
@@ -201,6 +213,81 @@ export function getDashboardMetricKeys(code: DashboardCode): readonly MetricKey[
  */
 export function getAllMetricCodes(): readonly string[] {
   return Object.values(METRICS).map((definition) => definition.code);
+}
+
+export type MetricCatalogEntry = {
+  metricCode: string;
+  metricName: string;
+  moduleCode: string;
+  dataSource: string | null;
+  unit: string;
+  higherIsBetter: boolean;
+};
+
+/**
+ * The catalog rows dashboard_metric_catalog should hold, derived from the same constant
+ * the dashboards execute. Generating the seed from here rather than hand-writing SQL is
+ * what keeps metric_code, unit and higher_is_better identical to what the code enriches
+ * under — a mismatch in any of the three silently disables targets for that metric.
+ */
+export function getMetricCatalogEntries(): readonly MetricCatalogEntry[] {
+  return Object.values(METRICS).map((definition) => ({
+    metricCode: definition.code,
+    metricName: definition.label,
+    moduleCode: definition.moduleCode,
+    dataSource: definition.sourceTable,
+    unit: definition.unit,
+    higherIsBetter: definition.higherIsBetter,
+  }));
+}
+
+export type RoleMetricConfigEntry = {
+  dashboardCode: DashboardCode;
+  metricCode: string;
+  displayOrder: number;
+  isPrimary: boolean;
+};
+
+/**
+ * The role/dashboard/metric rows dashboard_role_metric_config should hold, derived from
+ * DASHBOARD_METRICS so the configured order matches the order dashboards actually render.
+ *
+ * display_order follows bundle position. is_primary marks the first three, which are the
+ * tiles a layout puts above the fold.
+ */
+export function getRoleMetricConfigEntries(): readonly RoleMetricConfigEntry[] {
+  const entries: RoleMetricConfigEntry[] = [];
+  for (const [dashboardCode, keys] of Object.entries(DASHBOARD_METRICS) as Array<
+    [DashboardCode, readonly MetricKey[]]
+  >) {
+    keys.forEach((key, index) => {
+      entries.push({
+        dashboardCode,
+        metricCode: METRICS[key].code,
+        displayOrder: index + 1,
+        isPrimary: index < 3,
+      });
+    });
+  }
+  return entries;
+}
+
+/**
+ * Runs a single metric by its published code, for callers that work in metric codes rather
+ * than dashboards — the snapshot writer records every metric across every scope, which is
+ * not the shape of any one dashboard's bundle.
+ *
+ * Returns null for an unknown code rather than throwing, so one stale code in a caller's
+ * list cannot abort a whole run.
+ */
+export async function executeMetricByCode(
+  metricCode: string,
+  scope: DashboardScope,
+): Promise<MetricResult | null> {
+  const normalized = String(metricCode).trim().toUpperCase();
+  const definition = Object.values(METRICS).find((entry) => entry.code === normalized);
+  if (!definition) return null;
+  return definition.execute(scope);
 }
 
 export function isMetricConfiguredForDashboard(code: DashboardCode, metricCode: string): boolean {

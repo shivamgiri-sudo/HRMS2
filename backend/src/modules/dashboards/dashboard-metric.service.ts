@@ -25,7 +25,17 @@ export interface MetricResult {
   previousValue: number | null;
   target: number | null;
   variance: number | null;
+  /**
+   * Percentage difference from the TARGET. Null when no target is configured.
+   *
+   * Not the same number as changePct, and the two are not interchangeable: a tile labelled
+   * "vs last period" must read changePct. Layouts were passing variancePct under exactly
+   * that label, which showed nothing only because no target had ever been set — the moment
+   * one is, the tile would report distance-from-target as if it were period movement.
+   */
   variancePct: number | null;
+  /** Percentage change from the PREVIOUS snapshot. Null until two snapshots exist. */
+  changePct: number | null;
   status: "ok" | "warn" | "critical" | "unknown";
   trend: "up" | "down" | "stable" | null;
   drilldownApi: string;
@@ -79,6 +89,7 @@ async function wrapEnriched(
     target: enrichment.target ?? null,
     variance: enrichment.variance ?? null,
     variancePct: enrichment.variancePct ?? null,
+    changePct: enrichment.changePct ?? null,
     status,
     trend: enrichment.trend ?? null,
     drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
@@ -101,7 +112,7 @@ function nullResult(metricCode: string, error?: unknown): MetricResult {
     : logSourceFailure("dashboard-metric", error, { metricCode });
   return {
     value: null, previousValue: null, target: null, variance: null,
-    variancePct: null, status: "unknown", trend: null,
+    variancePct: null, changePct: null, status: "unknown", trend: null,
     drilldownApi: `/api/dashboards/:dashboardCode/metric/${metricCode}/drilldown`,
     actionUrl: null, detail: {},
     // Carry the driver code through to the response so the UI can say *why* a tile is
@@ -498,7 +509,12 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
     const status: MetricResult["status"] = overdue > 0 ? "critical" : pending > 0 ? "warn" : "ok";
 
     return wrapEnriched(
-      "DPDP_WITHDRAWAL",
+      // "DPDP_WITHDRAWAL" here, but the catalog defines this metric as "DPDP". Targets and
+      // snapshots are keyed on the code passed to enrichMetric, so the two spellings meant a
+      // DPDP target could never be matched and a DPDP snapshot could never be read back.
+      // Invisible while both tables were empty; a permanent silent no-op the moment they
+      // were seeded. dashboard-metric-code-contract.test.ts now pins the two together.
+      "DPDP",
       pending,
       {
         total: Number(r.total ?? 0),
