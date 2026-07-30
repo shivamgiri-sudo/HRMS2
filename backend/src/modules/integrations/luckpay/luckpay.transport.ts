@@ -9,8 +9,14 @@
  *
  * Auth contract (identical for every endpoint):
  *   POST {baseUrl}/auth/token   header: Authorization: Basic <basicToken>
- *   POST {baseUrl}{path}        headers: Authorization: <clientId>   (raw, NOT Bearer)
+ *   POST {baseUrl}{path}        headers: Authorization: base64(clientId)
  *                                        X-Access-Token: Bearer <token>
+ *
+ * The business-endpoint Authorization header is the BASE64 of the client id, not
+ * the raw id — vendor docs show `Authorization: TFBNNA==`, which is base64 of
+ * "LPM4". Sending the raw id (e.g. "LPM14") makes the gateway's base64 decode
+ * fail and every call is rejected with 401 VAL_EXT_001 "Invalid Base64 encoding",
+ * regardless of how valid the token and payload are.
  */
 import axios from "axios";
 import { env } from "../../../config/env.js";
@@ -109,6 +115,26 @@ export function normalizeLuckpayConfig(input: {
     source: input.source ?? "env",
     enabled: input.enabled ?? env.LUCKPAY_PROVIDER_ENABLED,
   };
+}
+
+/**
+ * Business-endpoint Authorization header value: base64 of the client id.
+ *
+ * Accepts a value that is ALREADY base64 so an operator who pastes the header
+ * form straight from the vendor docs into BGV settings still works. "LPM14" is
+ * not valid base64 (length 5), so a raw client id can never be mistaken for one.
+ */
+export function luckpayAuthHeader(clientId: string): string {
+  const clean = stripWs(clientId);
+  if (clean.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(clean)) {
+    try {
+      const decoded = Buffer.from(clean, "base64").toString("utf8");
+      if (decoded.length > 0 && /^[\x20-\x7E]+$/.test(decoded)) return clean;
+    } catch {
+      // fall through and encode
+    }
+  }
+  return Buffer.from(clean, "utf8").toString("base64");
 }
 
 /** Throws 503 when credentials are missing. Does NOT consider `enabled` — see assertLuckpayEnabled. */
@@ -301,7 +327,7 @@ export async function luckpayPostJson(
     {
       timeout: cfg.timeoutMs,
       headers: {
-        Authorization: cfg.clientId,
+        Authorization: luckpayAuthHeader(cfg.clientId),
         "X-Access-Token": `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
@@ -337,7 +363,7 @@ export async function luckpayPostMultipart(
       timeout: cfg.timeoutMs,
       headers: {
         ...form.getHeaders(),
-        Authorization: cfg.clientId,
+        Authorization: luckpayAuthHeader(cfg.clientId),
         "X-Access-Token": `Bearer ${accessToken}`,
       },
       maxBodyLength: Infinity,

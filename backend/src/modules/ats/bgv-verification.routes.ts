@@ -1,6 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { createHmac, timingSafeEqual } from "crypto";
+import { promises as dnsPromises } from "dns";
 import rateLimit from "express-rate-limit";
+import { resolveLuckpayConfig } from "../integrations/luckpay/luckpay.config.js";
+import { getLuckpayAccessToken } from "../integrations/luckpay/luckpay.transport.js";
+import { loadBgvDbConfig } from "./bgv-config.store.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -779,20 +783,68 @@ router.get("/api-failures", requireAuth, requireRole("admin", "super_admin", "hr
   return res.json({ success: true, data: { days, failures: rows, summary } });
 }));
 
+/**
+ * Live provider connectivity test.
+ *
+ * This previously reported "configured and reachable" without contacting any
+ * provider — it only built the adapter and read a cached status object, so it
+ * could never fail while credentials were merely non-empty. Operators read that
+ * as proof the integration worked while every real check was failing.
+ *
+ * It now performs actual network calls, limited to free/non-billable ones:
+ *   - Luckpay: POST /auth/token for the core and DigiLocker scopes.
+ *   - Befisc:  DNS resolution of the configured host.
+ * No verification endpoint is called, so this costs nothing to run.
+ */
 router.post("/test-connection", requireAuth, requireRole("admin", "hr"), h(async (_req: Request, res: Response) => {
+  const results: Array<{ target: string; ok: boolean; detail: string }> = [];
+
+  const recordLuckpay = async (scope: "core" | "digilocker") => {
+    try {
+      const cfg = await resolveLuckpayConfig(scope);
+      if (!cfg.basicToken || !cfg.clientId) {
+        results.push({ target: `luckpay:${scope}`, ok: false, detail: `Credentials not configured (source: ${cfg.source}).` });
+        return;
+      }
+      await getLuckpayAccessToken(cfg);
+      results.push({ target: `luckpay:${scope}`, ok: true, detail: `Auth token acquired from ${cfg.baseUrl} (credentials from ${cfg.source}).` });
+    } catch (error: any) {
+      results.push({ target: `luckpay:${scope}`, ok: false, detail: String(error?.message ?? "Auth failed") });
+    }
+  };
+
+  await recordLuckpay("core");
+  await recordLuckpay("digilocker");
+
   try {
-    const adapter = await getConfiguredBgvProviderAdapter();
-    // getRuntimeStatus exists on LuckpayClient; for composite adapter use getLuckpayProviderRuntimeStatus()
-    const runtime = (adapter as any).getRuntimeStatus?.() ?? getLuckpayProviderRuntimeStatus();
-    return res.json({
-      success: true,
-      message: `BGV provider "${adapter.providerKey}" is configured and reachable`,
-      data: runtime,
-    });
+    const dbCfg = await loadBgvDbConfig();
+    const befiscUrl = String(dbCfg?.befisc_api_url ?? "").trim();
+    if (!befiscUrl) {
+      results.push({ target: "befisc", ok: false, detail: "Befisc API URL is not configured." });
+    } else {
+      const host = new URL(befiscUrl).hostname;
+      try {
+        const { address } = await dnsPromises.lookup(host);
+        results.push({ target: "befisc", ok: true, detail: `${host} resolves to ${address}.` });
+      } catch (dnsError: any) {
+        results.push({ target: "befisc", ok: false, detail: `${host} does not resolve (${dnsError?.code ?? "DNS error"}) — the configured URL is wrong or decommissioned.` });
+      }
+    }
   } catch (error: any) {
-    const statusCode = error.statusCode === 503 ? 503 : 502;
-    return res.status(statusCode).json({ success: false, message: error.message || "Connection test failed" });
+    results.push({ target: "befisc", ok: false, detail: String(error?.message ?? "Befisc check failed") });
   }
+
+  const failed = results.filter((r) => !r.ok);
+  const adapterKey = await getConfiguredBgvProviderAdapter().then((a) => a.providerKey).catch(() => "unknown");
+  const message = failed.length === 0
+    ? `All provider connections OK for "${adapterKey}".`
+    : `${failed.length} of ${results.length} provider checks FAILED: ${failed.map((f) => `${f.target} — ${f.detail}`).join(" | ")}`;
+
+  return res.status(failed.length === 0 ? 200 : 502).json({
+    success: failed.length === 0,
+    message,
+    data: { provider: adapterKey, results, runtime: getLuckpayProviderRuntimeStatus() },
+  });
 }));
 
 export default router;

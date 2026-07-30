@@ -210,7 +210,10 @@ describe("Composite Befisc/Luckpay adapter", () => {
       }),
       expect.objectContaining({
         headers: expect.objectContaining({
-          Authorization: "TESTCLIENT",
+          // Business endpoints take base64(clientId), never the raw id. Sending
+          // the raw id makes Luckpay reject every call with VAL_EXT_001
+          // "Invalid Base64 encoding" (verified against the live provider).
+          Authorization: Buffer.from("TESTCLIENT", "utf8").toString("base64"),
           "X-Access-Token": "Bearer access-token",
         }),
       }),
@@ -384,7 +387,10 @@ describe("Composite Befisc/Luckpay adapter", () => {
       "https://staging-api-banking.luckpay.in/apibanking/api/v1/verifyDigilockerWithURL",
       expect.any(Object),
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "DLCLIENT", "X-Access-Token": "Bearer dl-token" }),
+        headers: expect.objectContaining({
+          Authorization: Buffer.from("DLCLIENT", "utf8").toString("base64"),
+          "X-Access-Token": "Bearer dl-token",
+        }),
       }),
     );
   });
