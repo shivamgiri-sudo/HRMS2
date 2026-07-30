@@ -1,6 +1,24 @@
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+
+/**
+ * Coerce whatever a caller sent into the 0/1 the column stores.
+ *
+ * This was `input.activeStatus === false ? 0 : 1`, which only recognised a literal boolean false.
+ * A JSON client sending `activeStatus: 0` — the obvious thing to send for a TINYINT column — hit
+ * `0 === false` (false under strict equality), so the row stayed ACTIVE while the API still
+ * answered success. Retiring a head appeared to work and silently did nothing, which is how a junk
+ * "test / testtest" sub-head went on blocking every branch's budget submission at 97.44% coverage.
+ */
+function toActiveFlag(value: unknown): 0 | 1 {
+  if (value === undefined || value === null) return 1;
+  if (typeof value === "string") {
+    const normalised = value.trim().toLowerCase();
+    return normalised === "0" || normalised === "false" || normalised === "" ? 0 : 1;
+  }
+  return Number(value) === 0 ? 0 : 1;
+}
 import type {
   BudgetGstType,
   BudgetTaxTreatment,
@@ -132,7 +150,7 @@ export const financeExpenseMasterService = {
     if (!Number.isInteger(displayOrder) || displayOrder < 0) {
       throw new Error("Display order must be a positive whole number");
     }
-    const activeStatus = input.activeStatus === false ? 0 : 1;
+    const activeStatus = toActiveFlag(input.activeStatus);
 
     if (input.id) {
       const [result] = await db.execute<ResultSetHeader>(
@@ -218,7 +236,7 @@ export const financeExpenseMasterService = {
     if (!heads[0]) throw new Error("Expense head not found");
 
     const subHeadCode = codeFromName(input.subHeadCode || subHeadName);
-    const activeStatus = input.activeStatus === false ? 0 : 1;
+    const activeStatus = toActiveFlag(input.activeStatus);
     const values = [
       input.headId,
       subHeadCode,

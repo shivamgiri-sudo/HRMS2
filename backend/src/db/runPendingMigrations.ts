@@ -1130,9 +1130,16 @@ export function buildSchemaMigrationsInsertStatement(
   }
 
   const sql = `INSERT INTO schema_migrations (${columns.join(", ")}) VALUES (${values.join(", ")})`;
-  return !options.success && updates.length > 0
-    ? `${sql} ON DUPLICATE KEY UPDATE ${updates.join(", ")}`
-    : sql;
+  if (options.success) return sql;
+
+  // A failure MUST be recordable more than once. Every `updates` entry above is conditional on an
+  // optional column, so on a table without them the clause was omitted entirely — the first failure
+  // wrote a row, and every retry then died on the primary key with "Duplicate entry", which the
+  // runner reported as the migration's own failure. With STOP_ON_FIRST_FAILURE that one poisoned
+  // row blocks every migration behind it, permanently, and the only way out was renaming the file.
+  // filename = filename is a no-op that guarantees a valid clause.
+  const failureUpdates = updates.length > 0 ? updates : ["filename = filename"];
+  return `${sql} ON DUPLICATE KEY UPDATE ${failureUpdates.join(", ")}`;
 }
 
 function buildSchemaMigrationsInsertParams(
