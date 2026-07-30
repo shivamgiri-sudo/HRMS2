@@ -234,6 +234,67 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).rejects.toThrow(/seat count is missing/i);
   });
 
+  // Cost-centre scope. Before this, a branch-common line always hit every active cost centre and
+  // the only way to leave one out was a manual split assigning it 0%.
+  it("splits across only the selected cost centres, leaving the rest with no allocation row", async () => {
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 300, revenue_rate_per_head: 0 },
+      { cost_centre_id: "cc2", planned_headcount: 100, revenue_rate_per_head: 0 },
+      // cc3 has no driver data at all, which is fine once it is out of scope
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "total_manpower", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers), undefined, ["cc1", "cc2"]
+    );
+    expect(rows.map((r) => r.costCentreId).sort()).toEqual(["cc1", "cc2"]);
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(AMOUNTS.grossAmount * 0.75);
+    expect(byId.cc2.grossAmount).toBe(AMOUNTS.grossAmount * 0.25);
+    // The whole line still lands — nothing is lost to the excluded cost centre.
+    expect(rows.reduce((a, r) => a + r.grossAmount, 0)).toBe(AMOUNTS.grossAmount);
+  });
+
+  it("spreads across every active cost centre when no scope is given", async () => {
+    const drivers: FakeDriver[] = THREE_COST_CENTRES.map((cc) => ({
+      cost_centre_id: cc.id, planned_headcount: 100, revenue_rate_per_head: 0,
+    }));
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "total_manpower", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers)
+    );
+    expect(rows).toHaveLength(3);
+  });
+
+  it("does not demand driver data for a cost centre that is out of scope", async () => {
+    // The whole point: cc3 has no headcount, which would previously have thrown even though the
+    // line does not apply to cc3.
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 50, revenue_rate_per_head: 0 },
+      { cost_centre_id: "cc3", planned_headcount: 0, revenue_rate_per_head: 0 },
+    ];
+    await expect(
+      computeLineAllocations("branch-1", "2026-08", "total_manpower", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES, drivers), undefined, ["cc1"])
+    ).resolves.toHaveLength(1);
+  });
+
+  it("rejects a scope naming a cost centre that is not active for the branch", async () => {
+    await expect(
+      computeLineAllocations("branch-1", "2026-08", "equal_split", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES), undefined, ["cc1", "cc-not-here"])
+    ).rejects.toThrow(/not active for this branch/i);
+  });
+
+  it("requires manual percentages only for the selected cost centres", async () => {
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "manual", AMOUNTS,
+      [{ costCentreId: "cc1", percentage: 70 }, { costCentreId: "cc2", percentage: 30 }],
+      fakeExecutor(THREE_COST_CENTRES), undefined, ["cc1", "cc2"]
+    );
+    expect(rows.map((r) => r.costCentreId).sort()).toEqual(["cc1", "cc2"]);
+    expect(rows.reduce((a, r) => a + r.grossAmount, 0)).toBe(AMOUNTS.grossAmount);
+  });
+
   it("rejects allocation when the branch has no active cost centres", async () => {
     await expect(
       computeLineAllocations("branch-1", "2026-08", "equal_split", AMOUNTS, undefined, fakeExecutor([]))

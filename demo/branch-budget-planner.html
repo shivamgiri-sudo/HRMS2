@@ -1,0 +1,972 @@
+<title>Branch Budget Planner — design demo</title>
+
+<style>
+  :root {
+    --paper:#f6f7f9; --surface:#ffffff; --raised:#eef1f6;
+    --ink:#131720; --muted:#5c6675; --faint:#8a94a4;
+    --rule:#dde2e9; --rule-strong:#c3cbd8;
+    --accent:#2f4bbf; --accent-soft:#e8ecfb;
+    --pos:#16794a; --pos-soft:#e6f4ec; --warn:#8a5a00; --warn-soft:#fdf4e3;
+    --crit:#a5241d; --crit-soft:#fdeceb;
+    --band-driver:#eef3ff; --band-head:#f0f2f6; --band-total:#e7ebf4;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --shadow-frozen: 6px 0 8px -6px rgba(19,23,32,.28);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:#0e1116; --surface:#161b23; --raised:#1e242e;
+      --ink:#e6e9ee; --muted:#98a2b3; --faint:#6b7686;
+      --rule:#272e3a; --rule-strong:#3a4351;
+      --accent:#8fa4ff; --accent-soft:#1c2440;
+      --pos:#5bd39a; --pos-soft:#132a1f; --warn:#e0b055; --warn-soft:#2a2313;
+      --crit:#f28b82; --crit-soft:#2d1715;
+      --band-driver:#151d33; --band-head:#1b212b; --band-total:#1d2635;
+      --shadow-frozen: 6px 0 8px -6px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#0e1116; --surface:#161b23; --raised:#1e242e;
+    --ink:#e6e9ee; --muted:#98a2b3; --faint:#6b7686;
+    --rule:#272e3a; --rule-strong:#3a4351;
+    --accent:#8fa4ff; --accent-soft:#1c2440;
+    --pos:#5bd39a; --pos-soft:#132a1f; --warn:#e0b055; --warn-soft:#2a2313;
+    --crit:#f28b82; --crit-soft:#2d1715;
+    --band-driver:#151d33; --band-head:#1b212b; --band-total:#1d2635;
+    --shadow-frozen: 6px 0 8px -6px rgba(0,0,0,.6);
+  }
+  :root[data-theme="light"] {
+    --paper:#f6f7f9; --surface:#ffffff; --raised:#eef1f6;
+    --ink:#131720; --muted:#5c6675; --faint:#8a94a4;
+    --rule:#dde2e9; --rule-strong:#c3cbd8;
+    --accent:#2f4bbf; --accent-soft:#e8ecfb;
+    --pos:#16794a; --pos-soft:#e6f4ec; --warn:#8a5a00; --warn-soft:#fdf4e3;
+    --crit:#a5241d; --crit-soft:#fdeceb;
+    --band-driver:#eef3ff; --band-head:#f0f2f6; --band-total:#e7ebf4;
+    --shadow-frozen: 6px 0 8px -6px rgba(19,23,32,.28);
+  }
+
+  body { background:var(--paper); color:var(--ink); font-family:var(--sans); font-size:14px; line-height:1.5; }
+  * { box-sizing:border-box; }
+  .wrap { display:flex; flex-direction:column; min-height:100vh; }
+
+  .masthead { padding:20px 24px 14px; border-bottom:1px solid var(--rule); background:var(--surface); }
+  .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:650; }
+  .masthead h1 { margin:6px 0 4px; font-size:23px; letter-spacing:-.02em; font-weight:640; text-wrap:balance; }
+  .masthead p { margin:0; color:var(--muted); max-width:70ch; }
+  .demo-flag { margin-top:12px; padding:9px 13px; border-left:3px solid var(--warn);
+    background:var(--warn-soft); font-size:13px; border-radius:0 6px 6px 0; }
+
+  .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:9px; padding:10px 24px;
+    border-bottom:1px solid var(--rule); background:var(--surface); position:sticky; top:0; z-index:70; }
+  .ctx { display:flex; align-items:baseline; gap:8px; }
+  .ctx .branch { font-weight:640; font-size:15px; }
+  .ctx .period { font-family:var(--mono); font-size:13px; color:var(--muted); }
+  .spacer { flex:1 1 auto; }
+
+  button { font:inherit; font-size:13px; padding:6px 11px; border-radius:6px; cursor:pointer;
+    border:1px solid var(--rule-strong); background:var(--surface); color:var(--ink); }
+  button:hover { background:var(--raised); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--surface); font-weight:600; }
+  button.primary:hover { filter:brightness(1.08); }
+  button[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+
+  .seg { display:flex; border:1px solid var(--rule-strong); border-radius:6px; overflow:hidden; }
+  .seg button { border:0; border-radius:0; border-right:1px solid var(--rule-strong); }
+  .seg button:last-child { border-right:0; }
+
+  input.search { font:inherit; font-size:13px; padding:6px 10px; width:190px;
+    border:1px solid var(--rule-strong); border-radius:6px; background:var(--surface); color:var(--ink); }
+
+  .dirty-dot { width:7px; height:7px; border-radius:50%; background:var(--warn); display:inline-block; }
+  .save-state { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+
+  .problems { padding:9px 24px; background:var(--crit-soft); border-bottom:1px solid var(--rule);
+    font-size:13px; display:flex; align-items:center; gap:12px; position:sticky; top:53px; z-index:65; }
+  .problems.ok { background:var(--pos-soft); }
+  .problems strong { color:var(--crit); }
+  .problems.ok strong { color:var(--pos); }
+
+  /* A bounded scroll region. With an unbounded height the shell grows to fit 40+ rows, overflow
+     never engages, the page scrolls instead, and the sticky header/totals rows can never be
+     reached. Height is capped so the grid always scrolls inside itself. */
+  .grid-shell { flex:0 0 auto; height:clamp(340px, 68vh, 900px); overflow:auto; background:var(--surface); }
+  /* Fixed layout so the frozen left block cannot stretch and push the cost centres off-screen. */
+  table { border-collapse:separate; border-spacing:0; table-layout:fixed; width:max-content; }
+  th, td { border-bottom:1px solid var(--rule); border-right:1px solid var(--rule); padding:0; }
+
+  thead th { position:sticky; background:var(--raised); z-index:40; font-size:10.5px;
+    letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-weight:650;
+    padding:7px 9px; text-align:right; white-space:nowrap; }
+  thead tr.grp th { top:0; height:34px; }
+  thead tr.col th { top:34px; }
+  th.lbl, td.lbl { text-align:left; }
+
+  .fz { position:sticky; background:var(--surface); z-index:30; }
+  thead .fz { z-index:50; background:var(--raised); }
+  tfoot .fz { z-index:55; }
+  .fz-edge { box-shadow:var(--shadow-frozen); border-right:1px solid var(--rule-strong); }
+  .cc-group { border-left:1px solid var(--rule-strong); }
+  th.cc-title { text-align:center; }
+  th.cc-title .code { font-family:var(--mono); font-size:11px; letter-spacing:0; text-transform:none; color:var(--ink); display:block; }
+  th.cc-title .proc { font-size:10px; letter-spacing:.06em; color:var(--muted); display:block; }
+  th.cc-title .proc.unmapped { color:var(--warn); }
+
+  tbody td { background:var(--surface); }
+  tbody tr:hover td, tbody tr:hover td.fz { background:var(--raised); }
+
+  tr.band td { background:var(--band-driver); font-size:10.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--accent); font-weight:700; padding:6px 9px; }
+  tr.driver td, tr.driver td.fz { background:var(--band-driver); }
+  tr.driver:hover td, tr.driver:hover td.fz { background:var(--accent-soft); }
+
+  tr.head-row td, tr.head-row td.fz { background:var(--band-head); font-weight:640; }
+  tr.head-row .twist { display:inline-block; width:12px; color:var(--muted); cursor:pointer; }
+
+  .cell-txt { padding:5px 9px; white-space:nowrap; }
+  .num { font-family:var(--mono); font-variant-numeric:tabular-nums; text-align:right; }
+  .muted { color:var(--muted); } .faint { color:var(--faint); }
+
+  input.cell, select.cell { width:100%; border:0; background:transparent; color:inherit; font:inherit; padding:5px 9px; cursor:text; }
+  select.cell { cursor:pointer; padding:4px 6px; font-size:12.5px; }
+  input.cell.num { font-family:var(--mono); font-variant-numeric:tabular-nums; text-align:right; }
+  input.cell:focus, select.cell:focus { outline:2px solid var(--accent); outline-offset:-2px; background:var(--surface); }
+
+  /* Three cell states, told apart at a glance. Before this, a calculated cell looked identical to
+     an editable one, so most of the grid read as "broken" — on a Manpower row only 4 of 24 cells
+     took input and nothing said which, or why. */
+  td.edit { background:var(--surface); }
+  td.edit:hover { box-shadow:inset 0 0 0 1px var(--accent); }
+  td.calc {
+    color:var(--muted); cursor:help;
+    background-image:repeating-linear-gradient(135deg,
+      transparent 0 5px, color-mix(in srgb, var(--accent) 7%, transparent) 5px 6px);
+  }
+  td.na { color:var(--faint); cursor:help; }
+  tbody tr:hover td.edit { background:var(--surface); }
+
+  .cellkey { display:flex; flex-wrap:wrap; align-items:center; gap:16px; padding:7px 24px;
+    border-bottom:1px solid var(--rule); background:var(--paper); font-size:12px; color:var(--muted); }
+  .cellkey .k { display:flex; align-items:center; gap:6px; }
+  .cellkey .sw { width:26px; height:15px; border:1px solid var(--rule-strong); border-radius:3px; }
+  .cellkey .sw.edit { background:var(--surface); }
+  .cellkey .sw.calc { background-image:repeating-linear-gradient(135deg,
+      transparent 0 5px, color-mix(in srgb, var(--accent) 7%, transparent) 5px 6px); }
+  .cellkey .sw.na { background:var(--raised); }
+  .cellkey .hint { color:var(--accent); font-weight:600; }
+
+  .dir { font-family:var(--mono); font-weight:700; padding:0 4px; }
+  .dir.down { color:var(--accent); } .dir.up { color:var(--pos); }
+
+  .chip { display:inline-flex; align-items:center; gap:5px; font-size:11px; padding:2px 7px;
+    border-radius:999px; border:1px solid var(--rule-strong); color:var(--muted); white-space:nowrap; }
+  .chip.planned { color:var(--pos); border-color:var(--pos); }
+  .chip.gap { color:var(--warn); border-color:var(--warn); background:var(--warn-soft); }
+
+  td.unbalanced { background:var(--crit-soft) !important; }
+  .warn-txt { color:var(--crit); font-weight:600; }
+
+  tr.unplanned td { color:var(--faint); }
+  input.reason-in { font-size:12.5px; font-style:italic; }
+  input.reason-in.needs { background:var(--warn-soft); color:var(--warn); }
+  input.reason-in.needs::placeholder { color:var(--warn); opacity:.85; }
+
+  /* sub-header cell carries the row's identity, dirty state and actions */
+  .sub-cell { display:flex; align-items:center; gap:6px; padding:4px 6px 4px 9px; }
+  .sub-cell .name { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sub-cell .name.detail-child { padding-left:14px; color:var(--muted); font-size:13px; }
+  .acts { display:flex; gap:2px; opacity:0; transition:opacity .12s; }
+  tr:hover .acts, .acts:focus-within { opacity:1; }
+  @media (prefers-reduced-motion: reduce) { .acts { transition:none; } }
+  .acts button { padding:1px 5px; font-size:12px; line-height:1.35; border-radius:4px; min-width:20px; }
+  .acts button.danger:hover { background:var(--crit-soft); border-color:var(--crit); color:var(--crit); }
+  .rowdot { width:6px; height:6px; border-radius:50%; flex:0 0 auto; background:transparent; }
+  .rowdot.on { background:var(--warn); }
+
+  tfoot td { position:sticky; bottom:0; background:var(--band-total); font-weight:650; z-index:45;
+    border-top:2px solid var(--rule-strong); }
+  tfoot td.fz { background:var(--band-total); }
+  tfoot .pct { font-size:10.5px; color:var(--muted); font-weight:500; }
+
+  .footer { position:sticky; bottom:0; z-index:70; display:flex; flex-wrap:wrap; align-items:center;
+    gap:22px; padding:10px 24px; border-top:1px solid var(--rule-strong); background:var(--surface); }
+  .stat { display:flex; flex-direction:column; gap:1px; }
+  .stat .k { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+  .stat .v { font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:16px; font-weight:600; }
+  .stat .v.pos { color:var(--pos); } .stat .v.crit { color:var(--crit); }
+
+  .legend { padding:14px 24px 40px; color:var(--muted); font-size:12.5px;
+    border-top:1px solid var(--rule); background:var(--paper); }
+  .legend h2 { font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink); margin:0 0 8px; }
+  .legend h2:not(:first-child) { margin-top:16px; }
+  .legend ul { margin:0; padding-left:18px; display:grid; gap:5px; }
+  .legend code { font-family:var(--mono); font-size:12px; background:var(--raised); padding:1px 5px; border-radius:3px; }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="eyebrow">MAS PeopleOS · Finance</div>
+    <h1>Branch Budget Planner</h1>
+    <p>Rows are Header / Sub-header / Detail. Columns are cost centres. The branch total sits on the left; each cost centre carries its own Units and Amount on the right.</p>
+    <div class="demo-flag">
+      <strong>Design demo.</strong> Real master data — 20 heads, 38 sub-heads, and the 7 active NOIDA-2 cost-centre codes.
+      Amounts are illustrative and nothing is saved. This page exists to agree the layout and interactions before any production code is written.
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="ctx">
+      <span class="branch">NOIDA-2</span>
+      <span class="period">Aug-2026 · FY 2026-27</span>
+      <span class="chip" id="statusChip">Draft</span>
+    </div>
+    <input class="search" id="search" type="search" placeholder="Find a head or sub-head…" aria-label="Find a head or sub-head">
+    <div class="seg" role="group" aria-label="Filter rows">
+      <button id="fAll"  aria-pressed="true">All</button>
+      <button id="fPlan" aria-pressed="false">Planned</button>
+      <button id="fGap"  aria-pressed="false">Not decided</button>
+      <button id="fProb" aria-pressed="false">Problems</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="save-state" id="saveState">All changes captured</span>
+    <button id="btnUndo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+    <button id="btnCopy">Copy Jul → Aug</button>
+    <button id="btnPrior" aria-pressed="true">Prior-period</button>
+    <button id="btnExpand">Collapse all</button>
+    <button class="primary" id="btnSave">Save draft</button>
+  </div>
+
+  <div class="problems" id="problems"></div>
+
+  <div class="cellkey">
+    <span class="k"><span class="sw edit"></span>Type here</span>
+    <span class="k"><span class="sw calc"></span>Calculated — click to see what drives it</span>
+    <span class="k"><span class="sw na"></span>Not used by this row's sharing method</span>
+    <span class="spacer"></span>
+    <span class="hint" id="cellHint"></span>
+  </div>
+
+  <div class="grid-shell" id="shell">
+    <table id="grid">
+      <thead>
+        <tr class="grp" id="hdrGroup"></tr>
+        <tr class="col" id="hdrCol"></tr>
+      </thead>
+      <tbody id="body"></tbody>
+      <tfoot id="foot"></tfoot>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div class="stat"><span class="k">Branch total</span><span class="v" id="fTotal">—</span></div>
+    <div class="stat"><span class="k">Unallocated</span><span class="v" id="fUnalloc">—</span></div>
+    <div class="stat"><span class="k">Sub-heads decided</span><span class="v" id="fCov">—</span></div>
+    <div class="stat"><span class="k">Budget lines</span><span class="v" id="fLines">—</span></div>
+    <div class="spacer"></div>
+    <div class="stat"><span class="k">Jul budget</span><span class="v muted" id="fPrior">—</span></div>
+    <div class="stat"><span class="k">Variance</span><span class="v" id="fVar">—</span></div>
+  </div>
+
+  <div class="legend">
+    <h2>Adding lines — sub-headers come only from the Finance master</h2>
+    <ul>
+      <li><strong>+ line</strong> on a <em>header</em> opens a picker containing only the sub-headers defined under that header. A sub-header can never be typed: free text would invent sub-heads the master does not have, and coverage matches budget lines to sub-heads by name, so an invented one would silently never be counted.</li>
+      <li>The Sub-header column is a label everywhere in the grid, not an input. Only <em>Detail</em> — the item or contract description — is free text.</li>
+      <li>Unit and default sharing method come from the chosen sub-head's own master record.</li>
+    </ul>
+    <h2>Row actions</h2>
+    <ul>
+      <li><strong>+</strong> on a row adds another detail line for that same sub-head — one sub-head can carry as many detail lines as the branch needs (two AMC contracts, three separate hire agreements).</li>
+      <li><strong>⧉</strong> duplicates a detail line with its figures, for near-identical items.</li>
+      <li><strong>⌫</strong> clears a line back to blank, which returns the sub-head to <em>not planned</em>.</li>
+      <li><strong>✕</strong> deletes an added detail line. The first line of each sub-head cannot be deleted — all 38 come from the Finance master and every one has to be decided before submit — so it clears instead.</li>
+      <li>A row with unsaved edits shows an amber dot next to its name. <code>Esc</code> reverts the cell you are in; <code>Ctrl+Z</code> undoes the last change.</li>
+    </ul>
+    <h2>Why there is no per-row Save button</h2>
+    <ul>
+      <li>The budget is saved as one document — the API replaces the whole line set in a single transaction, so a per-row save would be a lie about what happens. Instead every edit is captured immediately, the toolbar tells you the state, and one <strong>Save draft</strong> commits the sheet. Row-level <em>Undo</em> and <em>Clear</em> give you the control a per-row save was reaching for.</li>
+    </ul>
+    <h2>How the arithmetic runs</h2>
+    <ul>
+      <li><span class="dir down">↓</span> <strong>Top-down</strong> — you type the branch Amount; cost-centre cells are derived. Manpower, Agent headcount, Revenue, Equal, Grade-weighted, Seats, Floor area, Devices, Hiring volume.</li>
+      <li><span class="dir down">↓</span> <strong>Manual</strong> — you type amounts per cost centre against the branch total; Unallocated must reach zero.</li>
+      <li><span class="dir up">↑</span> <strong>Direct</strong> and <strong>Meter</strong> — you type per-cost-centre cells and the branch Amount is the sum. Metered rows use your own projected units × the tariff; meter readings are historical and never gate a budget.</li>
+      <li>Splits allocate in whole rupees by largest remainder, so every column you can see adds up exactly.</li>
+      <li>Keyboard: <code>Tab</code> / <code>Enter</code> / arrows move, <code>Ctrl+D</code> fills down, and a block copied from Excel pastes straight in.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const CCS = [
+    { code:"BSS/BO/NOIDA-2/576",  short:"/576",  proc:"Onfido", hc:368, seats:400, area:9200, dev:390, hire:24, rate:14500 },
+    { code:"BSS/BO/NOIDA-2/577",  short:"/577",  proc:null,     hc:53,  seats:60,  area:1400, dev:56,  hire:4,  rate:12000 },
+    { code:"BSS/BO/NOIDA-2/927",  short:"/927",  proc:null,     hc:26,  seats:30,  area:700,  dev:28,  hire:2,  rate:11000 },
+    { code:"BSS/BO/NOIDA-2/972",  short:"/972",  proc:"BDM",    hc:24,  seats:28,  area:640,  dev:26,  hire:2,  rate:9500  },
+    { code:"BSS/BO/NOIDA-2/983",  short:"/983",  proc:null,     hc:36,  seats:40,  area:950,  dev:38,  hire:3,  rate:10500 },
+    { code:"BSS/BO/NOIDA-2/1015", short:"/1015", proc:"GS1",    hc:41,  seats:48,  area:1100, dev:44,  hire:3,  rate:13000 },
+    { code:"BSS/BO/NOIDA-2/1029", short:"/1029", proc:null,     hc:3,   seats:6,   area:150,  dev:4,   hire:0,  rate:8000  },
+  ];
+  const N = CCS.length;
+
+  const METHODS = {
+    total_manpower:  { label:"Manpower",        dir:"down", w:c => c.hc },
+    agent_headcount: { label:"Agent headcount", dir:"down", w:c => c.hc },
+    revenue_share:   { label:"Revenue share",   dir:"down", w:c => c.hc * c.rate },
+    grade_weighted:  { label:"Grade-weighted",  dir:"down", w:c => c.hc * c.rate * 0.62 },
+    seat_count:      { label:"Seats",           dir:"down", w:c => c.seats },
+    floor_area:      { label:"Floor area",      dir:"down", w:c => c.area },
+    device_count:    { label:"Devices",         dir:"down", w:c => c.dev },
+    hiring_volume:   { label:"Hiring volume",   dir:"down", w:c => c.hire },
+    equal_split:     { label:"Equal split",     dir:"down", w:() => 1 },
+    manual:          { label:"Manual",          dir:"down", w:null },
+    direct:          { label:"Direct",          dir:"up",   w:null },
+    meter_wise:      { label:"Meter",           dir:"up",   w:null },
+  };
+
+  const MASTER = [
+    ["Business Promotion Expenses", [["Business Promotion Expenses","Unit","revenue_share"]]],
+    ["Communication & Connectivity", [
+      ["Company Owned Data","Connection","meter_wise"], ["Company Owned Voice","Connection","meter_wise"],
+      ["Mobile & Internet Reimbursement","User","agent_headcount"], ["Postage & Courier Expenses","Shipment","direct"],
+      ["SMS Charges","Unit","meter_wise"]]],
+    ["Contract Fees Facilities", [["Contract Fees-Facility Staff","Month","total_manpower"]]],
+    ["CONTRACT FEES", [["Process Outsourcing","Service","direct"]]],
+    ["Donation-Charitable Trust", [["Donation-Charitable Trust","Unit","direct"]]],
+    ["Electricity", [["Electricity Govt.","kWh","meter_wise"], ["Generator-Diesel","Litre","meter_wise"]]],
+    ["Fee & Subscription", [["Fee & Subscription","Month","revenue_share"]]],
+    ["Hiring Charges", [["Computer Hire","Device","device_count"], ["Generator Hire","Month","meter_wise"]]],
+    ["Insurance Expenses", [["Car Insurance","Year","direct"], ["Infra Insurance","Year","floor_area"]]],
+    ["Legal/Consultancy Charges", [["Legal & Professional Charges","Service","direct"]]],
+    ["Office Rent", [["Office Rent","Month","floor_area"], ["Property Tax","Year","floor_area"]]],
+    ["Office Maintenance A/c", [["Cafeteria & Other Maintenance","Month","total_manpower"], ["Sweeper & Cleaning Materials","Month","total_manpower"]]],
+    ["Printing & Stationery Expenses", [["Office Stationery","Unit","total_manpower"]]],
+    ["Repairs & Maintenance", [
+      ["Computer & Peripherals Maintenance","Device","device_count"], ["Electrical Repairs & Maintenance","Service","floor_area"],
+      ["Office Repair & Maintenance","Service","floor_area"], ["R&M - Air Conditioner","Unit","floor_area"],
+      ["R&M- Ups Networking Equipment","Unit","device_count"]]],
+    ["Security Service Charges", [["Security Service Charges","Month","floor_area"]]],
+    ["Spot/Floor/Field Incentive", [["Spot/Floor/Field Incentive","Employee","direct"]]],
+    ["Staff Welfare", [
+      ["Drinking Water","Month","total_manpower"], ["R&R Expenses","Month","total_manpower"],
+      ["Tea, Coffee & Refreshment","Month","total_manpower"], ["Festival Exp.","Event","total_manpower"],
+      ["Medical Exp.","Employee","direct"]]],
+    ["Staff Training & Recruitment", [["Recruitment Advertisement Charges","Campaign","hiring_volume"]]],
+    ["Tours, Travelling & Conveyance", [["Local Conveyance A/c","Trip","direct"], ["Parking Charges","Trip","direct"]]],
+    ["Tour Expenses", [["Tour Expenses","Trip","direct"]]],
+  ];
+
+  // Every sub-head opens with plausible figures, seeded ACCORDING TO ITS OWN METHOD: a
+  // bottom-up row (Meter, Direct) needs per-cost-centre cells, because qty/rate on such a row is
+  // derived and typing it does nothing — which is why Local Conveyance previously showed a rate
+  // but a dash for its amount. Deterministic, so the demo looks the same every time.
+  let seedN = 7;
+  const srnd = () => (seedN = (seedN * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const r500 = (n) => Math.max(500, Math.round(n / 500) * 500);
+  function seedFor(sub, unit, method) {
+    // Weight the cost centres roughly by headcount so the dummy figures look believable.
+    const w = [368, 53, 26, 24, 36, 41, 3];
+    const wTot = w.reduce((a, b) => a + b, 0);
+    if (method === 'meter_wise') {
+      // A metered row's Rate is a per-unit tariff, not a lump sum. Using the lump-sum rate here
+      // multiplied 12,000 units by up to 1,20,000 and produced a branch total of Rs 180 crore.
+      // Whole rupees, so the per-cost-centre column always adds up on screen.
+      const tariff = unit === 'kWh' ? 9 : unit === 'Litre' ? 92 : Math.round(6 + srnd() * 240);
+      const total = Math.round(200 + srnd() * 12000);
+      return { rate: tariff, units: w.map((x) => Math.max(1, Math.round(total * x / wTot))) };
+    }
+    const rate = r500(3000 + srnd() * 120000);
+    if (method === 'direct') {
+      // A direct cost sits on one or two cost centres, not all seven.
+      const amt = r500(20000 + srnd() * 180000);
+      const cells = w.map(() => null);
+      cells[0] = amt;
+      if (srnd() > 0.5) cells[1] = r500(amt * 0.3);
+      return { rate, direct: cells };
+    }
+    const qty = ['Month', 'Year', 'Service', 'Lot'].includes(unit) ? 1 : 1 + Math.floor(srnd() * 30);
+    return { qty, rate };
+  }
+
+  const UNIT_OPTIONS = ["Unit", "Nos", "Lot", "Month", "Year", "Seat", "Device", "User", "Connection",
+    "Shipment", "Service", "Employee", "Campaign", "Trip", "Event", "Litre", "kWh", "KL"];
+
+  const money = n => (n || n === 0) ? Math.round(n).toLocaleString("en-IN") : "—";
+  const qnum  = n => (n || n === 0) ? Number(n).toLocaleString("en-IN", { maximumFractionDigits:2 }) : "—";
+  const esc   = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+  // Largest-remainder split at WHOLE-RUPEE granularity. The production engine allocates in
+  // integer paise, which is exact but yields cells like 1428.57; a grid showing whole rupees then
+  // rounds each up and the column visibly fails to add up. A budget is a plan, not a payment.
+  function split(total, weights) {
+    const rupees = Math.round(total);
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (!sum || !rupees) return weights.map(() => 0);
+    const raw = weights.map(w => rupees * w / sum);
+    const floors = raw.map(Math.floor);
+    const rem = rupees - floors.reduce((a, b) => a + b, 0);
+    const order = raw.map((v, i) => ({ i, f: v - floors[i] })).sort((a, b) => b.f - a.f);
+    for (let k = 0; k < rem; k++) floors[order[k % order.length].i] += 1;
+    return floors;
+  }
+
+  // ── state ────────────────────────────────────────────────────────────────
+  let uid = 0;
+  let rows = [];
+  function makeRow(head, hi, sub, unit, method, seed, isBase) {
+    const s = seed || {};
+    return {
+      id: ++uid, head, hi, sub, unit, method, isBase,
+      detail: "", qty: s.qty ?? null, rate: s.rate ?? null,
+      cells: CCS.map((_, i) => ({ units: s.units ? s.units[i] : null, amount: s.direct ? s.direct[i] : null })),
+      prior: s.qty ? Math.round(s.qty * s.rate * 0.97) : 0,
+      reason: "", dirty: false,
+    };
+  }
+  MASTER.forEach(([head, subs], hi) => subs.forEach(([sub, unit, method]) =>
+    rows.push(makeRow(head, hi, sub, unit, method, seedFor(sub, unit, method), true))));
+
+  const collapsed = new Set();
+  let showPrior = true, filter = "all", query = "";
+  /** Head index whose "+ line" picker is open, or null. */
+  let pickerForHead = null;
+  let hintTimer = null;
+  const undoStack = [];
+
+  const snapshot = () => JSON.stringify({ rows, ccs: CCS });
+  function pushUndo() {
+    undoStack.push(snapshot());
+    if (undoStack.length > 60) undoStack.shift();
+    document.getElementById("btnUndo").disabled = false;
+  }
+  function restore(json) {
+    const s = JSON.parse(json);
+    rows = s.rows;
+    s.ccs.forEach((c, i) => Object.assign(CCS[i], c));
+    uid = Math.max(...rows.map(r => r.id), 0);
+  }
+
+  // ── per-row maths
+  function compute(r) {
+    const m = METHODS[r.method];
+    if (m.dir === "up") {
+      // A bottom-up cell with Units behaves the same whichever method it is: Units × Rate. Direct
+      // cells without Units keep whatever amount was typed.
+      // Rounded to whole rupees for the same reason the split is: a half-rupee cell displays
+      // rounded, and seven rounded cells then do not add up to the displayed branch total.
+      r.cells.forEach(c => {
+        if (c.units != null && c.units !== "") c.amount = Math.round(Number(c.units) * (r.rate || 0));
+      });
+      r.amount = r.cells.reduce((a, c) => a + (c.amount || 0), 0);
+      r.qtyShown = r.method === "meter_wise" ? r.cells.reduce((a, c) => a + (c.units || 0), 0) : r.qty;
+      r.unalloc = 0;
+      return;
+    }
+    r.amount = (r.qty || 0) * (r.rate || 0);
+    r.qtyShown = r.qty;
+    if (r.method === "manual") {
+      r.unalloc = Math.round((r.amount - r.cells.reduce((a, c) => a + (c.amount || 0), 0)) * 100) / 100;
+      return;
+    }
+    const parts = split(r.amount, CCS.map(m.w));
+    r.cells.forEach((c, i) => { c.amount = parts[i]; c.units = null; });
+    r.unalloc = 0;
+  }
+  const planned = r => (r.amount || 0) > 0;
+  const rowProblem = r => (planned(r) && Math.abs(r.unalloc) > 0.009) ? "unbalanced"
+    : (!planned(r) && !r.reason.trim() && isSubHeadUndecided(r)) ? "undecided" : null;
+
+  // A sub-head counts as decided when ANY of its lines carries money, or its first line
+  // explains why nothing is budgeted.
+  const groupOf = r => rows.filter(x => x.hi === r.hi && x.sub === r.sub);
+  function isSubHeadUndecided(r) {
+    const g = groupOf(r);
+    if (g.some(planned)) return false;
+    return !g.some(x => x.reason.trim());
+  }
+
+  // ── layout metrics
+  const W = { sub:230, detail:140, qty:58, unit:64, rate:82, amount:96, prior:82, vari:56, sharing:112, dir:26, ccU:64, ccA:88 };
+  const FZ2 = W.sub;
+  const midCols = () => showPrior ? 8 : 6;
+  const blank = () => CCS.map(() => `<td class="cc-group"></td><td></td>`).join("");
+
+  function renderHead() {
+    const table = document.getElementById("grid");
+    let cg = table.querySelector("colgroup");
+    if (!cg) { cg = document.createElement("colgroup"); table.insertBefore(cg, table.firstChild); }
+    const widths = [W.sub, W.detail, W.qty, W.unit, W.rate, W.amount];
+    if (showPrior) widths.push(W.prior, W.vari);
+    widths.push(W.sharing, W.dir);
+    CCS.forEach(() => widths.push(W.ccU, W.ccA));
+    cg.innerHTML = widths.map(w => `<col style="width:${w}px">`).join("");
+
+    document.getElementById("hdrGroup").innerHTML =
+      `<th class="fz lbl" style="left:0">&nbsp;</th>
+       <th class="fz lbl fz-edge" colspan="${midCols() + 1}" style="left:${FZ2}px">Total branch budget</th>` +
+      CCS.map(cc => `<th class="cc-group cc-title" colspan="2">
+          <span class="code">${cc.short}</span>
+          <span class="proc ${cc.proc ? "" : "unmapped"}">${cc.proc || "unmapped ⚠"}</span></th>`).join("");
+
+    document.getElementById("hdrCol").innerHTML =
+      `<th class="fz lbl" style="left:0">Sub-header</th>
+       <th class="fz lbl fz-edge" style="left:${FZ2}px">Detail</th>
+       <th>Qty</th><th class="lbl">Unit</th><th>Rate</th><th>Amount</th>
+       ${showPrior ? "<th>Jul bud</th><th>Var</th>" : ""}
+       <th class="lbl">Sharing</th><th title="Direction the arithmetic runs">⇅</th>` +
+      CCS.map(() => `<th class="cc-group">Units</th><th>Amount</th>`).join("");
+  }
+
+  const matchesQuery = r => !query || r.head.toLowerCase().includes(query) || r.sub.toLowerCase().includes(query)
+    || (r.detail || "").toLowerCase().includes(query);
+  function passesFilter(r) {
+    if (!matchesQuery(r)) return false;
+    if (filter === "planned") return planned(r);
+    if (filter === "gap") return !planned(r);
+    if (filter === "problems") return Boolean(rowProblem(r));
+    return true;
+  }
+
+  function renderBody() {
+    rows.forEach(compute);
+    const b = document.getElementById("body");
+    const out = [];
+
+    const band = label => `<tr class="band"><td class="fz lbl" style="left:0">${label}</td>
+      <td class="fz lbl fz-edge" style="left:${FZ2}px"></td><td colspan="${midCols()}"></td>${blank()}</tr>`;
+
+    out.push(band("Drivers · Aug-2026"));
+    // Each driver sits in the sub-column it belongs to — counts under Units, money under Amount —
+    // so the Units/Amount boundary holds on every row of the grid.
+    [["Planned headcount","hc","units"], ["Seats","seats","units"], ["Floor area (sq ft)","area","units"],
+     ["Devices","dev","units"], ["Revenue rate / head","rate","amount"]].forEach(([label, key, where]) => {
+      out.push(`<tr class="driver"><td class="fz lbl" style="left:0"><div class="cell-txt muted">${label}</div></td>
+        <td class="fz lbl fz-edge" style="left:${FZ2}px"></td><td colspan="${midCols()}"></td>` +
+        CCS.map((cc, i) => {
+          const inp = `<input class="cell num" data-driver="${key}" data-cc="${i}" value="${cc[key]}" aria-label="${label} ${cc.short}">`;
+          return where === "units" ? `<td class="cc-group">${inp}</td><td></td>` : `<td class="cc-group"></td><td>${inp}</td>`;
+        }).join("") + `</tr>`);
+    });
+    out.push(band("Budget"));
+
+    MASTER.forEach(([headName], hi) => {
+      const group = rows.filter(r => r.hi === hi);
+      const visible = group.filter(passesFilter);
+      if (!visible.length) return;
+      const tot = group.reduce((a, r) => a + (r.amount || 0), 0);
+      const open = !collapsed.has(hi);
+      const probs = group.filter(rowProblem).length;
+      // The only way to add a line is to pick one of this head's sub-heads from the Finance
+      // master. A sub-header is never typed — free text here would invent sub-heads that the
+      // master does not have, and coverage joins budget lines to sub-heads on the name.
+      const subOptions = MASTER[hi][1];
+      const picking = pickerForHead === hi;
+      out.push(`<tr class="head-row" data-head="${hi}">
+        <td class="fz lbl" style="left:0"><div class="sub-cell">
+          <span class="twist" role="button" tabindex="0"
+            aria-label="${open ? "Collapse" : "Expand"} ${esc(headName)}">${open ? "▾" : "▸"}</span>
+          <span class="name"><strong>${esc(headName)}</strong></span>
+          <span class="acts"><button data-act="pick" data-head="${hi}"
+            title="Add a line for one of this head's sub-headers" aria-label="Add a line under ${esc(headName)}">+ line</button></span>
+        </div></td>
+        <td class="fz lbl fz-edge" style="left:${FZ2}px">${picking
+          ? `<select class="cell" data-pick-head="${hi}" aria-label="Choose a sub-header defined under ${esc(headName)}">
+               <option value="">Choose sub-header…</option>
+               ${subOptions.map(([s]) => `<option value="${esc(s)}">${esc(s)}</option>`).join("")}
+             </select>`
+          : `<div class="cell-txt faint">${group.length} line${group.length > 1 ? "s" : ""}${probs ? ` · <span class="warn-txt">${probs} to fix</span>` : ""}</div>`}</td>
+        <td colspan="3"></td><td class="num"><div class="cell-txt">${tot ? money(tot) : "—"}</div></td>
+        ${showPrior ? `<td class="num"><div class="cell-txt muted">${group.reduce((a,r)=>a+r.prior,0) ? money(group.reduce((a,r)=>a+r.prior,0)) : "—"}</div></td><td></td>` : ""}
+        <td colspan="2"></td>` +
+        CCS.map((_, i) => { const v = group.reduce((a, r) => a + (r.cells[i].amount || 0), 0);
+          return `<td class="cc-group"></td><td class="num"><div class="cell-txt">${v ? money(v) : "—"}</div></td>`; }).join("") +
+        `</tr>`);
+      if (!open) return;
+      visible.forEach(r => out.push(renderRow(r)));
+    });
+
+    b.innerHTML = out.join("");
+    renderFoot();
+    renderStats();
+  }
+
+  function renderRow(r) {
+    const m = METHODS[r.method], up = m.dir === "up", isPlanned = planned(r);
+    const prob = rowProblem(r);
+    const varPct = r.prior ? ((r.amount - r.prior) / r.prior) * 100 : null;
+    const varCls = varPct === null ? "faint" : Math.abs(varPct) > 25 ? "warn-txt" : "muted";
+    const g = groupOf(r);
+    const first = g[0] === r;
+
+    // Actions live in the frozen Sub-header cell so they are reachable however far right you scroll.
+    const acts = `<span class="acts">
+      ${first ? `<button data-act="add" data-row="${r.id}" title="Add another detail line under this sub-head" aria-label="Add detail line to ${esc(r.sub)}">+</button>` : ""}
+      <button data-act="dup" data-row="${r.id}" title="Duplicate this line" aria-label="Duplicate line">⧉</button>
+      <button data-act="clear" data-row="${r.id}" title="Clear this line" aria-label="Clear line">⌫</button>
+      ${r.isBase ? "" : `<button class="danger" data-act="del" data-row="${r.id}" title="Delete this detail line" aria-label="Delete line">✕</button>`}
+    </span>`;
+
+    const detailCell = isPlanned || !first
+      ? `<input class="cell" data-f="detail" data-row="${r.id}" value="${esc(r.detail)}" placeholder="add detail" aria-label="Detail for ${esc(r.sub)}">`
+      : `<input class="cell reason-in ${r.reason.trim() ? "" : "needs"}" data-f="reason" data-row="${r.id}"
+            value="${esc(r.reason)}" placeholder="not planned — reason" aria-label="Reason not planned for ${esc(r.sub)}">`;
+
+    let html = `<tr data-row="${r.id}"${isPlanned ? "" : ' class="unplanned"'}>
+      <td class="fz lbl" style="left:0"><div class="sub-cell">
+        <span class="rowdot ${r.dirty ? "on" : ""}" title="${r.dirty ? "Edited, not yet saved" : ""}"></span>
+        <span class="name ${first ? "" : "detail-child"}" title="${esc(r.sub)}">${
+          first ? esc(r.sub) : "↳ " + esc(r.detail || r.sub)}</span>
+        ${acts}</div></td>
+      <td class="fz lbl fz-edge" style="left:${FZ2}px">${detailCell}</td>
+      <td class="num ${up ? "calc" : "edit"}"${up ? ` title="Summed from the per-cost-centre Units you type on the right."` : ""}>${up
+        ? `<div class="cell-txt num">${isPlanned ? qnum(r.qtyShown) : "—"}</div>`
+        : `<input class="cell num" data-f="qty" data-row="${r.id}" value="${r.qty ?? ""}" aria-label="Quantity">`}</td>
+      <td class="lbl edit"><select class="cell" data-f="unit" data-row="${r.id}" aria-label="Unit type">${
+        UNIT_OPTIONS.map((u) => `<option value="${esc(u)}"${u === r.unit ? " selected" : ""}>${esc(u)}</option>`).join("")
+      }</select></td>
+      <td class="num edit"><input class="cell num" data-f="rate" data-row="${r.id}" value="${r.rate ?? ""}" aria-label="Rate"></td>
+      <td class="num ${up ? "calc" : "edit"}"${up ? ` title="Summed from the per-cost-centre Amounts on the right, because this row is bottom-up (↑)."` : ""}>${up
+        ? `<div class="cell-txt">${isPlanned ? `<strong>${money(r.amount)}</strong>` : "—"}</div>`
+        : `<input class="cell num" data-f="amount" data-row="${r.id}" value="${r.amount || ""}" aria-label="Branch amount">`}</td>
+      ${showPrior ? `<td class="num calc" title="Last month's budget for this sub-head — reference only."><div class="cell-txt muted">${r.prior ? money(r.prior) : "—"}</div></td>
+        <td class="num calc" title="Change against last month."><div class="cell-txt ${varCls}">${varPct === null ? "—" : (varPct > 0 ? "+" : "") + varPct.toFixed(1) + "%"}</div></td>` : ""}
+      <td class="lbl edit"><select class="cell" data-f="method" data-row="${r.id}" aria-label="Sharing method">${
+        Object.entries(METHODS).map(([k, v]) => `<option value="${k}"${k === r.method ? " selected" : ""}>${v.label}</option>`).join("")
+      }</select></td>
+      <td class="calc" title="${up ? "Bottom-up: you type the cost-centre cells and the branch total is their sum." : "Top-down: you type the branch Amount and the cost-centre cells are derived."}"><div class="cell-txt dir ${up ? "up" : "down"}">${up ? "↑" : "↓"}</div></td>` +
+      CCS.map((cc, i) => {
+        const cell = r.cells[i];
+        // Units are typed for any bottom-up row — metered consumption or a direct quantity such as
+        // 60 devices at 450 each. Amounts are typed when the row is manual or direct without units.
+        const uEdit = up;
+        const aEdit = r.method === "manual" || (r.method === "direct" && !cell.units);
+        const bad = prob === "unbalanced";
+        const aWhy = r.method === "meter_wise" || (r.method === "direct" && cell.units)
+          ? `Units × Rate. Clear the Units to type an amount instead.`
+          : `Derived from the ${METHODS[r.method].label} split. Switch this row to Manual to type amounts.`;
+        return `<td class="cc-group num ${uEdit ? "edit" : "na"}"${uEdit ? "" : ` title="Units are only typed on a bottom-up row (Meter or Direct). This row is ${METHODS[r.method].label}."`}>${uEdit
+            ? `<input class="cell num" data-f="u${i}" data-row="${r.id}" value="${cell.units ?? ""}" aria-label="${cc.short} units">`
+            : `<div class="cell-txt num faint">${cell.units != null ? qnum(cell.units) : "—"}</div>`}</td>
+          <td class="num ${aEdit ? "edit" : "calc"} ${bad ? "unbalanced" : ""}"${aEdit ? "" : ` title="${aWhy}"`}>${aEdit
+            ? `<input class="cell num" data-f="a${i}" data-row="${r.id}" value="${cell.amount ?? ""}" aria-label="${cc.short} amount">`
+            : `<div class="cell-txt num">${isPlanned && cell.amount ? money(cell.amount) : "—"}</div>`}</td>`;
+      }).join("") + `</tr>`;
+
+    if (prob === "unbalanced") {
+      html += `<tr data-note="${r.id}"><td class="fz lbl" style="left:0"></td>
+        <td class="fz lbl fz-edge" style="left:${FZ2}px"></td>
+        <td colspan="${midCols()}"><div class="cell-txt warn-txt">Unallocated ₹${money(r.unalloc)} — the manual split must reach zero.</div></td>${blank()}</tr>`;
+    }
+    return html;
+  }
+
+  // Column totals per cost centre — the question a branch admin asks most often
+  // ("what is /576 getting?") and the one the grid could not answer before.
+  function renderFoot() {
+    const branch = rows.reduce((a, r) => a + (r.amount || 0), 0);
+    document.getElementById("foot").innerHTML =
+      `<tr><td class="fz lbl" style="left:0"><div class="cell-txt">Cost-centre total</div></td>
+       <td class="fz lbl fz-edge" style="left:${FZ2}px"><div class="cell-txt faint">${rows.length} lines</div></td>
+       <td colspan="3"></td><td class="num"><div class="cell-txt">${money(branch)}</div></td>
+       ${showPrior ? `<td colspan="2"></td>` : ""}<td colspan="2"></td>` +
+      CCS.map((_, i) => {
+        const v = rows.reduce((a, r) => a + (r.cells[i].amount || 0), 0);
+        const pct = branch ? (v / branch) * 100 : 0;
+        return `<td class="cc-group num"><div class="cell-txt pct">${pct ? pct.toFixed(1) + "%" : "—"}</div></td>
+                <td class="num"><div class="cell-txt">${v ? money(v) : "—"}</div></td>`;
+      }).join("") + `</tr>`;
+  }
+
+  function renderStats() {
+    const total = rows.reduce((a, r) => a + (r.amount || 0), 0);
+    const un = rows.reduce((a, r) => a + Math.abs(r.unalloc || 0), 0);
+    const prior = rows.reduce((a, r) => a + r.prior, 0);
+    const subHeads = new Set(rows.map(r => r.hi + "|" + r.sub));
+    let decided = 0;
+    subHeads.forEach(k => {
+      const [hi, sub] = k.split("|");
+      const g = rows.filter(r => String(r.hi) === hi && r.sub === sub);
+      if (g.some(planned) || g.some(r => r.reason.trim())) decided++;
+    });
+
+    document.getElementById("fTotal").textContent = "₹" + money(total);
+    const u = document.getElementById("fUnalloc");
+    u.textContent = "₹" + money(un); u.className = "v " + (un > 0.009 ? "crit" : "pos");
+    const c = document.getElementById("fCov");
+    c.textContent = decided + " / " + subHeads.size;
+    c.className = "v " + (decided === subHeads.size ? "pos" : "");
+    document.getElementById("fLines").textContent = String(rows.length);
+    document.getElementById("fPrior").textContent = "₹" + money(prior);
+    const v = document.getElementById("fVar");
+    const pct = prior ? ((total - prior) / prior) * 100 : 0;
+    v.textContent = (pct > 0 ? "+" : "") + pct.toFixed(1) + "%";
+    v.className = "v " + (Math.abs(pct) > 25 ? "crit" : "");
+
+    const problems = rows.filter(rowProblem);
+    const unbal = problems.filter(r => rowProblem(r) === "unbalanced").length;
+    const undec = subHeads.size - decided;
+    const p = document.getElementById("problems");
+    if (!problems.length && !undec) {
+      p.className = "problems ok";
+      p.innerHTML = `<strong>Ready to submit.</strong> All ${subHeads.size} sub-heads are decided and every split reconciles.`;
+    } else {
+      p.className = "problems";
+      const bits = [];
+      if (undec) bits.push(`${undec} sub-head${undec > 1 ? "s" : ""} not decided`);
+      if (unbal) bits.push(`${unbal} manual split${unbal > 1 ? "s" : ""} unbalanced`);
+      p.innerHTML = `<strong>${bits.join(" · ")}</strong> block submission.
+        <button id="jumpProb">Show only these</button>`;
+    }
+    const ready = !problems.length && !undec;
+    const chip = document.getElementById("statusChip");
+    chip.textContent = ready ? "Ready to submit" : "Draft";
+    chip.className = "chip " + (ready ? "planned" : "");
+    const dirty = rows.some(r => r.dirty);
+    document.getElementById("saveState").innerHTML = dirty
+      ? `<span class="dirty-dot"></span>Unsaved edits on ${rows.filter(r => r.dirty).length} line(s)`
+      : "All changes captured";
+  }
+
+  const rowById = id => rows.find(r => r.id === +id);
+
+  // ── edits
+  document.getElementById("body").addEventListener("input", e => {
+    const el = e.target;
+    // Adding a line: the chosen value can only be one of this head's master sub-heads.
+    if (el.matches("select[data-pick-head]")) {
+      const hi = +el.dataset.pickHead;
+      const sub = el.value;
+      if (!sub) return;
+      const template = rows.find(r => r.hi === hi && r.sub === sub)
+        ?? { head: MASTER[hi][0], hi, sub, unit: "Unit", method: "total_manpower" };
+      const defaults = MASTER[hi][1].find(([s]) => s === sub);
+      pushUndo();
+      const fresh = makeRow(MASTER[hi][0], hi, sub, defaults?.[1] ?? template.unit,
+        defaults?.[2] ?? template.method, null, false);
+      fresh.dirty = true;
+      const group = rows.filter(r => r.hi === hi && r.sub === sub);
+      const at = group.length ? rows.indexOf(group[group.length - 1]) + 1 : rows.length;
+      rows.splice(at, 0, fresh);
+      pickerForHead = null;
+      renderBody();
+      document.querySelector(`#body input[data-f="detail"][data-row="${fresh.id}"]`)?.focus();
+      return;
+    }
+    if (!el.matches("input.cell, select.cell")) return;
+    pushUndo();
+    if (el.dataset.driver) {
+      CCS[+el.dataset.cc][el.dataset.driver] = Number(el.value) || 0;
+      return rerenderKeepingFocus(el);
+    }
+    const r = rowById(el.dataset.row), f = el.dataset.f, val = el.value;
+    r.dirty = true;
+    if (f === "detail") { r.detail = val; renderStats(); return; }
+    if (f === "reason") { r.reason = val; renderStats(); return; }
+    if (f === "qty")  r.qty  = val === "" ? null : Number(val);
+    if (f === "rate") r.rate = val === "" ? null : Number(val);
+    if (f === "unit") r.unit = val;
+    // Typing the branch Amount directly is often how a branch admin thinks ("rent is 4,50,000"),
+    // so it back-solves the Rate against the Quantity rather than being read-only.
+    if (f === "amount") {
+      const amt = val === "" ? 0 : Number(val);
+      if (!r.qty) r.qty = 1;
+      r.rate = r.qty ? amt / r.qty : amt;
+    }
+    if (f === "method") r.method = val;
+    // Anchored to a digit on purpose: a bare f[0] check made "unit" look like cost-centre cell
+    // "u<n>" and "amount" like "a<n>", so r.cells[NaN] threw and the edit was silently dropped.
+    const uCell = /^u(\d+)$/.exec(f);
+    const aCell = /^a(\d+)$/.exec(f);
+    if (uCell) r.cells[+uCell[1]].units  = val === "" ? null : Number(val);
+    if (aCell) r.cells[+aCell[1]].amount = val === "" ? null : Number(val);
+    rerenderKeepingFocus(el);
+  });
+
+  function rerenderKeepingFocus(el) {
+    const key = el.dataset.driver
+      ? `[data-driver="${el.dataset.driver}"][data-cc="${el.dataset.cc}"]`
+      : `[data-f="${el.dataset.f}"][data-row="${el.dataset.row}"]`;
+    const pos = el.selectionStart;
+    renderBody();
+    const next = document.querySelector(`#body ${key}`);
+    if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch {} }
+  }
+
+  // ── row actions
+  document.getElementById("body").addEventListener("click", e => {
+    const pick = e.target.closest('button[data-act="pick"]');
+    if (pick) {
+      const hi = +pick.dataset.head;
+      pickerForHead = pickerForHead === hi ? null : hi;
+      collapsed.delete(hi);           // opening the picker on a collapsed head would hide the result
+      renderBody();
+      document.querySelector(`#body select[data-pick-head="${hi}"]`)?.focus();
+      return;
+    }
+    const act = e.target.closest("button[data-act]");
+    if (act) {
+      pushUndo();
+      const r = rowById(act.dataset.row);
+      const at = rows.indexOf(r);
+      if (act.dataset.act === "add") {
+        const g = groupOf(r);
+        const last = rows.indexOf(g[g.length - 1]);
+        rows.splice(last + 1, 0, makeRow(r.head, r.hi, r.sub, r.unit, r.method, null, false));
+        rows[last + 1].dirty = true;
+      } else if (act.dataset.act === "dup") {
+        const copy = JSON.parse(JSON.stringify(r));
+        copy.id = ++uid; copy.isBase = false; copy.dirty = true; copy.prior = 0;
+        copy.detail = (r.detail || r.sub) + " (copy)";
+        rows.splice(at + 1, 0, copy);
+      } else if (act.dataset.act === "clear") {
+        Object.assign(r, { detail:"", qty:null, rate:null, reason:"", dirty:true,
+          cells: CCS.map(() => ({ units:null, amount:null })) });
+      } else if (act.dataset.act === "del") {
+        rows.splice(at, 1);
+      }
+      renderBody();
+      return;
+    }
+    // Clicking a cell that cannot be typed in should say why, rather than appearing broken.
+    const dead = e.target.closest("td.calc, td.na");
+    if (dead) {
+      const hint = document.getElementById("cellHint");
+      hint.textContent = dead.getAttribute("title") || "";
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => { hint.textContent = ""; }, 6000);
+    }
+    const tw = e.target.closest(".twist");
+    if (tw) {
+      const hi = +tw.closest("tr").dataset.head;
+      collapsed.has(hi) ? collapsed.delete(hi) : collapsed.add(hi);
+      renderBody();
+    }
+  });
+  document.getElementById("body").addEventListener("keydown", e => {
+    if (e.target.classList.contains("twist") && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault(); e.target.click();
+    }
+  });
+
+  // ── keyboard navigation, Esc revert, Ctrl+D fill down
+  let focusSnapshot = null;
+  document.getElementById("body").addEventListener("focusin", e => {
+    if (e.target.matches("input.cell")) focusSnapshot = e.target.value;
+  });
+  document.getElementById("body").addEventListener("keydown", e => {
+    const el = e.target;
+    if (!el.matches("input.cell")) return;
+    const cells = [...document.querySelectorAll("#body input.cell")];
+    const i = cells.indexOf(el);
+    const cell = el.closest("td");
+    const ci = [...cell.parentElement.children].indexOf(cell);
+    const go = t => { if (t) { e.preventDefault(); t.focus(); t.select?.(); } };
+    const sameColIn = (from, dir) => {
+      let n = dir > 0 ? from.nextElementSibling : from.previousElementSibling;
+      while (n && !n.children[ci]?.querySelector("input.cell")) n = dir > 0 ? n.nextElementSibling : n.previousElementSibling;
+      return n?.children[ci]?.querySelector("input.cell");
+    };
+    if (e.key === "Escape" && focusSnapshot !== null) {
+      e.preventDefault(); el.value = focusSnapshot; el.dispatchEvent(new Event("input", { bubbles:true }));
+    } else if (e.key === "Enter" || (e.key === "ArrowDown" && !e.shiftKey)) {
+      go(sameColIn(el.closest("tr"), 1));
+    } else if (e.key === "ArrowUp") {
+      go(sameColIn(el.closest("tr"), -1));
+    } else if (e.key === "ArrowRight" && el.selectionStart === el.value.length) { go(cells[i + 1]); }
+    else if (e.key === "ArrowLeft" && el.selectionStart === 0) { go(cells[i - 1]); }
+    else if (e.key.toLowerCase() === "d" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const src = sameColIn(el.closest("tr"), -1);
+      if (src) { el.value = src.value; el.dispatchEvent(new Event("input", { bubbles:true })); }
+    }
+  });
+
+  // ── paste a block out of Excel
+  document.getElementById("body").addEventListener("paste", e => {
+    const el = e.target;
+    if (!el.matches("input.cell") || !el.dataset.row) return;
+    const text = (e.clipboardData || window.clipboardData).getData("text");
+    if (!/[\t\n]/.test(text)) return;
+    e.preventDefault();
+    pushUndo();
+    const order = ["qty", "rate"];
+    const fi = order.indexOf(el.dataset.f);
+    if (fi < 0) return;
+    const visible = [...document.querySelectorAll("#body tr[data-row]")].map(t => +t.dataset.row);
+    let idx = visible.indexOf(+el.dataset.row);
+    text.replace(/\r/g, "").split("\n").filter(Boolean).forEach((line, dr) => {
+      const r = rowById(visible[idx + dr]);
+      if (!r) return;
+      r.dirty = true;
+      line.split("\t").forEach((v, dc) => {
+        const f = order[fi + dc];
+        if (!f) return;
+        const n = Number(String(v).replace(/[₹,\s]/g, ""));
+        if (!Number.isNaN(n)) r[f] = n;
+      });
+    });
+    renderBody();
+  });
+
+  // ── toolbar
+  const setFilter = (name, btn) => {
+    filter = name;
+    ["fAll","fPlan","fGap","fProb"].forEach(id =>
+      document.getElementById(id).setAttribute("aria-pressed", String(document.getElementById(id) === btn)));
+    renderBody();
+  };
+  document.getElementById("fAll").onclick  = e => setFilter("all", e.currentTarget);
+  document.getElementById("fPlan").onclick = e => setFilter("planned", e.currentTarget);
+  document.getElementById("fGap").onclick  = e => setFilter("gap", e.currentTarget);
+  document.getElementById("fProb").onclick = e => setFilter("problems", e.currentTarget);
+  document.getElementById("problems").addEventListener("click", e => {
+    if (e.target.id === "jumpProb") setFilter("problems", document.getElementById("fProb"));
+  });
+  document.getElementById("search").addEventListener("input", e => {
+    query = e.target.value.trim().toLowerCase(); renderBody();
+  });
+  document.getElementById("btnPrior").onclick = e => {
+    showPrior = !showPrior; e.currentTarget.setAttribute("aria-pressed", String(showPrior));
+    renderHead(); renderBody();
+  };
+  document.getElementById("btnExpand").onclick = e => {
+    if (collapsed.size) { collapsed.clear(); e.currentTarget.textContent = "Collapse all"; }
+    else { MASTER.forEach((_, i) => collapsed.add(i)); e.currentTarget.textContent = "Expand all"; }
+    renderBody();
+  };
+  document.getElementById("btnCopy").onclick = () => {
+    pushUndo();
+    rows.forEach(r => { if (!planned(r) && r.prior) { r.qty = 1; r.rate = r.prior; r.dirty = true; } });
+    renderBody();
+  };
+  document.getElementById("btnUndo").onclick = () => {
+    if (!undoStack.length) return;
+    restore(undoStack.pop());
+    document.getElementById("btnUndo").disabled = !undoStack.length;
+    renderHead(); renderBody();
+  };
+  document.addEventListener("keydown", e => {
+    if (e.key.toLowerCase() === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      const el = document.activeElement;
+      if (el && el.matches("input.cell")) return; // let the browser undo inside a field
+      e.preventDefault(); document.getElementById("btnUndo").click();
+    }
+  });
+  document.getElementById("btnSave").onclick = () => {
+    const unbal = rows.filter(r => rowProblem(r) === "unbalanced").length;
+    if (unbal) return alert(`Cannot save — ${unbal} manual split(s) are still unallocated.`);
+    rows.forEach(r => { r.dirty = false; });
+    renderBody();
+    alert("Demo only — nothing is saved. In the real planner this posts the whole line set in one transaction.");
+  };
+
+  renderHead();
+  renderBody();
+})();
+</script>

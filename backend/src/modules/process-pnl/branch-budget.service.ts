@@ -53,6 +53,11 @@ export interface BudgetLineInput {
   planningLevel?: BudgetPlanningLevel;
   /** Only used when planningLevel = "branch" and allocationDriver = "manual". */
   manualAllocations?: ManualAllocationInput[];
+  /** Only used when planningLevel = "branch". The cost centres this line actually applies to;
+   *  omit to spread across every active cost centre. Lets a line that genuinely covers only part
+   *  of the branch (one floor's air conditioning) exclude the rest, instead of forcing a manual
+   *  split with 0% entries. */
+  includedCostCentreIds?: string[] | null;
 }
 
 export interface SaveBudgetInput {
@@ -618,7 +623,9 @@ async function replaceBudgetLines(
           pnlCostAmount: value.pnlCostAmount,
         },
         line.manualAllocations,
-        connection
+        connection,
+        undefined,
+        line.includedCostCentreIds
       );
       await replaceLineAllocations(connection, lineId, allocations, actorId);
     }

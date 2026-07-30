@@ -319,7 +319,12 @@ export async function computeLineAllocations(
   /** Restricts meter-wise sharing to one kind of meter. Without it an electricity line would be
    *  apportioned by kWh + litres + KL added together, which is not a quantity. Omit to use every
    *  meter regardless of utility (the pre-434 behaviour). */
-  utilityType?: MeterUtilityType
+  utilityType?: MeterUtilityType,
+  /** Restricts the split to these cost centres. Omit (or pass an empty list) to spread across every
+   *  active cost centre, which is the long-standing behaviour. Real costs are rarely branch-wide —
+   *  air-conditioner maintenance touches only the floors a few processes occupy — and without this
+   *  the only way to exclude a cost centre was a manual split giving it 0%. */
+  includedCostCentreIds?: string[] | null
 ): Promise<LineAllocationRow[]> {
   const method = (SEEDED_DRIVER_ALIASES[(sharingMethod ?? "").trim()]
     ?? (sharingMethod ?? "").trim()) as SharingMethod;
@@ -330,9 +335,29 @@ export async function computeLineAllocations(
     );
   }
 
-  const costCentres = await listActiveCostCentres(branchId, executor);
-  if (costCentres.length === 0) {
+  const allActive = await listActiveCostCentres(branchId, executor);
+  if (allActive.length === 0) {
     throw new Error("This branch has no active cost centres to allocate a branch-level line to");
+  }
+
+  // Narrow to the line's own cost-centre scope. Everything downstream — driver checks, manual
+  // percentages, the split itself — then works against the selected set only, so an excluded cost
+  // centre neither needs driver data nor receives an allocation row.
+  const scopeIds = (includedCostCentreIds ?? []).filter(Boolean);
+  let costCentres = allActive;
+  if (scopeIds.length) {
+    const activeIds = new Set(allActive.map((cc) => cc.id));
+    const unknown = scopeIds.filter((id) => !activeIds.has(id));
+    if (unknown.length) {
+      throw new Error(
+        `Cost centre scope names ${unknown.length} cost centre(s) that are not active for this branch`
+      );
+    }
+    const wanted = new Set(scopeIds);
+    costCentres = allActive.filter((cc) => wanted.has(cc.id));
+    if (costCentres.length === 0) {
+      throw new Error("Select at least one cost centre for this branch-level line");
+    }
   }
 
   let shares: AllocationShare[];
@@ -348,7 +373,7 @@ export async function computeLineAllocations(
     const missing = costCentres.filter((cc) => !manualAllocations.some((m) => m.costCentreId === cc.id));
     if (missing.length > 0) {
       throw new Error(
-        `Manual sharing requires a percentage for every active cost centre. Missing: ` +
+        `Manual sharing requires a percentage for every ${scopeIds.length ? "selected" : "active"} cost centre. Missing: ` +
         missing.map((cc) => cc.costCentreName).join(", ")
       );
     }

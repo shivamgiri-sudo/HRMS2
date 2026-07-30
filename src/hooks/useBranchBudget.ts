@@ -62,6 +62,9 @@ export interface BranchBudgetLineInput {
   planningLevel?: BudgetPlanningLevel;
   /** Only used when planningLevel = "branch" and allocationDriver = "manual". */
   manualAllocations?: ManualAllocationInput[];
+  /** Only used when planningLevel = "branch". The cost centres this line applies to; omit or leave
+   *  empty to spread across every active cost centre. */
+  includedCostCentreIds?: string[] | null;
 }
 
 export interface SaveBranchBudgetInput {
@@ -313,6 +316,12 @@ export function budgetLineRecordToInput(
       costCentreId: a.cost_centre_id,
       percentage: a.allocation_percentage,
     })),
+    // The saved allocation rows ARE the cost-centre scope: a cost centre left out of the line has
+    // no row (as opposed to a row with a zero amount), so the selection round-trips without
+    // needing a table of its own.
+    includedCostCentreIds: line.allocations?.length
+      ? line.allocations.map((a) => a.cost_centre_id)
+      : null,
   };
 }
 

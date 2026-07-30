@@ -116,6 +116,17 @@ type BudgetCapabilities = {
  *  branch-budget.service.ts saveDraft(). */
 const EDITABLE_BUDGET_STATUSES = ["draft", "revision_required"];
 
+/** Whether a branch-common line spans the whole branch. An empty selection means "all", and so
+ *  does an explicit selection naming every active cost centre — which is how a saved
+ *  whole-branch line comes back, since its scope is derived from its allocation rows. */
+function coversAllCostCentres(
+  line: { includedCostCentreIds?: string[] | null },
+  activeCount: number
+) {
+  const n = line.includedCostCentreIds?.length ?? 0;
+  return n === 0 || n >= activeCount;
+}
+
 /** Identity a correction note is anchored to. Deliberately head/sub-head/item rather than line id:
  *  saving a draft replaces the whole line set with fresh ids, so a note keyed by id would come
  *  unstuck from its line the moment the branch admin saved the very fix it asked for. */
@@ -852,6 +863,53 @@ export default function BranchBudgetManagementWorkspace() {
                       <Field label={`Cost centre ${scope === "cost_centre" ? "*" : ""}`}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.costCentreId ?? ""} disabled={!canEdit || scope !== "cost_centre"} onChange={(event) => { const selected = costCentres.find((item) => item.id === event.target.value); updateLine(index, { attributionScope: "cost_centre", costCentreId: event.target.value || null, processId: selected?.process_id ?? null }); }}><option value="">Select cost centre</option>{costCentres.map((item) => <option key={item.id} value={item.id}>{item.cost_centre_name ?? item.name}</option>)}</select></Field>
                       <Field label={`Process ${scope === "process" ? "*" : ""}`}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.processId ?? ""} disabled={!canEdit || scope !== "process"} onChange={(event) => updateLine(index, { attributionScope: "process", processId: event.target.value || null, costCentreId: null })}><option value="">Select process</option>{processes.map((item) => <option key={item.id} value={item.id}>{item.process_name ?? item.name}</option>)}</select></Field>
                       <Field label={scope === "branch_common" ? "Sharing method *" : "Allocation driver *"}><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.allocationDriver ?? ""} disabled={!canEdit} onChange={(event) => updateLine(index, { allocationDriver: event.target.value })}>{scope === "branch_common" ? BRANCH_SHARING_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>) : ALLOCATION_DRIVERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+                      {/* Cost-centre scope. A branch-common line used to always hit every active
+                          cost centre, so excluding one meant a manual split giving it 0%. Real
+                          costs are often partial — one floor's air conditioning, two processes'
+                          courier spend. Empty selection means the whole branch, preserving the
+                          previous behaviour for every existing line. */}
+                      {scope === "branch_common" && (
+                        <Field label="Applies to cost centres" span={2}>
+                          <div className="rounded-md border border-input bg-background p-2">
+                            <div className="mb-1.5 flex items-center gap-2 text-xs text-slate-500">
+                              {/* A saved line derives its scope from its allocation rows, so a
+                                  whole-branch line arrives as an explicit list of every cost
+                                  centre. That is the same thing as "all" and must read that way. */}
+                              <span>{coversAllCostCentres(line, activeCostCentres.length) ? `All ${activeCostCentres.length} cost centres` : `${line.includedCostCentreIds!.length} of ${activeCostCentres.length} selected`}</span>
+                              {!coversAllCostCentres(line, activeCostCentres.length) && canEdit && (
+                                <button type="button" className="text-blue-700 underline" onClick={() => updateLine(index, { includedCostCentreIds: null })}>Use all</button>
+                              )}
+                            </div>
+                            <div className="flex max-h-28 flex-wrap gap-x-4 gap-y-1 overflow-auto">
+                              {activeCostCentres.map((cc) => {
+                                const selected = line.includedCostCentreIds ?? [];
+                                const on = selected.length === 0 || selected.includes(cc.id);
+                                return (
+                                  <label key={cc.id} className="flex items-center gap-1.5 text-xs text-slate-700">
+                                    <input
+                                      type="checkbox"
+                                      disabled={!canEdit}
+                                      checked={on}
+                                      onChange={(event) => {
+                                        // An empty list means "all", so the first unticking has to
+                                        // materialise the full set before removing one from it.
+                                        const base = selected.length ? selected : activeCostCentres.map((item) => item.id);
+                                        const next = event.target.checked
+                                          ? [...new Set([...base, cc.id])]
+                                          : base.filter((id) => id !== cc.id);
+                                        updateLine(index, {
+                                          includedCostCentreIds: next.length === activeCostCentres.length ? null : next,
+                                        });
+                                      }}
+                                    />
+                                    {cc.costCentreName}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </Field>
+                      )}
                       <Field label="Head *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.head} disabled={!canEdit || mastersQuery.isLoading} onChange={(event) => applyHead(index, event.target.value)}><option value="">Select Head</option>{activeMasters.map((entry) => <option key={entry.id} value={entry.headName}>{entry.headName}</option>)}</select></Field>
                       <Field label="Sub-head *"><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={line.subHead ?? ""} disabled={!canEdit || !line.head} onChange={(event) => applySubHead(index, event.target.value)}><option value="">Select Sub-head</option>{subHeads.map((entry) => <option key={entry.id} value={entry.subHeadName}>{entry.subHeadName}</option>)}</select></Field>
                       <Field label="Item / service *" span={2}><Input value={line.itemName} disabled={!canEdit} onChange={(event) => updateLine(index, { itemName: event.target.value })} /></Field>
