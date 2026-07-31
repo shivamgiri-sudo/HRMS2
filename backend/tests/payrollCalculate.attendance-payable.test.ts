@@ -112,7 +112,12 @@ const employeeRow = {
   structure_id: "struct-1",
   basic_pct: 40,
   hra_pct: 20,
-  state_code: null,
+  // A real state, because professional tax is a state levy and the engine now
+  // refuses to compute one for an employee whose branch has no state rather
+  // than falling back to a hardcoded 200. Uttar Pradesh levies no PT, so this
+  // resolves to 0 without needing pt_slab_master fixtures — and it is where the
+  // largest group of real employees sits.
+  state_code: "Uttar Pradesh",
   process_id: "proc-1",
   branch_id: "branch-1",
   salary_start_date: "2026-01-01",
