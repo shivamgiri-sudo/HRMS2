@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FilePen, CheckCircle, ChevronRight, Search, Copy } from 'lucide-react';
+import { FilePen, CheckCircle, ChevronRight, Search, Copy, Loader2 } from 'lucide-react';
 import { cn, formatISTDate } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -95,6 +95,7 @@ export default function NativeOfferLetterGeneration() {
   // Generated Letters tab state
   const [listEmpId, setListEmpId] = useState('');
   const [fetchEmpId, setFetchEmpId] = useState('');
+  const [listEmpSearch, setListEmpSearch] = useState('');
 
   // ── Queries ──────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,13 @@ export default function NativeOfferLetterGeneration() {
     queryKey: ['employees-search', empSearch],
     queryFn: () => hrmsApi.get<{ data: Employee[] }>(`/api/employees?search=${encodeURIComponent(empSearch)}&limit=10`),
     enabled: empSearch.trim().length >= 2,
+    staleTime: 30_000,
+  });
+
+  const { data: listEmpSearchData, isFetching: listEmpFetching } = useQuery({
+    queryKey: ['employees-search-list', listEmpSearch],
+    queryFn: () => hrmsApi.get<{ data: Employee[] }>(`/api/employees?search=${encodeURIComponent(listEmpSearch)}&limit=10`),
+    enabled: listEmpSearch.trim().length >= 2,
     staleTime: 30_000,
   });
 
@@ -395,19 +403,43 @@ export default function NativeOfferLetterGeneration() {
                 <CardTitle className="text-base">Letters by Employee</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Paste employee UUID..."
-                    value={listEmpId}
-                    onChange={(e) => setListEmpId(e.target.value)}
-                    className="max-w-sm"
-                  />
-                  <Button
-                    onClick={() => { setFetchEmpId(listEmpId.trim()); refetchLetters(); }}
-                    disabled={listEmpId.trim().length === 0}
-                  >
-                    Load
-                  </Button>
+                <div className="space-y-2 max-w-sm">
+                  <div className="relative flex items-center gap-2">
+                    <Search className="absolute left-3 h-4 w-4 text-slate-400 pointer-events-none" />
+                    <Input
+                      placeholder="Search employee by name or code…"
+                      value={listEmpSearch}
+                      onChange={(e) => {
+                        setListEmpSearch(e.target.value);
+                        setListEmpId('');
+                        setFetchEmpId('');
+                      }}
+                      className="pl-9"
+                    />
+                    {listEmpFetching && <Loader2 className="h-4 w-4 animate-spin text-slate-400 flex-shrink-0" />}
+                  </div>
+                  {(listEmpSearchData as any)?.data?.length > 0 && !listEmpId && (
+                    <div className="rounded-xl border shadow-sm bg-white max-h-48 overflow-y-auto divide-y">
+                      {((listEmpSearchData as any).data as Employee[]).map((e: Employee) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 transition-colors"
+                          onClick={() => {
+                            setListEmpId(e.id);
+                            setListEmpSearch(`${e.first_name} ${e.last_name} (${e.employee_code})`);
+                            setFetchEmpId(e.id);
+                          }}
+                        >
+                          <span className="font-medium">{e.first_name} {e.last_name}</span>
+                          <span className="ml-2 text-slate-400 text-xs">{e.employee_code}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {listEmpId && (
+                    <p className="text-xs text-emerald-700 font-medium">Employee selected — letters shown below.</p>
+                  )}
                 </div>
 
                 {lettersFetching && <p className="text-sm text-slate-400">Loading...</p>}
