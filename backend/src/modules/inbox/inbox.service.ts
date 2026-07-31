@@ -218,7 +218,12 @@ export interface PendingTask {
   tat_deadline?: string;
   created_at: string;
   aging_hours: number;
-  risk: "breached" | "due_soon" | "on_track";
+  /**
+   * "breached" means a real TAT deadline was missed. "aged" means the item has no
+   * deadline at all and is simply old — see calcRisk for why the two must not be
+   * conflated.
+   */
+  risk: "breached" | "aged" | "due_soon" | "on_track";
   employee_name?: string;
   branch_name?: string;
   branch_id?: string;
@@ -227,6 +232,8 @@ export interface PendingTask {
 export interface PendingSummary {
   total: number;
   breached: number;
+  /** Deadline-less items past the ageing threshold. Never counted as breached. */
+  aged: number;
   due_soon: number;
   on_track: number;
   by_module: Record<string, number>;
@@ -241,13 +248,30 @@ export interface TimelineEvent {
   source_table: string;
 }
 
-function calcRisk(deadlineStr?: string | null, createdStr?: string): "breached" | "due_soon" | "on_track" {
+/**
+ * Risk for a work item.
+ *
+ * A deadline-less item that is merely OLD returns "aged", never "breached".
+ *
+ * CEO UAT 31-Jul-2026 reported /work-inbox showing 23 items of which 100% read
+ * "TAT breached". None of them had a TAT: work_inbox_item carries no deadline
+ * column at all (createItem inserts none), so every row arrived here with
+ * deadlineStr = null and fell into the age branch, where anything older than 48h
+ * was labelled breached. Missing-punch items are generated per employee per date
+ * and never expire, so the label was guaranteed for essentially every row — a
+ * permanent red "SLA missed" for a service level that was never defined.
+ *
+ * This mirrors the distinction the dashboard contract already makes, where
+ * `overdue_count` counts only rows with a real due date and `aged_count` is the
+ * age-based signal "kept separate so an age is never presented as a missed
+ * deadline" (shared/dashboardMetricContract.ts).
+ */
+function calcRisk(deadlineStr?: string | null, createdStr?: string): "breached" | "aged" | "due_soon" | "on_track" {
   if (!deadlineStr) {
-    // No deadline: use age — >48h = breached, >24h = due_soon
     if (!createdStr) return "on_track";
     const ageH = (Date.now() - new Date(createdStr).getTime()) / 3_600_000;
-    if (ageH > 48) return "breached";
-    if (ageH > 24) return "due_soon";
+    // Old, but nothing was promised — "aged", not "breached".
+    if (ageH > 48) return "aged";
     return "on_track";
   }
   const remaining = new Date(deadlineStr).getTime() - Date.now();
@@ -399,7 +423,8 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   ];
 
   // Sort by risk then priority
-  const riskOrder = { breached: 0, due_soon: 1, on_track: 2 };
+  // A real missed deadline outranks a merely old item.
+  const riskOrder = { breached: 0, due_soon: 1, aged: 2, on_track: 3 };
   const prioOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
   items.sort((a, b) => {
     const rd = riskOrder[a.risk] - riskOrder[b.risk];
@@ -410,6 +435,7 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   const summary: PendingSummary = {
     total: items.length,
     breached: items.filter((i) => i.risk === "breached").length,
+    aged: items.filter((i) => i.risk === "aged").length,
     due_soon: items.filter((i) => i.risk === "due_soon").length,
     on_track: items.filter((i) => i.risk === "on_track").length,
     by_module: items.reduce<Record<string, number>>((acc, i) => {
