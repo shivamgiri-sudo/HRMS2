@@ -32,6 +32,14 @@ import type {
 
 const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
 
+/**
+ * `created_by` values that mean "this run was not produced by a payroll process".
+ * Runs written straight into salary_prep_run bypass the payroll window, carry a
+ * MySQL UUID v1 rather than the application's v4, and leave window_close_date
+ * NULL — but they render in the runs list exactly like a real run.
+ */
+const SYNTHETIC_RUN_CREATORS = ["test-auto-gen"] as const;
+
 export const payrollService = {
   // ─── Structures ────────────────────────────────────────────────────────────
 
@@ -376,6 +384,25 @@ export const payrollService = {
     const params: unknown[] = [];
     if (runMonth) { conds.push("run_month = ?"); params.push(runMonth); }
     if (status)   { conds.push("status = ?");    params.push(status); }
+
+    // Hide runs that no payroll process created.
+    //
+    // A Jul-2026 run written directly into salary_prep_run by 'test-auto-gen'
+    // sits beside the real one and renders identically — "Jul 2026 —
+    // processing", 1,288 lines, INR 1.22 Cr net. The CEO UAT of 31-Jul-2026
+    // reported "Jul 2026 - processing" appearing twice, and there is nothing on
+    // screen to say which of the two is real.
+    //
+    // Filtered rather than deleted: removing 6,537 production payroll rows is
+    // the payroll owner's call, and scripts/purge-synthetic-payroll-run.sql is
+    // ready for when they make it. This takes the run off screen today without
+    // touching the data, and is reversible by deleting these two lines.
+    //
+    // Not a general "hide test data" switch — it names the one creator that has
+    // ever written a run this way. Anything else stays visible, including runs
+    // that are empty or broken, because those are real and someone must see them.
+    conds.push(`(created_by IS NULL OR created_by NOT IN (${SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ")}))`);
+    params.push(...SYNTHETIC_RUN_CREATORS);
 
     // Apply scope filter from middleware
     if ((filters as any).scopeFilter) {
