@@ -8,6 +8,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { logger } from "../../lib/logger.js";
 import type { PunchAssessmentMode } from "./cosec-punch-interpretation.service.js";
 import { buildSourceUserMaps, classifySourceUser } from "./attendance-reconciliation-mapping.js";
+import { queuePayrollRecalculation, drainPayrollRecalcQueue } from "../payroll/payroll-targeted-recalculation.service.js";
 
 export type PunchGroup = {
   cosecUserId: string;
@@ -593,6 +594,43 @@ export async function mergeNightShiftRollover(
   return merged;
 }
 
+/**
+ * Called after a COSEC sync completes. Queues + immediately drains
+ * payroll recalculation for all employees whose attendance was written
+ * for open (non-locked) payroll months.
+ */
+export async function triggerPostSyncPayrollRecalc(
+  written: Map<string, Set<string>>, // YYYY-MM → Set<employeeId>
+): Promise<void> {
+  for (const [month, empIds] of written) {
+    // Only act if an open salary_prep_run exists for this month
+    const [runRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM salary_prep_run
+        WHERE run_month = ?
+          AND status NOT IN ('locked', 'disbursed', 'completed')
+        LIMIT 1`,
+      [month],
+    );
+    if (!(runRows as any[]).length) continue;
+
+    for (const employeeId of empIds) {
+      await queuePayrollRecalculation({
+        employeeId,
+        payrollMonth: month,
+        sourceEventType: "cosec_sync",
+        reason: "COSEC attendance sync wrote new/updated rows",
+        requestedBy: "system",
+      });
+    }
+
+    try {
+      await drainPayrollRecalcQueue(month);
+    } catch (err) {
+      logger.warn({ month, err }, "[CosecSync] post-sync recalc drain failed — sync result unaffected");
+    }
+  }
+}
+
 export const cosecSyncService = {
   getLastSyncResult() {
     return lastSyncResult;
@@ -651,6 +689,7 @@ export const cosecSyncService = {
         (excludedRows[0] as any[]).map((row) => String(row.cosec_user_id ?? "")),
       );
 
+      const writtenByMonth = new Map<string, Set<string>>();
       for (const group of groups) {
         const isMissingPunch = !!(group as any).missingPunch;
         try {
@@ -676,13 +715,25 @@ export const cosecSyncService = {
                 `Night shift started ${group.firstPunch} but no exit punch found; day N+1 is week_off`,
               );
               result.migratedDays += 1;
+              const month = group.punchDate.slice(0, 7);
+              if (!writtenByMonth.has(month)) writtenByMonth.set(month, new Set());
+              writtenByMonth.get(month)!.add(employee.employee_id);
             } else {
               result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
             }
           } else {
             const status = await migratePunchGroup(group, assessmentModeForPunchDate(group.punchDate, to));
-            if (status === "migrated") result.migratedDays += 1;
-            else result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
+            if (status === "migrated") {
+              result.migratedDays += 1;
+              const month = group.punchDate.slice(0, 7);
+              const employee = await resolveEmployee(group.cosecUserId);
+              if (employee?.employee_id) {
+                if (!writtenByMonth.has(month)) writtenByMonth.set(month, new Set());
+                writtenByMonth.get(month)!.add(employee.employee_id);
+              }
+            } else {
+              result.unmappedUsers.push({ cosecUserId: group.cosecUserId, punchDate: group.punchDate, totalPunches: group.totalPunches });
+            }
           }
         } catch (error) {
           result.success = false;
@@ -693,6 +744,10 @@ export const cosecSyncService = {
           });
         }
       }
+      // Fire-and-forget post-sync recalc — errors are caught inside, never mask sync result
+      void triggerPostSyncPayrollRecalc(writtenByMonth).catch((err) => {
+        logger.warn({ err }, "[CosecSync] triggerPostSyncPayrollRecalc threw unexpectedly");
+      });
 
       if (result.unmappedUsers.length > 0) {
         logger.warn(
