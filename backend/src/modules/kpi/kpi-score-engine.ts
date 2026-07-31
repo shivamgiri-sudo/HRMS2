@@ -12,7 +12,10 @@ export type KpiScoringType =
   | "manual"
   | "calculated"
   | "higher_is_better"
-  | "lower_is_better";
+  | "lower_is_better"
+  /** Like higher/lower_better, but scores 0 once min_threshold is breached. */
+  | "floor_gated_higher"
+  | "floor_gated_lower";
 
 export interface KpiScoreInput {
   scoringType: KpiScoringType | string;
@@ -54,6 +57,41 @@ export function calculateMetricScore(input: KpiScoreInput): KpiScoreResult {
 
   let metricScore = 0;
   let note = "Calculated";
+
+  // ── Floor gate ──────────────────────────────────────────────────────────────────────
+  // min_threshold is the point past which performance is unacceptable, and it always sits on
+  // the *worse* side of the target: below it when higher is better (sales ≥ ₹30,000 floor
+  // under a ₹50,000 target), above it when lower is better (AHT ≤ 360s ceiling under a 240s
+  // target). Both directions in production already follow that rule.
+  //
+  // Opt-in per metric. Honouring it everywhere would zero 87% of ATTENDANCE_PCT rows, since
+  // that metric only ever holds 0/50/100 and every half-day sits under the 85 threshold.
+  if (scoringType === "floor_gated_higher" || scoringType === "floor_gated_lower") {
+    const lowerBetter = scoringType === "floor_gated_lower";
+    if (min !== null) {
+      const failed = lowerBetter ? (actual ?? 0) > min : (actual ?? 0) < min;
+      if (failed) {
+        return {
+          metricScore: 0,
+          weightedScore: 0,
+          status: "threshold_failed",
+          note: lowerBetter
+            ? `Actual ${actual} is above the ${min} ceiling`
+            : `Actual ${actual} is below the ${min} floor`,
+        };
+      }
+    }
+    if (!target || target <= 0) {
+      metricScore = 0;
+      note = "Invalid target";
+    } else if (lowerBetter) {
+      metricScore = actual === 0 ? 100 : (actual ?? 0) <= 0 ? 0 : (target / (actual as number)) * 100;
+    } else {
+      metricScore = ((actual ?? 0) / target) * 100;
+    }
+    const capped = Math.max(0, Math.min(metricScore, max ?? 120));
+    return { metricScore: round2(capped), weightedScore: round2((capped * weightage) / 100), status: "calculated", note };
+  }
 
   if (scoringType === "lower_better" || scoringType === "lower_is_better") {
     if (actual === 0) {

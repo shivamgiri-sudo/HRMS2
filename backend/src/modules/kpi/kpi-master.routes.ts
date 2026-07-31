@@ -10,6 +10,8 @@ import type { RowDataPacket } from 'mysql2';
 import {
   listKpiMasterConfig,
   upsertKpiMasterConfig,
+  clearKpiMasterConfigCell,
+  getKpiTargetMatrix,
   deleteKpiMasterConfig,
   resolveEmployeeKpis,
   getResolvedKpis,
@@ -117,6 +119,161 @@ router.post(
       created_by: req.authUser?.id,
     });
     res.json({ success: true, data: result });
+  })
+);
+
+// ─── Target matrix ───────────────────────────────────────────────────────────────────
+// One payload backing the process × designation grid: the pairs that have employees, the
+// metrics worth a column, and the effective value of every cell with the tier it came from.
+
+router.get(
+  '/matrix',
+  requireRole('admin', 'hr', 'manager', 'process_manager'),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const data = await getKpiTargetMatrix();
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * Validates one cell edit. Returns a message instead of throwing so a bulk apply can report
+ * which row failed rather than losing the whole batch.
+ */
+function readCellInput(
+  body: any,
+  metric?: { unit?: string | null; direction?: string | null },
+): { ok: true; value: any } | { ok: false; message: string } {
+  const metricId = typeof body?.metric_id === 'string' ? body.metric_id.trim() : '';
+  const processId = typeof body?.process_id === 'string' ? body.process_id.trim() : '';
+  if (!metricId) return { ok: false, message: 'metric_id is required' };
+  if (!processId) return { ok: false, message: 'process_id is required' };
+
+  const target = Number(body?.target_value);
+  if (!Number.isFinite(target)) return { ok: false, message: 'target_value must be a number' };
+  if (target < 0) return { ok: false, message: 'target_value cannot be negative' };
+  // Targets are unit-typed: AHT in seconds, error rate in percent, sales in currency. A
+  // percentage above 100 is a typo, not an ambitious goal.
+  if (metric?.unit === 'percent' && target > 100) {
+    return { ok: false, message: `target_value ${target} is above 100 for a percentage metric` };
+  }
+
+  const min = body?.min_threshold === null || body?.min_threshold === undefined || body?.min_threshold === ''
+    ? null
+    : Number(body.min_threshold);
+  if (min !== null && !Number.isFinite(min)) return { ok: false, message: 'min_threshold must be a number or blank' };
+  // The threshold is the unacceptable bound, so it always sits on the worse side of the
+  // target — under it when higher is better, over it when lower is better. Reversed, it
+  // would gate on the wrong side and fail everyone who is performing well.
+  if (min !== null && metric?.direction) {
+    const lowerBetter = metric.direction === 'lower_is_better';
+    if (lowerBetter && min < target) {
+      return { ok: false, message: `min_threshold ${min} must be above the target ${target} when lower is better` };
+    }
+    if (!lowerBetter && min > target) {
+      return { ok: false, message: `min_threshold ${min} must be below the target ${target} when higher is better` };
+    }
+  }
+
+  const weightage = body?.weightage === undefined || body?.weightage === null || body?.weightage === ''
+    ? undefined
+    : Number(body.weightage);
+  if (weightage !== undefined && (!Number.isFinite(weightage) || weightage < 0 || weightage > 100)) {
+    return { ok: false, message: 'weightage must be between 0 and 100' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      metric_id: metricId,
+      org_unit_type: 'process' as const,
+      org_unit_id: processId,
+      // Blank designation means the row applies to every designation on the process, which
+      // is what the pre-1035 rows have always meant.
+      designation_id: typeof body?.designation_id === 'string' && body.designation_id.trim()
+        ? body.designation_id.trim()
+        : null,
+      target_value: target,
+      min_threshold: min,
+      weightage,
+    },
+  };
+}
+
+router.post(
+  '/matrix/cell',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [metricRows] = await db.execute<RowDataPacket[]>(
+      'SELECT unit, direction FROM kpi_metric_master WHERE id = ? LIMIT 1',
+      [typeof req.body?.metric_id === 'string' ? req.body.metric_id.trim() : ''],
+    );
+    const parsed = readCellInput(req.body, (metricRows as any[])[0]);
+    if (!parsed.ok) return res.status(400).json({ success: false, message: parsed.message });
+    await upsertKpiMasterConfig({ ...parsed.value, created_by: req.authUser?.id });
+    res.json({ success: true });
+  })
+);
+
+router.delete(
+  '/matrix/cell',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const metricId = typeof req.body?.metric_id === 'string' ? req.body.metric_id.trim() : '';
+    const processId = typeof req.body?.process_id === 'string' ? req.body.process_id.trim() : '';
+    if (!metricId || !processId) {
+      return res.status(400).json({ success: false, message: 'metric_id and process_id are required' });
+    }
+    await clearKpiMasterConfigCell({
+      metric_id: metricId,
+      org_unit_type: 'process',
+      org_unit_id: processId,
+      designation_id: typeof req.body?.designation_id === 'string' && req.body.designation_id.trim()
+        ? req.body.designation_id.trim()
+        : null,
+    });
+    res.json({ success: true });
+  })
+);
+
+/**
+ * Applies one metric's target across many pairs in a single call — the point of the grid,
+ * since setting DIALS for 40 process×designation pairs one request at a time is what made
+ * the old screens unusable. Reports per-row failures rather than aborting the batch.
+ */
+router.post(
+  '/matrix/bulk',
+  requireRole('admin', 'hr', 'process_manager'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const cells = Array.isArray(req.body?.cells) ? req.body.cells : null;
+    if (!cells) return res.status(400).json({ success: false, message: 'cells must be an array' });
+    if (!cells.length) return res.status(400).json({ success: false, message: 'cells is empty' });
+    if (cells.length > 500) {
+      return res.status(400).json({ success: false, message: 'cells exceeds the 500-row limit' });
+    }
+
+    // Loaded once rather than per row: unit and direction decide what a valid target and
+    // threshold look like, and a bulk apply can carry hundreds of rows.
+    const [metricRows] = await db.execute<RowDataPacket[]>(
+      'SELECT id, unit, direction FROM kpi_metric_master'
+    );
+    const metricsById = new Map(
+      (metricRows as any[]).map((row) => [String(row.id), { unit: row.unit, direction: row.direction }]),
+    );
+
+    const failures: Array<{ index: number; message: string }> = [];
+    let applied = 0;
+    for (const [index, cell] of cells.entries()) {
+      const parsed = readCellInput(cell, metricsById.get(String(cell?.metric_id)));
+      if (!parsed.ok) { failures.push({ index, message: parsed.message }); continue; }
+      try {
+        await upsertKpiMasterConfig({ ...parsed.value, created_by: req.authUser?.id });
+        applied += 1;
+      } catch (error) {
+        failures.push({ index, message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    res.json({ success: failures.length === 0, applied, failed: failures.length, failures });
   })
 );
 

@@ -204,6 +204,18 @@ export default function KpiMasterConfig() {
           </button>
         </div>
 
+        {/* This page edits one row at a time across every org level. The grid is the faster
+            route for the common case; this page stays for department and cost-centre rows,
+            which the grid does not cover. */}
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900">
+          Setting targets by process and designation?{" "}
+          <a href="/kpi-targets" className="cursor-pointer font-semibold underline underline-offset-2">
+            KPI Targets
+          </a>{" "}
+          shows every pair in one editable grid. Use this page for department and cost-centre
+          level targets.
+        </div>
+
         {/* Feedback */}
         {success && (
           <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg text-sm">{success}</div>

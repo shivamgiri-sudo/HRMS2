@@ -376,6 +376,16 @@ export default function NativeKPIConfiguration() {
           </div>
         </div>
 
+        {/* Kept because the rating-band editor below has no equivalent yet, but the targets
+            tab shows one process per visit — the grid shows all of them at once. */}
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-sm font-semibold text-indigo-900">
+          This page configures one process at a time.{" "}
+          <a href="/kpi-targets" className="cursor-pointer underline underline-offset-2">
+            KPI Targets
+          </a>{" "}
+          shows every process and designation together, and can set a target for many at once.
+        </div>
+
         {/* Message banner */}
         {message && (
           <div

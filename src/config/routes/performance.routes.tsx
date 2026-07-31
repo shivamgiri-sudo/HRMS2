@@ -12,6 +12,7 @@ const UnifiedPerformanceCommandCenter = lazy(() => import("@/pages/UnifiedPerfor
 const NativeKPIConfiguration         = lazy(() => import("@/pages/NativeKPIConfiguration"));
 const NativeOperationsKPI            = lazy(() => import("@/pages/NativeOperationsKPI"));
 const KpiMasterConfig                = lazy(() => import("@/pages/KpiMasterConfig"));
+const KpiTargetMatrix                = lazy(() => import("@/pages/KpiTargetMatrix"));
 const MyKpiDashboard                 = lazy(() => import("@/pages/MyKpiDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPerformanceDashboard"));
 const NativeQualityDashboard         = lazy(() => import("@/pages/NativeQualityDashboard"));
@@ -63,6 +64,7 @@ export const performanceRouteElements = (
       <Route path="/kpi-config"   element={<ProtectedRoute><Gate pageCode="KPI_CONFIG"><NativeKPIConfiguration /></Gate></ProtectedRoute>} />
       <Route path="/operations-kpi" element={<ProtectedRoute><Gate pageCode="OPERATIONS_KPI"><NativeOperationsKPI /></Gate></ProtectedRoute>} />
       <Route path="/kpi-master"   element={<ProtectedRoute><Gate pageCode="KPI_MASTER"><KpiMasterConfig /></Gate></ProtectedRoute>} />
+      <Route path="/kpi-targets"  element={<ProtectedRoute><Gate pageCode="KPI_MASTER"><KpiTargetMatrix /></Gate></ProtectedRoute>} />
       <Route path="/my-kpi"       element={<ProtectedRoute><Gate pageCode="MY_KPI"><DashboardLayout><MyKpiDashboard /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/agent-performance" element={<ProtectedRoute><Gate pageCode="AGENT_PERFORMANCE"><NativeAgentPerformanceDashboard /></Gate></ProtectedRoute>} />
       <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
