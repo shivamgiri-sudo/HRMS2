@@ -642,11 +642,31 @@ function resolveShiftWorkedMinutes(row: {
   return 0;
 }
 
-function deriveStatus(row: any, settings: BreakSettingsRow) {
+function isShiftEndReached(
+  punchOut: string | null | undefined,
+  shiftEndTime: string | null | undefined,
+  shiftDate: string,
+): boolean {
+  if (!shiftEndTime) return true; // no roster → caller uses fallback
+  if (!punchOut) return false;
+  const [h, m] = String(shiftEndTime).split(":").map(Number);
+  const endMs = new Date(
+    `${shiftDate}T${String(h).padStart(2, "0")}:${String(m ?? 0).padStart(2, "0")}:00+05:30`,
+  ).getTime();
+  const outMs = new Date(
+    punchOut.replace(" ", "T") + (punchOut.includes("+") ? "" : "+05:30"),
+  ).getTime();
+  return Number.isFinite(endMs) && Number.isFinite(outMs) && outMs >= endMs;
+}
+
+function deriveStatus(row: any, settings: BreakSettingsRow, shiftDate: string) {
   const activeMinutes = row.active_break_start_time
     ? minutesBetween(row.active_break_start_time, currentIstDateTime().dateTime).minutes
     : 0;
-  const isExceeded = Boolean(row.active_break_id) && activeMinutes >= Number(settings.active_break_alert_minutes ?? 10);
+  const completedBreakMinutes = Number(row.total_break_minutes ?? 0);
+  const totalBreakMinutes = completedBreakMinutes + activeMinutes;
+  const dailyLimit = Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES);
+  const isExceeded = Boolean(row.active_break_id) && totalBreakMinutes > dailyLimit;
   const workedMinutes = resolveShiftWorkedMinutes(row);
 
   if (row.leave_name) {
@@ -658,8 +678,16 @@ function deriveStatus(row: any, settings: BreakSettingsRow) {
   if (row.active_break_id) {
     return { label: isExceeded ? "Break Exceeded" : "On Break", tone: isExceeded ? "danger" : "warning", activeMinutes, isExceeded };
   }
-  if (row.biometric_punch_in_time && row.biometric_punch_out_time && workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES) {
-    return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
+  if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
+    if (row.shift_end_time) {
+      // Roster available: punch-out must be at or after the scheduled shift end
+      if (isShiftEndReached(row.biometric_punch_out_time, row.shift_end_time, shiftDate)) {
+        return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
+      }
+    } else if (workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES) {
+      // No roster: fall back to 9-hour minimum
+      return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
+    }
   }
   if (row.biometric_punch_in_time) {
     return { label: "On Duty", tone: "active", activeMinutes, isExceeded };
@@ -1356,7 +1384,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       biometric_punch_in_time: punchIn,
       biometric_punch_out_time: punchOut,
       biometric_minutes: biometricMinutes,
-    }, settings);
+    }, settings, shiftDate);
     const completedBreakMinutes = Number(row.total_break_minutes ?? 0);
     const currentBreakMinutes = row.active_break_id ? status.activeMinutes : 0;
     const totalBreakMinutesOverall = completedBreakMinutes + currentBreakMinutes;
@@ -1410,7 +1438,7 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
       current_status: status.label,
       current_status_tone: status.tone,
       exceeded_minutes: status.isExceeded
-        ? Math.max(0, status.activeMinutes - Number(settings.active_break_alert_minutes ?? 10))
+        ? Math.max(0, totalBreakMinutesOverall - dailyBreakLimitMinutes)
         : 0,
       today_sessions: todaySessions,
       safe_actions: {
