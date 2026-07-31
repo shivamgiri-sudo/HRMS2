@@ -912,12 +912,20 @@ function candidateQuestion(question: AssessmentQuestionDefinition) {
 }
 
 function serializeTyping(row: TypingRow, includeReference = false) {
+  const duration = Number(row.duration_limit_seconds);
+  const elapsedSinceStart = row.started_at && !row.submitted_at
+    ? Math.floor((Date.now() - new Date(row.started_at).getTime()) / 1000)
+    : null;
+  const remainingSeconds = elapsedSinceStart !== null
+    ? Math.max(0, duration - elapsedSinceStart)
+    : null;
   return {
     id: row.id,
     attemptNo: Number(row.attempt_no),
     startedAt: row.started_at,
     submittedAt: row.submitted_at,
-    durationSeconds: Number(row.duration_limit_seconds),
+    durationSeconds: duration,
+    remainingSeconds,
     elapsedSeconds: row.elapsed_seconds,
     grossWpm: row.gross_wpm,
     netWpm: row.net_wpm,
@@ -1295,12 +1303,17 @@ export async function startTypingAttempt(token: string, meta: Meta = {}) {
       executor,
     );
     await connection.commit();
+    const duration = Number(typing.duration_limit_seconds);
+    const elapsedSinceStart = typing.started_at
+      ? Math.floor((Date.now() - new Date(typing.started_at).getTime()) / 1000)
+      : 0;
     return {
       id: typing.id,
       attemptNo: Number(typing.attempt_no),
       maxAttempts: 2,
       passage: typing.reference_text,
-      durationSeconds: Number(typing.duration_limit_seconds),
+      durationSeconds: duration,
+      remainingSeconds: Math.max(0, duration - elapsedSinceStart),
       startedAt: typing.started_at,
     };
   } catch (error) {
