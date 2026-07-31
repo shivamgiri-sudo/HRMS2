@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculatePayrollRunScoped } from "./payrollCalculate.service.js";
@@ -96,9 +97,69 @@ export async function recalculateOpenPayrollForEmployee(params: {
   }
 
   for (const run of openRuns) {
+    // Snapshot BEFORE
+    const [beforeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT paid_working_days, final_payable_days, net_salary, gross_salary
+         FROM salary_prep_line
+        WHERE run_id = ? AND employee_id = ? LIMIT 1`,
+      [String(run.id), params.employeeId],
+    );
+    const before = (beforeRows as any[])[0] ?? null;
+
     await calculatePayrollRunScoped(String(run.id), params.actorUserId ?? "system", {
       employeeIds: [params.employeeId],
     });
+
+    // Snapshot AFTER
+    const [afterRows] = await db.execute<RowDataPacket[]>(
+      `SELECT paid_working_days, final_payable_days, net_salary, gross_salary
+         FROM salary_prep_line
+        WHERE run_id = ? AND employee_id = ? LIMIT 1`,
+      [String(run.id), params.employeeId],
+    );
+    const after = (afterRows as any[])[0] ?? null;
+
+    // Write audit event only when values changed
+    if (before && after) {
+      const diffPaidDays = Number(after.paid_working_days) - Number(before.paid_working_days);
+      const diffFinalDays = Number(after.final_payable_days) - Number(before.final_payable_days);
+      const diffNet = Math.round((Number(after.net_salary) - Number(before.net_salary)) * 100) / 100;
+      const diffGross = Math.round((Number(after.gross_salary) - Number(before.gross_salary)) * 100) / 100;
+      if (diffPaidDays !== 0 || diffFinalDays !== 0 || diffNet !== 0) {
+        await db.execute(
+          `INSERT INTO payroll_calculation_audit (id, run_id, employee_id, event_type, event_detail, actor_user_id)
+           VALUES (?, ?, ?, 'SALARY_DRIFT_RECALC', ?, ?)`,
+          [
+            randomUUID(),
+            String(run.id),
+            params.employeeId,
+            JSON.stringify({
+              event: "SALARY_DRIFT_RECALC",
+              trigger: params.sourceEventType,
+              before: {
+                paid_working_days: Number(before.paid_working_days),
+                final_payable_days: Number(before.final_payable_days),
+                net_salary: Number(before.net_salary),
+                gross_salary: Number(before.gross_salary),
+              },
+              after: {
+                paid_working_days: Number(after.paid_working_days),
+                final_payable_days: Number(after.final_payable_days),
+                net_salary: Number(after.net_salary),
+                gross_salary: Number(after.gross_salary),
+              },
+              diff: {
+                paid_working_days: diffPaidDays,
+                final_payable_days: diffFinalDays,
+                net_salary: diffNet,
+                gross_salary: diffGross,
+              },
+            }),
+            params.actorUserId ?? "system",
+          ],
+        );
+      }
+    }
   }
 
   const suffix = closedRuns.length ? `; ${closedRuns.length} closed run(s) queued instead` : "";
@@ -110,3 +171,5 @@ export async function recalculateOpenPayrollForEmployee(params: {
       : `Employee salary line recalculated across ${openRuns.length} open runs.${suffix}`,
   };
 }
+
+export { drainPayrollRecalcQueue } from "./payroll-recalc-drainer.service.js";
