@@ -5,6 +5,7 @@ import { missingTdsConfigKeys } from "./statutory-regime.js";
 // The closed-run set was `["locked", "disbursed"]`, which matched no row in
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
+import { isProfessionalTaxExempt } from "./professional-tax-states.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getStatutoryConfigForPeriod } from "./statutory-config.resolver.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
@@ -238,16 +239,35 @@ export async function getPtFromSlab(
   const row = (rows as Array<{ pt_amount: number }>)[0];
   if (row) return Number(row.pt_amount);
 
-  // If no slab exists for this state at all, the state has no PT law → return 0
   const [anyRows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM pt_slab_master
       WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?)) AND is_active = 1
       LIMIT 1`,
     [stateCode, stateCode]
   );
-  if ((anyRows as any[]).length === 0) return 0;
 
-  // State has slabs but income is below the lowest bracket → 0
+  if ((anyRows as RowDataPacket[]).length === 0) {
+    // No slab rows for this state. That means one of two very different things,
+    // and treating them alike is how an under-deduction hides:
+    //
+    //   the state levies no PT   -> 0 is the correct answer. Uttar Pradesh and
+    //                               Delhi are in this position and account for
+    //                               831 employees.
+    //   nobody configured it yet -> 0 is an under-deduction, and the shortfall
+    //                               is the employer's liability. Punjab levies
+    //                               PT and has no rows here.
+    //
+    // The table cannot tell them apart, so the exempt states are named
+    // explicitly and anything else is reported as the configuration gap it is.
+    if (isProfessionalTaxExempt(stateCode)) return 0;
+    throw new Error(
+      `Professional tax is not configured for state "${stateCode}". Add its slabs to ` +
+      `pt_slab_master, or record the state as PT-exempt if it levies none. ` +
+      `No amount is assumed, because zero would be an under-deduction if the state does levy PT.`,
+    );
+  }
+
+  // State has slabs but the income falls below the lowest bracket → genuinely 0.
   return 0;
 }
 
