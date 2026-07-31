@@ -416,6 +416,60 @@ export const helpdeskService = {
     return (rows as RowDataPacket[])[0] ?? null;
   },
 
+  /**
+   * Case history for one grievance, assembled from the two places that already
+   * hold real timestamps. Nothing here is synthesised.
+   *
+   *   1. sensitive_action_log — every audited action against this grievance
+   *      (viewed, escalated, evidence added, investigation note), with the actor
+   *      and the moment it happened.
+   *   2. The grievance row itself — created_at, resolved_at and closed_at.
+   *
+   * Assignment is deliberately absent: the row records assigned_to but no
+   * assigned_at, and nothing audits the change, so there is no honest timestamp
+   * for it. Inventing one from updated_at would put a plausible but wrong time in
+   * front of an HR user reading a confidentiality-graded case history. When
+   * assignment starts being audited it appears here automatically, because this
+   * reads the audit log rather than a hardcoded list of actions.
+   */
+  async getGrievanceTimeline(id: string) {
+    const [auditRows] = await db.execute<RowDataPacket[]>(
+      `SELECT s.id,
+              s.action_type                  AS action,
+              COALESCE(e.full_name, u.email) AS actor,
+              s.change_summary               AS note,
+              s.acted_at                     AS created_at
+         FROM sensitive_action_log s
+         LEFT JOIN auth_user u ON u.id = s.actor_user_id
+         LEFT JOIN employees e ON e.user_id = s.actor_user_id
+        WHERE s.entity_type = 'grievance' AND s.entity_id = ?
+        ORDER BY s.acted_at ASC`,
+      [id]
+    );
+
+    const [milestoneRows] = await db.execute<RowDataPacket[]>(
+      `SELECT created_at, resolved_at, closed_at, resolution_note FROM grievance WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const g = (milestoneRows as RowDataPacket[])[0];
+
+    const milestones: Array<Record<string, unknown>> = [];
+    if (g?.created_at) milestones.push({ id: `${id}:raised`, action: "GRIEVANCE_RAISED", created_at: g.created_at });
+    if (g?.resolved_at) {
+      milestones.push({
+        id: `${id}:resolved`,
+        action: "GRIEVANCE_RESOLVED",
+        note: g.resolution_note ?? undefined,
+        created_at: g.resolved_at,
+      });
+    }
+    if (g?.closed_at) milestones.push({ id: `${id}:closed`, action: "GRIEVANCE_CLOSED", created_at: g.closed_at });
+
+    return [...(auditRows as RowDataPacket[]), ...milestones].sort(
+      (a, b) => new Date(a.created_at as string).getTime() - new Date(b.created_at as string).getTime()
+    );
+  },
+
   async createGrievance(data: {
     employee_id: string;
     category?: string;

@@ -62,8 +62,6 @@ const KNOWN_GAPS: Record<string, string> = {
   // scaffolding that cannot fire, and should be built or deleted, not rushed.
 
   // Reachable — a user can hit these today.
-  "GET /api/helpdesk/grievances/:p/timeline":
-    "REACHABLE (NativeGrievanceCommandCenter is routed, calls it from two places). The grievances module exists but has no /timeline route.",
   "GET /api/executive/quality-summary/process-breakdown":
     "REACHABLE (useExecutiveQuality is used by a mounted component). Only /quality-summary exists on the executive router, not the breakdown.",
   "POST /api/ats/onboarding/requests":
