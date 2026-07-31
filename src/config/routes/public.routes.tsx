@@ -33,6 +33,7 @@ const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocum
 const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfComplianceReviewPage"));
 const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
 const VisitorStatusPage   = lazy(() => import("@/pages/VisitorStatusPage"));
+const VisitorGatePage     = lazy(() => import("@/pages/VisitorGatePage"));
 
 export const publicRouteElements = (
   <>
@@ -90,5 +91,6 @@ export const publicRouteElements = (
       <Route path="/visitor-register"        element={<VisitorSelfRegister />} />
       <Route path="/visitor-status/:token"   element={<VisitorStatusPage />} />
       <Route path="/visitor-status"          element={<VisitorStatusPage />} />
+      <Route path="/visitor-gate"            element={<VisitorGatePage />} />
   </>
 );

@@ -60,3 +60,38 @@ visitorPublicRouter.post("/checkout-request", h(async (req, res) => {
   const data = await visitorService.requestPublicCheckout(input.tracking_token, req);
   return res.json({ success: true, data });
 }));
+
+// ── Public Gate Console (no auth — guards access without HRMS login) ──────────
+
+const gateVisitsSchema = z.object({
+  branch_id: z.string().uuid("branch_id must be a valid UUID"),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+});
+
+const gateEventSchema = z.object({
+  visit_id: z.string().uuid("visit_id must be a valid UUID"),
+  gate_code: z.string().min(2, "gate_code required (min 2 chars)").max(50),
+  badge_number: z.string().max(50).optional(),
+});
+
+visitorPublicRouter.get("/gate/visits", h(async (req, res) => {
+  const { branch_id, date } = gateVisitsSchema.parse({
+    branch_id: req.query.branch_id,
+    date: req.query.date ?? new Date().toISOString().slice(0, 10),
+  });
+  const data = await visitorService.listGateVisits(branch_id, date);
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ success: true, data });
+}));
+
+visitorPublicRouter.post("/gate/check-in", h(async (req, res) => {
+  const { visit_id, gate_code, badge_number } = gateEventSchema.parse(req.body);
+  const data = await visitorService.publicGateCheckEvent(visit_id, "checked_in", gate_code, badge_number);
+  return res.json({ success: true, data });
+}));
+
+visitorPublicRouter.post("/gate/check-out", h(async (req, res) => {
+  const { visit_id, gate_code } = gateEventSchema.parse(req.body);
+  const data = await visitorService.publicGateCheckEvent(visit_id, "checked_out", gate_code);
+  return res.json({ success: true, data });
+}));

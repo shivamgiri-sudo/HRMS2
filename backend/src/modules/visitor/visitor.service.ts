@@ -456,6 +456,100 @@ export const visitorService = {
     return rows;
   },
 
+  async listGateVisits(branchId: string, date: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vv.id, vv.visit_number,
+              vp.full_name AS visitor_name, vp.company_name,
+              vv.host_display_name, vv.visit_type, vv.purpose,
+              vv.scheduled_start, vv.scheduled_end,
+              vv.status, vv.checked_in_at, vv.checked_out_at
+         FROM visitor_visit vv
+         JOIN visitor_profile vp ON vp.id = vv.visitor_id
+        WHERE vv.branch_id = ?
+          AND vv.status IN ('approved', 'checked_in', 'checked_out')
+          AND (
+            DATE(vv.scheduled_start) = ?
+            OR (vv.status = 'checked_in' AND DATE(vv.checked_in_at) = ?)
+            OR (vv.status = 'checked_out' AND DATE(vv.checked_out_at) = ?)
+          )
+        ORDER BY vv.scheduled_start ASC
+        LIMIT 200`,
+      [branchId, date, date, date],
+    );
+    return rows;
+  },
+
+  async publicGateCheckEvent(visitId: string, event: "checked_in" | "checked_out", gateCode: string, badgeNumber?: string) {
+    const conn = await db.getConnection();
+    let previousStatus: VisitStatus | undefined;
+    try {
+      await conn.beginTransaction();
+      const [visits] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, branch_id, status FROM visitor_visit WHERE id = ? LIMIT 1 FOR UPDATE`,
+        [visitId],
+      );
+      const visit = visits[0];
+      if (!visit) throw Object.assign(new Error("Visit not found"), { statusCode: 404 });
+      if (!canTransitionVisit(visit.status as VisitStatus, event)) {
+        throw Object.assign(new Error(`Visit cannot move from ${visit.status} to ${event}`), { statusCode: 409 });
+      }
+      previousStatus = visit.status as VisitStatus;
+
+      let badgeId: string | null = null;
+      if (event === "checked_in" && badgeNumber) {
+        const [badges] = await conn.execute<RowDataPacket[]>(
+          `SELECT id, status FROM visitor_badge WHERE badge_number = ? AND branch_id = ? LIMIT 1 FOR UPDATE`,
+          [badgeNumber, visit.branch_id],
+        );
+        if (badges[0] && badges[0].status !== "available") {
+          throw Object.assign(new Error("Badge is not available"), { statusCode: 409 });
+        }
+        badgeId = badges[0]?.id ?? randomUUID();
+        await conn.execute<ResultSetHeader>(
+          `INSERT INTO visitor_badge (id, badge_number, branch_id, status, current_visit_id, issued_at)
+           VALUES (?, ?, ?, 'issued', ?, CURRENT_TIMESTAMP)
+           ON DUPLICATE KEY UPDATE status = 'issued', current_visit_id = VALUES(current_visit_id),
+                                   issued_at = CURRENT_TIMESTAMP, returned_at = NULL`,
+          [badgeId, badgeNumber, visit.branch_id, visitId],
+        );
+      }
+
+      const timeColumn = event === "checked_in" ? "checked_in_at" : "checked_out_at";
+      const expected = event === "checked_in" ? "approved" : "checked_in";
+      const [result] = await conn.execute<ResultSetHeader>(
+        `UPDATE visitor_visit SET status = ?, ${timeColumn} = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+        [event, visitId, expected],
+      );
+      if (result.affectedRows !== 1) {
+        throw Object.assign(new Error("Visit status changed; refresh before trying again"), { statusCode: 409 });
+      }
+
+      if (event === "checked_out") {
+        await conn.execute<ResultSetHeader>(
+          `UPDATE visitor_badge SET status = 'available', current_visit_id = NULL, returned_at = CURRENT_TIMESTAMP WHERE current_visit_id = ?`,
+          [visitId],
+        );
+        await conn.execute<ResultSetHeader>(
+          `UPDATE visitor_belonging SET verified_out = 1 WHERE visit_id = ?`,
+          [visitId],
+        );
+      }
+
+      await conn.execute<ResultSetHeader>(
+        `INSERT INTO visitor_check_event (id, visit_id, event_type, gate_code, badge_id, actor_user_id, metadata_json)
+         VALUES (?, ?, ?, ?, ?, NULL, ?)`,
+        [randomUUID(), visitId, event, gateCode, badgeId, JSON.stringify({ source: "guard_gate_public" })],
+      );
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+    return { id: visitId, status: event };
+  },
+
   async emergencyRegister(userId: string, branchId?: string) {
     const scope = await actorScope(userId);
     if (!scope.unrestricted && !scope.branchId) return [];
