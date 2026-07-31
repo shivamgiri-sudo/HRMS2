@@ -83,6 +83,9 @@ export interface NotificationDeliverer {
     resolution: RecipientResolution;
     isCritical: boolean;
     correlationId?: string;
+    /** Passed through so the in-app mirror can dedupe on (user, type, entity). */
+    entityType?: string;
+    entityId?: string;
   }): Promise<{ dispatchLogId?: string }>;
 }
 
@@ -208,6 +211,8 @@ export const notificationGateway = {
         resolution,
         isCritical: Number(cfg.is_critical) === 1,
         correlationId: input.correlationId,
+        entityType: input.entityType,
+        entityId: input.entityId,
       });
       await completeClaim(claimId, 'sent', dispatchLogId ?? null, null);
       return { outcome: 'sent', claimId, recipients: counts, dropped: resolution.dropped };

@@ -1,16 +1,28 @@
 import nodemailer from "nodemailer";
-import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
+// Pooling options live on SMTPPool, not SMTPTransport — `pool: true` selects a different
+// transport implementation inside nodemailer, and its option type differs accordingly.
+import type SMTPPool from "nodemailer/lib/smtp-pool/index.js";
 import { env } from "../../config/env.js";
 
 export type EmailAttachment = {
   filename: string;
-  path: string;
+  /** Path on disk (report files). Mutually exclusive with `content`. */
+  path?: string;
+  /** In-memory buffer (generated PDFs). Mutually exclusive with `path`. */
+  content?: Buffer;
   contentType?: string;
 };
 
 export type EmailSendInput = {
   to: string;
   cc?: string;
+  /**
+   * Added for the notification gateway. Escalation digests and bulk notices go to more
+   * than five people, and the catalogue rule is that anything above that becomes BCC so
+   * recipients are not exposed to each other.
+   */
+  bcc?: string;
+  replyTo?: string;
   subject: string;
   html: string;
   text?: string;
@@ -37,10 +49,16 @@ function smtpPassword(): string {
 }
 
 function createTransporter() {
-  const options: SMTPTransport.Options = {
+  const options: SMTPPool.Options = {
     host: env.SMTP_HOST,
     port: env.SMTP_PORT,
     secure: smtpSecure(),
+    // Pooled. Previously a fresh transport — and therefore a fresh TCP + TLS handshake —
+    // was created for every single message; auth-launch.routes.ts:281 loops up to 500
+    // sends in a row. Bounded so a burst cannot exhaust the provider's connection limit.
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 100,
   };
 
   const pass = smtpPassword();
@@ -52,6 +70,23 @@ function createTransporter() {
   }
 
   return nodemailer.createTransport(options);
+}
+
+/**
+ * Cached transporter. Keyed on nothing — config is env-only and cannot change at runtime.
+ * Reset by resetTransporter() in tests.
+ */
+let cachedTransporter: ReturnType<typeof createTransporter> | null = null;
+
+function getTransporter() {
+  if (!cachedTransporter) cachedTransporter = createTransporter();
+  return cachedTransporter;
+}
+
+/** Drops the pooled connections. For tests and for a deliberate reconnect. */
+export function resetTransporter(): void {
+  try { cachedTransporter?.close(); } catch { /* already closed */ }
+  cachedTransporter = null;
 }
 
 export const emailService = {
@@ -74,8 +109,7 @@ export const emailService = {
 
   async verify(): Promise<boolean> {
     if (!this.isConfigured()) return false;
-    const transporter = createTransporter();
-    await transporter.verify();
+    await getTransporter().verify();
     return true;
   },
 
@@ -84,11 +118,12 @@ export const emailService = {
       throw new Error("SMTP is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM.");
     }
 
-    const transporter = createTransporter();
-    const result = await transporter.sendMail({
+    const result = await getTransporter().sendMail({
       from: fromAddress(),
       to: input.to,
       ...(input.cc ? { cc: input.cc } : {}),
+      ...(input.bcc ? { bcc: input.bcc } : {}),
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       subject: input.subject,
       html: input.html,
       text: input.text,

@@ -29,6 +29,7 @@ import { startReportGenerationWorker, stopReportGenerationWorker } from "./repor
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
+import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -154,6 +155,8 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
 ];
 
 async function startAllWorkers(): Promise<void> {
+  // The workers process sends most notifications, so it needs the deliverer too.
+  registerNotificationDeliverer();
   console.log("\n================================================");
   console.log("  HRMS Unified Worker Runner");
   console.log(`  Workers: ${WORKERS.map(w => w.name).join(", ")}`);

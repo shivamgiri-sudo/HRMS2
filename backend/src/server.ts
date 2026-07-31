@@ -116,6 +116,10 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 function startServer() {
   httpServer = app.listen(env.PORT, () => {
     // GOVERNANCE: These always run (essential schedulers)
+    // Binds the notification gateway to SMTP. Without it a live event throws NOT_WIRED
+    // rather than silently doing nothing. Events are still individually gated by
+    // notification_event_config, so registering this does not make anything send.
+    registerNotificationDeliverer();
     startOfficialEmailComplianceScheduler();
     startIntegrationScheduler();
     console.log("[scheduler] official-email and integration scheduler started");
