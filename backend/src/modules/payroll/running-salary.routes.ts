@@ -10,13 +10,41 @@
 
 import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { hasAnyRole, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { computeRunningSalary } from "./running-salary.service.js";
 import { toISTDate } from "../../shared/timezone.js";
 import type { RowDataPacket } from "mysql2/promise";
 import type { Response } from "express";
 
 export const runningSalaryRouter = Router();
+
+/**
+ * Roles whose reach is limited to their assigned scope.
+ *
+ * Deliberately excludes admin / super_admin / ceo — those bypass through
+ * allowAdminBypass / allowCeoAllRead / the super_admin short-circuit inside
+ * buildScopeWhereClause, exactly as PAYROLL_SCOPE_ROLES does in payroll.routes.ts.
+ * A role listed here needs a user_assignment_scope row; scope_type='all' is how an
+ * HO user keeps org-wide reach.
+ */
+const RUNNING_SALARY_SCOPE_ROLES = [
+  "payroll_head", "payroll_branch", "payroll", "payroll_admin",
+  "hr", "hr_admin", "wfm", "branch_head", "management",
+];
+
+/**
+ * Every scope type the employees table can satisfy. All five are supplied because
+ * buildScopeWhereClause silently skips a scope whose alias is missing — a
+ * department-scoped user with only `branchId` mapped would fall through to 1=0 and
+ * be denied their own department. Same alias map as attendance.dispute.routes.ts.
+ */
+const EMPLOYEE_SCOPE_ALIASES = {
+  branchId: "e.branch_id",
+  processId: "e.process_id",
+  departmentId: "e.department_id",
+  managerEmployeeId: "e.reporting_manager_id",
+  employeeId: "e.id",
+};
 
 /**
  * Current payroll month (YYYY-MM) in IST.
@@ -229,6 +257,33 @@ runningSalaryRouter.get(
     }
 
     const { employeeId } = req.params;
+
+    // Role alone answers "may you read running salary", never "whose". Without this
+    // a branch_head or wfm user authorized above could read any employee in the
+    // company, which is precisely the row-scope enforcement the charter requires at
+    // query level rather than in the UI.
+    const scoped = await buildScopeWhereClause(
+      userId,
+      RUNNING_SALARY_SCOPE_ROLES,
+      EMPLOYEE_SCOPE_ALIASES,
+      { allowAdminBypass: true, allowCeoAllRead: true },
+    );
+    {
+      const { db } = await import("../../db/mysql.js");
+      const [inScope] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 FROM employees e WHERE e.id = ? AND (${scoped.sql}) LIMIT 1`,
+        [employeeId, ...scoped.params],
+      );
+      if ((inScope as RowDataPacket[]).length === 0) {
+        // Distinguished from the role denial above so a user who is the right role
+        // but has no user_assignment_scope row is diagnosable, not just "denied".
+        return res.status(403).json({
+          success: false,
+          message: "Access denied: employee is outside your assigned scope",
+        });
+      }
+    }
+
     const rawMonth = (req.query.month as string) || "";
 
     let runMonthYYYYMM: string;
@@ -303,6 +358,19 @@ runningSalaryRouter.get(
     const params: unknown[] = [];
     if (branch_id) { conds.push("e.branch_id = ?"); params.push(branch_id); }
     if (process_id) { conds.push("e.process_id = ?"); params.push(process_id); }
+
+    // branch_id / process_id above are caller-supplied filters, not permissions —
+    // on their own they let a branch_head pass any branch and pull 100 employees'
+    // salary from a branch they do not run. ANDed with the scope clause, an
+    // out-of-scope branch simply matches no rows.
+    const scoped = await buildScopeWhereClause(
+      userId,
+      RUNNING_SALARY_SCOPE_ROLES,
+      EMPLOYEE_SCOPE_ALIASES,
+      { allowAdminBypass: true, allowCeoAllRead: true },
+    );
+    conds.push(`(${scoped.sql})`);
+    params.push(...scoped.params);
 
     const [empRows] = await (db as any).execute(
       `SELECT e.id, e.employee_code, CONCAT(e.first_name, ' ', e.last_name) AS name

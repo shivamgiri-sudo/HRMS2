@@ -17,15 +17,16 @@ const EMPLOYEE_ID = "11111111-1111-1111-1111-111111111111";
 const AUTH_USER_ID = "22222222-2222-2222-2222-222222222222";
 const RUN_MONTH = "2026-07";
 
-const { execute, computeRunningSalary, hasAnyRole } = vi.hoisted(() => ({
+const { execute, computeRunningSalary, hasAnyRole, buildScopeWhereClause } = vi.hoisted(() => ({
   execute: vi.fn(),
   computeRunningSalary: vi.fn(),
   hasAnyRole: vi.fn(),
+  buildScopeWhereClause: vi.fn(),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../running-salary.service.js", () => ({ computeRunningSalary }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
+vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole, buildScopeWhereClause }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     (req as express.Request & { authUser: { id: string } }).authUser = { id: AUTH_USER_ID };
@@ -52,10 +53,16 @@ const LIVE_ESTIMATE = {
   gross_monthly: 25132,
 };
 
+/** The employee falls inside the caller's assigned scope. */
+const IN_SCOPE = [[{ 1: 1 }]];
+/** Out of scope: the scope-probe SELECT matches no row. */
+const OUT_OF_SCOPE = [[]];
+
 /** No finalized run for the month — handlers fall through to the live estimate. */
-function withNoFinalizedRun() {
+function withNoFinalizedRun(scopeProbe: unknown = IN_SCOPE) {
   execute.mockImplementation(async (sql: string) => {
     if (sql.includes("auth_user_id")) return [[{ id: EMPLOYEE_ID }]];
+    if (sql.includes("FROM employees e WHERE e.id")) return scopeProbe;
     return [[]];
   });
 }
@@ -64,6 +71,7 @@ function withNoFinalizedRun() {
 function withFinalizedRun(row: Record<string, unknown>) {
   execute.mockImplementation(async (sql: string) => {
     if (sql.includes("auth_user_id")) return [[{ id: EMPLOYEE_ID }]];
+    if (sql.includes("FROM employees e WHERE e.id")) return IN_SCOPE;
     if (sql.includes("salary_prep_line")) return [[row]];
     return [[]];
   });
@@ -80,7 +88,10 @@ describe("running-summary routes", () => {
     execute.mockReset();
     computeRunningSalary.mockReset();
     hasAnyRole.mockReset();
+    buildScopeWhereClause.mockReset();
     hasAnyRole.mockResolvedValue(true);
+    // Default: an org-wide scope (scope_type='all' resolves to 1=1).
+    buildScopeWhereClause.mockResolvedValue({ sql: "1=1", params: [] });
     computeRunningSalary.mockResolvedValue(LIVE_ESTIMATE);
   });
 
@@ -159,6 +170,51 @@ describe("running-summary routes", () => {
     ]) {
       expect(allowedRoles).toContain(role);
     }
+  });
+
+  it("denies an employee outside the caller's assigned scope", async () => {
+    // Right role, wrong employee: the scope probe matches no row.
+    withNoFinalizedRun(OUT_OF_SCOPE);
+    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
+
+    const res = await request(buildApp()).get(`/api/payroll/running-summary/${EMPLOYEE_ID}?month=${RUN_MONTH}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toMatch(/outside your assigned scope/i);
+    // The salary must never be computed for someone the caller cannot see.
+    expect(computeRunningSalary).not.toHaveBeenCalled();
+  });
+
+  it("scopes the per-employee lookup by the caller's scope clause", async () => {
+    withNoFinalizedRun();
+    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
+
+    await request(buildApp()).get(`/api/payroll/running-summary/${EMPLOYEE_ID}?month=${RUN_MONTH}`);
+
+    const probe = execute.mock.calls.find(([sql]) => String(sql).includes("FROM employees e WHERE e.id"));
+    expect(probe).toBeDefined();
+    expect(String(probe![0])).toContain("e.branch_id = ?");
+    // Employee id first, then the scope clause's own params.
+    expect(probe![1]).toEqual([EMPLOYEE_ID, "branch-A"]);
+    expect(computeRunningSalary).toHaveBeenCalled();
+  });
+
+  it("constrains the batch route to the caller's scope, not the requested branch", async () => {
+    withNoFinalizedRun();
+    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
+
+    // Caller asks for a branch that is not theirs.
+    await request(buildApp())
+      .get(`/api/payroll/running-summary-batch?month=${RUN_MONTH}&branch_id=branch-B`);
+
+    const listQuery = execute.mock.calls.find(([sql]) => String(sql).includes("FROM employees e"));
+    expect(listQuery).toBeDefined();
+    // Both the requested filter AND the scope clause must be present: the requested
+    // branch is a filter, the scope clause is the permission. Without the second,
+    // branch_id=branch-B would return branch B's salaries to a branch A user.
+    expect(String(listQuery![0])).toContain("e.branch_id = ?");
+    expect(String(listQuery![0])).toContain("(e.branch_id = ?)");
+    expect(listQuery![1]).toEqual(["branch-B", "branch-A"]);
   });
 
   it("denies the per-employee route to roles outside the payroll/HR set", async () => {
