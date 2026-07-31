@@ -15,7 +15,12 @@ import { formatIST } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Risk = "breached" | "due_soon" | "on_track";
+/**
+ * "breached" means a real TAT deadline was missed. "aged" means the item carries no
+ * deadline and is simply old. The CEO UAT saw 23 items all reading "TAT breached"
+ * when none of them had a TAT at all — see calcRisk in inbox.service.ts.
+ */
+type Risk = "breached" | "aged" | "due_soon" | "on_track";
 
 interface PendingTask {
   id: string;
@@ -38,6 +43,7 @@ interface PendingTask {
 interface PendingSummary {
   total: number;
   breached: number;
+  aged: number;
   due_soon: number;
   on_track: number;
   by_module: Record<string, number>;
@@ -114,6 +120,8 @@ export function humaniseModuleKey(key: string): string {
 const RISK_STYLES: Record<Risk, { badge: string; ring: string; bar: string }> = {
   breached:  { badge: "bg-red-100 text-red-700 border-red-200",    ring: "ring-2 ring-red-300",    bar: "bg-red-500" },
   due_soon:  { badge: "bg-amber-100 text-amber-700 border-amber-200", ring: "ring-2 ring-amber-300", bar: "bg-amber-500" },
+  // Slate, not red: an old item with no promised deadline is not an SLA failure.
+  aged:      { badge: "bg-slate-100 text-slate-600 border-slate-200", ring: "", bar: "bg-slate-400" },
   on_track:  { badge: "bg-emerald-50 text-emerald-700 border-emerald-200", ring: "", bar: "bg-emerald-500" },
 };
 
@@ -147,6 +155,7 @@ function KpiStrip({ summary, loading }: { summary: PendingSummary | null; loadin
     { label: "Total Pending", value: summary?.total ?? 0,    icon: Bell,        gradient: "from-blue-600 to-indigo-700" },
     { label: "Breached TAT",  value: summary?.breached ?? 0, icon: AlertTriangle, gradient: "from-red-500 to-rose-600" },
     { label: "Due Soon",      value: summary?.due_soon ?? 0, icon: Clock,        gradient: "from-amber-500 to-orange-600" },
+    { label: "Ageing",        value: summary?.aged ?? 0,     icon: Clock,        gradient: "from-slate-500 to-slate-600" },
     { label: "On Track",      value: summary?.on_track ?? 0, icon: CheckCircle2, gradient: "from-emerald-500 to-teal-600" },
   ];
   return (
@@ -506,12 +515,13 @@ export default function NativeWorkInbox() {
           <div>
             <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Risk</p>
             <div className="flex flex-wrap gap-2">
-              {(["all", "breached", "due_soon", "on_track"] as const).map((r) => {
+              {(["all", "breached", "due_soon", "aged", "on_track"] as const).map((r) => {
                 const active = riskFilter === r;
                 const styles: Record<string, string> = {
                   all:      active ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600",
                   breached: active ? "bg-red-600 text-white" : "bg-red-50 text-red-700",
                   due_soon: active ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700",
+                  aged:     active ? "bg-slate-600 text-white" : "bg-slate-100 text-slate-600",
                   on_track: active ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700",
                 };
                 return (
