@@ -57,7 +57,7 @@ import {
 
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
-const TEMPLATE_STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "document-templates");
+import { TEMPLATE_STORAGE_ROOT, toStorableTemplatePath } from "./joiningDocumentTemplatePath.js";
 const EPF_REVIEW_CONSENT_TEXT = "Please verify your EPF details. These details will be used for EPFO compliance, UAN/KYC processing, nomination, payroll PF deduction, and statutory filing.";
 const EPF_FORM_CODES = ["FORM_11", "FORM_2", "KYC_DECLARATION", "PF_ELIGIBILITY_SHEET", "HR_PAYROLL_PF_CHECKLIST", "MISSING_DATA_ALERT", "ECR_READINESS"] as const;
 
@@ -974,7 +974,11 @@ hrDocumentTemplatesRouter.post(
               updated_at = NOW()
         WHERE id = ?`,
       [
-        storagePath,
+        // Store the file name, not an absolute path. Persisting the absolute path
+        // put a developer's "C:\Users\...\document-templates\..." into the shared
+        // database, which no Linux server can resolve — that is what silently
+        // disabled joining-document e-signing for every template.
+        toStorableTemplatePath(storagePath),
         templateMimeFromName(templateFile.originalname),
         fillMode,
         parsedSchema ? JSON.stringify(parsedSchema) : null,

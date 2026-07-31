@@ -11,6 +11,7 @@ import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scope
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
 import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload, luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
+import { templateFileExists } from "./joiningDocumentTemplatePath.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { emailService } from "../communication/email.service.js";
 import { buildJoiningDocEsignEmailHtml } from "../ats/ats.email.service.js";
@@ -582,7 +583,7 @@ async function assertTemplateConfiguredForEsign(checklist: ChecklistRow): Promis
   ).catch(() => [[] as RowDataPacket[], []] as [RowDataPacket[], unknown]);
 
   const storagePath = (templateRows as RowDataPacket[])[0]?.template_storage_path;
-  if (storagePath && fs.existsSync(String(storagePath))) return;
+  if (templateFileExists(storagePath)) return;
 
   const err = new Error(
     `No document template is configured for ${checklist.document_code}. ` +
@@ -715,7 +716,7 @@ async function ensureGeneratedFile(checklist: ChecklistRow, target: EmployeeDocu
     [checklist.document_code, checklist.template_version],
   );
   const templateRow = templateRows[0] as RowDataPacket | undefined;
-  const templateConfigured = Boolean(templateRow?.template_storage_path && fs.existsSync(String(templateRow.template_storage_path)));
+  const templateConfigured = templateFileExists(templateRow?.template_storage_path);
   const generated = await generateAgreementPdf(checklist, target, actorUserId, templateConfigured);
   const fileId = generated.id;
   const originalFilename = generated.original_filename ?? `${checklist.document_code.toLowerCase()}-${target.employee_code ?? checklist.employee_id}.pdf`;

@@ -12,6 +12,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { fillAcroFormPdf, validateAcroFormTemplate } from "./pdfAcroFormFill.service.js";
 import { applyCompanySeal } from "./companySeal.service.js";
+import { resolveTemplateFile } from "./joiningDocumentTemplatePath.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 
@@ -1662,17 +1663,20 @@ export async function generateChecklistDraft(
   let content: Buffer;
 
   try {
-    if (checklist.template_storage_path && fs.existsSync(checklist.template_storage_path)) {
+    // Resolve once: the stored path may have been written on another OS, in which
+    // case the file is still here under its own name. See joiningDocumentTemplatePath.
+    const templatePath = resolveTemplateFile(checklist.template_storage_path);
+    if (templatePath) {
       const fillMode = safeTrim(checklist.fill_mode) ?? "placeholder";
-      if (fillMode === "placeholder" && checklist.template_storage_path.toLowerCase().endsWith(".docx")) {
+      if (fillMode === "placeholder" && templatePath.toLowerCase().endsWith(".docx")) {
         outputFileName = `${checklist.document_code.toLowerCase()}-draft.docx`;
-        content = await renderPlaceholderDocx(checklist.template_storage_path, replacements);
+        content = await renderPlaceholderDocx(templatePath, replacements);
       } else if (fillMode === "acroform") {
-        if (!checklist.template_storage_path.toLowerCase().endsWith(".pdf")) {
+        if (!templatePath.toLowerCase().endsWith(".pdf")) {
           throw new Error("AcroForm templates must be PDF files.");
         }
         content = await fillAcroFormPdf({
-          templatePath: checklist.template_storage_path,
+          templatePath,
           fieldMaps,
           values: values.map((value) => ({ field_key: String(value.field_key), value_text: String(value.value_text ?? "") })),
           flatten: false,
@@ -1684,15 +1688,15 @@ export async function generateChecklistDraft(
           await applyCompanySeal(content, String(checklist.document_code ?? "")),
         );
       } else if (fillMode === "fillable_pdf") {
-        content = await renderFillablePdf(checklist.template_storage_path, fieldMaps, values);
+        content = await renderFillablePdf(templatePath, fieldMaps, values);
       } else if (
         fillMode === "pdf_overlay" ||
         fillMode === "pdf_coordinate_overlay" ||
         fillMode === "scanned_pdf_overlay" ||
         fillMode === "image_pdf_overlay" ||
-        checklist.template_storage_path.toLowerCase().endsWith(".pdf")
+        templatePath.toLowerCase().endsWith(".pdf")
       ) {
-        content = await renderOverlayPdf(checklist.template_storage_path, fieldMaps, values);
+        content = await renderOverlayPdf(templatePath, fieldMaps, values);
       } else {
         content = await renderSummaryPdf(checklist, values);
       }
@@ -1724,11 +1728,12 @@ export async function generateChecklistDraft(
 
 export async function inspectChecklistAcroFormTemplate(checklistId: string) {
   const checklist = await checklistContext(checklistId);
-  if (!checklist.template_storage_path || !fs.existsSync(checklist.template_storage_path)) {
+  const templatePath = resolveTemplateFile(checklist.template_storage_path);
+  if (!templatePath) {
     throw new Error("Template file not found for checklist.");
   }
   const fieldMaps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
-  return validateAcroFormTemplate(checklist.template_storage_path, fieldMaps);
+  return validateAcroFormTemplate(templatePath, fieldMaps);
 }
 
 export async function getChecklistFieldReview(checklistId: string) {
