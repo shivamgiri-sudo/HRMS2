@@ -130,6 +130,45 @@ const ROLES_ALL_MANAGEMENT = ["super_admin", "admin", "hr", "hr_head", "finance"
 // ─── Report Definitions ────────────────────────────────────────────────────────
 
 export const REPORT_CATALOG: ReportDefinition[] = [
+  {
+    // The feedback loop for the notification system. Building this immediately corrected a
+    // figure the project had been repeating: the catalogue said 156 active employees could
+    // not receive a payslip, counting only those whose official_email was EMPTY. The
+    // resolver also requires a company domain, and by that rule 725 of 1,152 (62.9%) are
+    // blocked — 519 have a gmail.com address sitting in the official_email column, plus 31
+    // example.com test rows and several hand-typed typos. This report is the worklist for
+    // fixing that, and no `fin` event can sensibly go live until it has been worked through.
+    code: "notification-undeliverable-recipients",
+    name: "Undeliverable Notification Recipients",
+    category: "HR & Workforce",
+    subcategory: "Data Quality",
+    description: "Active employees who cannot receive notifications, and why",
+    rowGrain: "One row per active employee with at least one delivery gap",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 110 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 130 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "official_email", label: "Official Email", format: "text", width: 200 },
+      { key: "personal_email", label: "Personal Email", format: "text", width: 200 },
+      { key: "reporting_manager", label: "Reporting Manager", format: "text", width: 180 },
+      { key: "gap_reason", label: "Why Undeliverable", format: "text", width: 260 },
+      { key: "blocks_financial_mail", label: "Blocks Payslip", format: "text", width: 110 },
+    ],
+    filters: [F_BRANCH, F_PROCESS],
+    viewRoles: ROLES_HR_ADMIN,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "process_master"],
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+    containsFinancialData: false,
+    // Validated against production 2026-07-31: 774 rows; counts cross-checked against
+    // independent queries (155 with no official email, 156 with no manager).
+    availabilityStatus: "validated",
+  },
   // ═══════════════════════════════════════════════════════════════════════════════
   // CATEGORY 1: HR & WORKFORCE
   // ═══════════════════════════════════════════════════════════════════════════════
