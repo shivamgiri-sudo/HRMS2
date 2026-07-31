@@ -2,6 +2,11 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { missingTdsConfigKeys } from "./statutory-regime.js";
+// The closed-run set was `["locked", "disbursed"]`, which matched no row in
+// production — runs finish as FINALIZED — so this guard never fired.
+import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
+import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
+import { getStatutoryConfigForPeriod } from "./statutory-config.resolver.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
@@ -19,7 +24,6 @@ interface TaxDeclarationRow {
   regime: string;
 }
 
-const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
 
 // ─── Gratuity ─────────────────────────────────────────────────────────────────
 
@@ -101,6 +105,40 @@ export interface TdsResult {
 
 interface StatutoryConfigMap {
   [key: string]: number;
+}
+
+/**
+ * Statutory rates a payable payroll run must use for its period.
+ *
+ * statutory_config_version is authoritative wherever it can be read: it is the
+ * only source that can hold two financial years at once, and the only one that
+ * records approval. The charter requires payable figures to rest on APPROVED
+ * effective-dated configuration, so an unapproved row there is a proposal and
+ * must not reach a payslip.
+ *
+ * The distinction that matters is between "versioning is not deployed here" and
+ * "versioning is deployed and a key is missing":
+ *
+ *   unavailable — migration 1030 has not run on this database. Fall back to the
+ *                 flat statutory_config, which is what payroll read before
+ *                 versioning existed. That loader still filters is_active and
+ *                 effective_from, so this is a period-resolved reading, never a
+ *                 hardcoded rate. Failing the run here would break every
+ *                 environment where 1030 has not yet been applied.
+ *   versioned   — trust it completely, gaps included. Falling back on a missing
+ *                 key would make the approval gate bypassable by omitting the
+ *                 key: the stale flat row would quietly supply it. Instead the
+ *                 gap reaches calculateTds, which reports pending_configuration
+ *                 naming the key, and the run stops rather than under-deducting.
+ *
+ * Exported so this rule is testable directly. It was previously inline, where a
+ * test could only restate it and would not notice the call site changing.
+ */
+export async function resolveStatutoryConfigForRun(period: string): Promise<StatutoryConfigMap> {
+  const resolved = await getStatutoryConfigForPeriod(period);
+  return resolved.source === "versioned"
+    ? resolved.values
+    : await loadFlatStatutoryConfig(period);
 }
 
 /**
@@ -226,8 +264,6 @@ interface EmployeeRow {
   employee_id: string;
   employee_code: string;
   prep_line_id?: string | null;
-  overtime_hours: number;
-  overtime_amount: number;
   ctc_annual: number;
   basic_pct: number;
   hra_pct: number;
@@ -257,6 +293,69 @@ interface StatutoryRow {
   professional_tax: number;
 }
 
+/**
+ * Professional tax for one employee.
+ *
+ * PT is levied by the STATE. An employee whose branch has no state therefore
+ * has no determinable liability, and no organisation-wide amount could be
+ * correct for them.
+ *
+ * This previously fell back to a hardcoded 200 — a number nobody configured;
+ * statutory_config has never held a professional_tax key. In the 2026-03 run
+ * alone that deducted ₹200 from 172 employees whose branch had no state
+ * (₹34,400), while employees in Uttar Pradesh and Delhi — states with no
+ * professional tax at all — correctly paid nothing.
+ *
+ * Stopping and naming the branch is recoverable in a single edit. Silently
+ * deducting from someone who owes nothing is not.
+ *
+ * Where the state IS known, getPtFromSlab resolves it, including returning 0 for
+ * states that levy no PT. That path was always correct and is unchanged.
+ */
+export async function resolveProfessionalTax(
+  employeeCode: string,
+  stateCode: string | null | undefined,
+  monthlyGross: number,
+): Promise<number> {
+  if (!stateCode) {
+    throw new Error(
+      `Professional tax cannot be determined for ${employeeCode}: their branch has no state set. ` +
+      `PT is levied per state, so no default is applied. Set the branch's state and re-run.`,
+    );
+  }
+  return getPtFromSlab(stateCode, monthlyGross);
+}
+
+/**
+ * PF / ESIC parameters for a run, from the statutory configuration resolved for
+ * its period.
+ *
+ * The `??` defaults are retained deliberately for PF and ESIC — unlike TDS,
+ * these are single nationwide statutory rates rather than slabs that a Finance
+ * Act reshapes, and production supplies every one of them from configuration, so
+ * the defaults are unreachable there.
+ *
+ * pf_wage_limit is 999999 in production, not the ₹15,000 EPF ceiling. That is
+ * deliberate: an employer may contribute PF on wages above the statutory
+ * ceiling, and this one does. Do not "correct" it to 15000 — that would cut
+ * every employee's PF and change take-home pay. The test pinning this exists to
+ * stop exactly that.
+ */
+export function buildStatutoryRow(statConfig: Record<string, number>): StatutoryRow {
+  return {
+    pf_employee_pct:   statConfig["pf_employee_pct"]   ?? 12,
+    esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
+    esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
+    esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
+    pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
+    // No `?? 200`. Professional tax is a state levy with no sensible
+    // organisation-wide default, and statutory_config has never held this key —
+    // that constant was a number nobody approved. resolveProfessionalTax stops
+    // the run rather than guessing.
+    professional_tax:  statConfig["professional_tax"]  ?? 0,
+  };
+}
+
 export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
   return calculatePayrollRunScoped(runId, userId);
 }
@@ -272,31 +371,35 @@ export async function calculatePayrollRunScoped(
   );
   const run = (runRows as SalaryPrepRun[])[0];
   if (!run) throw new Error("Run not found");
-  if (LOCKED_STATUSES.has(run.status)) {
+  if (isRunClosed(run.status)) {
     throw new Error(`Cannot recalculate a ${run.status} run`);
   }
   // TDS mode: 'manual' = skip auto-TDS projection; Payroll HO uploads amounts separately.
   const tdsMode: 'auto' | 'manual' = (run as any).tds_mode ?? 'manual';
 
-  // 2a. Load statutory config as flat key→value map (for TDS slab lookups)
-  const [statKvRows] = await db.execute<RowDataPacket[]>(
-    "SELECT config_key, config_value FROM statutory_config"
-  );
-  const statConfig: StatutoryConfigMap = {};
-  for (const r of statKvRows as Array<{ config_key: string; config_value: number }>) {
-    // Normalise keys to lowercase so calculateTds() lookups work
-    statConfig[r.config_key.toLowerCase()] = Number(r.config_value);
-  }
+  // 2a. Statutory config in force for the month being run (for TDS slab lookups).
+  //
+  // Resolved for run.run_month rather than for today: recalculating an earlier
+  // month must apply the rates that governed it, or a reissued payslip disagrees
+  // with what was actually deducted and filed.
+  //
+  // statutory_config_version is authoritative where it is readable, because only
+  // it can express two financial years at once and only it records approval —
+  // the charter requires payable figures to rest on APPROVED effective-dated
+  // configuration, and an unapproved row there is a proposal that must not reach
+  // a payslip.
+  //
+  // Where it is not readable — migration 1030 not applied on this database — the
+  // flat statutory_config is used instead. That is a deployment gap, not a
+  // licence to relax: the flat loader already filters is_active and
+  // effective_from, so the fallback is the same period-resolved reading payroll
+  // used before versioning existed, never a hardcoded rate. Failing the run
+  // outright here would break every environment where 1030 has not yet run.
+  const statConfig: StatutoryConfigMap = await resolveStatutoryConfigForRun(run.run_month);
 
-  // 2b. Legacy flat-row fallback (PF / ESIC / PT values)
-  const stat: StatutoryRow = {
-    pf_employee_pct:   statConfig["pf_employee_pct"]   ?? 12,
-    esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
-    esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
-    esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
-    pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
-    professional_tax:  statConfig["professional_tax"]  ?? 200,
-  };
+  // 2b. PF / ESIC parameters for the run. See buildStatutoryRow for why the PF
+  // and ESIC defaults are kept while the professional-tax one was removed.
+  const stat: StatutoryRow = buildStatutoryRow(statConfig);
 
   // 3. Fetch eligible employees (scoped to run's process/branch filters)
   const scopedEmployeeIds = Array.from(new Set((options.employeeIds ?? []).filter(Boolean)));
@@ -338,8 +441,6 @@ export async function calculatePayrollRunScoped(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             spl_existing.id AS prep_line_id,
-            COALESCE(spl_existing.overtime_hours, 0)  AS overtime_hours,
-            COALESCE(spl_existing.overtime_amount, 0) AS overtime_amount,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             e.process_id, e.branch_id,
@@ -845,10 +946,20 @@ export async function calculatePayrollRunScoped(
       // employee_deduction_entries or payroll_deduction_type may not exist yet — non-fatal
     }
 
-    // Resolve PT from slab when employee has a state_code, else fall back to config value
-    const professionalTax = emp.state_code
-      ? await getPtFromSlab(emp.state_code, grossAfterLwp)
-      : stat.professional_tax;
+    // Professional tax is levied by the STATE, so an employee whose branch has
+    // no state has no determinable liability — there is no organisation-wide
+    // amount that could be correct. This previously fell back to a hardcoded
+    // 200, which is not a configured value: statutory_config has no
+    // professional_tax key at all, so that number was invented here. In the
+    // 2026-03 run alone it deducted Rs 200 from 172 employees whose branch had
+    // no state — Rs 34,400 — while employees in Uttar Pradesh and Delhi, states
+    // with no professional tax, correctly paid nothing.
+    //
+    // Stopping and naming the branch is recoverable in one edit. Silently
+    // deducting from someone who owes nothing is not.
+    const professionalTax = await resolveProfessionalTax(
+      emp.employee_code, emp.state_code, grossAfterLwp,
+    );
 
     // Check for approved PF / ESI opt-outs (employee voluntary declaration approved by Payroll HO)
     const [overrideRows] = await conn.execute<RowDataPacket[]>(
@@ -885,11 +996,8 @@ export async function calculatePayrollRunScoped(
       gratuityPct: statConfig["gratuity_pct"],
     });
 
-    // Preserve WFM-entered OT across recalculations (written by PATCH /lines/:id/overtime)
-    const otAmount = Number(emp.overtime_amount) || 0;
-
-    // Net pay = payrollService net + holiday work extra payout + overtime - advance recovery - loan EMI - misc deductions
-    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout + otAmount - advanceRecovery - loanEmi - miscDeductions);
+    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions
+    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
     const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
     // 6. Accumulate prep line for batch upsert after loop
@@ -955,10 +1063,6 @@ export async function calculatePayrollRunScoped(
     for (const ded of statutoryDeductions) {
       if (ded.amount <= 0) continue;
       batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'statutory', 0]);
-    }
-
-    if (otAmount > 0) {
-      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'OVERTIME', 'Overtime Allowance', 'earning', otAmount, 'overtime', 1]);
     }
 
     for (const ded of miscComponents) {
@@ -1172,7 +1276,9 @@ export async function calculatePayrollRunScoped(
     // Reset run to draft so it can be retried cleanly
     try {
       await db.execute(
-        `UPDATE salary_prep_run SET status = 'draft' WHERE id = ? AND status NOT IN ('locked','disbursed')`,
+        // LOWER(status) because FINALIZED is stored uppercase; without it this
+        // error path could demote a settled run to draft.
+        `UPDATE salary_prep_run SET status = 'draft' WHERE id = ? AND LOWER(status) NOT IN (${CLOSED_RUN_STATUSES_SQL})`,
         [runId]
       );
     } catch {

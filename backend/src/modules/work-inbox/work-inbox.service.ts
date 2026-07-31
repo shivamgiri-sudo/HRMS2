@@ -126,13 +126,51 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
               'work_inbox_item' AS source_table
          FROM work_inbox_item wii
         WHERE wii.user_id = ? AND wii.is_actioned = 0
+       UNION ALL
+       /*
+        * Pending leave, derived from the source table rather than from a producer row.
+        *
+        * LEAVE_APPROVAL_PENDING is declared in action-item-registry.ts but nothing has ever
+        * written it — no INSERT anywhere in the backend produces that item_type — so the 27
+        * leave requests sitting in 'pending' were invisible in every inbox while the type
+        * they belong to was advertised as supported. Deriving avoids a backfill and cannot
+        * drift out of sync the way a producer row does once a request is approved.
+        *
+        * Routed to the reporting manager, with HR as a fallback because the manager link
+        * does not cover the queue: of the 27 pending, 9 have no reporting manager at all
+        * and only 5 of the 7 named managers hold a user account. Without the fallback a
+        * third of the queue would reach nobody.
+        */
+       SELECT CONCAT('leave:', lr.id) AS id,
+              'LEAVE_APPROVAL_PENDING' AS item_type,
+              CONCAT('Leave approval: ', COALESCE(e.full_name, e.employee_code)) AS title,
+              CONCAT(
+                TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM COALESCE(lr.total_days, 0))),
+                IF(COALESCE(lr.total_days, 0) = 1, ' day from ', ' days from '),
+                DATE_FORMAT(COALESCE(lr.from_date, lr.start_date), '%d %b %Y')
+              ) AS description,
+              'leave' AS module_code,
+              'leave_request' AS entity_type,
+              lr.id AS entity_id,
+              'high' AS priority,
+              'pending' AS status,
+              NULL AS due_at,
+              lr.created_at,
+              '/leave-approvals' AS action_url,
+              e.full_name AS assigned_employee_name,
+              'leave_request' AS source_table
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+        WHERE LOWER(COALESCE(lr.status, '')) = 'pending'
+          AND (mgr.user_id = ? OR ? IN ('hr', 'hr_head', 'admin', 'super_admin'))
      ) merged
      ORDER BY FIELD(merged.priority,'critical','high','medium','low'),
               merged.due_at IS NULL,
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    [userId, role, userId]
+    [userId, role, userId, userId, role]
   );
   return rows;
 }

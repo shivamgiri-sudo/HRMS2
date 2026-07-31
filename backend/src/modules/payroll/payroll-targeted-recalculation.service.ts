@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculatePayrollRunScoped } from "./payrollCalculate.service.js";
 
-const CLOSED_RUN_STATUSES = new Set(["locked", "disbursed"]);
+import { isRunClosed } from "./run-status.js";
 
 export async function queuePayrollRecalculation(params: {
   employeeId: string;
@@ -71,8 +71,8 @@ export async function recalculateOpenPayrollForEmployee(params: {
     return { status: "no_open_run", runId: null, message: "No salary run line exists for this employee/month; queued recalculation." };
   }
 
-  const openRuns = runs.filter((r) => !CLOSED_RUN_STATUSES.has(String(r.status)));
-  const closedRuns = runs.filter((r) => CLOSED_RUN_STATUSES.has(String(r.status)));
+  const openRuns = runs.filter((r) => !isRunClosed(r.status));
+  const closedRuns = runs.filter((r) => isRunClosed(r.status));
 
   // A closed run cannot be rewritten in place; queue it so the divergence is at
   // least recorded rather than lost.

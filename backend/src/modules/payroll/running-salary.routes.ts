@@ -150,15 +150,29 @@ async function getFinalizedLineForMonth(
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ?
         AND spr.run_month = ?
-        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed')
+        -- 'finalized' belongs here and was missing, which inverted this whole
+        -- override. Production has 51 FINALIZED runs (2021-03 to 2026-04) and
+        -- zero rows in 'locked', 'disbursed' or 'completed' — so the most
+        -- settled months, 63,316 employee-months of them, fell through to a
+        -- live estimate recomputed from *current* attendance, while the 12
+        -- 'approved' months got the stored figure. Exactly backwards: a closed
+        -- month should show what was actually paid.
+        --
+        -- Lowercase matches the stored 'FINALIZED' because the column collates
+        -- utf8mb4_unicode_ci.
+        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed', 'finalized')
         AND spl.status NOT IN ('excluded', 'blocked')
       ORDER BY
+        -- Most authoritative first. 'finalized' has to outrank 'approved', not
+        -- sit in the ELSE: 2026-03 carries both an approved and a FINALIZED run,
+        -- and without this the approved one would still win the tie.
         CASE spr.status
           WHEN 'disbursed'  THEN 1
-          WHEN 'locked'     THEN 2
-          WHEN 'approved'   THEN 3
-          WHEN 'completed'  THEN 4
-          ELSE 5
+          WHEN 'finalized'  THEN 2
+          WHEN 'locked'     THEN 3
+          WHEN 'approved'   THEN 4
+          WHEN 'completed'  THEN 5
+          ELSE 6
         END
       LIMIT 1`,
     [employeeId, runMonthYYYYMM],

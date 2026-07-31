@@ -54,17 +54,12 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- Replaces uq_kpi_org (metric_id, org_unit_type, org_unit_id). For every existing row
 -- designation_scope_key is '~ANY~', so the new key enforces exactly the old constraint on
 -- them; it only additionally allows one row per (metric, org unit, specific designation).
-SET @has_old_key := (
-  SELECT COUNT(*) FROM information_schema.STATISTICS
-   WHERE TABLE_SCHEMA = DATABASE()
-     AND TABLE_NAME = 'kpi_master_config'
-     AND INDEX_NAME = 'uq_kpi_org'
-);
-SET @sql := IF(@has_old_key > 0,
-  'ALTER TABLE kpi_master_config DROP INDEX uq_kpi_org',
-  'SELECT "uq_kpi_org already removed" AS note');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+-- Order matters. uq_kpi_org (metric_id, ...) is the index MySQL uses to back the
+-- kpi_master_config_ibfk_1 foreign key on metric_id, so dropping it first fails with
+-- ER_DROP_INDEX_FK: "Cannot drop index 'uq_kpi_org': needed in a foreign key constraint".
+-- The replacement also leads with metric_id, so creating it first lets it take over
+-- backing the FK and the drop then succeeds.
 SET @has_new_key := (
   SELECT COUNT(*) FROM information_schema.STATISTICS
    WHERE TABLE_SCHEMA = DATABASE()
@@ -75,6 +70,17 @@ SET @sql := IF(@has_new_key = 0,
   'CREATE UNIQUE INDEX uq_kpi_org_designation
      ON kpi_master_config (metric_id, org_unit_type, org_unit_id, designation_scope_key)',
   'SELECT "uq_kpi_org_designation already present" AS note');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @has_old_key := (
+  SELECT COUNT(*) FROM information_schema.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'kpi_master_config'
+     AND INDEX_NAME = 'uq_kpi_org'
+);
+SET @sql := IF(@has_old_key > 0,
+  'ALTER TABLE kpi_master_config DROP INDEX uq_kpi_org',
+  'SELECT "uq_kpi_org already removed" AS note');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── Step 4: resolution lookup path ───────────────────────────────────────────────────────

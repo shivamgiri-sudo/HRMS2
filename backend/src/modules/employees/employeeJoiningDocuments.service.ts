@@ -573,14 +573,28 @@ async function insertFileRecord(params: {
  * Mirrors the check ensureGeneratedFile uses to decide template_pending.
  */
 async function assertTemplateConfiguredForEsign(checklist: ChecklistRow): Promise<void> {
+  // `template_version`, not `version`. There is no `version` column, so this
+  // query raised "Unknown column 'version' in 'order clause'" on every call —
+  // and the catch below turned that into an empty result, which reads exactly
+  // like "no template configured". Every e-sign request was rejected with 409
+  // regardless of how well the templates were set up.
+  //
+  // The catch stays, so a genuine database problem still degrades to a clear
+  // message rather than a 500, but it now logs instead of swallowing silently.
   const [templateRows] = await db.execute<RowDataPacket[]>(
     `SELECT template_storage_path
        FROM employee_joining_document_template
       WHERE document_code = ? AND active_status = 1
-      ORDER BY (version = ?) DESC, updated_at DESC
+      ORDER BY (template_version = ?) DESC, updated_at DESC
       LIMIT 1`,
     [checklist.document_code, checklist.template_version],
-  ).catch(() => [[] as RowDataPacket[], []] as [RowDataPacket[], unknown]);
+  ).catch((error: unknown) => {
+    console.error(
+      `[joining-docs] template lookup failed for ${checklist.document_code}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return [[] as RowDataPacket[], []] as [RowDataPacket[], unknown];
+  });
 
   const storagePath = (templateRows as RowDataPacket[])[0]?.template_storage_path;
   if (templateFileExists(storagePath)) return;

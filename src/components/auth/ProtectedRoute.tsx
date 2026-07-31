@@ -25,8 +25,8 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
-  const { isAdminOrHR, isLoading: isRoleLoading, error: roleError, roleKeys } = useIsAdminOrHR();
-  const { isLoading: isAccessLoading, isError: isAccessError, error: accessError, canViewPage } = useWorkforceAccess();
+  const { isAdminOrHR, isLoading: isRoleLoading, error: roleError, roleKeys, isResolved: isRoleResolved } = useIsAdminOrHR();
+  const { isLoading: isAccessLoading, isError: isAccessError, error: accessError, canViewPage, isResolved: isAccessResolved } = useWorkforceAccess();
   const isEmployee = employeeStatus?.isEmployee ?? false;
   const routePageCode = dashboardCode ? undefined : getRoutePageCode(location.pathname);
   const hasRoutePageAccess = routePageCode ? canViewPage(routePageCode) : false;
@@ -92,6 +92,25 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
 
   if (!mustChangePassword && twoFactorRequired && !twoFactorVerified && location.pathname !== "/two-factor") {
     return <Navigate to="/two-factor" replace />;
+  }
+
+  // Every check below denies on an empty role list or a false canViewPage, and both are
+  // the default state before the role query resolves. That query is `enabled: !!user?.id`,
+  // and React Query v5 computes isLoading as `isPending && isFetching` — so a disabled
+  // query, and the first render after it is enabled but before the fetch effect runs,
+  // reports isLoading === false with data still undefined. The loading gate above
+  // therefore lets that render through, roleKeys is [], and the user is shown
+  // "Access Denied" for a frame before their real roles arrive. That is the flash the
+  // CEO UAT reported on /ceo/dashboard.
+  //
+  // Placed after the !user redirect on purpose: a signed-out user must still be sent to
+  // /auth rather than held on a spinner the query will never resolve.
+  if (!isRoleResolved || !isAccessResolved) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
   }
 
   // Dashboard routes stay tied to their dashboard entitlement.

@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import { isRunClosed } from './run-status.js';
 
 /**
  * Assert that a payroll run is still editable.
@@ -13,7 +14,10 @@ export async function assertRunEditable(runId: string): Promise<void> {
   const run = (rows[0] as any);
   if (!run) throw new Error('Payroll run not found');
 
-  if (['locked', 'disbursed'].includes(run.status)) {
+  // isRunClosed rather than a literal ['locked','disbursed']: production runs
+  // finish as FINALIZED, which that list omitted, so this guard matched nothing
+  // and every settled run stayed editable.
+  if (isRunClosed(run.status)) {
     throw new Error(`Payroll run is ${run.status}. No changes are permitted.`);
   }
 

@@ -302,6 +302,34 @@ router.get("/grievances/:id", h(async (req: AuthenticatedRequest, res: Response)
   res.json({ data: grievance });
 }));
 
+// GET /grievances/:id/timeline — case history for the detail drawer.
+//
+// NativeGrievanceCommandCenter has always requested this alongside the detail
+// call inside a Promise.allSettled, so the missing route produced no error —
+// just a drawer with no history. The route-contract gate is what surfaced it.
+//
+// Access control is deliberately identical to GET /grievances/:id rather than a
+// lighter check: a timeline names the people who handled a case that may be
+// anonymous, confidentiality-graded and anti-retaliation-flagged, so it must not
+// be readable by anyone who cannot read the grievance itself. Equally it is not
+// behind a blanket requireRole, which would cut an employee off from the history
+// of their own case.
+router.get("/grievances/:id/timeline", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const isAdminHr = await hasRole(userId, "admin", "hr");
+
+  if (!isAdminHr) {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+    const list = await helpdeskService.listGrievances({ employee_id: emp.id });
+    const found = (list as any[]).find(g => g.id === req.params.id);
+    if (!found) return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+
+  const data = await helpdeskService.getGrievanceTimeline(req.params.id);
+  res.json({ data });
+}));
+
 router.patch("/grievances/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const data = await helpdeskService.updateGrievance(req.params.id, req.body);
   await writeSensitiveAuditLog({
