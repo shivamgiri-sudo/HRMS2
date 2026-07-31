@@ -124,6 +124,9 @@ breakManagementRouter.get("/kiosks/export", requireBreakAdmin, h(async (req, res
     status: z.enum(["active", "inactive", "all"]).optional(),
     mode: z.enum(["summary", "detailed"]).optional(),
     limit: z.coerce.number().optional(),
+    date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    kiosk_id: z.string().optional(),
   }).parse(req.query);
   const data = await breakManagementService.exportKioskDevices(query);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");

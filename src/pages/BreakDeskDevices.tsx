@@ -1,7 +1,7 @@
 import { useDeferredValue, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, Download, KeyRound, Link2, Loader2, MonitorCog, Plus, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertTriangle, Calendar, CheckCircle2, Copy, Download, Filter, KeyRound, Link2, Loader2, MonitorCog, Plus, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -95,6 +95,10 @@ export default function BreakDeskDevices() {
   const [fingerprintText, setFingerprintText] = useState("");
   const [tokenResult, setTokenResult] = useState<TokenResult | null>(null);
   const [exportMode, setExportMode] = useState<"summary" | "detailed" | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<KioskDevice | null>(null);
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
+  const [reportKioskId, setReportKioskId] = useState("");
   const deferredSearch = useDeferredValue(search);
 
   const kioskQuery = useMemo(() => new URLSearchParams({ status: "all", limit: "250" }).toString(), []);
@@ -213,22 +217,19 @@ export default function BreakDeskDevices() {
   async function exportReport(mode: "summary" | "detailed") {
     try {
       setExportMode(mode);
-      const params = new URLSearchParams({
-        status,
-        mode,
-        limit: "250",
-      });
+      const params = new URLSearchParams({ status, mode, limit: "2000" });
       if (search.trim()) params.set("search", search.trim());
+      if (reportFrom) params.set("date_from", reportFrom);
+      if (reportTo) params.set("date_to", reportTo);
+      if (reportKioskId) params.set("kiosk_id", reportKioskId);
       const blob = await hrmsApi.getBlob(`/api/break-management/kiosks/export?${params.toString()}`);
-      const url = window.URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = `break-desk-kiosks-${mode}-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(anchor);
       anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(url);
-      toast.success(mode === "summary" ? "Kiosk summary exported" : "Detailed kiosk report exported");
+      URL.revokeObjectURL(url);
+      toast.success(mode === "summary" ? "Kiosk summary exported" : "Detailed break report exported");
     } catch (error: any) {
       toast.error(error?.message ?? "Unable to export kiosk report");
     } finally {
@@ -271,11 +272,13 @@ export default function BreakDeskDevices() {
   }
 
   function confirmDelete(device: KioskDevice) {
-    const allow = window.confirm(
-      `Delete break desk ID ${device.kiosk_code}?\n\nThis removes the desk login. Old logs stay preserved, but active live breaks must be closed first.`,
-    );
-    if (!allow) return;
-    removeDesk.mutate(device);
+    setPendingDelete(device);
+  }
+
+  function executeDelete() {
+    if (!pendingDelete) return;
+    removeDesk.mutate(pendingDelete);
+    setPendingDelete(null);
   }
 
   function updateBranch(branchId: string | null) {
@@ -407,6 +410,28 @@ export default function BreakDeskDevices() {
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                     <option value="all">All</option>
+                  </select>
+                </div>
+                {/* Date range + desk filter for detailed report */}
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#145da0]/20 bg-[#145da0]/5 px-3 py-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-[#145da0]">
+                    <Filter className="h-3.5 w-3.5" />
+                    Detailed report filters
+                  </div>
+                  <label className="flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                    <input type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold outline-none" />
+                  </label>
+                  <span className="text-xs text-slate-400">to</span>
+                  <label className="flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                    <input type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold outline-none" />
+                  </label>
+                  <select value={reportKioskId} onChange={(e) => setReportKioskId(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold outline-none">
+                    <option value="">All desks</option>
+                    {(kiosks.data ?? []).map((k) => (
+                      <option key={k.id} value={k.id}>{k.kiosk_code} — {k.kiosk_name}</option>
+                    ))}
                   </select>
                 </div>
                 </div>
@@ -591,6 +616,37 @@ export default function BreakDeskDevices() {
           </div>
         </div>
       </div>
+
+      {/* Inline delete confirmation — avoids window.confirm suppression */}
+      {pendingDelete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-rose-50 p-2 text-rose-600">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-base font-black text-slate-900">Delete desk ID?</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  <span className="font-bold text-rose-700">{pendingDelete.kiosk_code}</span> — {pendingDelete.kiosk_name}
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  This removes the desk login. Old break logs are preserved, but active live breaks must be closed first.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setPendingDelete(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={executeDelete} disabled={removeDesk.isPending} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-black text-white transition hover:bg-rose-700 disabled:opacity-60">
+                {removeDesk.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Delete desk
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 }
