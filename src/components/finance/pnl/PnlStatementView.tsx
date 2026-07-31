@@ -1,6 +1,18 @@
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import type { PnlStatement, PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { useRefreshRunningSalarySnapshot } from "@/hooks/usePnlStatement";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+
+/** Mirrors PNL_WRITE_ROLES on the refresh endpoint; the backend enforces it regardless. */
+const PNL_REFRESH_ROLES = ["super_admin", "admin", "finance", "finance_head", "accounts_head", "payroll_head"];
+
+/** Today in IST — the same day boundary the snapshot's as_of_date is written against. */
+function istToday(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
 
 const SECTION_LABELS: Record<string, string> = {
   headcount: "Headcount",
@@ -21,13 +33,22 @@ export function PnlStatementView({
   isLoading,
   viewBy,
   onViewByChange,
+  period,
 }: {
   statement: PnlStatement | undefined;
   isLoading: boolean;
   viewBy: PnlStatementViewBy;
   onViewByChange: (viewBy: PnlStatementViewBy) => void;
+  /** Period the statement is showing (YYYY-MM). Required to refresh its people cost. */
+  period?: string;
 }) {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const { hasAnyRole } = useWorkforceAccess();
+  const refresh = useRefreshRunningSalarySnapshot();
+
+  const asOf = statement?.peopleCostAsOf ?? null;
+  const isStale = !!asOf && asOf < istToday();
+  const canRefresh = hasAnyRole(...PNL_REFRESH_ROLES);
 
   function toggleSection(section: string) {
     setCollapsedSections((current) => {
@@ -40,7 +61,7 @@ export function PnlStatementView({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-slate-500">View by</span>
         <select
           className="h-8 rounded-md border border-input bg-background px-2 text-xs"
@@ -51,7 +72,61 @@ export function PnlStatementView({
           <option value="branch">Branch</option>
           <option value="lob">LOB</option>
         </select>
+
+        {/* People cost is a stored snapshot read beside live revenue. Its age decides
+            whether Operating Profit means anything, so it is stated, not implied. */}
+        <div className="ml-auto flex items-center gap-2">
+          {asOf ? (
+            <span
+              className={`text-xs font-medium ${isStale ? "text-amber-700" : "text-slate-500"}`}
+              title={isStale ? "Salary earned since this date is not in the statement" : undefined}
+            >
+              People cost as of {asOf}{isStale ? " — out of date" : ""}
+            </span>
+          ) : (
+            <span className="text-xs font-medium text-amber-700" title="Agent, DSC and BMC people cost read zero until a snapshot exists, which overstates Operating Profit">
+              No people-cost snapshot for this period
+            </span>
+          )}
+
+          {canRefresh && (
+            <button
+              type="button"
+              onClick={() => period && refresh.mutate({ period })}
+              disabled={!period || refresh.isPending}
+              title={period ? "Recomputes earned-to-date salary per employee" : "Select a period first"}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refresh.isPending ? "animate-spin" : ""}`} />
+              {refresh.isPending ? "Refreshing…" : "Refresh people cost"}
+            </button>
+          )}
+        </div>
       </div>
+
+      {refresh.isPending && (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
+          Recomputing earned salary for every active employee in the period. This runs six at a time
+          and can take several minutes on a large branch — you can leave this tab open.
+        </div>
+      )}
+
+      {refresh.isError && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">
+          Refresh failed: {(refresh.error as Error)?.message || "the request did not complete"}.
+        </div>
+      )}
+
+      {refresh.isSuccess && refresh.data && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
+          Snapshot updated to {refresh.data.asOfDate} — {refresh.data.snapshotted} of{" "}
+          {refresh.data.employeesConsidered} employees costed
+          {refresh.data.skipped > 0 && `, ${refresh.data.skipped} with no earnings skipped`}
+          {refresh.data.failed > 0 && `, ${refresh.data.failed} failed`}.
+          {(refresh.data.skipped > 0 || refresh.data.failed > 0) &&
+            " Uncosted staff are excluded from people cost, so Operating Profit is overstated by whatever they would have cost."}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex h-40 items-center justify-center rounded-3xl border border-slate-200 bg-white">

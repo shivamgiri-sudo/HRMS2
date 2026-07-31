@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import type { BpoPnlFilters } from "@/hooks/useBpoProcessPnl";
 
@@ -60,5 +60,47 @@ export function usePnlStatement(filters: BpoPnlFilters, viewBy: PnlStatementView
       return response.data;
     },
     staleTime: 60_000,
+  });
+}
+
+/** What a refresh actually did, so the caller can report coverage rather than just "done". */
+export interface RunningSalarySnapshotResult {
+  periodCode: string;
+  asOfDate: string;
+  employeesConsidered: number;
+  snapshotted: number;
+  skipped: number;
+  failed: number;
+  totalEarned: number;
+}
+
+/**
+ * The statement's Agent/DSC/BMC people cost is read from pnl_running_salary_snapshot,
+ * a stored snapshot — never computed live, because it costs one computeRunningSalary()
+ * call per employee. Nothing in the app triggered a refresh, so the figure was as old
+ * as whoever last called the endpoint by hand, while the statement presented it beside
+ * live revenue as though both were current.
+ *
+ * Deliberately a manual action rather than an on-read refresh: a few hundred employees
+ * take minutes, which is not something to hang a statement load on. The generous
+ * timeout reflects that — the backend runs six employees at a time and a large branch
+ * genuinely can take several minutes.
+ */
+export function useRefreshRunningSalarySnapshot() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { period: string; branchId?: string }) => {
+      const response = await hrmsApi.post<{ success: boolean; data: RunningSalarySnapshotResult }>(
+        "/api/finance/pnl/running-salary/refresh",
+        { period: vars.period, branchId: vars.branchId },
+        10 * 60 * 1000,
+      );
+      return response.data;
+    },
+    onSuccess: () => {
+      // The statement reads the snapshot this just rewrote, as does the summary.
+      void queryClient.invalidateQueries({ queryKey: ["pnl-statement"] });
+      void queryClient.invalidateQueries({ queryKey: ["pnl-summary"] });
+    },
   });
 }

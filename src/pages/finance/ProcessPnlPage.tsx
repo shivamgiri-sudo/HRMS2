@@ -295,6 +295,7 @@ export default function ProcessPnlPage() {
               isLoading={statementQuery.isLoading}
               viewBy={statementViewBy}
               onViewByChange={setStatementViewBy}
+              period={filters.period}
             />
           </TabsContent>
 

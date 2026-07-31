@@ -79,3 +79,46 @@ describe("Process P&L page matrix contracts", () => {
     expect(totalsSource).toContain('const stickyOffsets = ["0px", "220px", "370px", "500px"]');
   });
 });
+
+describe("P&L running-salary snapshot freshness", () => {
+  const statementSource = readFileSync(
+    resolve(process.cwd(), "src/components/finance/pnl/PnlStatementView.tsx"),
+    "utf8",
+  );
+  const hookSource = readFileSync(resolve(process.cwd(), "src/hooks/usePnlStatement.ts"), "utf8");
+
+  /**
+   * Agent/DSC/BMC people cost comes from pnl_running_salary_snapshot, refreshed only
+   * by an explicit endpoint call. Nothing in the app called it, so the statement could
+   * show an arbitrarily old cost beside live revenue and still read as current.
+   */
+  it("gives the statement a way to refresh the snapshot it reads", () => {
+    expect(hookSource).toContain("useRefreshRunningSalarySnapshot");
+    expect(hookSource).toContain("/api/finance/pnl/running-salary/refresh");
+    expect(statementSource).toContain("useRefreshRunningSalarySnapshot");
+    expect(statementSource).toContain("Refresh people cost");
+  });
+
+  it("invalidates the views that read the snapshot once it is rewritten", () => {
+    expect(hookSource).toContain('queryKey: ["pnl-statement"]');
+    expect(hookSource).toContain('queryKey: ["pnl-summary"]');
+  });
+
+  it("states the snapshot's age rather than implying the cost is current", () => {
+    expect(statementSource).toContain("People cost as of");
+    expect(statementSource).toContain("No people-cost snapshot for this period");
+    expect(statementSource).toContain("isStale");
+  });
+
+  it("passes the viewed period through, since the refresh is period-scoped", () => {
+    expect(pageSource).toContain("period={filters.period}");
+    expect(statementSource).toContain("disabled={!period || refresh.isPending}");
+  });
+
+  it("reports skipped and failed employees, which understate people cost", () => {
+    // A silent success would hide that some staff were never costed, and an
+    // uncosted employee inflates Operating Profit by their whole salary.
+    expect(statementSource).toContain("refresh.data.skipped");
+    expect(statementSource).toContain("refresh.data.failed");
+  });
+});
