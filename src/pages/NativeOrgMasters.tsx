@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from "react";
 import {
   AlertTriangle, Building2, Layers, Briefcase, Tag,
   Megaphone, DollarSign, Award, Plus, Pencil, Trash2,
-  Loader, RefreshCcw, X, Check, Network, Download,
+  Loader, RefreshCcw, X, Check, Network, Download, MapPin,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { BranchCoordPicker } from "@/components/BranchCoordPicker";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -180,10 +181,12 @@ interface FormModalProps {
   onClose: () => void;
   submitting: boolean;
   submitLabel: string;
+  /** Optional extra content rendered immediately after a specific field (keyed by field.key) */
+  renderAfterField?: Record<string, React.ReactNode>;
 }
 
 function FormModal({
-  title, fields, values, onChange, onSubmit, onClose, submitting, submitLabel,
+  title, fields, values, onChange, onSubmit, onClose, submitting, submitLabel, renderAfterField,
 }: FormModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
@@ -207,6 +210,7 @@ function FormModal({
                   rows={3}
                   className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none transition-colors"
                 />
+                {renderAfterField?.[field.key]}
               </div>
             ) : (
               <div key={field.key}>
@@ -219,6 +223,7 @@ function FormModal({
                   onChange={(e) => onChange(field.key, e.target.value)}
                   className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
                 />
+                {renderAfterField?.[field.key]}
               </div>
             )
           )}
@@ -268,6 +273,11 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | number | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  // Coordinate picker — only relevant for the branches tab
+  const isBranchTab = tab.key === "branches";
+  const [showAddCoordPicker, setShowAddCoordPicker] = useState(false);
+  const [showEditCoordPicker, setShowEditCoordPicker] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -559,6 +569,33 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
           onClose={() => setShowAdd(false)}
           submitting={addSubmitting}
           submitLabel="Create"
+          renderAfterField={isBranchTab ? {
+            longitude: (
+              <button
+                type="button"
+                onClick={() => setShowAddCoordPicker(true)}
+                className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                Pick on map
+              </button>
+            ),
+          } : undefined}
+        />
+      )}
+
+      {/* Add coord picker */}
+      {isBranchTab && showAddCoordPicker && (
+        <BranchCoordPicker
+          value={
+            addForm.latitude || addForm.longitude
+              ? { lat: addForm.latitude ?? "", lng: addForm.longitude ?? "" }
+              : null
+          }
+          onChange={(v) => {
+            setAddForm((prev) => ({ ...prev, latitude: v.lat, longitude: v.lng }));
+          }}
+          onClose={() => setShowAddCoordPicker(false)}
         />
       )}
 
@@ -573,6 +610,33 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
           onClose={() => setEditRecord(null)}
           submitting={editSubmitting}
           submitLabel="Save Changes"
+          renderAfterField={isBranchTab ? {
+            longitude: (
+              <button
+                type="button"
+                onClick={() => setShowEditCoordPicker(true)}
+                className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                Pick on map
+              </button>
+            ),
+          } : undefined}
+        />
+      )}
+
+      {/* Edit coord picker */}
+      {isBranchTab && showEditCoordPicker && (
+        <BranchCoordPicker
+          value={
+            editForm.latitude || editForm.longitude
+              ? { lat: editForm.latitude ?? "", lng: editForm.longitude ?? "" }
+              : null
+          }
+          onChange={(v) => {
+            setEditForm((prev) => ({ ...prev, latitude: v.lat, longitude: v.lng }));
+          }}
+          onClose={() => setShowEditCoordPicker(false)}
         />
       )}
     </div>
