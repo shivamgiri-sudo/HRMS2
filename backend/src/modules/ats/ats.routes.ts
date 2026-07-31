@@ -743,7 +743,7 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
   const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
   const emp = await getEmployeeForUser(req.authUser!.id);
   if (!emp) {
-    return res.json({ success: true, data: { status: "not_applicable" } });
+    return res.json({ success: true, data: { status: "not_applicable" }, generatedAt: new Date().toISOString() });
   }
 
   const { db } = await import("../../db/mysql.js");
@@ -759,6 +759,7 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
     // No onboarding record = already onboarded, return completed status with steps
     return res.json({
       success: true,
+      generatedAt: new Date().toISOString(),
       data: {
         status: "completed",
         stage: "Joining Completion",
@@ -775,6 +776,7 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
 
   return res.json({
     success: true,
+    generatedAt: new Date().toISOString(),
     data: {
       status: record.onboarding_status,
       stage: "Joining Completion",

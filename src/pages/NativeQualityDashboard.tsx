@@ -44,7 +44,21 @@ interface Summary {
 }
 interface TrendPoint { date: string; total_calls: number; avg_score: number; above_80: number; below_50: number; }
 interface AgentRow { agent_name: string; agent_code?: string; total_calls: number; avg_score: number; calls_above_80: number; calls_below_50: number; band: string; }
-interface ClientRow { client_id: string; client_name?: string; total_calls: number; avg_score: number; agent_count: number; }
+/**
+ * Label for a client in the audit data.
+ *
+ * db_audit.call_quality_assessment.ClientId holds opaque numeric ids from the audit
+ * system, and no name source is reachable from either database — verified 31-Jul-2026:
+ * 15 distinct ids, zero matching mas_hrms.client_master on any key. The backend used to
+ * COALESCE the id into client_name, so the UI rendered "475" where a name belongs and it
+ * read as corrupted data. Presenting it as an identifier makes the missing mapping
+ * legible. Supply a ClientId -> name mapping and client_name populates with no UI change.
+ */
+function clientLabel(c: { client_name?: string | null; client_id: string }): string {
+  return c.client_name?.trim() ? c.client_name : `Client #${c.client_id}`;
+}
+
+interface ClientRow { client_id: string; client_name?: string | null; total_calls: number; avg_score: number; agent_count: number; }
 interface AprRow { process: string; process_code?: string; agents: number; avg_calls: number; avg_aht: number; avg_shrinkage_pct: number; avg_bio_mins: number; avg_lunch_mins: number; avg_qa_mins: number; avg_training_mins: number; }
 interface SalesSummary { total_calls: number; sales_done: number; competitor_mentions: number; objection_calls: number; }
 interface Competitor { CompetitorName: string; mentions: number; }
@@ -467,7 +481,7 @@ export default function NativeQualityDashboard() {
         <select value={clientId} onChange={e => setClientId(e.target.value)}
           className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-300 cursor-pointer">
           <option value="">All Clients</option>
-          {(clientsQ.data ?? []).map(c => <option key={c.client_id} value={c.client_id}>{c.client_name ?? c.client_id}</option>)}
+          {(clientsQ.data ?? []).map(c => <option key={c.client_id} value={c.client_id}>{clientLabel(c)}</option>)}
         </select>
       </div>
       <div className="flex flex-col gap-1">
@@ -563,7 +577,7 @@ export default function NativeQualityDashboard() {
                 <div key={c.client_id} className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
                   <div className="mb-3 flex items-start justify-between">
                     <div>
-                      <h3 className="font-bold text-slate-900">{c.client_name ?? c.client_id}</h3>
+                      <h3 className="font-bold text-slate-900">{clientLabel(c)}</h3>
                       <p className="text-xs text-slate-400">{safeNumber(c.total_calls).toLocaleString()} audited calls</p>
                     </div>
                   </div>
