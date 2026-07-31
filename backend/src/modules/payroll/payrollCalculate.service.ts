@@ -6,6 +6,7 @@ import { missingTdsConfigKeys } from "./statutory-regime.js";
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
+import { getStatutoryConfigForPeriod } from "./statutory-config.resolver.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
@@ -104,6 +105,40 @@ export interface TdsResult {
 
 interface StatutoryConfigMap {
   [key: string]: number;
+}
+
+/**
+ * Statutory rates a payable payroll run must use for its period.
+ *
+ * statutory_config_version is authoritative wherever it can be read: it is the
+ * only source that can hold two financial years at once, and the only one that
+ * records approval. The charter requires payable figures to rest on APPROVED
+ * effective-dated configuration, so an unapproved row there is a proposal and
+ * must not reach a payslip.
+ *
+ * The distinction that matters is between "versioning is not deployed here" and
+ * "versioning is deployed and a key is missing":
+ *
+ *   unavailable — migration 1030 has not run on this database. Fall back to the
+ *                 flat statutory_config, which is what payroll read before
+ *                 versioning existed. That loader still filters is_active and
+ *                 effective_from, so this is a period-resolved reading, never a
+ *                 hardcoded rate. Failing the run here would break every
+ *                 environment where 1030 has not yet been applied.
+ *   versioned   — trust it completely, gaps included. Falling back on a missing
+ *                 key would make the approval gate bypassable by omitting the
+ *                 key: the stale flat row would quietly supply it. Instead the
+ *                 gap reaches calculateTds, which reports pending_configuration
+ *                 naming the key, and the run stops rather than under-deducting.
+ *
+ * Exported so this rule is testable directly. It was previously inline, where a
+ * test could only restate it and would not notice the call site changing.
+ */
+export async function resolveStatutoryConfigForRun(period: string): Promise<StatutoryConfigMap> {
+  const resolved = await getStatutoryConfigForPeriod(period);
+  return resolved.source === "versioned"
+    ? resolved.values
+    : await loadFlatStatutoryConfig(period);
 }
 
 /**
@@ -280,10 +315,24 @@ export async function calculatePayrollRunScoped(
   const tdsMode: 'auto' | 'manual' = (run as any).tds_mode ?? 'manual';
 
   // 2a. Statutory config in force for the month being run (for TDS slab lookups).
+  //
   // Resolved for run.run_month rather than for today: recalculating an earlier
   // month must apply the rates that governed it, or a reissued payslip disagrees
   // with what was actually deducted and filed.
-  const statConfig: StatutoryConfigMap = await loadFlatStatutoryConfig(run.run_month);
+  //
+  // statutory_config_version is authoritative where it is readable, because only
+  // it can express two financial years at once and only it records approval —
+  // the charter requires payable figures to rest on APPROVED effective-dated
+  // configuration, and an unapproved row there is a proposal that must not reach
+  // a payslip.
+  //
+  // Where it is not readable — migration 1030 not applied on this database — the
+  // flat statutory_config is used instead. That is a deployment gap, not a
+  // licence to relax: the flat loader already filters is_active and
+  // effective_from, so the fallback is the same period-resolved reading payroll
+  // used before versioning existed, never a hardcoded rate. Failing the run
+  // outright here would break every environment where 1030 has not yet run.
+  const statConfig: StatutoryConfigMap = await resolveStatutoryConfigForRun(run.run_month);
 
   // 2b. Legacy flat-row fallback (PF / ESIC / PT values)
   const stat: StatutoryRow = {
