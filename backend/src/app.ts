@@ -102,6 +102,7 @@ import { goalsRouter } from "./modules/goals/goals.routes.js";
 import { jobsRouter } from "./modules/jobs/jobs.routes.js";
 import { complianceRouter } from "./modules/compliance/compliance.routes.js";
 import { privacyRouter } from "./modules/privacy/privacy.routes.js";
+import { privacyPublicRouter } from "./modules/privacy/privacy.public.routes.js";
 import { dpdpWithdrawalRouter } from "./modules/privacy/dpdp-withdrawal.routes.js";
 import { performanceFeedbackRouter } from "./modules/performance-feedback/performance-feedback.routes.js";
 import { engagementRouter } from "./modules/engagement/engagement.routes.js";
@@ -318,6 +319,11 @@ app.use("/api/leave", leaveRouter);
 // PUBLIC payslip QR verification — must precede every other /api/payroll router,
 // since those apply requireAuth at router level and would 401 the scan first.
 app.use("/api/payroll", payrollPublicRouter);
+// PUBLIC DPDP grievance officer — the site footer requests this on every page, including
+// the landing page and the privacy policy, where there is no token to send. It must precede
+// clientRouter, which is mounted on the bare "/api" prefix and applies requireAuth at router
+// level, so anything after it is unreachable anonymously.
+app.use("/api/privacy", privacyPublicRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
 app.use("/api/payroll/readiness", payrollReadinessRouter);

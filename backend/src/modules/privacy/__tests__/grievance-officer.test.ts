@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveGrievanceOfficer } from "../privacy.routes.js";
+import { resolveGrievanceOfficer } from "../privacy.public.routes.js";
 
 /**
  * The site footer calls GET /api/privacy/grievance-officer on every page and renders the
