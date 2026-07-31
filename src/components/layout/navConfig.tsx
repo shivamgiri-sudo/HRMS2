@@ -378,6 +378,7 @@ export const navGroups: NavGroup[] = [
       {
         label: "Access & Settings", href: "/settings", icon: ic(Settings), roles: ["admin","super_admin","hr","manager","it","payroll_head","wfm"], description: "Access & configuration",
         children: [
+          { label: "Config Center",    href: "/admin/configuration",         icon: ic(LayoutDashboard), roles: ["super_admin","admin"], description: "Configuration inventory & governance" },
           { label: "Settings",         href: "/settings",                    icon: ic(Settings),   roles: ["admin","super_admin","hr","manager","it","payroll_head","wfm"], description: "Settings" },
           { label: "Access Control",   href: "/settings/access-control",    icon: ic(Settings),   pageCode: "ACCESS_CONTROL", roles: ["admin"], description: "Access" },
           { label: "Page Access",      href: "/super-admin/page-access",    icon: ic(ShieldCheck),roles: ["admin"],            description: "Page access" },

@@ -13,6 +13,7 @@ const PageLoader = () => (
   </div>
 );
 
+const NativeConfigurationCenter     = lazy(() => import("@/pages/NativeConfigurationCenter"));
 const Settings                      = lazy(() => import("@/pages/Settings"));
 const Profile                       = lazy(() => import("@/pages/Profile"));
 const NativeAssetsManager           = lazy(() => import("@/pages/NativeAssetsManager"));
@@ -132,6 +133,9 @@ export const platformRouteElements = (
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
       <Route path="/migration-console"            element={<ProtectedRoute roles={['admin']}><Gate pageCode="MIGRATION_CONSOLE"><NativeMigrationConsole /></Gate></ProtectedRoute>} />
       <Route path="/audit-log"                    element={<ProtectedRoute roles={['admin','super_admin','hr','payroll_head','wfm']}><Gate pageCode="AUDIT_LOG"><NativeAuditLog /></Gate></ProtectedRoute>} />
+
+      {/* Configuration Control Center */}
+      <Route path="/admin/configuration" element={<ProtectedRoute roles={['super_admin','admin']}><Gate pageCode="CONFIGURATION_CENTER"><NativeConfigurationCenter /></Gate></ProtectedRoute>} />
 
       {/* Security / access */}
       <Route path="/security-center"             element={<ProtectedRoute roles={['admin','ceo','coo','hr']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
