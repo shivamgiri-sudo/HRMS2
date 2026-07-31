@@ -58,6 +58,39 @@ function currentIstRunMonth(): string {
   return (toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10)).slice(0, 7);
 }
 
+/**
+ * Resolve the payroll month to show when none is explicitly requested.
+ *
+ * On the 1st–3rd of a new month the current calendar month has no payroll run
+ * and no attendance data yet — showing it produces earned_salary = ₹0, which
+ * looks like a bug to every HR user checking yesterday's salary. Fall back to
+ * the previous month when:
+ *   • today is the 1st–3rd of the month (early rollover window), AND
+ *   • the current month has no active salary_prep_run row.
+ * Outside that window, or once a run is created, the current month is returned.
+ */
+async function resolveDefaultRunMonth(db: typeof import("../../db/mysql.js").db): Promise<string> {
+  const currentMonth = currentIstRunMonth();
+  const todayIst = (toISTDate(new Date()) ?? new Date().toISOString().slice(0, 10));
+  const dayOfMonth = parseInt(todayIst.slice(8, 10), 10);
+
+  // Only look back during the early rollover window (days 1–3)
+  if (dayOfMonth > 3) return currentMonth;
+
+  const [rows] = await db.execute<import("mysql2/promise").RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM salary_prep_run WHERE run_month = ?`,
+    [currentMonth],
+  );
+  const hasCurrent = Number((rows[0] as any).cnt ?? 0) > 0;
+  if (hasCurrent) return currentMonth;
+
+  // No run yet this month — return the previous month
+  const [y, m] = currentMonth.split("-").map(Number);
+  const prevM = m === 1 ? 12 : m - 1;
+  const prevY = m === 1 ? y - 1 : y;
+  return `${prevY}-${String(prevM).padStart(2, "0")}`;
+}
+
 
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
@@ -208,7 +241,8 @@ runningSalaryRouter.get(
       runMonthYYYYMM = rawMonth;
       runMonth = `${rawMonth}-01`;
     } else {
-      runMonthYYYYMM = currentIstRunMonth();
+      const { db } = await import("../../db/mysql.js");
+      runMonthYYYYMM = await resolveDefaultRunMonth(db);
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
@@ -292,7 +326,8 @@ runningSalaryRouter.get(
       runMonthYYYYMM = rawMonth;
       runMonth = `${rawMonth}-01`;
     } else {
-      runMonthYYYYMM = currentIstRunMonth();
+      const { db: dbInner } = await import("../../db/mysql.js");
+      runMonthYYYYMM = await resolveDefaultRunMonth(dbInner);
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
@@ -337,19 +372,20 @@ runningSalaryRouter.get(
     const rawMonth = (req.query.month as string) || "";
     let runMonthYYYYMM: string;
     let runMonth: string;
+
+    const { db } = await import("../../db/mysql.js");
+
     if (rawMonth && /^\d{4}-\d{2}$/.test(rawMonth)) {
       runMonthYYYYMM = rawMonth;
       runMonth = `${rawMonth}-01`;
     } else {
-      runMonthYYYYMM = currentIstRunMonth();
+      runMonthYYYYMM = await resolveDefaultRunMonth(db);
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
     const { branch_id, process_id } = req.query as Record<string, string>;
     const limitRaw = parseInt((req.query.limit as string) || "50", 10);
     const limit = Math.min(Math.max(1, limitRaw), 100);
-
-    const { db } = await import("../../db/mysql.js");
 
     const conds: string[] = [
       "e.employment_status = 'active'",

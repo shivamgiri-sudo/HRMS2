@@ -26,11 +26,29 @@ const INR = (v: number | null | undefined) =>
  * Payroll months are IST months. Deriving this from the browser's local clock
  * showed the wrong month to anyone outside IST around the month boundary,
  * which made the running-month salary look inconsistent with Payroll.
+ *
+ * On the 1st–3rd of a new month, salary_prep_run for the new month does not
+ * exist yet and attendance data is empty, so the API returns ₹0 earned for
+ * the new month. The backend resolveDefaultRunMonth helper catches this via a
+ * DB query; this client-side function mirrors the same heuristic so the
+ * query key is already correct before the first API response arrives.
  */
 export function getIstRunMonth(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit",
-  }).format(new Date()).slice(0, 7);
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date()); // "YYYY-MM-DD"
+  const dayOfMonth = parseInt(istDate.slice(8, 10), 10);
+  const currentMonth = istDate.slice(0, 7);
+
+  // During the first 3 days of a new month, default to the previous month.
+  // The backend will override with the correct month once the first run is created.
+  if (dayOfMonth <= 3) {
+    const [y, m] = currentMonth.split("-").map(Number);
+    const prevM = m === 1 ? 12 : m - 1;
+    const prevY = m === 1 ? y - 1 : y;
+    return `${prevY}-${String(prevM).padStart(2, "0")}`;
+  }
+  return currentMonth;
 }
 
 interface RunningMonthCardProps {
