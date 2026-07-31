@@ -203,9 +203,15 @@ function TestRenderModal({
               {result.body_html && (
                 <div>
                   <span className="font-semibold text-slate-700">Body (HTML preview):</span>
-                  <div
-                    className="mt-1 rounded bg-white p-3 text-xs shadow-sm"
-                    dangerouslySetInnerHTML={{ __html: result.body_html }}
+                  {/* Imported template HTML is untrusted: it arrives from a spreadsheet an
+                      operator was handed. It was previously injected straight into this
+                      document with dangerouslySetInnerHTML, which executes with the admin's
+                      live session. Now it renders inside a script-less sandboxed iframe. */}
+                  <iframe
+                    title="Imported template preview"
+                    sandbox=""
+                    srcDoc={result.body_html}
+                    className="mt-1 h-64 w-full rounded border-0 bg-white shadow-sm"
                   />
                 </div>
               )}

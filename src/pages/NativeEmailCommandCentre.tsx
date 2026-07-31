@@ -11,8 +11,9 @@
  * permanent hard 0 as a percentage; showing a metric you do not measure is worse than
  * showing none (CLAUDE.md rule 10).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import DOMPurify from "dompurify";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsModernShell, HrmsBentoTile } from "@/components/ui/hrms-modern";
@@ -23,11 +24,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import {
   Mail, ShieldAlert, Radar, Send, Users, AlertTriangle, CheckCircle2,
-  CircleSlash, Eye, CalendarClock, Lock,
+  CircleSlash, Eye, CalendarClock, Lock, Code2, Monitor, Smartphone,
+  BarChart3, Save, RotateCcw, Braces,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -57,6 +61,24 @@ interface Claim {
   recipient_count: number; cc_count: number; dropped_count: number;
   entity_type: string | null; entity_id: string | null; error_message: string | null;
   claimed_at: string;
+}
+interface TemplateRow {
+  id: string; name: string; subject: string | null; category: string | null;
+  channel: string | null; is_active: number; is_critical: number;
+  variables_schema: unknown; body_html: string | null; body_text: string | null;
+  updated_at: string | null;
+  /** Comma-separated event codes whose template_key points here — may be null. */
+  used_by: string | null;
+}
+interface RenderedPreview {
+  subject: string; html: string; text?: string;
+  usedFallback: boolean; renderError: string | null; note: string | null;
+}
+interface AnalyticsPayload {
+  byEvent: Array<{ event_code: string; mode: string; total: number; sent: number; failed: number; suppressed: number; dropped: number }>;
+  byDay: Array<{ day: string; mode: string; n: number }>;
+  dropReasons: Array<{ reason: string; n: number }>;
+  tracksOpens: boolean; tracksClicks: boolean;
 }
 interface Subscription {
   id: string; subscription_name: string; report_code: string; frequency: string;
@@ -96,6 +118,45 @@ function explainDrop(reason: string): string {
   }
 }
 
+/** Tokens actually referenced by the body/subject, e.g. {{employee_name}}. Derived from the
+ *  template text rather than from variables_schema, because the schema column is frequently
+ *  null and a token picker listing variables the template does not use is noise. */
+function extractTokens(...parts: Array<string | null | undefined>): string[] {
+  const found = new Set<string>();
+  for (const p of parts) {
+    for (const m of (p ?? "").matchAll(/\{\{\s*([\w.]+)\s*\}\}/g)) found.add(m[1]);
+  }
+  return [...found].sort();
+}
+
+/**
+ * Two independent defences, because an email template body is attacker-influenced content
+ * that an admin views with a live session:
+ *   1. DOMPurify strips scripts/handlers/embeds before the markup is ever handed over.
+ *   2. The iframe is sandboxed with NO allow-scripts, so even a bypass cannot execute.
+ * Either alone would probably do; neither alone is worth betting a session cookie on.
+ */
+function sanitiseForPreview(html: string): string {
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "base", "link"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "formaction", "srcdoc"],
+    ALLOW_DATA_ATTR: false,
+  });
+}
+
+/** Sample values so a preview shows a realistic email rather than {{placeholders}}. Clearly
+ *  fictitious on purpose — never a real employee (CLAUDE.md rule 10). */
+const SAMPLE_DATA: Record<string, unknown> = {
+  employee_name: "A. Sample", employee_code: "MAS-00000", decision: "approved",
+  leave_type: "Earned Leave", dates: "12 Aug 2026 - 14 Aug 2026", days: 3,
+  remarks: "Approved by reporting manager.", balance_after: 8.5, taken_ytd: 6,
+  balance_type: "Earned Leave", branch_name: "NOIDA-2", manager_name: "R. Manager",
+  week_start_date: "2026-08-10", week_end_date: "2026-08-16", shifts: 6,
+  week_offs: 1, night_shifts: 2, ack_deadline: "09 Aug 2026, 18:00",
+  net_pay: "₹42,180", lop_days: 0, ytd_gross: "₹3,71,400", month: "July 2026",
+};
+
 export default function NativeEmailCommandCentre() {
   const qc = useQueryClient();
   const [tab, setTab] = useState("catalogue");
@@ -116,6 +177,87 @@ export default function NativeEmailCommandCentre() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // ── templates + preview ────────────────────────────────────────────────────
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftHtml, setDraftHtml] = useState("");
+  const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
+  const [sampleJson, setSampleJson] = useState(JSON.stringify(SAMPLE_DATA, null, 2));
+
+  const { data: templatesResp, isLoading: loadingTemplates } = useQuery({
+    queryKey: ["notif-templates"],
+    queryFn: () => hrmsApi.get<{ success: boolean; data: TemplateRow[] }>("/api/notification-admin/templates"),
+  });
+  const templates = useMemo(() => templatesResp?.data ?? [], [templatesResp]);
+  const current = templates.find((t) => t.id === selectedTemplate) ?? null;
+
+  // Load the chosen template into the draft. Keyed on id so switching templates discards
+  // an unsaved draft deliberately rather than silently carrying it across.
+  useEffect(() => {
+    if (!current) return;
+    setDraftSubject(current.subject ?? "");
+    setDraftHtml(current.body_html ?? "");
+  }, [current?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dirty = !!current && (draftSubject !== (current.subject ?? "") || draftHtml !== (current.body_html ?? ""));
+
+  const parsedSample = useMemo<{ data: Record<string, unknown>; error: string | null }>(() => {
+    try {
+      const v = JSON.parse(sampleJson);
+      if (!v || typeof v !== "object" || Array.isArray(v)) return { data: {}, error: "Sample data must be a JSON object" };
+      return { data: v as Record<string, unknown>, error: null };
+    } catch (e) {
+      return { data: {}, error: (e as Error).message };
+    }
+  }, [sampleJson]);
+
+  // Rendered by the SERVER, through the same renderer delivery uses — so what is shown is
+  // what would actually be sent, including the fallback when a template is broken.
+  const { data: previewResp, isFetching: previewing } = useQuery({
+    queryKey: ["notif-preview", current?.name ?? null, draftSubject, draftHtml, sampleJson],
+    enabled: !!current && !parsedSample.error,
+    queryFn: () =>
+      hrmsApi.post<{ success: boolean; data: RenderedPreview }>("/api/notification-admin/templates/preview", {
+        templateKey: current?.name ?? null,
+        eventCode: current?.used_by?.split(",")[0] ?? "preview",
+        data: parsedSample.data,
+      }),
+  });
+  const rendered = previewResp?.data ?? null;
+
+  // While the draft is dirty the server preview reflects the SAVED template, not the edit.
+  // Showing the draft markup locally keeps the preview honest about which one you are seeing.
+  const previewHtml = useMemo(
+    () => sanitiseForPreview(dirty ? draftHtml : (rendered?.html ?? draftHtml)),
+    [dirty, draftHtml, rendered?.html],
+  );
+
+  // Reuses the EXISTING template endpoint rather than adding a second write path.
+  const saveTemplate = useMutation({
+    mutationFn: () =>
+      hrmsApi.put(`/api/communication/templates/${current?.id}`, {
+        subject: draftSubject,
+        body_html: draftHtml,
+      }),
+    onSuccess: () => {
+      toast.success("Template saved");
+      void qc.invalidateQueries({ queryKey: ["notif-templates"] });
+      void qc.invalidateQueries({ queryKey: ["notif-preview"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const { data: analyticsResp, isLoading: loadingAnalytics } = useQuery({
+    queryKey: ["notif-analytics"],
+    queryFn: () => hrmsApi.get<{ success: boolean; data: AnalyticsPayload }>("/api/notification-admin/analytics"),
+  });
+  const analytics = analyticsResp?.data ?? null;
+
+  const tokens = useMemo(
+    () => extractTokens(draftHtml, draftSubject),
+    [draftHtml, draftSubject],
+  );
 
   const modules = useMemo(
     () => ["all", ...Array.from(new Set(events.map((e) => e.module))).sort()],
@@ -161,10 +303,329 @@ export default function NativeEmailCommandCentre() {
         <Tabs value={tab} onValueChange={setTab} className="mt-6">
           <TabsList>
             <TabsTrigger value="catalogue" className="cursor-pointer">Catalogue</TabsTrigger>
+            <TabsTrigger value="templates" className="cursor-pointer">Templates &amp; preview</TabsTrigger>
             <TabsTrigger value="recipients" className="cursor-pointer">Recipients</TabsTrigger>
             <TabsTrigger value="activity" className="cursor-pointer">Activity</TabsTrigger>
+            <TabsTrigger value="analytics" className="cursor-pointer">Analytics</TabsTrigger>
             <TabsTrigger value="subscriptions" className="cursor-pointer">Scheduled reports</TabsTrigger>
           </TabsList>
+
+          {/* ── Templates & preview ───────────────────────────────────────────
+              Editor and preview live in ONE split pane rather than two tabs: the
+              whole value is watching the render change as you type, which a tab
+              switch destroys. */}
+          <TabsContent value="templates" className="mt-4">
+            <Card>
+              <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Code2 className="h-4 w-4" /> Templates and live preview
+                  </CardTitle>
+                  <CardDescription>
+                    Rendered by the server through the same path delivery uses, so a broken
+                    template looks broken here too. Only <code>communication_template</code> is
+                    listed — the other three stores are unreachable from the gateway, and
+                    editing them would change nothing.
+                  </CardDescription>
+                </div>
+                <Select value={selectedTemplate ?? ""} onValueChange={setSelectedTemplate}>
+                  <SelectTrigger className="w-[280px] cursor-pointer">
+                    <SelectValue placeholder={loadingTemplates ? "Loading…" : "Choose a template"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={t.id} className="cursor-pointer">
+                        {t.name}{t.category ? ` · ${t.category}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </CardHeader>
+
+              <CardContent>
+                {!current ? (
+                  <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-16 text-center">
+                    <Mail className="h-8 w-8 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      {loadingTemplates
+                        ? "Loading templates…"
+                        : templates.length === 0
+                          ? "No email templates exist in communication_template yet."
+                          : "Pick a template to edit and preview it."}
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      {current.used_by ? (
+                        <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                          Used by {current.used_by.split(",").length} event(s)
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+                          <AlertTriangle className="mr-1 h-3 w-3" />
+                          No event points at this template
+                        </Badge>
+                      )}
+                      {current.is_critical ? (
+                        <Badge className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50">Critical</Badge>
+                      ) : null}
+                      {!current.is_active ? <Badge variant="outline">Inactive</Badge> : null}
+                      {dirty ? (
+                        <Badge className="border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-100">
+                          Unsaved — preview shows your draft
+                        </Badge>
+                      ) : null}
+                      <div className="ml-auto flex items-center gap-2">
+                        <Button
+                          variant="outline" size="sm" className="cursor-pointer"
+                          disabled={!dirty}
+                          onClick={() => { setDraftSubject(current.subject ?? ""); setDraftHtml(current.body_html ?? ""); }}
+                        >
+                          <RotateCcw className="mr-1 h-3.5 w-3.5" /> Revert
+                        </Button>
+                        <Button
+                          size="sm" className="cursor-pointer"
+                          disabled={!dirty || saveTemplate.isPending}
+                          onClick={() => saveTemplate.mutate()}
+                        >
+                          <Save className="mr-1 h-3.5 w-3.5" />
+                          {saveTemplate.isPending ? "Saving…" : "Save template"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <ResizablePanelGroup direction="horizontal" className="min-h-[560px] rounded-lg border">
+                      {/* ── editor ── */}
+                      <ResizablePanel defaultSize={48} minSize={28}>
+                        <div className="flex h-full flex-col gap-3 p-4">
+                          <div>
+                            <Label htmlFor="tpl-subject" className="text-xs">Subject</Label>
+                            <Input
+                              id="tpl-subject" value={draftSubject}
+                              onChange={(e) => setDraftSubject(e.target.value)}
+                              className="mt-1 font-mono text-sm"
+                            />
+                          </div>
+
+                          {tokens.length > 0 && (
+                            <div>
+                              <Label className="flex items-center gap-1 text-xs">
+                                <Braces className="h-3 w-3" /> Variables used ({tokens.length}) — click to copy
+                              </Label>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {tokens.map((t) => (
+                                  <button
+                                    key={t} type="button"
+                                    onClick={() => {
+                                      void navigator.clipboard?.writeText(`{{${t}}}`);
+                                      toast.success(`Copied {{${t}}}`);
+                                    }}
+                                    className="cursor-pointer rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 transition-colors duration-150 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                                  >
+                                    {`{{${t}}}`}
+                                    {!(t in parsedSample.data) && (
+                                      <span className="ml-1 text-amber-600" title="No sample value — renders empty">•</span>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex min-h-0 flex-1 flex-col">
+                            <Label htmlFor="tpl-html" className="text-xs">HTML body</Label>
+                            <Textarea
+                              id="tpl-html" value={draftHtml}
+                              onChange={(e) => setDraftHtml(e.target.value)}
+                              spellCheck={false}
+                              className="mt-1 min-h-0 flex-1 resize-none font-mono text-xs leading-relaxed"
+                            />
+                          </div>
+
+                          <div>
+                            <Label htmlFor="tpl-sample" className="text-xs">
+                              Sample data (JSON) — fictitious values, never a real employee
+                            </Label>
+                            <Textarea
+                              id="tpl-sample" value={sampleJson}
+                              onChange={(e) => setSampleJson(e.target.value)}
+                              spellCheck={false}
+                              className="mt-1 h-24 resize-none font-mono text-[11px]"
+                            />
+                            {parsedSample.error && (
+                              <p className="mt-1 text-xs text-rose-600">{parsedSample.error}</p>
+                            )}
+                          </div>
+                        </div>
+                      </ResizablePanel>
+
+                      <ResizableHandle withHandle />
+
+                      {/* ── preview ── */}
+                      <ResizablePanel defaultSize={52} minSize={30}>
+                        <div className="flex h-full flex-col bg-slate-50">
+                          <div className="flex items-center gap-2 border-b bg-white px-4 py-2">
+                            <Eye className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">Preview</span>
+                            {previewing && <span className="text-xs text-muted-foreground">rendering…</span>}
+                            <div className="ml-auto flex items-center gap-1">
+                              <Button
+                                variant={device === "desktop" ? "secondary" : "ghost"} size="sm"
+                                className="cursor-pointer" onClick={() => setDevice("desktop")}
+                                aria-pressed={device === "desktop"} title="Desktop width"
+                              >
+                                <Monitor className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant={device === "mobile" ? "secondary" : "ghost"} size="sm"
+                                className="cursor-pointer" onClick={() => setDevice("mobile")}
+                                aria-pressed={device === "mobile"} title="Mobile width"
+                              >
+                                <Smartphone className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {rendered?.note && (
+                            <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span>{rendered.note}</span>
+                            </div>
+                          )}
+                          {rendered?.renderError && (
+                            <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 font-mono text-[11px] text-rose-700">
+                              {rendered.renderError}
+                            </div>
+                          )}
+
+                          <div className="border-b bg-white px-4 py-2">
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Subject</div>
+                            <div className="truncate font-medium">
+                              {dirty ? draftSubject : (rendered?.subject ?? draftSubject) || <span className="text-muted-foreground">(empty)</span>}
+                            </div>
+                          </div>
+
+                          <div className="flex-1 overflow-auto p-4">
+                            <div
+                              className="mx-auto bg-white shadow-sm transition-all duration-200"
+                              style={{ maxWidth: device === "mobile" ? 380 : 720 }}
+                            >
+                              {/* sandbox WITHOUT allow-scripts: markup renders, nothing executes.
+                                  Combined with DOMPurify above — see sanitiseForPreview. */}
+                              <iframe
+                                title="Email preview"
+                                sandbox=""
+                                srcDoc={previewHtml || "<p style='font:14px system-ui;color:#94a3b8;padding:24px'>Nothing to preview yet.</p>"}
+                                className="h-[520px] w-full border-0"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </ResizablePanel>
+                    </ResizablePanelGroup>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* ── Analytics ─────────────────────────────────────────────────── */}
+          <TabsContent value="analytics" className="mt-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4" /> Delivery analytics — last 30 days
+                </CardTitle>
+                <CardDescription>
+                  Queued, sent, failed, suppressed and dropped. There is deliberately no open
+                  rate or click rate: nothing in the platform tracks either, and the previous
+                  <code className="mx-1">open_rate</code> was computed from a status nothing
+                  ever set — a permanent hard zero rendered as a percentage.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loadingAnalytics ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" />
+                  </div>
+                ) : !analytics || analytics.byEvent.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-16 text-center">
+                    <Radar className="h-8 w-8 text-muted-foreground" />
+                    <p className="text-sm font-medium">No dispatch claims in the last 30 days</p>
+                    <p className="max-w-md text-xs text-muted-foreground">
+                      Expected while events sit in shadow with little traffic. Claims appear as
+                      soon as a wired event fires — including suppressed ones, so an event that
+                      resolves to nobody still shows up here rather than vanishing.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div>
+                      <h4 className="mb-2 text-sm font-medium">By event</h4>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Event</TableHead><TableHead>Mode</TableHead>
+                            <TableHead className="text-right">Claims</TableHead>
+                            <TableHead className="text-right">Sent</TableHead>
+                            <TableHead className="text-right">Failed</TableHead>
+                            <TableHead className="text-right">Suppressed</TableHead>
+                            <TableHead className="text-right">Recipients dropped</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {analytics.byEvent.map((r) => (
+                            <TableRow key={`${r.event_code}:${r.mode}`}>
+                              <TableCell className="font-mono text-xs">{r.event_code}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className={r.mode === "live"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "border-blue-200 bg-blue-50 text-blue-700"}>{r.mode}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">{r.total}</TableCell>
+                              <TableCell className="text-right tabular-nums">{r.sent ?? 0}</TableCell>
+                              <TableCell className={`text-right tabular-nums ${Number(r.failed) > 0 ? "font-medium text-rose-600" : ""}`}>{r.failed ?? 0}</TableCell>
+                              <TableCell className="text-right tabular-nums">{r.suppressed ?? 0}</TableCell>
+                              <TableCell className={`text-right tabular-nums ${Number(r.dropped) > 0 ? "text-amber-700" : ""}`}>{r.dropped ?? 0}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {analytics.dropReasons.length > 0 && (
+                      <div>
+                        <h4 className="mb-2 text-sm font-medium">
+                          Why recipients were dropped
+                          <span className="ml-2 font-normal text-xs text-muted-foreground">
+                            the worklist for making mail deliverable
+                          </span>
+                        </h4>
+                        <div className="space-y-1.5">
+                          {(() => {
+                            const max = Math.max(...analytics.dropReasons.map((d) => Number(d.n)), 1);
+                            return analytics.dropReasons.map((d) => (
+                              <div key={d.reason} className="flex items-center gap-3">
+                                <div className="w-64 shrink-0 text-xs">{explainDrop(d.reason)}</div>
+                                <div className="h-4 flex-1 overflow-hidden rounded bg-slate-100">
+                                  <div
+                                    className="h-full rounded bg-amber-400 transition-all duration-300"
+                                    style={{ width: `${(Number(d.n) / max) * 100}%` }}
+                                  />
+                                </div>
+                                <div className="w-12 shrink-0 text-right text-xs tabular-nums">{d.n}</div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* ── Catalogue ─────────────────────────────────────────────────── */}
           <TabsContent value="catalogue" className="mt-4">

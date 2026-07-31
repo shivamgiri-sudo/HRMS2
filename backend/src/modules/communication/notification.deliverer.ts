@@ -39,7 +39,7 @@ function addressList(people: ResolvedRecipient[]): string {
  * should look unfinished so somebody fixes it, rather than looking polished enough to
  * leave. It still carries the "why you got this" line, which is mandatory on every copy.
  */
-function fallbackBody(eventCode: string, data: Record<string, unknown>): { subject: string; html: string; text: string } {
+export function fallbackBody(eventCode: string, data: Record<string, unknown>): { subject: string; html: string; text: string } {
   const rows = Object.entries(data)
     .filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object')
     .slice(0, 12)

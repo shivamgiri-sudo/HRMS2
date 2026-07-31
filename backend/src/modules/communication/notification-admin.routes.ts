@@ -21,6 +21,8 @@ import { RecipientResolutionError } from "../../shared/recipient-resolver.types.
 import type { RecipientSpec, Sensitivity } from "../../shared/recipient-resolver.types.js";
 import { maskEmail } from "../../shared/email-domains.js";
 import { getReportDefinition } from "../reporting/report-catalog.js";
+import { templateService } from "./template.service.js";
+import { fallbackBody } from "./notification.deliverer.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -239,6 +241,81 @@ router.get("/report-codes", h(async (_req, res) => {
         "Only 6 of the 89 catalogued reports have a builder in report-worker-executor.ts. " +
         "The rest return a PENDING_DEDICATED_BUILDER placeholder, so subscribing to one " +
         "would email an empty spreadsheet on a schedule.",
+    },
+  });
+}));
+
+/** GET /api/notification-admin/templates — the store the gateway actually renders from.
+ *
+ *  Only communication_template is listed. Three other template stores exist
+ *  (email_template_master, notification_template, ats_email_template); none of them is
+ *  reachable from notificationGateway, so editing them here would let an operator change
+ *  a template and watch nothing happen. */
+router.get("/templates", h(async (_req, res) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT t.id, t.name, t.subject, t.category, t.channel, t.is_active, t.is_critical,
+            t.variables_schema, t.body_html, t.body_text, t.updated_at,
+            (SELECT GROUP_CONCAT(c.event_code ORDER BY c.event_code SEPARATOR ',')
+               FROM notification_event_config c WHERE c.template_key = t.name) AS used_by
+       FROM communication_template t
+      WHERE t.channel IN ('email', 'both') OR t.channel IS NULL
+      ORDER BY t.category, t.name`,
+  );
+  return res.json({ success: true, data: rows });
+}));
+
+/** POST /api/notification-admin/templates/preview — render exactly as delivery would.
+ *
+ *  This deliberately calls the SAME templateService.renderTemplate the deliverer calls,
+ *  and falls back the SAME way, so a template that is missing or broken looks broken here
+ *  too. A preview that renders through a prettier path than production is worse than no
+ *  preview: it certifies mail that will not actually look like that.
+ *
+ *  Returns raw HTML. The client sandboxes it — see NativeEmailCommandCentre. */
+router.post("/templates/preview", h(async (req, res) => {
+  const { templateKey, eventCode, data } = req.body as {
+    templateKey?: string | null;
+    eventCode?: string;
+    data?: Record<string, unknown>;
+  };
+  const payload = data && typeof data === "object" ? data : {};
+  const event = typeof eventCode === "string" && eventCode ? eventCode : "preview";
+
+  let subject: string;
+  let html: string;
+  let text: string | undefined;
+  let usedFallback = false;
+  let renderError: string | null = null;
+
+  if (templateKey) {
+    const rendered = await templateService
+      .renderTemplate({ template_name: templateKey, channel: "email", data: payload })
+      .catch((err: unknown) => { renderError = (err as Error).message.slice(0, 300); return null; });
+    if (rendered?.html) {
+      subject = rendered.subject ?? fallbackBody(event, payload).subject;
+      html = rendered.html;
+      text = rendered.text;
+    } else {
+      const f = fallbackBody(event, payload);
+      subject = f.subject; html = f.html; text = f.text;
+      usedFallback = true;
+    }
+  } else {
+    const f = fallbackBody(event, payload);
+    subject = f.subject; html = f.html; text = f.text;
+    usedFallback = true;
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      subject, html, text, usedFallback, renderError,
+      // Surfaced so the UI can say WHY it fell back rather than showing a mystery body.
+      note: usedFallback
+        ? templateKey
+          ? `Template '${templateKey}' did not render — production would send this fallback instead.`
+          : "No template is configured for this event; production sends this generated fallback."
+        : null,
     },
   });
 }));
