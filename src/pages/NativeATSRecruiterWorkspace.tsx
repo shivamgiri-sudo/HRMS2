@@ -863,7 +863,10 @@ export default function NativeATSRecruiterWorkspace() {
     setResendingId(row.candidate_id);
     setResendMsg(null);
     try {
-      await hrmsApi.post("/api/ats/onboarding/resend-token", { candidateId: row.candidate_id });
+      // send-token regenerates the token and re-emails the link, so calling it
+      // again is the resend. Reusing it keeps one copy of the branch/recruiter
+      // scope check rather than duplicating it behind a second path.
+      await hrmsApi.post(`/api/ats/onboarding/send-token/${row.candidate_id}`, {});
       setResendMsg({ id: row.candidate_id, text: "Onboarding link resent successfully.", ok: true });
       await loadHistory();
     } catch (err: any) {

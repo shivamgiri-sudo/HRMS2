@@ -696,4 +696,113 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/set-followup", async 
   }
 });
 
+// ── Log the follow-up call ────────────────────────────────────────────────────
+// Counterpart to set-followup: that one schedules the reminder, this one records
+// what happened when the recruiter actually rang. Migration 1009 shipped the five
+// followup_call_* columns for this and the route was never added, so the UI's
+// "Log call" button posted into a 404 and 0 of 38,236 activity rows had a call
+// recorded.
+//
+// The completed/pending split is not inferred — NativeATSHiringEntry renders
+// "Done" on `followup_call_done && !followup_required`, so a logged call clears
+// followup_required. "Rescheduled" is the one outcome that keeps it open, and it
+// moves followup_date to the new date so the row stays in the pending list.
+const FOLLOWUP_CALL_OUTCOMES = [
+  "Interested",
+  "Not Interested",
+  "No Response",
+  "Rescheduled",
+  "Already Joined",
+  "Declined Offer",
+  "Wrong Number",
+] as const;
+
+recruiterHiringRouter.post("/recruiter/hiring-activity/:id/log-followup-call", async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      followup_call_date,
+      followup_call_outcome,
+      followup_call_notes,
+      followup_rescheduled_to,
+    } = req.body as {
+      followup_call_date?: string;
+      followup_call_outcome?: string;
+      followup_call_notes?: string | null;
+      followup_rescheduled_to?: string | null;
+    };
+
+    if (!followup_call_date) {
+      return res.status(400).json({ success: false, message: "followup_call_date is required" });
+    }
+    if (!followup_call_outcome) {
+      return res.status(400).json({ success: false, message: "followup_call_outcome is required" });
+    }
+    if (!(FOLLOWUP_CALL_OUTCOMES as readonly string[]).includes(followup_call_outcome)) {
+      return res.status(400).json({
+        success: false,
+        message: `followup_call_outcome must be one of: ${FOLLOWUP_CALL_OUTCOMES.join(", ")}`,
+      });
+    }
+
+    const rescheduled = followup_call_outcome === "Rescheduled";
+    if (rescheduled && !followup_rescheduled_to) {
+      return res.status(400).json({
+        success: false,
+        message: "followup_rescheduled_to is required when the outcome is Rescheduled",
+      });
+    }
+
+    const { allowed, row } = await ensureRowAccess(req as AuthenticatedRequest, id);
+    if (!allowed || !row) {
+      return res.status(403).json({ success: false, message: "Access denied or record not found" });
+    }
+
+    // followup_date only moves when rescheduled; otherwise it is left as the
+    // historical record of when the follow-up had been due.
+    await db.execute(
+      `UPDATE ats_recruiter_hiring_activity
+          SET followup_call_done = 1,
+              followup_call_date = ?,
+              followup_call_outcome = ?,
+              followup_call_notes = ?,
+              followup_rescheduled_to = ?,
+              followup_required = ?,
+              followup_date = ${rescheduled ? "?" : "followup_date"},
+              updated_by = ?,
+              updated_at = NOW()
+        WHERE id = ?`,
+      rescheduled
+        ? [followup_call_date, followup_call_outcome, followup_call_notes ?? null, followup_rescheduled_to, 1, followup_rescheduled_to, req.authUser!.id, id]
+        : [followup_call_date, followup_call_outcome, followup_call_notes ?? null, null, 0, req.authUser!.id, id]
+    );
+
+    // Resolve the reminder set-followup created, or roll it forward. Without this
+    // a logged call leaves the recruiter's inbox item open for ever.
+    const candidateName = String((row as RowDataPacket).candidate_name ?? "Candidate");
+    if (rescheduled) {
+      await db.execute(
+        `UPDATE work_inbox_item
+            SET title = ?, description = ?, is_read = 0, is_actioned = 0, created_at = NOW()
+          WHERE entity_type='hiring_activity' AND entity_id = ? AND type='ats_followup_reminder'`,
+        [`Follow-up: ${candidateName}`, `Rescheduled to ${followup_rescheduled_to}`, id]
+      );
+    } else {
+      await db.execute(
+        `UPDATE work_inbox_item
+            SET is_actioned = 1, is_read = 1
+          WHERE entity_type='hiring_activity' AND entity_id = ? AND type='ats_followup_reminder'`,
+        [id]
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: rescheduled ? "Follow-up rescheduled" : "Follow-up call logged",
+    });
+  } catch (error: unknown) {
+    return res.status(getErrorStatus(error)).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
 export { __test__ };
