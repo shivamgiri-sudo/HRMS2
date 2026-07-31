@@ -43,6 +43,7 @@ import {
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
 import { numberToWords } from "@/lib/numberToWords";
 import { RunningMonthCard, getIstRunMonth } from "@/components/payroll/RunningMonthCard";
+import { TaxCertificateCard } from "@/components/profile/TaxCertificateCard";
 import { useRunningSalary } from "@/hooks/useAttendanceHub";
 
 interface PayslipViewerProps {
@@ -534,6 +535,11 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
             </CardContent>
           </Card>
         )}
+
+        {/* Tax certificate. Placed above the running month because at filing
+            time this is what an employee came for, and because it is the only
+            place that says which half of the certificate they actually have. */}
+        <TaxCertificateCard employeeId={employeeId} />
 
         {/* Running month — the same card, endpoint and fields the Attendance Hub
             and Running Payroll pages render. Shown unconditionally: once the

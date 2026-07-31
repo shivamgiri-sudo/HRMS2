@@ -31,6 +31,7 @@ import { payrollProcessReadinessRouter } from "./modules/payroll/payroll-process
 import { payrollCalendarRouter } from "./modules/payroll/payroll-calendar.routes.js";
 import { payrollCostSummaryRouter } from "./modules/payroll/payroll-cost-summary.routes.js";
 import { payrollStatutoryFilingRouter } from "./modules/payroll/payroll-statutory-filing.routes.js";
+import { tdsCertificatePartARouter } from "./modules/payroll/tds-certificate-part-a.routes.js";
 import { payrollVarianceRouter } from "./modules/payroll/payroll-variance.routes.js";
 import { payrollAuditTrailRouter } from "./modules/payroll/payroll-audit-trail.routes.js";
 import { loansRouter } from "./modules/payroll/loans.routes.js";
@@ -331,6 +332,7 @@ app.use("/api/privacy", privacyPublicRouter);
 app.use("/api/payroll", payrollStatutoryConfigCompatRouter);
 app.use("/api/payroll", payrollLinesCompatRouter);
 app.use("/api/payroll/readiness", payrollReadinessRouter);
+app.use("/api/payroll/tds-certificate/part-a", tdsCertificatePartARouter);
 app.use("/api/payroll", listEndpointLimiter, payrollSecureRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
