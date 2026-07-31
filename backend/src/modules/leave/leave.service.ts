@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { notifyLeaveSubmitted, notifyLeaveDecision } from "./leave.notifications.js";
 import { leavePolicyService } from "./leave-policy.service.js";
 import { captureAttendanceSnapshot, enumerateDates, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
 import { applyRestore, planLeaveRestore, rederiveDates, type DateRestorePlan } from "../../shared/attendanceRestore.js";
@@ -194,6 +195,12 @@ export const leaveService = {
     } catch {
       // Non-fatal — notification failure should not block submission
     }
+
+    // Email to the approver (fire-and-forget), alongside the inbox item above and the SMS
+    // below. The gateway resolves the reporting manager itself, so this does not repeat
+    // the manager lookup — and unlike the inbox path it degrades visibly when an employee
+    // has no manager, rather than silently notifying nobody.
+    setImmediate(() => { void notifyLeaveSubmitted(id); });
 
     // SMS — leave request submitted (fire-and-forget)
     try {
@@ -429,6 +436,15 @@ export const leaveService = {
         entity_type: 'leave',
         entity_id: request.employee_id,
         types: ['leave_request'],
+      });
+    }
+
+    // Email notification (fire-and-forget), alongside the SMS below rather than instead of
+    // it. Ships in shadow — the gateway resolves recipients and records a claim without
+    // delivering until leave_decision is switched live.
+    if (input.status === 'approved' || input.status === 'rejected' || input.status === 'cancelled') {
+      setImmediate(() => {
+        void notifyLeaveDecision(id, input.status as 'approved' | 'rejected' | 'cancelled', input.remarks);
       });
     }
 
