@@ -29,11 +29,17 @@ export async function runOfficialEmailComplianceSweep(): Promise<{ notified: num
 
   let notified = 0;
   for (const row of rows as Array<{ id: string; user_id: string }>) {
+    // One standing reminder per employee, not one per day. The daily insert
+    // wrote a fresh row every morning whether or not the previous one had been
+    // dealt with, which is where 43,943 of the 65,831 open alerts came from —
+    // the same employee reminded 46 times about the same profile field. If an
+    // open reminder already exists it is left in place; if it was actioned and
+    // the address is still non-compliant, a new one is raised.
     const [result] = await db.execute<any>(
       `INSERT INTO work_inbox_item
          (id, user_id, type, title, description, entity_type, entity_id, action_url, priority)
        SELECT UUID(), ?, 'alerts', 'Official email required',
-              'Please update your official email address using @teammas.in or @teammas.co.in. This reminder will continue daily until your profile is compliant.',
+              'Please update your official email address using @teammas.in or @teammas.co.in. This reminder stays in your inbox until your profile is compliant.',
               'official_email_compliance', ?, '/profile?tab=profile', 'high'
         WHERE NOT EXISTS (
           SELECT 1
@@ -41,7 +47,7 @@ export async function runOfficialEmailComplianceSweep(): Promise<{ notified: num
            WHERE user_id = ?
              AND entity_type = 'official_email_compliance'
              AND entity_id = ?
-             AND DATE(created_at) = CURDATE()
+             AND is_actioned = 0
         )`,
       [row.user_id, row.id, row.user_id, row.id]
     );

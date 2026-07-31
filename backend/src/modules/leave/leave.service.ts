@@ -160,8 +160,12 @@ export const leaveService = {
             type: 'leave_request',
             title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
             description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${input.totalDays} day${input.totalDays === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+            // The leave request, not the employee. Keyed on the employee this
+            // collapsed every request a person raised onto one alert, so a
+            // second application never reached the manager and approving one
+            // could not tell the inbox which alert to close.
             entity_type: 'leave',
-            entity_id: input.employeeId,
+            entity_id: id,
             action_url: `/leave/requests`,
             priority: 'high',
           });
@@ -210,6 +214,19 @@ export const leaveService = {
       cur.setUTCDate(cur.getUTCDate() + 1);
     }
     return dates;
+  },
+
+  // Whether this employee still has leave awaiting somebody's decision. Used
+  // to decide if a legacy employee-keyed inbox alert can be closed: it stands
+  // for "this person has leave to review", so it may only close once nothing
+  // of theirs is pending.
+  async _hasOpenLeave(employeeId: string): Promise<boolean> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM leave_request
+        WHERE employee_id = ? AND status IN ('pending','pending_branch_head') LIMIT 1`,
+      [employeeId]
+    );
+    return rows.length > 0;
   },
 
   async reviewRequest(id: string, input: ReviewLeaveInput, reviewerId: string): Promise<LeaveRequest> {
@@ -347,6 +364,24 @@ export const leaveService = {
       throw err;
     } finally {
       conn.release();
+    }
+
+    // The decision is made, so the approver's alert has served its purpose.
+    // Closed on both keys because alerts raised before the entity_id fix above
+    // carry the employee id rather than the request id, and those approvers
+    // are still being reminded about leave they have already dealt with.
+    const { inboxService } = await import('../inbox/inbox.service.js');
+    await inboxService.resolveItems({
+      entity_type: 'leave',
+      entity_id: id,
+      types: ['leave_request'],
+    });
+    if (!(await this._hasOpenLeave(request.employee_id))) {
+      await inboxService.resolveItems({
+        entity_type: 'leave',
+        entity_id: request.employee_id,
+        types: ['leave_request'],
+      });
     }
 
     // SMS — leave approved or rejected (fire-and-forget)

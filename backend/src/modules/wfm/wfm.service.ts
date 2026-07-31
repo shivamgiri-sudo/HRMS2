@@ -521,6 +521,43 @@ export const wfmService = {
     }
     conn.release();
 
+    // A reviewed regularization is no longer anybody's pending work, so close
+    // the alerts that were chasing it. Stage-1 approval is deliberately not
+    // treated as done — it moves to WFM, and the block below raises their
+    // alert. Both keys are closed because alerts carry the employee id, and
+    // the request id is accepted too so the fix survives that being corrected.
+    if ((input.status as string) !== 'manager_approved') {
+      // One statement rather than four: every alert this decision settles is
+      // closed atomically, and the review path keeps a single extra round trip.
+      //   1. the alert for this specific request;
+      //   2. the legacy employee-keyed alert, but only once nothing else of
+      //      theirs is still in flight — it stands for "this person has a
+      //      regularization to review", so it must outlive a partial clear-out;
+      //   3. the missing-punch and validation alerts for that same date, which
+      //      this regularization is the answer to. Those carry the date in
+      //      action_url rather than a column, so they match on the URL suffix.
+      // The pool runs dateStrings, so session_date is already YYYY-MM-DD;
+      // sliced regardless so an ISO timestamp could never break the match.
+      const sessionDate = String(reg.session_date).slice(0, 10);
+      await db.execute(
+        `UPDATE work_inbox_item
+            SET is_actioned = 1, is_read = 1
+          WHERE is_actioned = 0
+            AND entity_type = 'attendance'
+            AND (
+                  (type = 'attendance_regularization' AND entity_id = ?)
+               OR (type = 'attendance_regularization' AND entity_id = ?
+                   AND NOT EXISTS (
+                     SELECT 1 FROM attendance_regularization ar
+                      WHERE ar.employee_id = ?
+                        AND ar.status NOT IN ('approved','rejected','cancelled') ))
+               OR (type IN ('attendance_missing_punch','attendance_validation')
+                   AND entity_id = ? AND action_url LIKE CONCAT('%date=', ?))
+            )`,
+        [id, reg.employee_id, reg.employee_id, reg.employee_id, sessionDate]
+      ).catch(() => { /* non-fatal: the reconciliation sweep will catch it */ });
+    }
+
     // When manager approves (stage 1 → manager_approved), escalate to WFM for final action
     if ((input.status as string) === 'manager_approved') {
       try {

@@ -67,10 +67,21 @@ function chimePriorityFrom(p: Notification["priority"]): "urgent" | "high" | "no
 }
 
 const TOAST_DURATION: Record<"urgent" | "high" | "normal", number | undefined> = {
-  urgent: Infinity, // stays until manually dismissed
+  urgent: 15000,
   high: 8000,
   normal: 5000,
 };
+
+/**
+ * How many times an unactioned item is allowed to remind before it goes quiet.
+ *
+ * The reminder used to repeat indefinitely, and because nothing closed an item
+ * when its work was done, "indefinitely" was literal — a recruiter with a few
+ * hundred stale urgent alerts got a chime and a toast every two minutes for
+ * the rest of the session. The item stays in the bell and on the Work Inbox
+ * either way; this only limits the interrupting.
+ */
+const MAX_REPEATS = 3;
 
 const PRIORITY_ICON: Record<"urgent" | "high" | "normal", string> = {
   urgent: "🔴",
@@ -184,10 +195,18 @@ export const useNotifications = () => {
       const cp = chimePriorityFrom(n.priority);
       if (!cp) continue; // "low" — no repeat
       const intervalMs = REPEAT_INTERVAL[cp];
+      let fired = 0;
       const timerId = setInterval(() => {
+        fired += 1;
         playChime(cp);
         fireBrowserNotification(n.title, n.message || "Reminder: unactioned notification");
         showNotificationToast(n, true);
+        // Stop nagging after a few reminders. The item is still listed in the
+        // bell and the Work Inbox; it just stops interrupting.
+        if (fired >= MAX_REPEATS) {
+          clearInterval(timerId);
+          repeatTimers.current.delete(n.id);
+        }
       }, intervalMs);
       repeatTimers.current.set(n.id, timerId);
     }

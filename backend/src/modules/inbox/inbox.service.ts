@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
 interface InboxFilters {
@@ -75,24 +75,106 @@ export const inboxService = {
   },
 
   /**
-   * Create an inbox item with built-in deduplication.
-   * If an unread/unactioned item of the same (user_id, type, entity_type, entity_id)
-   * already exists within the cooldown window (default 30 min), skip insertion.
+   * Close every open item raised for a given entity, because the work it was
+   * asking for has now been done.
+   *
+   * This is the counterpart createItem never had. Alerts are raised by a dozen
+   * workers and services, but until this existed the only writer of
+   * `is_actioned` was the manual "complete" button on the Work Inbox page — so
+   * approving a leave, submitting interview feedback or clearing a
+   * regularization updated its own table and left the alert open forever. The
+   * repeat-reminder timer keys off `is_actioned`, so the user kept being
+   * chased for work they had already finished.
+   *
+   * `types` narrows the close to specific alert types; omit it to close every
+   * open alert for the entity. `user_id` narrows it to one recipient; omit it
+   * to close the alert for everyone it was raised against, which is almost
+   * always what you want — if the work is done it is done for all of them.
+   *
+   * Returns the number of items closed. Never throws: resolution is a
+   * best-effort side effect and must not roll back the business action that
+   * triggered it.
    */
-  async createItem(data: CreateInboxItem, cooldownMinutes = 30) {
-    // Dedup check: skip if identical unactioned item exists within cooldown window
+  async resolveItems(params: {
+    entity_type: string;
+    entity_id: string;
+    types?: string[];
+    user_id?: string;
+  }): Promise<number> {
+    if (!params.entity_type || !params.entity_id) return 0;
+
+    const conds = ["entity_type = ?", "entity_id = ?", "is_actioned = 0"];
+    const args: unknown[] = [params.entity_type, params.entity_id];
+
+    if (params.types?.length) {
+      conds.push(`type IN (${params.types.map(() => "?").join(",")})`);
+      args.push(...params.types);
+    }
+    if (params.user_id) {
+      conds.push("user_id = ?");
+      args.push(params.user_id);
+    }
+
+    try {
+      const [result] = await db.execute<ResultSetHeader>(
+        `UPDATE work_inbox_item SET is_actioned = 1, is_read = 1 WHERE ${conds.join(" AND ")}`,
+        args,
+      );
+      return Number(result?.affectedRows ?? 0);
+    } catch (error) {
+      console.warn(
+        `[inbox] resolveItems failed for ${params.entity_type}:${params.entity_id}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return 0;
+    }
+  },
+
+  /**
+   * Create an inbox item, or refresh the one already standing for this work.
+   *
+   * Dedup is scoped to *open* items and carries no time window. It used to
+   * expire after 30 minutes, which meant a condition nobody had dealt with
+   * minted a brand new row every half hour — 488 rows for the same handful of
+   * candidates in three days, all pointing at identical work. One open item per
+   * (user, type, entity, action_url) is the whole truth: if it is still open,
+   * the work is still outstanding, and a second row adds nothing but noise.
+   *
+   * `action_url` is part of the key because several callers encode the subject
+   * date there (`?employeeId=…&date=…`) while entity_id holds only the
+   * employee — without it, every day's missing-punch alert would collapse onto
+   * the first one and later dates would never be raised.
+   *
+   * created_at is deliberately NOT bumped on refresh, so ageing is measured
+   * from when the work first came up rather than from the last reminder.
+   *
+   * @param cooldownMinutes retained for call-site compatibility; no longer used.
+   */
+  async createItem(data: CreateInboxItem, cooldownMinutes?: number) {
+    void cooldownMinutes;
+    // Dedup: one open item per (user, type, entity, action_url) — no expiry.
     if (data.entity_type && data.entity_id) {
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM work_inbox_item
          WHERE user_id = ? AND type = ? AND entity_type = ? AND entity_id = ?
+           AND action_url <=> ?
            AND is_actioned = 0
-           AND created_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)
          LIMIT 1`,
-        [data.user_id, data.type, data.entity_type, data.entity_id, cooldownMinutes]
+        [data.user_id, data.type, data.entity_type, data.entity_id, data.action_url ?? null]
       );
-      if ((existing as RowDataPacket[]).length > 0) {
-        // Return existing item instead of creating duplicate
-        return (existing as RowDataPacket[])[0];
+      const openItem = (existing as RowDataPacket[])[0];
+      if (openItem) {
+        // Refresh the wording — elapsed times and counts in the title/description
+        // go stale — but leave created_at alone so ageing stays honest.
+        await db.execute(
+          `UPDATE work_inbox_item SET title = ?, description = ?, priority = ? WHERE id = ?`,
+          [data.title, data.description ?? null, data.priority ?? "normal", openItem.id],
+        );
+        const [refreshed] = await db.execute<RowDataPacket[]>(
+          "SELECT * FROM work_inbox_item WHERE id = ? LIMIT 1",
+          [openItem.id],
+        );
+        return (refreshed as RowDataPacket[])[0];
       }
     }
 

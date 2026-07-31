@@ -267,6 +267,21 @@ export async function submitInterviewResult(input: InterviewResultInput) {
 
     await connection.commit();
 
+    // The outcome is recorded, so every alert chasing this interview is done.
+    // All four ATS chasers key on the candidate, and each has its own worker
+    // and its own threshold, so they are closed together rather than left for
+    // whichever worker happens to re-check first.
+    await inboxService.resolveItems({
+      entity_type: 'ats_candidate',
+      entity_id: input.candidate_id,
+      types: [
+        'sla_breach_uncalled',
+        'walkin_submission_sla',
+        'walkin_feedback_pending',
+        'interview_submission_overdue',
+      ],
+    });
+
     // If selected, send congratulations email and create portal login
     if (input.interview_status === 'selected') {
       await handleCandidateSelection(input.candidate_id);

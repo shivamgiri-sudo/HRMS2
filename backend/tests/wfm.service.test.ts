@@ -210,10 +210,47 @@ describe("wfmService.reviewRegularization", () => {
   it("approves regularization", async () => {
     exec.mockResolvedValueOnce([[fakeReg], []]); // get
     mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // regularization status UPDATE
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]); // re-fetch
     const r = await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
     expect(r.status).toBe("approved");
+  });
+
+  it("closes the inbox alerts the decision settles", async () => {
+    // Reviewing used to update attendance and leave the alert open, so the
+    // approver kept being reminded about a regularization they had cleared.
+    exec.mockResolvedValueOnce([[fakeReg], []]); // get
+    mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    exec.mockResolvedValueOnce([{ affectedRows: 2 }, []]); // inbox alert close
+    exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
+    exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]);
+
+    await wfmService.reviewRegularization("reg-1", { status: "approved" }, "mgr-1");
+
+    const closeCall = exec.mock.calls.find(([sql]) =>
+      String(sql).includes("UPDATE work_inbox_item")
+    );
+    expect(closeCall).toBeTruthy();
+    expect(String(closeCall?.[0])).toContain("is_actioned = 1");
+    // The punch and validation alerts for that same date are answered too.
+    expect(String(closeCall?.[0])).toContain("attendance_missing_punch");
+    expect(closeCall?.[1]).toContain("reg-1");
+  });
+
+  it("keeps the alert open when the manager only passes it to WFM", async () => {
+    // manager_approved is a hand-off, not a completion — WFM still has to act.
+    mocks.connExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    // Blanket row so both getRegularization calls resolve; the escalation
+    // lookups in between are satisfied by the same stub.
+    exec.mockResolvedValue([[{ ...fakeReg, status: "manager_approved" }], []]);
+
+    await wfmService.reviewRegularization("reg-1", { status: "manager_approved" } as never, "mgr-1");
+
+    const closeCall = exec.mock.calls.find(([sql]) =>
+      String(sql).includes("UPDATE work_inbox_item")
+    );
+    expect(closeCall).toBeUndefined();
   });
 
   it("creates and locks ADR when approved APR regularization has no existing ADR", async () => {
@@ -229,6 +266,7 @@ describe("wfmService.reviewRegularization", () => {
       .mockResolvedValueOnce([[], []]) // existing ADR lookup
       .mockResolvedValueOnce([[{ apr_minutes: 0 }], []]) // APR minutes lookup
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]); // ADR upsert
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // inbox alert close
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[{ ...fakeReg, status: "approved" }], []]);
 

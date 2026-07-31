@@ -24,6 +24,7 @@ import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-b
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
 import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
 import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
+import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from "./inbox-reconciliation.worker.js";
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
@@ -127,6 +128,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startWalkinSlaCron(); return Promise.resolve(); },
   },
   {
+    name: "inbox-reconciliation",
+    start: () => { startInboxReconciliationWorker(); return Promise.resolve(); },
+  },
+  {
     name: "report-generation",
     start: startReportGenerationWorker,
   },
@@ -184,6 +189,7 @@ function shutdown(): void {
   stopPayrollWindowClosureScheduler();
   stopBreachSlaCron();
   stopWalkinSlaCron();
+  stopInboxReconciliationWorker();
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();

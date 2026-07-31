@@ -510,6 +510,13 @@ export async function actionProvisioningRequest(params: {
     [actionedBy, evidenceNote ?? null, requestId],
   );
 
+  // The task is done — retire the alerts that were chasing it, for every SPOC
+  // it was dispatched to, not just whoever happened to action it.
+  await inboxService.resolveItems({
+    entity_type: 'it_provisioning_request',
+    entity_id: requestId,
+  });
+
   await logSensitiveAction({
     actor_user_id: actionedBy,
     action_type: 'it_provisioning_actioned',
@@ -536,6 +543,12 @@ export async function waiveProvisioningRequest(params: {
      WHERE id = ?`,
     [actionedBy, evidenceNote, requestId],
   );
+
+  // A waived task is settled too — nobody should keep being chased for it.
+  await inboxService.resolveItems({
+    entity_type: 'it_provisioning_request',
+    entity_id: requestId,
+  });
 
   await logSensitiveAction({
     actor_user_id: actionedBy,

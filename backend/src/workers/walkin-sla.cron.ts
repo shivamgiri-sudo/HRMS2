@@ -113,6 +113,15 @@ async function checkPendingFeedback(): Promise<void> {
      WHERE qt.queue_status = 'completed'
        AND qt.interview_completed_at IS NOT NULL
        AND c.candidate_status IN ('registered', 'in_process', 'walkin_registered')
+       -- candidate_status alone is not evidence of anything: it reads
+       -- 'registered' for 32,653 candidates and the recruiter's decision lands
+       -- in c.status instead. Keying only on it meant every alert raised here
+       -- was unclearable — all 17 open ones had a recorded outcome. A decision
+       -- in either column, or an interview result row, counts as submitted.
+       AND c.status NOT IN ('Selected', 'Rejected', 'Hold', 'No Show')
+       AND NOT EXISTS (
+         SELECT 1 FROM ats_interview_result r WHERE r.candidate_id = c.id
+       )
        AND DATE(qt.interview_completed_at) = CURDATE()
        AND TIMESTAMPDIFF(MINUTE, qt.interview_completed_at, NOW()) >= 10
      ORDER BY mins_since_complete DESC
