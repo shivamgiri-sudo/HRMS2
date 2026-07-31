@@ -35,7 +35,7 @@ import {
   useTodayLivePunch,
 } from "@/hooks/useAttendance";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useActiveBreak, useBreaksForRecord } from "@/hooks/useAttendanceBreaks";
+import { useActiveBreak, useBreaksForRecord, type AttendanceBreak } from "@/hooks/useAttendanceBreaks";
 import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 
@@ -295,6 +295,15 @@ const Attendance = () => {
     new Date().getFullYear().toString()
   );
   const [calendarView, setCalendarView] = useState<'cosec' | 'adr'>('cosec');
+  const [expandedBreakRows, setExpandedBreakRows] = useState<Set<string>>(new Set());
+
+  function toggleBreakRow(recordId: string) {
+    setExpandedBreakRows((prev) => {
+      const next = new Set(prev);
+      next.has(recordId) ? next.delete(recordId) : next.add(recordId);
+      return next;
+    });
+  }
   const targetDate = new Date(
     parseInt(selectedYear),
     parseInt(selectedMonth),
@@ -334,6 +343,24 @@ const Attendance = () => {
   const { data: todayBreaks } = useBreaksForRecord(todayRecord?.id);
 
   const attendanceList = (attendanceRecords || []) as AttendanceRecord[];
+
+  const historyRecordIds = attendanceList.map((r) => r.id);
+  const { data: historyBreaks } = useQuery({
+    queryKey: ["attendance-breaks-month", historyRecordIds],
+    queryFn: async () => {
+      if (historyRecordIds.length === 0) return [];
+      const res = await hrmsApi.get<{ success: boolean; data: unknown }>(
+        `/api/wfm/attendance/breaks?recordIds=${historyRecordIds.join(",")}`,
+      );
+      return (res as any).data ?? [] as AttendanceBreak[];
+    },
+    enabled: historyRecordIds.length > 0,
+  });
+
+  function getBreaksForRecord(recordId: string): AttendanceBreak[] {
+    return (historyBreaks ?? []).filter((b: AttendanceBreak) => b.attendance_record_id === recordId);
+  }
+
   const historySorting = useSorting<AttendanceRecord>(attendanceList);
   const historyPagination = usePagination(historySorting.sortedItems, {
     initialPageSize: 10,
@@ -788,6 +815,33 @@ const Attendance = () => {
                           </div>
                         ))}
                       </div>
+
+                      {/* Today's break timeline — individual break rows */}
+                      {(todayBreaks ?? []).length > 0 && (
+                        <div className="mt-3 space-y-1.5">
+                          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Today's breaks</p>
+                          {(todayBreaks ?? []).map((b, i) => {
+                            const start = formatTimeDisplay(b.pause_time);
+                            const end = b.resume_time ? formatTimeDisplay(b.resume_time) : null;
+                            const mins = b.resume_time
+                              ? Math.round((new Date(b.resume_time).getTime() - new Date(b.pause_time).getTime()) / 60000)
+                              : null;
+                            return (
+                              <div key={b.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-white px-3 py-2 text-xs">
+                                <span className="font-black text-slate-400">#{i + 1}</span>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${b.break_type === "LONG" ? "bg-emerald-50 text-emerald-700" : "bg-[#eef6ff] text-[#1B6AB5]"}`}>
+                                  {b.break_type ?? "Break"}
+                                </span>
+                                <span className="text-slate-700">{start} → {end ?? <span className="text-amber-600 font-bold">Ongoing</span>}</span>
+                                {mins !== null && <span className="ml-auto text-slate-500">{mins} min</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {(todayBreaks ?? []).length === 0 && displayClockIn && (
+                        <p className="mt-3 text-[11px] text-slate-400">No breaks taken today.</p>
+                      )}
                     </div>
 
                   {displayClockOut && (
@@ -1268,6 +1322,10 @@ const Attendance = () => {
                         >
                           Status
                         </SortableTableHead>
+
+                        <TableCell className="font-semibold text-slate-500">
+                          Breaks
+                        </TableCell>
                       </TableRow>
                     </TableHeader>
 
@@ -1280,6 +1338,7 @@ const Attendance = () => {
                         );
 
                         return (
+                          <>
                           <TableRow key={record.id} className="hover:bg-slate-50/80 transition-colors duration-150 cursor-pointer">
                             <TableCell className="font-medium text-slate-900">
                               {safeFormatDate(record.date, "MMM d, yyyy")}
@@ -1397,7 +1456,54 @@ const Attendance = () => {
                             </TableCell>
 
                             <TableCell>{getStatusBadge(record.status)}</TableCell>
+
+                            <TableCell>
+                              {(() => {
+                                const breaks = getBreaksForRecord(record.id);
+                                if (breaks.length === 0) return <span className="text-slate-400">—</span>;
+                                return (
+                                  <button
+                                    onClick={() => toggleBreakRow(record.id)}
+                                    className="inline-flex items-center gap-1 rounded-full bg-[#eef6ff] px-2.5 py-1 text-[11px] font-bold text-[#1B6AB5] transition hover:bg-[#d8ecff]"
+                                  >
+                                    {breaks.length} break{breaks.length > 1 ? "s" : ""}
+                                    <span className="text-[10px]">{expandedBreakRows.has(record.id) ? "▲" : "▼"}</span>
+                                  </button>
+                                );
+                              })()}
+                            </TableCell>
                           </TableRow>
+
+                          {expandedBreakRows.has(record.id) && (() => {
+                            const breaks = getBreaksForRecord(record.id);
+                            return (
+                              <TableRow key={`${record.id}-breaks`} className="bg-[#f4f9ff]">
+                                <TableCell colSpan={isAdminOrHR ? 9 : 8} className="px-4 py-2">
+                                  <div className="space-y-1.5">
+                                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[#1B6AB5]">Break detail</p>
+                                    {breaks.map((b, i) => {
+                                      const start = safeFormatDate(b.pause_time, "hh:mm a");
+                                      const end = b.resume_time ? safeFormatDate(b.resume_time, "hh:mm a") : null;
+                                      const mins = b.resume_time
+                                        ? Math.round((new Date(b.resume_time).getTime() - new Date(b.pause_time).getTime()) / 60000)
+                                        : null;
+                                      return (
+                                        <div key={b.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[#d8ecff] bg-white px-3 py-1.5 text-xs">
+                                          <span className="font-black text-slate-400">#{i + 1}</span>
+                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${(b as any).break_type === "LONG" ? "bg-emerald-50 text-emerald-700" : "bg-[#eef6ff] text-[#1B6AB5]"}`}>
+                                            {(b as any).break_type ?? "Break"}
+                                          </span>
+                                          <span className="text-slate-700">{start} → {end ?? <span className="text-amber-600 font-bold">Ongoing</span>}</span>
+                                          {mins !== null && <span className="ml-auto text-slate-500">{mins} min</span>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })()}
+                          </>
                         );
                       })}
                     </TableBody>
