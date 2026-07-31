@@ -293,6 +293,69 @@ interface StatutoryRow {
   professional_tax: number;
 }
 
+/**
+ * Professional tax for one employee.
+ *
+ * PT is levied by the STATE. An employee whose branch has no state therefore
+ * has no determinable liability, and no organisation-wide amount could be
+ * correct for them.
+ *
+ * This previously fell back to a hardcoded 200 — a number nobody configured;
+ * statutory_config has never held a professional_tax key. In the 2026-03 run
+ * alone that deducted ₹200 from 172 employees whose branch had no state
+ * (₹34,400), while employees in Uttar Pradesh and Delhi — states with no
+ * professional tax at all — correctly paid nothing.
+ *
+ * Stopping and naming the branch is recoverable in a single edit. Silently
+ * deducting from someone who owes nothing is not.
+ *
+ * Where the state IS known, getPtFromSlab resolves it, including returning 0 for
+ * states that levy no PT. That path was always correct and is unchanged.
+ */
+export async function resolveProfessionalTax(
+  employeeCode: string,
+  stateCode: string | null | undefined,
+  monthlyGross: number,
+): Promise<number> {
+  if (!stateCode) {
+    throw new Error(
+      `Professional tax cannot be determined for ${employeeCode}: their branch has no state set. ` +
+      `PT is levied per state, so no default is applied. Set the branch's state and re-run.`,
+    );
+  }
+  return getPtFromSlab(stateCode, monthlyGross);
+}
+
+/**
+ * PF / ESIC parameters for a run, from the statutory configuration resolved for
+ * its period.
+ *
+ * The `??` defaults are retained deliberately for PF and ESIC — unlike TDS,
+ * these are single nationwide statutory rates rather than slabs that a Finance
+ * Act reshapes, and production supplies every one of them from configuration, so
+ * the defaults are unreachable there.
+ *
+ * pf_wage_limit is 999999 in production, not the ₹15,000 EPF ceiling. That is
+ * deliberate: an employer may contribute PF on wages above the statutory
+ * ceiling, and this one does. Do not "correct" it to 15000 — that would cut
+ * every employee's PF and change take-home pay. The test pinning this exists to
+ * stop exactly that.
+ */
+export function buildStatutoryRow(statConfig: Record<string, number>): StatutoryRow {
+  return {
+    pf_employee_pct:   statConfig["pf_employee_pct"]   ?? 12,
+    esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
+    esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
+    esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
+    pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
+    // No `?? 200`. Professional tax is a state levy with no sensible
+    // organisation-wide default, and statutory_config has never held this key —
+    // that constant was a number nobody approved. resolveProfessionalTax stops
+    // the run rather than guessing.
+    professional_tax:  statConfig["professional_tax"]  ?? 0,
+  };
+}
+
 export async function calculatePayrollRun(runId: string, userId: string): Promise<CalculateResult> {
   return calculatePayrollRunScoped(runId, userId);
 }
@@ -334,15 +397,9 @@ export async function calculatePayrollRunScoped(
   // outright here would break every environment where 1030 has not yet run.
   const statConfig: StatutoryConfigMap = await resolveStatutoryConfigForRun(run.run_month);
 
-  // 2b. Legacy flat-row fallback (PF / ESIC / PT values)
-  const stat: StatutoryRow = {
-    pf_employee_pct:   statConfig["pf_employee_pct"]   ?? 12,
-    esic_employee_pct: statConfig["esic_employee_pct"] ?? 0.75,
-    esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
-    esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
-    pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
-    professional_tax:  statConfig["professional_tax"]  ?? 200,
-  };
+  // 2b. PF / ESIC parameters for the run. See buildStatutoryRow for why the PF
+  // and ESIC defaults are kept while the professional-tax one was removed.
+  const stat: StatutoryRow = buildStatutoryRow(statConfig);
 
   // 3. Fetch eligible employees (scoped to run's process/branch filters)
   const scopedEmployeeIds = Array.from(new Set((options.employeeIds ?? []).filter(Boolean)));
@@ -889,10 +946,20 @@ export async function calculatePayrollRunScoped(
       // employee_deduction_entries or payroll_deduction_type may not exist yet — non-fatal
     }
 
-    // Resolve PT from slab when employee has a state_code, else fall back to config value
-    const professionalTax = emp.state_code
-      ? await getPtFromSlab(emp.state_code, grossAfterLwp)
-      : stat.professional_tax;
+    // Professional tax is levied by the STATE, so an employee whose branch has
+    // no state has no determinable liability — there is no organisation-wide
+    // amount that could be correct. This previously fell back to a hardcoded
+    // 200, which is not a configured value: statutory_config has no
+    // professional_tax key at all, so that number was invented here. In the
+    // 2026-03 run alone it deducted Rs 200 from 172 employees whose branch had
+    // no state — Rs 34,400 — while employees in Uttar Pradesh and Delhi, states
+    // with no professional tax, correctly paid nothing.
+    //
+    // Stopping and naming the branch is recoverable in one edit. Silently
+    // deducting from someone who owes nothing is not.
+    const professionalTax = await resolveProfessionalTax(
+      emp.employee_code, emp.state_code, grossAfterLwp,
+    );
 
     // Check for approved PF / ESI opt-outs (employee voluntary declaration approved by Payroll HO)
     const [overrideRows] = await conn.execute<RowDataPacket[]>(
