@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { getIstDateString } from '../../utils/dateUtils.js';
+import { toIST } from '../../shared/timezone.js';
 
 /**
  * Enhanced Queue Service
@@ -171,6 +172,11 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
   const ranked = (rows as QueueEntry[]).map((row, index) => ({
     ...row,
     position_in_queue: index + 1,
+    arrival_time: toIST(row.arrival_time) ?? row.arrival_time,
+    created_at: toIST(row.created_at) ?? row.created_at,
+    called_at: toIST(row.called_at),
+    interview_started_at: toIST(row.interview_started_at),
+    interview_completed_at: toIST(row.interview_completed_at),
   }));
   return ranked;
 }
@@ -378,6 +384,11 @@ export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry
   const ranked = (rows as QueueEntry[]).map((row, index) => ({
     ...row,
     position_in_queue: index + 1,
+    arrival_time: toIST(row.arrival_time) ?? row.arrival_time,
+    created_at: toIST(row.created_at) ?? row.created_at,
+    called_at: toIST(row.called_at),
+    interview_started_at: toIST(row.interview_started_at),
+    interview_completed_at: toIST(row.interview_completed_at),
   }));
   return ranked;
 }
@@ -650,5 +661,8 @@ export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBo
     params
   );
 
-  return rows as OpsBoardEntry[];
+  return rows.map((r) => ({
+    ...r,
+    arrived_at: toIST(r.arrived_at),
+  })) as OpsBoardEntry[];
 }
