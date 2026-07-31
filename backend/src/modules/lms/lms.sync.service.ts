@@ -180,16 +180,34 @@ export async function syncAssessmentScores(actorId?: string): Promise<{ count: n
   const errors: string[] = [];
   let count = 0;
 
-  // Determine window start: last successful sync time, capped at 30 days ago for first run / long gaps
-  const [lastSyncRows] = await db.execute<RowDataPacket[]>(
-    `SELECT created_at FROM lms_sync_audit_log
-      WHERE sync_type = 'assessment_scores' AND status IN ('success', 'partial')
-      ORDER BY created_at DESC LIMIT 1`
+  // Window start = the newest attempt we have ACTUALLY stored, not the last time this
+  // function happened to run.
+  //
+  // It previously read the last 'success' row from lms_sync_audit_log. That row is written
+  // on every run, including runs that synced zero records — so the watermark advanced to
+  // "now" whether or not anything was imported, and any attempt older than the first run
+  // could never be picked up again. Observed on production 2026-07-31: the LMS held 227
+  // assessment attempts (newest 2026-07-14) while lms_assessment_scores had 0 rows, with
+  // every audit row reporting success. The data was permanently stranded and the logs said
+  // everything was fine.
+  //
+  // Anchoring on MAX(attempted_at) of what was stored makes the sync self-healing: if a
+  // row never landed, the watermark never moved past it, so the next run retries it. The
+  // 30-day floor applies only when the table is genuinely empty, and LOOKBACK_OVERLAP
+  // re-reads a small window each time so an attempt submitted mid-run is not skipped.
+  const LOOKBACK_OVERLAP_MS = 6 * 60 * 60 * 1000;   // 6 hours
+  const FIRST_RUN_LOOKBACK_MS = 365 * 24 * 60 * 60 * 1000;
+
+  const [storedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(attempted_at) AS newest FROM lms_assessment_scores`
   ).catch(() => [[] as RowDataPacket[], []]);
-  const lastSync = (lastSyncRows as any[])[0]?.created_at;
-  const windowStart = lastSync
-    ? new Date(lastSync)
-    : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const newestStored = (storedRows as any[])[0]?.newest;
+
+  // On a genuinely empty table, look back far enough to backfill the existing history
+  // rather than silently starting from today.
+  const windowStart = newestStored
+    ? new Date(new Date(newestStored).getTime() - LOOKBACK_OVERLAP_MS)
+    : new Date(Date.now() - FIRST_RUN_LOOKBACK_MS);
 
   const attempts = await lmsQuery<RowDataPacket[]>(
     `SELECT aa.id AS attempt_id, aa.employee_id AS lms_id, aa.assessment_id, aa.attempt_no,
