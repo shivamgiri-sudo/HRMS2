@@ -269,8 +269,9 @@ class DispatchService {
   async getStats(): Promise<DispatchStats> {
     const [todayRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()");
     const [delivRows]  = await db.execute<DeliveryWindowRow[]>("SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-    const [openedRows] = await db.execute<DeliveryWindowRow[]>("SELECT COUNT(*) t, SUM(status = 'opened') o FROM dispatch_log WHERE channel = 'email' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
     const [failedRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed' AND retry_count < 3");
+    const [retryRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE retry_count > 0 AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    const [bounceRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'bounced' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
     const [chRows]     = await db.execute<ChannelCountRow[]>("SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE() GROUP BY channel");
     const by_channel = { email: 0, sms: 0, whatsapp: 0 };
     for (const r of chRows) {
@@ -279,8 +280,9 @@ class DispatchService {
     return {
       total_sent_today: Number(todayRows[0]?.c ?? 0),
       delivery_rate: Number(delivRows[0]?.t ?? 0) > 0 ? (Number(delivRows[0]?.d ?? 0) / Number(delivRows[0]?.t ?? 0)) * 100 : 0,
-      open_rate: Number(openedRows[0]?.t ?? 0) > 0 ? (Number(openedRows[0]?.o ?? 0) / Number(openedRows[0]?.t ?? 0)) * 100 : 0,
       failed_count: Number(failedRows[0]?.c ?? 0),
+      retried_count: Number(retryRows[0]?.c ?? 0),
+      bounced_count: Number(bounceRows[0]?.c ?? 0),
       by_channel,
     };
   }

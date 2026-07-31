@@ -78,8 +78,17 @@ export interface DeliveryStatus { status: DispatchStatus; delivered_at?: string;
 
 // ========== Response types ==========
 export interface DispatchResult { queued: number; failed: number; dispatch_ids: string[]; portal_created?: number; }
+/**
+ * Delivery statistics. Every field here is measured from dispatch_log — nothing is inferred.
+ *
+ * `open_rate` was removed: it was computed from status='opened', which no code path ever
+ * sets, so it rendered a permanent hard 0 as a percentage. Open/click tracking needs a
+ * tracking pixel and a redirect service (and a DPDP review) before it can be reported
+ * honestly. Do not re-add a field here that nothing writes.
+ */
 export interface DispatchStats {
-  total_sent_today: number; delivery_rate: number; open_rate: number; failed_count: number;
+  total_sent_today: number; delivery_rate: number; failed_count: number;
+  retried_count: number; bounced_count: number;
   by_channel: { email: number; sms: number; whatsapp: number };
 }
 export interface PaginatedDispatchLogs { logs: DispatchLog[]; total: number; page: number; limit: number; }
