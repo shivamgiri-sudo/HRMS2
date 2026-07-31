@@ -26,6 +26,13 @@ export interface DateRestorePlan {
   restoredStatus: string | null;
   restoredLwp: number | null;
   note?: string;
+  /**
+   * Rows the write actually touched, filled in by applyRestore. Counts reported
+   * to the caller derive from this rather than from the plan: a plan says what
+   * SHOULD happen, and reporting it as though it did is how a discard came to
+   * claim "1 date deleted" while the row was still sitting there.
+   */
+  appliedRows?: number;
 }
 
 export type SnapshotEntry = {
@@ -186,11 +193,21 @@ export async function applyRestore(
     if (plan.mode === "skip_locked" || plan.mode === "skip_owned") continue;
 
     if (plan.mode === "delete") {
-      await conn.execute(
+      // No is_locked guard. A regularization approval always sets is_locked = 1,
+      // so `AND is_locked = 0` meant this DELETE could never fire for the exact
+      // case it exists to handle — the row it created stayed behind while the
+      // result claimed it had been removed.
+      //
+      // Safe without the guard because the planner has already established
+      // ownership: it only returns `delete` when the row belongs to this
+      // approval, and returns skip_locked / skip_owned for anything a different
+      // correction owns.
+      const [res] = await conn.execute(
         `DELETE FROM attendance_daily_record
-          WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
+          WHERE employee_id = ? AND record_date = ?`,
         [employeeId, plan.date]
       );
+      plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
       continue;
     }
 
@@ -199,12 +216,13 @@ export async function applyRestore(
       const cols = SNAPSHOT_RESTORE_COLUMNS.filter((c) => c in snap);
       if (cols.length === 0) continue;
       const setSql = cols.map((c) => `${c} = ?`).join(", ");
-      await conn.execute(
+      const [res] = await conn.execute(
         `UPDATE attendance_daily_record
             SET ${setSql}
           WHERE employee_id = ? AND record_date = ?`,
         [...cols.map((c) => (snap as any)[c] ?? null), employeeId, plan.date]
       );
+      plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
       continue;
     }
 
@@ -213,7 +231,7 @@ export async function applyRestore(
       // recompute the day. is_locked = 0 is essential: every engine write is
       // guarded by IF(is_locked = 0, ...), so a row left locked would be frozen
       // and never recomputed again.
-      await conn.execute(
+      const [res] = await conn.execute(
         `UPDATE attendance_daily_record
             SET attendance_status = ?, lwp_value = ?,
                 regularization_id = NULL, override_by = NULL, override_reason = NULL,
@@ -223,11 +241,12 @@ export async function applyRestore(
           WHERE employee_id = ? AND record_date = ?`,
         [plan.restoredStatus, plan.restoredLwp ?? 0, reasonText, actorUserId, employeeId, plan.date]
       );
+      plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
       continue;
     }
 
     // rederive — neutralise and unlock; the engine rebuilds the day after commit.
-    await conn.execute(
+    const [res] = await conn.execute(
       `UPDATE attendance_daily_record
           SET attendance_status = 'unreconciled', lwp_value = 0.00,
               regularization_id = NULL, override_by = NULL, override_reason = NULL,
@@ -237,6 +256,7 @@ export async function applyRestore(
         WHERE employee_id = ? AND record_date = ?`,
       [reasonText, actorUserId, employeeId, plan.date]
     );
+    plan.appliedRows = Number((res as any)?.affectedRows ?? 0);
   }
 }
 
