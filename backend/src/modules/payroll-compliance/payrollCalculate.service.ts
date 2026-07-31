@@ -35,27 +35,31 @@ export async function calculateGratuity(employeeId: string, lastBasicMonthly: nu
   return { eligible: true, amount: r2((lastBasicMonthly / 26) * 15 * completedYears), years: completedYears };
 }
 
-// Backward-compatible export for old callers.
-export function calculateTds(annualTaxableIncome: number, statutoryConfig: Record<string, number>) {
-  const stdDeduction = statutoryConfig["tds_standard_deduction"] ?? 75000;
-  const taxableIncome = Math.max(0, annualTaxableIncome - stdDeduction);
-  const slabs = [
-    { from: 0, to: 400000, rate: 0 },
-    { from: 400000, to: 800000, rate: 0.05 },
-    { from: 800000, to: 1200000, rate: 0.10 },
-    { from: 1200000, to: 1600000, rate: 0.15 },
-    { from: 1600000, to: 2000000, rate: 0.20 },
-    { from: 2000000, to: 2400000, rate: 0.25 },
-    { from: 2400000, to: Infinity, rate: 0.30 },
-  ];
-  let tax = 0;
-  for (const s of slabs) {
-    if (taxableIncome <= s.from) continue;
-    tax += (Math.min(taxableIncome, s.to) - s.from) * s.rate;
-  }
-  if (taxableIncome <= 1200000) tax = 0;
-  const tds_annual = r2(tax * 1.04);
-  return { tds_annual, tds_monthly: r2(tds_annual / 12), effective_rate: annualTaxableIncome > 0 ? r2((tds_annual / annualTaxableIncome) * 100) : 0 };
+/**
+ * @deprecated Use calculateTds from modules/payroll/payrollCalculate.service.ts.
+ *
+ * This computed TDS from slab boundaries, rates, the ₹12L rebate threshold and
+ * the 4% cess written as literals in its own body, reading only the standard
+ * deduction from configuration — and defaulting even that to 75000. A Finance
+ * Act changing any rate would leave it deducting the old one indefinitely, with
+ * nothing to show the figure was never approved. Under-deduction is the
+ * employer's liability under s.201(1A), so a wrong number here is not cosmetic.
+ *
+ * It has no callers: every live path resolves calculateTds from
+ * modules/payroll/payrollCalculate.service.ts, which reads every rate from
+ * statutory_config and returns status "pending_configuration" naming the
+ * missing keys rather than inventing one.
+ *
+ * Kept as a throwing stub rather than deleted, per the project rule against
+ * removing existing exports — and because a silent hardcoded calculator is
+ * precisely the thing someone imports by accident from a file with this name.
+ */
+export function calculateTds(_annualTaxableIncome: number, _statutoryConfig: Record<string, number>): never {
+  throw new Error(
+    "calculateTds() in payroll-compliance is deprecated: it applied hardcoded slab rates that no " +
+    "Finance Act change would ever update. Import calculateTds from " +
+    "modules/payroll/payrollCalculate.service.js, which resolves every rate from statutory_config.",
+  );
 }
 
 export async function getPtFromSlab(stateCode: string, monthlyIncome: number): Promise<number> {

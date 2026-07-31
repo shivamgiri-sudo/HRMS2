@@ -10,6 +10,7 @@ import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
 import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync } from "../../shared/scopeAccess.js";
 import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
+import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 
 // Synchronous role check against req.user.role (used for validate/reject guards)
@@ -1554,10 +1555,21 @@ router.get(
     const professionalTax = Number(fy?.professional_tax ?? 0);
     const monthsPaid   = Number(fy?.months_paid ?? 0);
 
-    const [sdRows] = await db.execute<RowDataPacket[]>(
-      `SELECT config_value FROM statutory_config WHERE config_key = 'tds_standard_deduction' LIMIT 1`
-    );
-    const standardDeduction = Number((sdRows as any[])[0]?.config_value ?? 75000);
+    // Resolved for the financial year the certificate covers, and with no
+    // fallback: a certificate computed from a guessed standard deduction is a
+    // tax document stating a figure nobody approved, and the employee files
+    // their return on it. Refusing is recoverable; a wrong Form 16/130 is not.
+    const fyConfig = await loadFlatStatutoryConfig(`${fyStart}-04-01`);
+    const standardDeduction = fyConfig["tds_standard_deduction"];
+    if (standardDeduction === undefined) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot issue the certificate: tds_standard_deduction has no active configuration " +
+          `effective for FY ${fyStart}-${String(fyStart + 1).slice(2)}. Seed and activate it, then retry.`,
+        data: { missing_config_keys: ["tds_standard_deduction"] },
+      });
+    }
 
     // Professional tax is deductible from salary income (s.16(iii) of the 1961
     // Act), so it reduces taxable income alongside the standard deduction.

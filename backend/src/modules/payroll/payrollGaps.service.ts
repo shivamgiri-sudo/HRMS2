@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateTds } from "./payrollCalculate.service.js";
+import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { payrollService } from "./payroll.service.js";
 
 /**
@@ -30,7 +31,10 @@ export interface LwpDeduction {
 export async function checkTdsConfigExists(): Promise<boolean> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS cnt FROM statutory_config WHERE config_key LIKE 'tds_slab_%'"
+      // is_active matters here: a slab switched off is not configuration a
+      // projection may rely on, and counting it made this gate report "configured"
+      // for rates nobody intended to apply.
+      "SELECT COUNT(*) AS cnt FROM statutory_config WHERE config_key LIKE 'tds_slab_%' AND is_active = 1"
     );
     const cnt: number = (rows as any[])[0]?.cnt ?? 0;
     return Number(cnt) > 0;
@@ -159,14 +163,9 @@ export const payrollGapsService = {
       };
     }
 
-    const [cfgRows] = await db.execute<RowDataPacket[]>(
-      "SELECT config_key, config_value FROM statutory_config"
-    );
-    const statutoryConfig: Record<string, number> = {};
-    for (const row of cfgRows as Array<{ config_key: string; config_value: string }>) {
-      const value = Number(row.config_value);
-      if (Number.isFinite(value)) statutoryConfig[String(row.config_key).toLowerCase()] = value;
-    }
+    // No period is in context here — this is an ad-hoc projection, not a run —
+    // so the loader falls back to today's date.
+    const statutoryConfig = await loadFlatStatutoryConfig();
 
     const result = calculateTds(annualTaxableIncome, statutoryConfig);
 

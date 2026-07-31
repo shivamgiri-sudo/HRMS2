@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { REQUIRED_TDS_CONFIG_KEYS } from "./statutory-regime.js";
 
 /**
  * Resolve statutory configuration as it stood for a given payroll period.
@@ -40,22 +41,13 @@ export interface StatutoryConfigResolution {
 /**
  * Keys a TDS computation cannot proceed without.
  *
- * Mirrors what calculateTds() reads. Listed explicitly so a missing slab is
- * reported as a named gap a finance user can act on, rather than silently
- * defaulting to a rate nobody approved.
+ * Defined once in statutory-regime.ts and re-exported here, so importers of
+ * either module see the same list. It was previously declared in both files:
+ * two lists that had to be edited together, where a Finance Act adding a slab
+ * to one and not the other leaves the gate demanding a key the calculator never
+ * reads — or the calculator reading one the gate never checks.
  */
-export const REQUIRED_TDS_CONFIG_KEYS = [
-  "tds_slab_0_400000",
-  "tds_slab_400001_800000",
-  "tds_slab_800001_1200000",
-  "tds_slab_1200001_1600000",
-  "tds_slab_1600001_2000000",
-  "tds_slab_2000001_2400000",
-  "tds_slab_2400001_above",
-  "tds_standard_deduction",
-  "tds_rebate_87a_limit",
-  "tds_cess_pct",
-] as const;
+export { REQUIRED_TDS_CONFIG_KEYS };
 
 /** First day of the payroll period — the date a version must have taken effect by. */
 function periodStart(period: string): string {

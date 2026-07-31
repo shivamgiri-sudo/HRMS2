@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { resolveHolidaysForEmployee } from "./holiday-work.service.js";
 import { payrollService } from "./payroll.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
+import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 
 // ─── Running salary helpers ───────────────────────────────────────────────────
 
@@ -105,14 +106,10 @@ export async function computeRunningSalary(
       : 0;
   }
 
-  // Statutory config for deductions
-  const [statKvRows] = await db.execute<RowDataPacket[]>(
-    `SELECT config_key, config_value FROM statutory_config`,
-  );
-  const statConfig: Record<string, number> = {};
-  for (const r of statKvRows as any[]) {
-    statConfig[String(r.config_key).toLowerCase()] = Number(r.config_value);
-  }
+  // Statutory config for deductions, in force for the month being shown — a
+  // rate dated next quarter must not change what this month's running salary
+  // reads as earned so far.
+  const statConfig = await loadFlatStatutoryConfig(runMonth);
   const pfEmployeePct  = statConfig["pf_employee_pct"]   ?? 12;
   const esicEmpPct     = statConfig["esic_employee_pct"] ?? 0.75;
   const esicEmrPct     = statConfig["esic_employer_pct"] ?? 3.25;

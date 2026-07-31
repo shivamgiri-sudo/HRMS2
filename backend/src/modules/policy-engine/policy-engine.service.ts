@@ -172,8 +172,11 @@ async function getPassThroughSections(domainKey: string): Promise<PolicySection[
   try {
     if (domainKey === "statutory") {
       const [rows] = await db.execute<RowDataPacket[]>(
+        // is_active, not active_status: statutory_config has no such column, so
+        // this failed with ER_BAD_FIELD_ERROR on every call and the catch below
+        // turned it into an empty section instead of a visible error.
         `SELECT config_key, config_value, effective_from FROM statutory_config
-         WHERE active_status = 1 ORDER BY config_key LIMIT 50`
+         WHERE is_active = 1 ORDER BY config_key LIMIT 50`
       );
       return [{
         section_key: "statutory_config",
