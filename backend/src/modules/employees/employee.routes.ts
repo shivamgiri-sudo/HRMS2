@@ -1009,6 +1009,12 @@ router.post("/:id/journey", requireRole("admin", "hr"), async (req: any, res: an
 });
 
 // GET /api/employees/:id/stat-card — comprehensive employee profile aggregate
+//
+// SHADOWED: employee.secure.routes.ts is mounted first (app.ts) and its
+// `/:id([0-9a-fA-F-]{36})/stat-card` route matches every UUID employee id, so this
+// handler never runs in practice. Kept for non-UUID ids and backward compatibility.
+// Any change to the stat-card payload must be made in employee.secure.routes.ts too,
+// or it will silently never reach the client.
 router.get("/:id/stat-card", requireAuth, h(async (req: any, res: any) => {
   const { db } = await import("../../db/mysql.js");
   const targetId = req.params.id;

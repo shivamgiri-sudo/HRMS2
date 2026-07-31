@@ -1221,14 +1221,10 @@ export default function NativeEmployeeStatCard() {
               designation={card.employee.designation_name ?? "—"}
               department={card.employee.dept_name ?? undefined}
               branchName={card.employee.branch_name ?? undefined}
-              branchAddress={
-                card.employee.branch_address ||
-                [card.employee.branch_city, card.employee.branch_state].filter(Boolean).join(", ") ||
-                undefined
-              }
+              branchAddress={card.employee.branch_address || undefined}
               branchCity={card.employee.branch_city ?? undefined}
               branchState={card.employee.branch_state ?? undefined}
-              hrContact={card.employee.branch_hr_contact ?? "hr@teammas.in"}
+              hrContact={card.employee.branch_hr_contact || "hr@teammas.in"}
               photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
               emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
               bloodGroup={card.employee.blood_group ?? "—"}
@@ -1249,14 +1245,10 @@ export default function NativeEmployeeStatCard() {
               designation={card.employee.designation_name ?? "—"}
               department={card.employee.dept_name ?? undefined}
               branchName={card.employee.branch_name ?? undefined}
-              branchAddress={
-                card.employee.branch_address ||
-                [card.employee.branch_city, card.employee.branch_state].filter(Boolean).join(", ") ||
-                undefined
-              }
+              branchAddress={card.employee.branch_address || undefined}
               branchCity={card.employee.branch_city ?? undefined}
               branchState={card.employee.branch_state ?? undefined}
-              hrContact={card.employee.branch_hr_contact ?? "hr@teammas.in"}
+              hrContact={card.employee.branch_hr_contact || "hr@teammas.in"}
               photoUrl={card.employee.avatar_url ?? card.employee.photo_url ?? undefined}
               emergencyContact={card.employee.emergency_contact?.mobile ?? "Contact HR"}
               bloodGroup={card.employee.blood_group ?? "—"}

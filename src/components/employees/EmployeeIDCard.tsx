@@ -110,11 +110,13 @@ export function EmployeeIDCard({
     ? department ? `${designation} — ${department}` : designation
     : department ?? "";
 
-  const addressLines: string[] = [];
-  if (branchName) addressLines.push(branchName);
-  if (branchAddress) addressLines.push(branchAddress);
-  const cityState = [branchCity, branchState].filter(Boolean).join(", ");
-  if (cityState) addressLines.push(cityState);
+  // Prefer the branch's full postal address — it already carries city, state and pincode,
+  // so the branch name is redundant when it is present. Fall back to name + city/state for
+  // branches whose address has not been filled in yet.
+  const addressLines: string[] = branchAddress?.trim()
+    ? branchAddress.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    : [branchName, [branchCity, branchState].filter(Boolean).join(", ")]
+        .filter((l): l is string => Boolean(l && l.trim()));
 
   const uid = accent.replace("#", "");
 
@@ -405,7 +407,7 @@ export function EmployeeIDCard({
           {addressLines.length > 0 ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
               {addressLines.map((line, i) => (
-                <p key={i} style={{ fontSize: 10, lineHeight: 1.4, color: i === 0 ? "#111827" : "#6b7280", fontWeight: i === 0 ? 700 : 400 }}>
+                <p key={i} style={{ fontSize: 10, lineHeight: 1.4, color: "#374151", fontWeight: 400 }}>
                   {line}
                 </p>
               ))}
