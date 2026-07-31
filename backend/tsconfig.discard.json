@@ -10,10 +10,7 @@
     "src/modules/leave/leave.secure.routes.ts",
     "src/modules/wfm/wfm.service.ts",
     "src/modules/wfm/wfm.regularization.secure.routes.ts",
-    "src/modules/payroll/leave-reversal.service.ts",
-    "src/modules/payroll/payroll-targeted-recalculation.service.ts",
-    "src/modules/process-pnl/pnl-running-salary.service.ts",
-    "src/modules/employees/employee.routes.ts"
+    "src/modules/payroll/leave-reversal.service.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

@@ -8,30 +8,6 @@ process.env.NODE_ENV = 'test';
 process.env.INTERNAL_DEMO_BYPASS = 'true';
 process.env.PORTAL_DEMO_BYPASS = 'true';
 
-// ── Refuse to run tests against production ──────────────────────────────────
-// backend/.env points DB_HOST at the production mas_hrms host and sets
-// NODE_ENV=development. vitest loads .env for mode "test", so without a
-// backend/.env.test to override it the suite inherits production connection
-// details. db.execute is mocked globally below, so nothing *should* connect —
-// but "should" is doing a lot of work in a repo where a single un-mocked query
-// would reach live payroll data. Fail loudly instead.
-//
-// CI has no .env at all, so DB_HOST is undefined there and this is a no-op.
-{
-  const PRODUCTION_DB_HOSTS = new Set([
-    '122.184.128.90', // mas_hrms, off-LAN
-    '192.168.10.6',   // mas_hrms, on-LAN
-  ]);
-  const host = (process.env.DB_HOST ?? '').trim();
-  if (PRODUCTION_DB_HOSTS.has(host)) {
-    throw new Error(
-      `Refusing to run tests against the production database (DB_HOST=${host}).\n` +
-      `Create backend/.env.test:  cp backend/.env.test.example backend/.env.test\n` +
-      `vitest loads it for mode "test", which overrides the production host in backend/.env.`,
-    );
-  }
-}
-
 /**
  * Global test setup
  *

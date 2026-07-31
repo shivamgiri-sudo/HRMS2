@@ -74,19 +74,12 @@ export function resolveBucket(row: {
   return isSupportRole(row.department_name, row.designation_name) ? "dsc_people" : "agent_salary";
 }
 
-async function loadEmployees(branchId?: string, employeeId?: string): Promise<EmployeeRow[]> {
+async function loadEmployees(branchId?: string): Promise<EmployeeRow[]> {
   const params: unknown[] = [];
   let branchClause = "";
   if (branchId) {
     branchClause = "AND e.branch_id = ?";
     params.push(branchId);
-  }
-  // Single-employee scope. A discard changes one person's attendance, and
-  // refreshing their snapshot row costs ~1.4s — refreshing their whole branch
-  // would cost minutes for no benefit.
-  if (employeeId) {
-    branchClause += " AND e.id = ?";
-    params.push(employeeId);
   }
   const [rows] = await db.execute<EmployeeRow[]>(
     `SELECT e.id, e.employee_code, e.branch_id, e.process_id, e.cost_centre_id,
@@ -189,7 +182,7 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
  */
 export async function refreshRunningSalarySnapshot(
   periodCode: string,
-  options: { branchId?: string; asOfDate?: string; employeeId?: string } = {}
+  options: { branchId?: string; asOfDate?: string } = {}
 ): Promise<SnapshotResult> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) {
     throw new Error("A valid period (YYYY-MM) is required");
@@ -199,7 +192,7 @@ export async function refreshRunningSalarySnapshot(
   const asOfDate = options.asOfDate
     ?? new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const employees = await loadEmployees(options.branchId, options.employeeId);
+  const employees = await loadEmployees(options.branchId);
   const byBucket: Record<PnlPeopleBucket, number> = {
     agent_salary: 0,
     dsc_people: 0,

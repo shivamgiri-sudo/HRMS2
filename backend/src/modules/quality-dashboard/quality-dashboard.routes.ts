@@ -310,45 +310,22 @@ router.get("/clients", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
     const pool = getCiPool();
-    // Row scope was missing here while /summary, /trend and /fraud-signals all apply
-    // it, so a branch_head or process_manager saw correctly-scoped headline figures
-    // beside an org-wide client table. Harmless for a global-scope caller such as the
-    // CEO, which is why the UAT did not surface it.
-    const scope = await resolveScope(req);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const params: any[] = [from, to];
-    const scopeCond = auditScopeCond(scope, params);
 
-    // client_name is no longer COALESCEd over a join that cannot match.
-    //
-    // db_audit.call_quality_assessment.ClientId holds opaque numeric ids belonging to
-    // the audit system. Verified 31-Jul-2026: 15 distinct ids, ZERO of which match
-    // mas_hrms.client_master on either client_code (business codes like 'MCIPL') or id
-    // (CHAR(36) UUIDs), and db_audit contains no client table at all. There is no name
-    // source reachable from either database.
-    //
-    // The old COALESCE(cm.client_name, cqa.ClientId) hid that: a 0% match rate rendered
-    // as a "client name" of 475, which reads as corrupted data rather than a missing
-    // mapping. client_name is now explicitly NULL so callers can distinguish "unmapped"
-    // from "named", and the UI labels the id as an id.
-    //
-    // Resolving this needs a ClientId -> name mapping for those 15 ids from whoever owns
-    // the audit system; it is not recoverable in code.
     const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         cqa.ClientId as client_id,
-        NULL as client_name,
+        COALESCE(cm.client_name, cqa.ClientId) as client_name,
         COUNT(*) as total_calls,
         ROUND(AVG(cqa.quality_percentage), 2) as avg_score,
         COUNT(DISTINCT cqa.User) as agent_count
       FROM db_audit.call_quality_assessment cqa
+      LEFT JOIN mas_hrms.client_master cm ON cm.client_code = cqa.ClientId
       WHERE cqa.CallDate BETWEEN ? AND ?
         AND cqa.ClientId IS NOT NULL AND cqa.ClientId != ''
-        ${scopeCond}
-      GROUP BY cqa.ClientId
+      GROUP BY cqa.ClientId, cm.client_name
       ORDER BY total_calls DESC
       LIMIT 20
-    `, params);
+    `, [from, to]);
 
     return res.json({ success: true, clients: rows });
   } catch (err: unknown) {

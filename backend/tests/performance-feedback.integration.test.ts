@@ -26,33 +26,6 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
 // setup.ts, so we inspect the Authorization header token prefix instead.
 // NOTE: vi.mock factories are hoisted above variable declarations, so all
 // data must be inlined inside the factory function.
-/**
- * Authentication is stubbed, not simulated.
- *
- * This suite already models authorization with synthetic tokens — requireRole
- * below derives roles from the token NAME ("hr.token", "manager.token"). That
- * scheme stopped working end-to-end when auth moved to MySQL JWTs, because
- * requireAuth now hands anything not prefixed "mock-token" to verifyAccessToken,
- * jwt.verify throws on "hr.token", and all 17 failures here were 401s raised
- * before requireRole ever ran.
- *
- * Signing real JWTs would defeat the file's own design: the role is carried by
- * the token name, so a real token would carry no role. Stubbing requireAuth
- * keeps that design intact and matches how other route suites here handle it
- * (see engagement/company-posts.routes.test.ts). What this suite exists to prove
- * is the feedback workflow — cycle, requests, submission, report, plan — not the
- * authentication layer, which payroll.security and platform.foundation cover
- * against the real middleware.
- */
-vi.mock("../src/middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "user-1", email: "user-1@mcn.com" };
-    next();
-  },
-  requireWriteAccess: (_req: any, _res: any, next: any) => next(),
-  invalidateAuthContextCache: () => {},
-}));
-
 vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: (...allowedRoles: string[]) =>
     (req: any, _res: any, next: any) => {
@@ -346,18 +319,10 @@ describe("Performance Feedback - Full Workflow Integration", () => {
 
   it("6. Employee views own feedback report", async () => {
     mockEmployee();
-    // Routed by SQL rather than by call order. getReportById resolves the
-    // caller's employee record first — answering 403 ("No employee record for
-    // authenticated user") if that lookup is empty — and issues further queries
-    // around the report read, so a positional pair fed the report row to the
-    // wrong query and produced a 404.
-    mockExecute.mockImplementation(async (sql: unknown) => {
-      const text = String(sql);
-      if (/FROM employees/i.test(text)) {
-        return [[{ id: employeeId, employee_code: "E001" }], []];
-      }
-      if (/report/i.test(text)) {
-        return [[{
+    // Get report (note: reports are accessed by report ID not request ID)
+    mockExecute.mockResolvedValueOnce([
+      [
+        {
           report_id: reportId,
           employee_id: employeeId,
           request_id: requestId,
@@ -369,10 +334,10 @@ describe("Performance Feedback - Full Workflow Integration", () => {
           kpi_scores_json: JSON.stringify([{ kpi_id: "kpi-1", actual_value: 92 }]),
           overall_strengths: "Strong performer in integration test",
           development_areas: "Needs work on problem solving",
-        }], []];
-      }
-      return [[], []];
-    });
+        },
+      ],
+      [],
+    ]);
 
     const res = await request(app)
       .get(`/api/performance-feedback/reports/${reportId}`)

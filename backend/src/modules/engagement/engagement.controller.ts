@@ -54,9 +54,7 @@ function parseLimit(value: unknown, fallback = 50) {
 export const engagementController = {
   async getMySummary(req: AuthenticatedRequest, res: Response) {
     const employee = await requireEmployee(req);
-    // generatedAt feeds the dashboard Source Freshness panel, which read
-    // "Timestamp unavailable" without it (CEO UAT). Computed live per request.
-    return res.json({ success: true, data: await getEmployeeEngagementSummary(employee.id), generatedAt: new Date().toISOString() });
+    return res.json({ success: true, data: await getEmployeeEngagementSummary(employee.id) });
   },
 
   async listBadges(req: AuthenticatedRequest, res: Response) {

@@ -102,7 +102,7 @@ export const platformRouteElements = (
       <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
-      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><BulkUploadHub /></ProtectedRoute>} />
+      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
       <Route path="/assets"          element={<ProtectedRoute><Assets /></ProtectedRoute>} />
       <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
       <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
@@ -130,15 +130,15 @@ export const platformRouteElements = (
 
       {/* Integration / migration / audit */}
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
-      <Route path="/migration-console"            element={<ProtectedRoute roles={['admin']}><NativeMigrationConsole /></ProtectedRoute>} />
-      <Route path="/audit-log"                    element={<ProtectedRoute roles={['admin','super_admin','hr','payroll_head','wfm']}><NativeAuditLog /></ProtectedRoute>} />
+      <Route path="/migration-console"            element={<ProtectedRoute roles={['admin']}><Gate pageCode="MIGRATION_CONSOLE"><NativeMigrationConsole /></Gate></ProtectedRoute>} />
+      <Route path="/audit-log"                    element={<ProtectedRoute roles={['admin','super_admin','hr','payroll_head','wfm']}><Gate pageCode="AUDIT_LOG"><NativeAuditLog /></Gate></ProtectedRoute>} />
 
       {/* Security / access */}
-      <Route path="/security-center"             element={<ProtectedRoute roles={['admin','ceo','coo','hr']}><NativeSecurityCenter /></ProtectedRoute>} />
+      <Route path="/security-center"             element={<ProtectedRoute roles={['admin','ceo','coo','hr']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
       <Route path="/settings/access-control"     element={<ProtectedRoute><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><SuperAdminAccessControl /></ProtectedRoute>} />
-      <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><SuperAdminModuleAccess /></ProtectedRoute>} />
-      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><NativePolicyEngine /></ProtectedRoute>} />
+      <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['admin']}><Gate pageCode="SUPER_ADMIN_PAGE_ACCESS"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin']}><Gate pageCode="SUPER_ADMIN_MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
       <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin']}><LiveLocationMap /></ProtectedRoute>} />
 
@@ -161,7 +161,7 @@ export const platformRouteElements = (
       <Route path="/jobs"                        element={<ProtectedRoute><Gate pageCode="JOBS"><NativeJobsPage /></Gate></ProtectedRoute>} />
 
       {/* Control tower */}
-      <Route path="/control-tower"               element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><NativeControlTower /></ProtectedRoute>} />
+      <Route path="/control-tower"               element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
 
       {/* Management dashboard */}
       <Route path="/management/dashboard"        element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
@@ -196,13 +196,13 @@ export const platformRouteElements = (
       <Route path="/reports-legacy/*" element={<Navigate to="/reports" replace />} />
 
       {/* Communication */}
-      <Route path="/communication/templates"     element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeTemplateManager /></ProtectedRoute>} />
+      <Route path="/communication/templates"     element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="COMM_TEMPLATES"><NativeTemplateManager /></Gate></ProtectedRoute>} />
       <Route path="/settings/email-templates/bulk-import" element={<ProtectedRoute roles={['admin','super_admin']}><Suspense fallback={<PageLoader />}><NativeEmailTemplateBulkImport /></Suspense></ProtectedRoute>} />
-      <Route path="/communication/dispatch"      element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeDispatchCenter /></ProtectedRoute>} />
-      <Route path="/communication/history"       element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeDispatchHistory /></ProtectedRoute>} />
+      <Route path="/communication/dispatch"      element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="COMM_DISPATCH"><NativeDispatchCenter /></Gate></ProtectedRoute>} />
+      <Route path="/communication/history"       element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="COMM_HISTORY"><NativeDispatchHistory /></Gate></ProtectedRoute>} />
       <Route path="/communication/preferences"   element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
-      <Route path="/settings/communication-config" element={<ProtectedRoute roles={['super_admin','admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
+      <Route path="/settings/communication-config" element={<ProtectedRoute roles={['super_admin','admin']}><Suspense fallback={<PageLoader />}><Gate pageCode="COMM_CONFIG"><NativeCommunicationConfig /></Gate></Suspense></ProtectedRoute>} />
     <Route path="/communication/email-centre" element={<ProtectedRoute><Gate pageCode="EMAIL_COMMAND_CENTRE"><NativeEmailCommandCentre /></Gate></ProtectedRoute>} />
-      <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['super_admin','admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
+      <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['super_admin','admin']}><Gate pageCode="CALL_CENTRE_CONFIG"><NativeCallCentreConfig /></Gate></ProtectedRoute>} />
   </>
 );

@@ -58,13 +58,13 @@ export const workforceRouteElements = (
       {/* Audit surface for reversed approvals. Discards themselves are performed
           inline on the Leaves / Regularization / Disputes pages. */}
       <Route path="/admin/discard-center"       element={<ProtectedRoute roles={['super_admin','wfm']}><Gate pageCode="DISCARD_CENTER"><NativeDiscardCenter /></Gate></ProtectedRoute>} />
-      <Route path="/attendance/billing-config"  element={<ProtectedRoute><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></ProtectedRoute>} />
-      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/attendance/billing-config"  element={<ProtectedRoute><Gate pageCode="ATTENDANCE_BILLING_CONFIG"><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><Gate pageCode="ATTENDANCE_MISMATCH_QUEUE"><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
-      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeAttendanceRulesMaster /></ProtectedRoute>} />
+      <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={
         <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm']}>
-          <AdminAttendanceView />
+          <Gate pageCode="HR_ATTENDANCE_LOOKUP"><AdminAttendanceView /></Gate>
         </ProtectedRoute>
       } />
 
@@ -73,18 +73,18 @@ export const workforceRouteElements = (
       <Route path="/leave-approvals" element={<Navigate to="/leaves" replace />} />
       <Route path="/leave/requests"  element={<Navigate to="/leaves" replace />} />
       <Route path="/leave-types"  element={<ProtectedRoute><Gate pageCode="LEAVE_TYPES"><NativeLeaveTypeConfig /></Gate></ProtectedRoute>} />
-      <Route path="/maternity-leave" element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeMaternityLeave /></ProtectedRoute>} />
+      <Route path="/maternity-leave" element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="MATERNITY_LEAVE"><NativeMaternityLeave /></Gate></ProtectedRoute>} />
 
       {/* WFM / Roster */}
       <Route path="/wfm/roster"        element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMRoster /></Gate></ProtectedRoute>} />
       <Route path="/wfm-roster"        element={<Navigate to="/wfm/roster" replace />} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWFMPlanningRules /></ProtectedRoute>} />
-      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeSlotRequirementBuilder /></ProtectedRoute>} />
+      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
       <Route path="/wfm/auto-roster"   element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWeekOffDayRuleConfig /></ProtectedRoute>} />
-      <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><WeekoffFairness /></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
       <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
 
       {/* Roster self-service */}
@@ -106,20 +106,20 @@ export const workforceRouteElements = (
       {/* Business command */}
       <Route path="/business-command-center" element={
         <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager','ceo','coo','hr','manager','process_manager']}>
-          <NativeBusinessCommandCenter />
+          <Gate pageCode="BUSINESS_COMMAND_CENTER"><NativeBusinessCommandCenter /></Gate>
         </ProtectedRoute>
       } />
       <Route path="/business-actions" element={
         <ProtectedRoute roles={['super_admin','admin','branch_head','operations_manager','ceo','coo','hr','manager','process_manager','team_leader','tl']}>
-          <NativeBusinessActionQueue />
+          <Gate pageCode="BUSINESS_ACTION_QUEUE"><NativeBusinessActionQueue /></Gate>
         </ProtectedRoute>
       } />
 
       {/* WFM SPOC Config — admin only */}
-      <Route path="/wfm/branch-spoc-config" element={<ProtectedRoute roles={['super_admin','admin']}><NativeBranchWFMSpocConfig /></ProtectedRoute>} />
+      <Route path="/wfm/branch-spoc-config" element={<ProtectedRoute roles={['super_admin','admin']}><Gate pageCode="WFM_BRANCH_SPOC_CONFIG"><NativeBranchWFMSpocConfig /></Gate></ProtectedRoute>} />
 
       {/* Break management — CANONICAL device route: /wfm/break-desk-devices */}
-      <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><BreakDeskDevices /></ProtectedRoute>} />
+      <Route path="/wfm/break-desk-devices" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_BREAK_DESK_DEVICES"><BreakDeskDevices /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
       <Route path="/break-management/devices" element={<Navigate to="/wfm/break-desk-devices" replace />} />
       <Route path="/break-reports" element={<Navigate to="/reports?view=library&report=break-daily-summary" replace />} />

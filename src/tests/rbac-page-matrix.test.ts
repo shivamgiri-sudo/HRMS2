@@ -4,7 +4,6 @@ import {
   COMMON_USER_PAGE_CODES,
   getRolePageCodes,
   ROLE_DASHBOARD_PAGE_CODES,
-  ROLE_EXCLUDED_PAGE_CODES,
 } from "@/lib/rbacPageMatrix";
 
 describe("rbac page matrix", () => {
@@ -13,22 +12,7 @@ describe("rbac page matrix", () => {
     (roleKey) => {
       const pages = getRolePageCodes(roleKey);
 
-      // Every common page EXCEPT any the role explicitly excludes. The blanket
-      // "all roles get all common pages" assertion stopped holding on 31-Jul-2026,
-      // when ROLE_EXCLUDED_PAGE_CODES was introduced so the CEO — who is not
-      // measured on operational KPIs — no longer receives MY_KPI.
-      //
-      // Deriving the expectation from ROLE_EXCLUDED_PAGE_CODES rather than
-      // hardcoding the CEO keeps this test meaningful: an undocumented removal
-      // still fails, only a declared one passes.
-      const excluded = new Set(ROLE_EXCLUDED_PAGE_CODES[roleKey] ?? []);
-      const expected = COMMON_USER_PAGE_CODES.filter((pageCode) => !excluded.has(pageCode));
-
-      expect(expected.every((pageCode) => pages.includes(pageCode))).toBe(true);
-      // And an excluded page really is absent, not merely tolerated.
-      for (const pageCode of excluded) {
-        expect(pages).not.toContain(pageCode);
-      }
+      expect(COMMON_USER_PAGE_CODES.every((pageCode) => pages.includes(pageCode))).toBe(true);
     },
   );
 

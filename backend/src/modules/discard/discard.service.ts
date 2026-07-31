@@ -126,16 +126,10 @@ export interface DiscardResult {
  * attendance.manual-override.routes.ts, which is the established answer in this
  * codebase to "may I change attendance for this month". `status` collates
  * utf8mb4_unicode_ci, so lowercase 'finalized' matches the stored 'FINALIZED'
- * (verified: 51 rows).
- *
- * `approved` is included here even though the manual-override guard omits it,
- * because recalculation is not status-neutral: calculatePayrollRunScoped ends with
- * an unconditional `UPDATE salary_prep_run SET status = 'processing'`
- * (payrollCalculate.service.ts:1107). Recalculating an approved run would
- * therefore silently revert its sign-off. 80 approved leaves sit in such months;
- * they need a payroll adjustment rather than a discard.
+ * (verified: 51 rows). `approved` is excluded, consistent with that guard and
+ * with payroll.secure.routes.ts, which groups it with in-progress statuses.
  */
-export const PAYROLL_CLOSED_STATUSES = ["published", "disbursed", "locked", "finalized", "approved"];
+export const PAYROLL_CLOSED_STATUSES = ["published", "disbursed", "locked", "finalized"];
 
 function httpError(message: string, statusCode: number, code?: string): Error {
   return Object.assign(new Error(message), { statusCode, code });
@@ -220,8 +214,7 @@ async function checkPayrollMonths(
         code: "PAYROLL_MONTH_CLOSED",
         message:
           `Payroll is closed for ${closedMonths.map((m) => `${m.month} (${m.runStatus})`).join(", ")}. ` +
-          `A closed month cannot be changed by a discard — raise a payroll adjustment instead. ` +
-          `(An approved run counts as closed: recalculating it would revert its sign-off.)`,
+          `A closed month cannot be changed by a discard — raise a payroll adjustment instead.`,
       }
     : null;
 
@@ -256,74 +249,11 @@ async function recalcPayroll(
         actorUserId,
       });
       statuses.push(`${month}:${res.status}`);
-
-      // Nothing drains payroll_recalculation_queue — no worker, cron or job reads
-      // it, so a queued row stays 'pending' forever. Since a discard already
-      // refuses closed months, anything other than 'recalculated' means payroll
-      // did NOT move, and saying so is the difference between a visible problem
-      // and a silently wrong salary.
-      if (res.status !== "recalculated") {
-        warnings.push(
-          `Payroll was NOT recalculated for ${month} (${res.status}): ${res.message} ` +
-          `Nothing processes the recalculation queue automatically — this needs a manual payroll run.`
-        );
-      }
     } catch (err: any) {
       warnings.push(`Payroll recalculation failed for ${month}: ${err?.message ?? String(err)}`);
     }
   }
   return { status: statuses.length ? statuses.join(", ") : null, warnings };
-}
-
-/**
- * Post-commit cache and snapshot refresh.
- *
- * The attendance and payroll numbers are already correct in the database by this
- * point; these are the stores that would otherwise keep serving the pre-discard
- * values. Each is isolated — the discard is durable and must not be undone by a
- * cache or snapshot failure.
- */
-async function refreshDerivedStores(
-  employeeId: string,
-  months: string[]
-): Promise<string[]> {
-  const warnings: string[] = [];
-
-  // /api/employees/hr-hub holds a 30s in-process cache with no invalidation hook,
-  // so the Attendance Hub would keep showing pre-discard present_days / lwp_days
-  // even on a forced refetch.
-  try {
-    const { invalidateHrHubCache } = await import("../employees/employee.routes.js");
-    invalidateHrHubCache();
-  } catch (err: any) {
-    warnings.push(`Attendance Hub cache could not be cleared: ${err?.message ?? String(err)}`);
-  }
-
-  // pnl_running_salary_snapshot feeds the P&L Agent/DSC/BMC people-cost lines and
-  // is otherwise only written by a manual refresh endpoint. Scoped to this one
-  // employee (~1.4s); a whole-branch refresh would take minutes.
-  for (const month of months) {
-    try {
-      const { refreshRunningSalarySnapshot } = await import(
-        "../process-pnl/pnl-running-salary.service.js"
-      );
-      await refreshRunningSalarySnapshot(month, { employeeId });
-    } catch (err: any) {
-      warnings.push(
-        `P&L running-salary snapshot not refreshed for ${month}: ${err?.message ?? String(err)}. ` +
-        `People-cost figures will show the pre-discard amount until the next manual refresh.`
-      );
-    }
-  }
-
-  // attendance_reconciliation_issue is only opened/closed by a full audit on a
-  // daily cron. Not triggered here — it is a lookback sweep across all employees.
-  warnings.push(
-    "Attendance reconciliation issues are recalculated by a daily job, so the " +
-    "control tower may lag this change by up to a day."
-  );
-
-  return warnings;
 }
 
 // ─── Entity loading ──────────────────────────────────────────────────────────
@@ -644,7 +574,6 @@ export const discardService = {
     warnings.push(...(await rederiveDates(employeeId, plans)));
     const payrollResult = await recalcPayroll(employeeId, months, "leave_discarded", id, actor.userId);
     warnings.push(...payrollResult.warnings);
-    warnings.push(...(await refreshDerivedStores(employeeId, months)));
 
     await logSensitiveAction({
       actor_user_id: actor.userId,
@@ -750,7 +679,6 @@ export const discardService = {
       employeeId, [month], "attendance_regularization_discarded", id, actor.userId
     );
     warnings.push(...payrollResult.warnings);
-    warnings.push(...(await refreshDerivedStores(employeeId, [month])));
 
     // Two audit rows, mirroring the approval pair: one on the request, one on the
     // attendance day keyed the same way as ATTENDANCE_RECORD_CORRECTED so the

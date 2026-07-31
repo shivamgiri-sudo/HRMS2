@@ -36,15 +36,15 @@ export const financeRouteElements = (
       <Route path="/procurement" element={<ProtectedRoute><Gate pageCode="PROCUREMENT"><NativeProcurementPage /></Gate></ProtectedRoute>} />
 
       {/* Finance */}
-      <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><NativeVendorPaymentTracking /></ProtectedRoute>} />
-      <Route path="/finance/grn"                     element={<ProtectedRoute roles={financeRoles}><NativeGRNManagement /></ProtectedRoute>} />
-      <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><BranchBudgetManagementPage /></ProtectedRoute>} />
-      <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><BudgetConsolidationPage /></ProtectedRoute>} />
-      <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><ProcessPnlPage /></ProtectedRoute>} />
-      <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><ProcessPnlConfigurationPage /></ProtectedRoute>} />
-      <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><ProcessLobManagementPage /></ProtectedRoute>} />
-      <Route path="/finance/process-pnl/period-close"  element={<ProtectedRoute roles={pnlRoles}><PnlPeriodClosePage /></ProtectedRoute>} />
-      <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlRoles}><ProcessPnlDetailPage /></ProtectedRoute>} />
+      <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={financeRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
+      <Route path="/finance/grn"                     element={<ProtectedRoute roles={financeRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />
+      <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_CONFIG"><ProcessPnlConfigurationPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_LOBS"><ProcessLobManagementPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/period-close"  element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_PERIOD_CLOSE"><PnlPeriodClosePage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlDetailPage /></Gate></ProtectedRoute>} />
 
       {/*
         Expenses — RETIRED, redirected to the working reimbursement flow.
