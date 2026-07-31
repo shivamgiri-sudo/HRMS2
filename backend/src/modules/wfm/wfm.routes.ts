@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { db } from "../../db/mysql.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { wfmController } from "./wfm.controller.js";
@@ -92,6 +93,72 @@ wfmRouter.get("/sessions/:sessionId/breaks", h(async (req: any, res: any) => {
   const breaks = await wfmService.getBreaksForSession(req.params.sessionId);
   return res.json({ success: true, data: breaks });
 }));
+/**
+ * GET /attendance/breaks?recordIds=a,b,c — breaks for several attendance records at once.
+ *
+ * The profile's attendance history has always called this and no such route existed, so it
+ * 404'd on every load and break details never appeared. Fetching them one record at a time
+ * through /sessions/:sessionId/breaks would mean a request per row, which is why the caller
+ * asks for them in a batch.
+ *
+ * Scoped to the caller's own employee, deliberately. recordIds arrive from the client, so
+ * without that filter anyone could pass another person's attendance ids and read where and
+ * when they took breaks. The existing /sessions/:sessionId/breaks route has no such check;
+ * that is not a precedent worth copying. This surface is self-only — Profile.tsx loads
+ * /api/employees/me and the route carries no employee parameter — so restricting to the
+ * caller costs no legitimate use.
+ *
+ * Returns the shape the client reads directly: it casts the response to AttendanceBreak[]
+ * and filters on attendance_record_id, without the field mapping that useBreaksForRecord
+ * applies. Returning the raw wfm_break_log columns would leave every filter matching
+ * nothing, and the breaks would silently appear absent rather than erroring.
+ */
+const MAX_BREAK_RECORD_IDS = 200;
+
+wfmRouter.get("/attendance/breaks", h(async (req: any, res: any) => {
+  const raw = String(req.query.recordIds ?? "").trim();
+  const recordIds = raw
+    .split(",")
+    .map((id: string) => id.trim())
+    .filter(Boolean)
+    // A month of attendance is ~31 rows; the cap only stops an unbounded IN list.
+    .slice(0, MAX_BREAK_RECORD_IDS);
+  if (recordIds.length === 0) return res.json({ success: true, data: [] });
+
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  // No employee record means no attendance of one's own — an empty list, not an error.
+  if (!callerEmp) return res.json({ success: true, data: [] });
+
+  const placeholders = recordIds.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, session_id, break_start, break_end, created_at
+       FROM wfm_break_log
+      WHERE session_id IN (${placeholders})
+        AND employee_id = ?
+      ORDER BY break_start ASC`,
+    [...recordIds, callerEmp.id]
+  );
+
+  return res.json({
+    success: true,
+    data: rows.map((row) => ({
+      id: row.id,
+      attendance_record_id: row.session_id,
+      pause_time: row.break_start,
+      resume_time: row.break_end ?? null,
+      // wfm_break_log carries no geolocation. Returned as null rather than omitted so the
+      // client's AttendanceBreak shape is satisfied and "no location" is explicit.
+      pause_latitude: null,
+      pause_longitude: null,
+      pause_location_name: null,
+      resume_latitude: null,
+      resume_longitude: null,
+      resume_location_name: null,
+      created_at: row.created_at,
+    })),
+  });
+}));
+
 wfmRouter.patch("/breaks/:breakId/end", h(async (req: any, res: any) => {
   await wfmService.endBreak(req.params.breakId, req.authUser!.id);
   return res.json({ success: true, message: "Break ended" });
