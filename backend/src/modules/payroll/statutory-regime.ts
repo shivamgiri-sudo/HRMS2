@@ -26,6 +26,38 @@
  * needs no database.
  */
 
+/**
+ * Configuration keys a TDS computation cannot proceed without.
+ *
+ * Lives here rather than beside the resolver so calculateTds can depend on it
+ * without pulling in a database module — the point of the contract is that the
+ * pure calculator refuses to invent a rate, and that has to hold everywhere.
+ *
+ * The slab boundaries are FY 2025-26 onward (Budget 2025), unchanged by Budget
+ * 2026. A future Finance Act that reshapes the bands changes this list, and a
+ * missing key then surfaces as a named gap instead of a silent default.
+ */
+export const REQUIRED_TDS_CONFIG_KEYS = [
+  "tds_slab_0_400000",
+  "tds_slab_400001_800000",
+  "tds_slab_800001_1200000",
+  "tds_slab_1200001_1600000",
+  "tds_slab_1600001_2000000",
+  "tds_slab_2000001_2400000",
+  "tds_slab_2400001_above",
+  "tds_standard_deduction",
+  "tds_rebate_87a_limit",
+  "tds_cess_pct",
+] as const;
+
+/** Keys from REQUIRED_TDS_CONFIG_KEYS absent from a config map. */
+export function missingTdsConfigKeys(config: Record<string, unknown>): string[] {
+  return REQUIRED_TDS_CONFIG_KEYS.filter((key) => {
+    const value = config[key];
+    return value === undefined || value === null || !Number.isFinite(Number(value));
+  });
+}
+
 export type StatutoryActId = "1961" | "2025";
 
 export interface StatutoryRegime {

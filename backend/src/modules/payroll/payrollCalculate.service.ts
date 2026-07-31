@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { missingTdsConfigKeys } from "./statutory-regime.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
@@ -89,6 +90,13 @@ export interface TdsResult {
   tds_annual: number;
   tds_monthly: number;
   effective_rate: number;
+  /**
+   * "pending_configuration" means no rate was applied because approved config
+   * was absent — NOT that the employee owes nothing. A caller must treat the
+   * zeros as unusable rather than deducting them.
+   */
+  status: "computed" | "pending_configuration";
+  missing_config_keys: string[];
 }
 
 interface StatutoryConfigMap {
@@ -105,22 +113,42 @@ export function calculateTds(
   annualTaxableIncome: number,
   statutoryConfig: StatutoryConfigMap
 ): TdsResult {
-  const stdDeduction = statutoryConfig["tds_standard_deduction"] ?? 75000;
-  // Budget 2025: 87A rebate is ₹12L (total income ≤ ₹12L → nil tax)
-  const rebateLimit  = statutoryConfig["tds_rebate_87a_limit"]   ?? 1200000;
-  const cessPct      = statutoryConfig["tds_cess_pct"]           ?? 4;
+  // No hardcoded fallbacks. Every rate below comes from approved configuration
+  // or the computation does not happen.
+  //
+  // The hazard was never that the old literals were wrong — they matched the
+  // Finance Act 2025 bands, which Budget 2026 left alone. It is that constants
+  // go stale invisibly: after a Finance Act changes a band, code carrying `?? 5`
+  // keeps deducting last year's rate and nothing reports it. Under-deduction is
+  // the employer's liability, with interest under s.201(1A) (s.392 of the 2025
+  // Act from 1 April 2026), so this refuses rather than guesses.
+  const missing = missingTdsConfigKeys(statutoryConfig);
+  if (missing.length > 0) {
+    return {
+      tds_annual: 0,
+      tds_monthly: 0,
+      effective_rate: 0,
+      status: "pending_configuration",
+      missing_config_keys: missing,
+    };
+  }
+
+  const stdDeduction = statutoryConfig["tds_standard_deduction"];
+  const rebateLimit  = statutoryConfig["tds_rebate_87a_limit"];
+  const cessPct      = statutoryConfig["tds_cess_pct"];
 
   const taxableIncome = Math.max(0, annualTaxableIncome - stdDeduction);
 
-  // New regime slabs FY 2026-27 — Budget 2025 (Finance Act 2025)
+  // Band boundaries are structural (Finance Act 2025, unchanged by Budget 2026);
+  // the RATES are configuration and are resolved per period.
   const slabs: Array<{ from: number; to: number; rate: number }> = [
-    { from: 0,       to: 400000,  rate: (statutoryConfig["tds_slab_0_400000"]         ?? 0)  / 100 },
-    { from: 400001,  to: 800000,  rate: (statutoryConfig["tds_slab_400001_800000"]    ?? 5)  / 100 },
-    { from: 800001,  to: 1200000, rate: (statutoryConfig["tds_slab_800001_1200000"]   ?? 10) / 100 },
-    { from: 1200001, to: 1600000, rate: (statutoryConfig["tds_slab_1200001_1600000"]  ?? 15) / 100 },
-    { from: 1600001, to: 2000000, rate: (statutoryConfig["tds_slab_1600001_2000000"]  ?? 20) / 100 },
-    { from: 2000001, to: 2400000, rate: (statutoryConfig["tds_slab_2000001_2400000"]  ?? 25) / 100 },
-    { from: 2400001, to: Infinity, rate: (statutoryConfig["tds_slab_2400001_above"]   ?? 30) / 100 },
+    { from: 0,       to: 400000,  rate: statutoryConfig["tds_slab_0_400000"]        / 100 },
+    { from: 400001,  to: 800000,  rate: statutoryConfig["tds_slab_400001_800000"]   / 100 },
+    { from: 800001,  to: 1200000, rate: statutoryConfig["tds_slab_800001_1200000"]  / 100 },
+    { from: 1200001, to: 1600000, rate: statutoryConfig["tds_slab_1200001_1600000"] / 100 },
+    { from: 1600001, to: 2000000, rate: statutoryConfig["tds_slab_1600001_2000000"] / 100 },
+    { from: 2000001, to: 2400000, rate: statutoryConfig["tds_slab_2000001_2400000"] / 100 },
+    { from: 2400001, to: Infinity, rate: statutoryConfig["tds_slab_2400001_above"]  / 100 },
   ];
 
   let tax = 0;
@@ -145,7 +173,7 @@ export function calculateTds(
     ? Math.round((tds_annual / annualTaxableIncome) * 10000) / 100
     : 0;
 
-  return { tds_annual, tds_monthly, effective_rate };
+  return { tds_annual, tds_monthly, effective_rate, status: "computed", missing_config_keys: [] };
 }
 
 // ─── Professional Tax from Slab ───────────────────────────────────────────────
@@ -732,13 +760,30 @@ export async function calculatePayrollRunScoped(
         });
         tdsMonthly = tdsResult.tds_monthly;
       } catch {
-        // Fallback to synchronous engine if taxEngine DB tables unavailable
+        // Fallback to the synchronous engine when the taxEngine tables are
+        // unavailable. It reads the same approved statutory_config, so this is a
+        // different route to the same rates — not a laxer one.
         const annualGross = grossAfterLwp * 12;
         const declHra = decl ? Number(decl.declared_hra) : 0;
         const decl80c = decl ? Number(decl.declared_80c) : 0;
         const decl80d = decl ? Number(decl.declared_80d) : 0;
         const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
-        tdsMonthly = calculateTds(taxableIncome, statConfig).tds_monthly;
+        const fallback = calculateTds(taxableIncome, statConfig);
+
+        // Zeros here mean "no approved rate was found", not "no tax is due".
+        // Deducting them would under-deduct silently, and the shortfall is the
+        // employer's liability with interest — so the run stops instead, naming
+        // what to fix. Previously this path applied hardcoded slabs, so a
+        // taxEngine outage plus stale config produced a plausible number that
+        // nobody could tell was wrong.
+        if (fallback.status === "pending_configuration") {
+          throw new Error(
+            `TDS cannot be computed for ${financialYear}: no approved statutory configuration for ` +
+            `${fallback.missing_config_keys.join(", ")}. Seed and approve these keys before running payroll ` +
+            `for this period — no fallback rates are applied.`,
+          );
+        }
+        tdsMonthly = fallback.tds_monthly;
       }
     }
 
