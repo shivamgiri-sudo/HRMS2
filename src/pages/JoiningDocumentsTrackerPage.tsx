@@ -17,9 +17,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
-import { useAuth } from "@/contexts/AuthContext";
 
 interface EmployeeRow {
   employee_id: string;
@@ -67,7 +66,6 @@ function StatusBadge({ status }: { status: string }) {
 export default function JoiningDocumentsTrackerPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { getAccessToken } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -156,6 +154,13 @@ export default function JoiningDocumentsTrackerPage() {
     onError: (err: any) => toast({ title: "Failed to assign HR", description: err?.message, variant: "destructive" }),
   });
 
+  const { data: hrUsersData } = useQuery({
+    queryKey: ['hr-users-for-assign'],
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; employee_code: string; first_name: string; last_name: string }> }>('/api/employees?role=hr&limit=50'),
+    staleTime: 60_000,
+  });
+  const hrUsers = (hrUsersData as any)?.data ?? [];
+
   const bulkDueDateMutation = useMutation({
     mutationFn: (data: { employee_ids: string[]; due_date: string }) =>
       hrmsApi.post("/api/ats/joining-documents-tracker/bulk-set-due-date", data),
@@ -183,7 +188,7 @@ export default function JoiningDocumentsTrackerPage() {
 
   const handleBulkDownload = async () => {
     try {
-      const token = getAccessToken?.();
+      const token = getAuthToken();
       const response = await fetch("/api/ats/joining-documents-tracker/bulk-download", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -517,14 +522,20 @@ export default function JoiningDocumentsTrackerPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="hrUserId">HR User ID</Label>
-              <Input
+              <Label htmlFor="hrUserId">Assign HR User</Label>
+              <select
                 id="hrUserId"
-                placeholder="Enter HR user ID..."
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={assignedHrUserId}
                 onChange={e => setAssignedHrUserId(e.target.value)}
-                className="mt-1"
-              />
+              >
+                <option value="">— Select HR —</option>
+                {hrUsers.map((u: { id: string; employee_code: string; first_name: string; last_name: string }) => (
+                  <option key={u.id} value={u.id}>
+                    {u.first_name} {u.last_name} ({u.employee_code})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <DialogFooter>
