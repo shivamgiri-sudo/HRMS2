@@ -21,6 +21,29 @@
 -- The ENUM is widened, never narrowed, so every existing row stays legal and
 -- this is safe to re-run.
 
-ALTER TABLE statutory_filing_record
-  MODIFY COLUMN filing_type
-    ENUM('EPF','ESIC','PT','TDS_24Q','TDS_138','LWF') NOT NULL;
+-- GUARDED BECAUSE THE TABLE MAY NOT EXIST YET
+-- ------------------------------------------
+-- statutory_filing_record is created lazily, inline, by
+-- payroll-statutory-filing.routes.ts on first use — so on a database where that
+-- route has never run, the table is absent and a bare ALTER fails with
+-- ER_NO_SUCH_TABLE. That is not hypothetical: production has no such table
+-- today. An unguarded ALTER would abort the migration run and, with
+-- STOP_ON_FIRST_FAILURE, block every migration queued behind it.
+--
+-- Where the table is absent this is a no-op, and correctly so: the inline
+-- CREATE TABLE already declares the widened ENUM including TDS_138, so a
+-- database that creates the table later gets the right shape without this file.
+-- Where the table does exist and predates the 2025 Act, the ENUM is widened.
+-- Either way the outcome is the same column definition.
+
+SET @stmt = (
+  SELECT IF(
+    (SELECT COUNT(*) FROM information_schema.tables
+      WHERE table_schema = DATABASE() AND table_name = 'statutory_filing_record') > 0,
+    'ALTER TABLE statutory_filing_record MODIFY COLUMN filing_type ENUM(''EPF'',''ESIC'',''PT'',''TDS_24Q'',''TDS_138'',''LWF'') NOT NULL',
+    'DO 0'
+  )
+);
+PREPARE s FROM @stmt;
+EXECUTE s;
+DEALLOCATE PREPARE s;
