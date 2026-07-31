@@ -2,7 +2,6 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { missingTdsConfigKeys } from "./statutory-regime.js";
-import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
@@ -227,6 +226,8 @@ interface EmployeeRow {
   employee_id: string;
   employee_code: string;
   prep_line_id?: string | null;
+  overtime_hours: number;
+  overtime_amount: number;
   ctc_annual: number;
   basic_pct: number;
   hra_pct: number;
@@ -277,11 +278,15 @@ export async function calculatePayrollRunScoped(
   // TDS mode: 'manual' = skip auto-TDS projection; Payroll HO uploads amounts separately.
   const tdsMode: 'auto' | 'manual' = (run as any).tds_mode ?? 'manual';
 
-  // 2a. Statutory config in force for the month being run (for TDS slab lookups).
-  // Resolved for run.run_month rather than for today: recalculating an earlier
-  // month must apply the rates that governed it, or a reissued payslip disagrees
-  // with what was actually deducted and filed.
-  const statConfig: StatutoryConfigMap = await loadFlatStatutoryConfig(run.run_month);
+  // 2a. Load statutory config as flat key→value map (for TDS slab lookups)
+  const [statKvRows] = await db.execute<RowDataPacket[]>(
+    "SELECT config_key, config_value FROM statutory_config"
+  );
+  const statConfig: StatutoryConfigMap = {};
+  for (const r of statKvRows as Array<{ config_key: string; config_value: number }>) {
+    // Normalise keys to lowercase so calculateTds() lookups work
+    statConfig[r.config_key.toLowerCase()] = Number(r.config_value);
+  }
 
   // 2b. Legacy flat-row fallback (PF / ESIC / PT values)
   const stat: StatutoryRow = {
@@ -333,6 +338,8 @@ export async function calculatePayrollRunScoped(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             spl_existing.id AS prep_line_id,
+            COALESCE(spl_existing.overtime_hours, 0)  AS overtime_hours,
+            COALESCE(spl_existing.overtime_amount, 0) AS overtime_amount,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             e.process_id, e.branch_id,
@@ -878,8 +885,11 @@ export async function calculatePayrollRunScoped(
       gratuityPct: statConfig["gratuity_pct"],
     });
 
-    // Net pay = payrollService net + holiday work extra payout - advance recovery - loan EMI - misc deductions
-    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout - advanceRecovery - loanEmi - miscDeductions);
+    // Preserve WFM-entered OT across recalculations (written by PATCH /lines/:id/overtime)
+    const otAmount = Number(emp.overtime_amount) || 0;
+
+    // Net pay = payrollService net + holiday work extra payout + overtime - advance recovery - loan EMI - misc deductions
+    const netPayFinal = Math.max(0, calc.net_salary + holidayWorkExtraPayout + otAmount - advanceRecovery - loanEmi - miscDeductions);
     const totalDedFinal = calc.total_deductions + advanceRecovery + loanEmi + miscDeductions;
 
     // 6. Accumulate prep line for batch upsert after loop
@@ -945,6 +955,10 @@ export async function calculatePayrollRunScoped(
     for (const ded of statutoryDeductions) {
       if (ded.amount <= 0) continue;
       batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'statutory', 0]);
+    }
+
+    if (otAmount > 0) {
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'OVERTIME', 'Overtime Allowance', 'earning', otAmount, 'overtime', 1]);
     }
 
     for (const ded of miscComponents) {

@@ -31,7 +31,7 @@ function categorize(curr: any, prev: any): VarCategory {
   const pf     = Math.abs((Number(curr.pf_employee) + Number(curr.pf_employer)) - (Number(prev.pf_employee) + Number(prev.pf_employer)));
   const esic   = Math.abs((Number(curr.esic_employee) + Number(curr.esic_employer)) - (Number(prev.esic_employee) + Number(prev.esic_employer)));
   const ded    = Math.abs(Number(curr.total_deductions ?? 0) - Number(prev.total_deductions ?? 0));
-  const ot     = Math.abs(Number(curr.overtime_pay ?? 0) - Number(prev.overtime_pay ?? 0));
+  const ot     = Math.abs(Number(curr.overtime_amount ?? 0) - Number(prev.overtime_amount ?? 0));
 
   if (net < 1) return "NO_CHANGE";
   if (incent > 100) return "INCENTIVE_CHANGE";
@@ -79,7 +79,7 @@ payrollVarianceRouter.get(
          spl.tds,
          spl.professional_tax,
          COALESCE(spl.incentive_total, 0) AS incentive_total,
-         COALESCE(spl.overtime_pay, 0) AS overtime_pay,
+         COALESCE(spl.overtime_amount, 0) AS overtime_amount,
          COALESCE(spl.total_deductions, 0) AS total_deductions,
          spl.paid_working_days,
          spl.lwp_days
@@ -112,7 +112,7 @@ payrollVarianceRouter.get(
          spl.tds,
          spl.professional_tax,
          COALESCE(spl.incentive_total, 0) AS incentive_total,
-         COALESCE(spl.overtime_pay, 0)    AS overtime_pay,
+         COALESCE(spl.overtime_amount, 0)    AS overtime_amount,
          COALESCE(spl.total_deductions, 0) AS total_deductions,
          spl.paid_working_days,
          spl.lwp_days
@@ -171,7 +171,7 @@ payrollVarianceRouter.get(
         curr_pf:      curr ? Number(curr.pf_employee) + Number(curr.pf_employer) : null,
         curr_esic:    curr ? Number(curr.esic_employee) + Number(curr.esic_employer) : null,
         curr_incentive: curr?.incentive_total ?? null,
-        curr_ot:      curr?.overtime_pay  ?? null,
+        curr_ot:      curr?.overtime_amount  ?? null,
         curr_ded:     curr?.total_deductions ?? null,
         // Prev month
         prev_net:     prev?.net_salary    ?? null,
