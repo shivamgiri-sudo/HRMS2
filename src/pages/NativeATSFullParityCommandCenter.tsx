@@ -25,6 +25,7 @@ import { SourcingTab } from "@/components/ats/command-center/SourcingTab";
 import { LiveQueueTab } from "@/components/ats/command-center/LiveQueueTab";
 import { JourneyTab } from "@/components/ats/command-center/JourneyTab";
 import { HealthTab } from "@/components/ats/command-center/HealthTab";
+import { ProvenanceBar } from "@/components/analytics/analytics-kit";
 
 type AnyRow = Record<string, unknown>;
 
@@ -244,119 +245,133 @@ export default function NativeATSFullParityCommandCenter() {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        {/* Hero header */}
-        <section className="rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 p-6 text-white shadow-xl">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="inline-flex rounded-full border border-sky-300/20 bg-sky-400/10 px-3 py-1 text-xs font-black uppercase tracking-widest text-sky-100">
-                ATS App Script Full Parity
-              </div>
-              <h1 className="mt-3 text-3xl font-black tracking-tight lg:text-4xl">ATS Command Center</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-300">
-                Dashboard, live queue, SLA, recruiter productivity, sourcing, candidate journey, confirmation, BGV, notifications and health — full parity layer.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/10 p-4">
-              <div className="mr-2 text-sm text-slate-200">
-                Updated: <b>{data?.refreshTime || "--"}</b>
-              </div>
-              <button
-                onClick={() => void load()}
-                disabled={refreshing}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-sky-400 px-3 py-2 text-sm font-black text-slate-950 disabled:opacity-60"
-              >
-                <RefreshCcw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                {refreshing ? "Loading…" : "Refresh"}
-              </button>
-              <button
-                onClick={() => void runJob("SLA Check", () => hrmsApi.post(`/api/ats-full-parity/jobs/sla-check`, {}))}
-                disabled={!!jobRunning["SLA Check"]}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-400 px-3 py-2 text-sm font-black text-slate-950 disabled:opacity-60"
-              >
-                {jobRunning["SLA Check"] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                Run SLA
-              </button>
-              <button
-                onClick={() => void runJob("Data Repair", () => hrmsApi.post(`/api/ats-full-parity/jobs/repair`, { limit: 500 }))}
-                disabled={!!jobRunning["Data Repair"]}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-sm font-black text-white disabled:opacity-60"
-              >
-                {jobRunning["Data Repair"] ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
-                Repair
-              </button>
-              <button
-                onClick={() => void previewDailyReport()}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-sm font-black text-white"
-              >
-                <FileText className="h-4 w-4" />
-                Daily Report
-              </button>
-            </div>
+        {/* Header — the chrome stays quiet so the data carries the colour. */}
+        <header className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold tracking-tight text-slate-900">ATS Command Center</h1>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Queue, SLA, recruiter productivity, sourcing, rejections, candidate journey and system health.
+            </p>
           </div>
-        </section>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => void load()}
+              disabled={refreshing}
+              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition-colors duration-150 hover:bg-slate-700 disabled:opacity-60"
+            >
+              <RefreshCcw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Loading…" : "Refresh"}
+            </button>
+            <button
+              onClick={() => void runJob("SLA Check", () => hrmsApi.post(`/api/ats-full-parity/jobs/sla-check`, {}))}
+              disabled={!!jobRunning["SLA Check"]}
+              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {jobRunning["SLA Check"] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+              Run SLA
+            </button>
+            <button
+              onClick={() => void runJob("Data Repair", () => hrmsApi.post(`/api/ats-full-parity/jobs/repair`, { limit: 500 }))}
+              disabled={!!jobRunning["Data Repair"]}
+              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {jobRunning["Data Repair"] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
+              Repair
+            </button>
+            <button
+              onClick={() => void previewDailyReport()}
+              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors duration-150 hover:bg-slate-50"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Daily Report
+            </button>
+          </div>
+        </header>
 
         {error && (
-          <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-700">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="text-sm">{error}</span>
+          <div role="alert" className="flex items-start gap-2.5 rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+            <div className="text-xs text-rose-900">
+              <p className="font-bold">Command Center data failed to load</p>
+              <p className="mt-1">{error}</p>
+            </div>
           </div>
         )}
 
-        {/* Sticky filter bar */}
-        <div className="sticky top-0 z-20 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
-            <select
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-            >
-              {periods.map((p) => <option key={p}>{p}</option>)}
-            </select>
-            <select
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-            >
-              <option value="">All branches</option>
-              {(data?.options?.branches || []).map((x) => <option key={x}>{x}</option>)}
-            </select>
-            <select
-              value={process}
-              onChange={(e) => setProcess(e.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-            >
-              <option value="">All processes</option>
-              {(data?.options?.processes || []).map((x) => <option key={x}>{x}</option>)}
-            </select>
-            <select
-              value={recruiter}
-              onChange={(e) => setRecruiter(e.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400"
-            >
-              <option value="">All recruiters</option>
-              {(data?.options?.recruiters || []).map((x) => <option key={x}>{x}</option>)}
-            </select>
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              {refreshing ? (
-                <span className="flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Refreshing…
-                </span>
-              ) : (
-                <span>{data ? "Data loaded" : "Select period & filters above"}</span>
-              )}
-            </div>
+        {/* Provenance — what the figures on every tab cover. */}
+        <ProvenanceBar
+          items={[
+            { label: "Period", value: period === "ALL" ? "All time" : period },
+            { label: "Branch", value: branch || "All branches" },
+            { label: "Process", value: process || "All processes" },
+            { label: "Recruiter", value: recruiter || "All recruiters" },
+            { label: "Refreshed", value: data?.refreshTime || "—", warn: !data?.refreshTime },
+            {
+              label: "Status",
+              value: refreshing ? "Refreshing…" : data ? "Loaded" : "Awaiting data",
+              warn: refreshing || !data,
+            },
+          ]}
+        />
+
+        {/* Filter bar */}
+        <div className="sticky top-0 z-20 rounded-xl border border-slate-200 bg-white/95 p-2.5 shadow-sm backdrop-blur">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Period</span>
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="h-9 cursor-pointer rounded-lg border border-slate-200 px-2.5 text-sm outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                {periods.map((p) => <option key={p}>{p}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Branch</span>
+              <select
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                className="h-9 cursor-pointer rounded-lg border border-slate-200 px-2.5 text-sm outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">All branches</option>
+                {(data?.options?.branches || []).map((x) => <option key={x}>{x}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Process</span>
+              <select
+                value={process}
+                onChange={(e) => setProcess(e.target.value)}
+                className="h-9 cursor-pointer rounded-lg border border-slate-200 px-2.5 text-sm outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">All processes</option>
+                {(data?.options?.processes || []).map((x) => <option key={x}>{x}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Recruiter</span>
+              <select
+                value={recruiter}
+                onChange={(e) => setRecruiter(e.target.value)}
+                className="h-9 cursor-pointer rounded-lg border border-slate-200 px-2.5 text-sm outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">All recruiters</option>
+                {(data?.options?.recruiters || []).map((x) => <option key={x}>{x}</option>)}
+              </select>
+            </label>
           </div>
         </div>
 
         {/* Tabs — horizontally scrollable on mobile */}
         <Tabs value={tab} onValueChange={setTab}>
           <div className="overflow-x-auto">
-            <TabsList className="flex h-auto w-max gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+            <TabsList className="flex h-auto w-max gap-0.5 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
               {TAB_IDS.map((t) => (
                 <TabsTrigger
                   key={t}
                   value={t}
-                  className="whitespace-nowrap rounded-xl px-4 py-2 text-sm font-bold data-[state=active]:bg-slate-950 data-[state=active]:text-white"
+                  className="cursor-pointer whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-semibold text-slate-600 transition-colors duration-150 hover:text-slate-900 data-[state=active]:bg-blue-700 data-[state=active]:text-white"
                 >
                   {t}
                 </TabsTrigger>

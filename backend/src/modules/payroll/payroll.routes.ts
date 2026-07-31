@@ -36,6 +36,38 @@ import type { RowDataPacket } from "mysql2";
 // once compiled, so uploaded tax proofs 404'd in production.
 const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
+/**
+ * Canonical ordering of payroll runs: most-progressed status first.
+ *
+ * A month can hold several runs (a re-run, a correction, an abandoned draft) and
+ * exactly one of them is the figure of record. Every surface that has to choose
+ * between them MUST use this ordering, or the same month reports different totals
+ * in different places — which is precisely how the trend chart came to disagree
+ * with the KPI cards sitting directly above it.
+ *
+ * @param alias table alias for `salary_prep_run`, or "" when the column is unqualified
+ */
+function runRankSql(alias = ""): string {
+  const col = alias ? `${alias}.status` : "status";
+  // UPPER() because statuses are not stored in a consistent case. Production
+  // holds 'FINALIZED' (51 of 67 runs) alongside lowercase 'approved',
+  // 'processing' and 'draft'; a case-sensitive CASE dropped every FINALIZED run
+  // to the ELSE branch — the worst rank — so the most authoritative status was
+  // ranked below a partial 'approved' run. For 2026-03 that selected a 226-line
+  // run worth ₹19.7L over the real 1,140-line payroll worth ₹1.77Cr.
+  return `
+  CASE UPPER(${col})
+    WHEN 'FINALIZED'  THEN 1
+    WHEN 'DISBURSED'  THEN 2
+    WHEN 'LOCKED'     THEN 3
+    WHEN 'APPROVED'   THEN 4
+    WHEN 'COMPLETED'  THEN 5
+    WHEN 'PROCESSING' THEN 6
+    WHEN 'DRAFT'      THEN 7
+    ELSE 8
+  END`;
+}
+
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -762,18 +794,18 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('excluded', 'blocked')
+        -- NOTE (unresolved, needs a payroll owner's decision — deliberately NOT
+        -- changed here): this allow-list omits 'FINALIZED', which is the status of
+        -- 51 of 67 runs in production. It therefore hides 63,316 of 81,528 payslip
+        -- lines, and 10,412 employees have NO visible payslip at all. Either the
+        -- list should become a deny-list on CANCELLED only,
+        -- or FINALIZED runs are intentionally withheld — changing it alters what
+        -- every employee sees in their own payslip history, so it is not a
+        -- unilateral call.
         AND spr.status IN ('locked', 'approved', 'disbursed', 'completed', 'draft', 'processing')
       ORDER BY
         spr.run_month DESC,
-        CASE spr.status
-          WHEN 'disbursed'  THEN 1
-          WHEN 'locked'     THEN 2
-          WHEN 'approved'   THEN 3
-          WHEN 'completed'  THEN 4
-          WHEN 'processing' THEN 5
-          WHEN 'draft'      THEN 6
-          ELSE 7
-        END`,
+        ${runRankSql("spr")}`,
     [callerEmp.id, `${year}-%`]
   );
 
@@ -1499,22 +1531,50 @@ router.get(
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
+/**
+ * A month can hold several payroll runs (a re-run, a correction, an abandoned
+ * draft). Exactly one is the canonical figure for that month: the most-progressed
+ * status, newest on a tie. Both analytics endpoints MUST resolve the month the
+ * same way — the trend chart used to sum every non-cancelled run while the KPI
+ * cards showed a single run, so the same month reported two different totals on
+ * one screen.
+ */
+const RUN_RANK_SQL = runRankSql();
+
+/** One canonical run id per run_month, ranked as above. */
+const CANONICAL_RUNS_CTE = `
+  canonical AS (
+    SELECT id, run_month, status,
+           ROW_NUMBER() OVER (PARTITION BY run_month ORDER BY ${RUN_RANK_SQL}, created_at DESC) AS rn
+      FROM salary_prep_run
+     WHERE UPPER(status) NOT IN ('CANCELLED')
+  )`;
+
 // GET /api/payroll/analytics/trends?months=6
 router.get("/analytics/trends", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const months = Math.min(24, Math.max(1, Number(req.query.months ?? 6)));
+  // Take the latest N months that actually have a run, rather than a calendar
+  // window. `>= CURDATE() - INTERVAL 6 MONTH` returned 7 months (the current one
+  // plus six) under a "Six-Month Trend" heading, and rendered gaps for months
+  // with no payroll.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT spr.run_month,
-            COUNT(DISTINCT spl.employee_id) AS headcount,
-            ROUND(SUM(spl.gross_salary),2)    AS total_gross,
-            ROUND(SUM(spl.total_deductions),2) AS total_deductions,
-            ROUND(SUM(spl.net_salary),2)      AS total_net
-     FROM salary_prep_line spl
-     JOIN salary_prep_run spr ON spr.id = spl.run_id
-     WHERE spr.run_month >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m')
-       AND spl.status != 'cancelled'
-     GROUP BY spr.run_month
-     ORDER BY spr.run_month ASC`,
-    [months]
+    `WITH ${CANONICAL_RUNS_CTE},
+     recent AS (
+       SELECT id, run_month, status FROM canonical WHERE rn = 1
+        ORDER BY run_month DESC LIMIT ${months}
+     )
+     SELECT r.run_month,
+            r.status                            AS run_status,
+            COUNT(DISTINCT spl.employee_id)     AS headcount,
+            ROUND(SUM(spl.gross_salary),2)      AS total_gross,
+            ROUND(SUM(spl.total_deductions),2)  AS total_deductions,
+            ROUND(SUM(spl.net_salary),2)        AS total_net,
+            ROUND(SUM(COALESCE(spl.pf_employer,0)),2)   AS total_pf_employer,
+            ROUND(SUM(COALESCE(spl.esic_employer,0)),2) AS total_esic_employer
+       FROM recent r
+       JOIN salary_prep_line spl ON spl.run_id = r.id AND spl.status != 'cancelled'
+      GROUP BY r.run_month, r.status
+      ORDER BY r.run_month ASC`
   );
   return res.json({ success: true, data: rows });
 }));
@@ -1524,45 +1584,44 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
   const dimension = (req.query.dimension as string) || "department";
   let runMonth = req.query.runMonth as string | undefined;
 
-  // Resolve the canonical single run for the month (most-progressed status, newest on tie)
-  const pickRunId = async (month: string): Promise<string | null> => {
+  // Resolve the canonical single run for the month. Shares RUN_RANK_SQL with the
+  // trends endpoint so both surfaces describe the same run.
+  const pickRun = async (month: string): Promise<{ id: string; status: string; siblings: number } | null> => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM salary_prep_run
-        WHERE run_month = ? AND status NOT IN ('cancelled')
-        ORDER BY
-          CASE status
-            WHEN 'disbursed'  THEN 1
-            WHEN 'locked'     THEN 2
-            WHEN 'approved'   THEN 3
-            WHEN 'completed'  THEN 4
-            WHEN 'processing' THEN 5
-            WHEN 'draft'      THEN 6
-            ELSE 7
-          END,
-          created_at DESC
+      `SELECT id, status, COUNT(*) OVER () AS siblings
+         FROM salary_prep_run
+        WHERE run_month = ? AND UPPER(status) NOT IN ('CANCELLED')
+        ORDER BY ${RUN_RANK_SQL}, created_at DESC
         LIMIT 1`,
       [month]
     );
-    return (rows as any[])[0]?.id ?? null;
+    const row = (rows as any[])[0];
+    return row ? { id: String(row.id), status: String(row.status ?? ""), siblings: Number(row.siblings ?? 1) } : null;
   };
 
   if (!runMonth) {
     const [latest] = await db.execute<RowDataPacket[]>(
-      `SELECT run_month FROM salary_prep_run WHERE status NOT IN ('draft','cancelled')
+      `SELECT run_month FROM salary_prep_run WHERE UPPER(status) NOT IN ('DRAFT','CANCELLED')
        ORDER BY run_month DESC LIMIT 1`
     );
     runMonth = (latest as any[])[0]?.run_month;
     if (!runMonth) return res.json({ success: true, runMonth: null, kpi: {}, data: [] });
   }
 
-  const runId = await pickRunId(runMonth);
-  if (!runId) return res.json({ success: true, runMonth, kpi: {}, data: [] });
+  const run = await pickRun(runMonth);
+  if (!run) return res.json({ success: true, runMonth, kpi: {}, data: [], meta: null });
+  const runId = run.id;
 
   const [kpiRows] = await db.execute<RowDataPacket[]>(
+    // avg_net is derived from the same numerator and denominator the dimension
+    // table uses (total ÷ distinct employees) so the KPI card and the table can
+    // never disagree about what "average" means.
     `SELECT COUNT(DISTINCT spl.employee_id)             AS headcount,
             ROUND(SUM(spl.net_salary),2)                AS total_net,
-            ROUND(AVG(spl.net_salary),2)                AS avg_net,
+            ROUND(SUM(spl.net_salary) / NULLIF(COUNT(DISTINCT spl.employee_id),0),2) AS avg_net,
             ROUND(SUM(spl.gross_salary),2)              AS total_gross,
+            ROUND(SUM(spl.total_deductions),2)          AS total_deductions,
+            ROUND(SUM(spl.basic),2)                     AS total_basic,
             ROUND(SUM(COALESCE(spl.pf_employer,0)),2)   AS total_pf_employer,
             ROUND(SUM(COALESCE(spl.esic_employer,0)),2) AS total_esic_employer
      FROM salary_prep_line spl
@@ -1593,7 +1652,10 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
     `SELECT ${d.sel},
             COUNT(DISTINCT spl.employee_id)                                                           AS headcount,
             ROUND(SUM(spl.basic),2)                                                                   AS total_basic,
-            ROUND(SUM(COALESCE(spl.hra,0)+COALESCE(spl.special_allowance,0)),2) AS total_allowances,
+            -- Everything in gross that is not basic. Summing only hra +
+            -- special_allowance dropped incentive_total and overtime_pay, so
+            -- basic + allowances did not reconcile to gross.
+            ROUND(SUM(GREATEST(spl.gross_salary - spl.basic, 0)),2)                                    AS total_allowances,
             ROUND(SUM(spl.gross_salary),2)                                                            AS total_gross,
             ROUND(SUM(spl.total_deductions),2)                                                        AS total_deductions,
             ROUND(SUM(spl.net_salary),2)                                                              AS total_net,
@@ -1608,7 +1670,18 @@ router.get("/analytics", requireRole("admin", "hr", "super_admin", "finance", "p
     [runId]
   );
 
-  return res.json({ success: true, runMonth, kpi: (kpiRows as any[])[0] ?? {}, data: dimRows });
+  // Provenance: which run these figures came from, its status, and whether other
+  // runs exist for the month. Without this the reader cannot tell a final
+  // disbursed payroll from an in-progress draft.
+  const meta = {
+    runId,
+    runStatus: run.status,
+    isProvisional: ["draft", "processing"].includes(run.status.toLowerCase()),
+    otherRunsInMonth: Math.max(0, run.siblings - 1),
+    dimension,
+  };
+
+  return res.json({ success: true, runMonth, kpi: (kpiRows as any[])[0] ?? {}, data: dimRows, meta });
 }));
 
 // ─── PT Slabs ─────────────────────────────────────────────────────────────────

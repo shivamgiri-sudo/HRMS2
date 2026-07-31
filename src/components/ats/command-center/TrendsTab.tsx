@@ -1,6 +1,18 @@
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend
-} from "recharts";
+  AXIS_TICK,
+  ChartCard,
+  ChartSkeleton,
+  CoverageNote,
+  EmptyState,
+  GRID_PROPS,
+  SERIES,
+  TOOLTIP_STYLE,
+  num,
+  pct,
+  ratio,
+} from "@/components/analytics/analytics-kit";
 
 type AnyRow = Record<string, unknown>;
 
@@ -11,10 +23,12 @@ interface TrendsTabProps {
   loading?: boolean;
 }
 
-function n(v: unknown) { return Number(v || 0).toLocaleString("en-IN"); }
-function pct(v: unknown) { return `${Number(v || 0).toFixed(1)}%`; }
+const N = (v: unknown) => Number(v || 0);
+const S = (v: unknown) => String(v ?? "");
+const CHART_GROUPS = 8;
+
 function mins(v: unknown) {
-  const m = Number(v || 0);
+  const m = Math.round(N(v));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 }
 
@@ -22,109 +36,187 @@ export function TrendsTab({ processTable, sourceTable, slotTable, loading }: Tre
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="h-72 animate-pulse rounded-lg border border-slate-200 bg-slate-100" />
-        <div className="h-64 animate-pulse rounded-lg border border-slate-200 bg-slate-100" />
+        <ChartSkeleton height={280} />
+        <ChartSkeleton height={220} />
       </div>
     );
   }
 
-  const processChartData = (processTable || []).slice(0, 8).map((p) => ({
-    name: String(p.Name || "").slice(0, 14),
-    Arrivals: Number(p.TotalArrival || 0),
-    Selected: Number(p.Selection || 0),
-    Rejected: Number(p.Rejection || 0),
+  const processRows = processTable || [];
+  const head = processRows.slice(0, CHART_GROUPS);
+  const tail = processRows.slice(CHART_GROUPS);
+  const processChartData = head.map((p) => ({
+    // Axis labels are truncated for layout only — the tooltip carries the full name,
+    // so a process is never silently misidentified by a clipped label.
+    name: S(p.Name).length > 16 ? `${S(p.Name).slice(0, 15)}…` : S(p.Name),
+    fullName: S(p.Name),
+    Arrivals: N(p.TotalArrival),
+    Selected: N(p.Selection),
+    Rejected: N(p.Rejection),
   }));
 
+  const sourceTotal = (sourceTable || []).reduce((sum, r) => sum + N(r.TotalArrival), 0);
+  const slotTotal = (slotTable || []).reduce((sum, r) => sum + N(r.TotalArrival), 0);
+
   return (
-    <div className="space-y-5">
-      {/* Process Chart */}
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <h3 className="text-sm font-bold text-slate-800 mb-3">By Process</h3>
-        {processChartData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={processChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="name" fontSize={10} stroke="#64748b" angle={-20} textAnchor="end" height={50} />
-              <YAxis fontSize={11} stroke="#64748b" />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-              <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Arrivals" fill="#1e40af" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Selected" fill="#10b981" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Rejected" fill="#ef4444" radius={[4, 4, 0, 0]} />
+    <div className="space-y-4">
+      <ChartCard
+        title="By Process"
+        subtitle="Arrivals and outcomes for the highest-volume processes."
+        footer={
+          <CoverageNote
+            shownGroups={head.length}
+            distinctGroups={processRows.length}
+            shownRecords={head.reduce((sum, p) => sum + N(p.TotalArrival), 0)}
+            otherGroups={tail.length}
+            otherRecords={tail.reduce((sum, p) => sum + N(p.TotalArrival), 0)}
+            unit="arrivals"
+          />
+        }
+      >
+        {processChartData.length === 0 ? (
+          <EmptyState label="No process data for these filters" height={260} />
+        ) : (
+          <ResponsiveContainer width="100%" height={290}>
+            <BarChart data={processChartData} margin={{ top: 8, right: 8, bottom: 28, left: 0 }}>
+              <CartesianGrid {...GRID_PROPS} />
+              <XAxis
+                dataKey="name"
+                tick={{ ...AXIS_TICK, fontSize: 10 }}
+                angle={-22}
+                textAnchor="end"
+                height={56}
+                interval={0}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis tick={AXIS_TICK} allowDecimals={false} axisLine={false} tickLine={false} width={44} />
+              <Tooltip
+                cursor={{ fill: "#f1f5f9" }}
+                contentStyle={TOOLTIP_STYLE}
+                formatter={(value: number, name: string) => [num(value), name]}
+                labelFormatter={(label, payload) => {
+                  const row: any = payload?.[0]?.payload;
+                  if (!row) return label;
+                  const rate = ratio(row.Selected, row.Arrivals);
+                  return `${row.fullName}${rate !== null ? ` — ${pct(rate)} selection rate` : ""}`;
+                }}
+              />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 6 }} />
+              <Bar dataKey="Arrivals" fill={SERIES[0]} radius={[3, 3, 0, 0]} barSize={16} />
+              <Bar dataKey="Selected" fill={SERIES[5]} radius={[3, 3, 0, 0]} barSize={16} />
+              <Bar dataKey="Rejected" fill={SERIES[1]} radius={[3, 3, 0, 0]} barSize={16} />
             </BarChart>
           </ResponsiveContainer>
-        ) : (
-          <div className="flex h-60 items-center justify-center text-sm text-slate-400">No process data</div>
         )}
-      </div>
+      </ChartCard>
 
-      {/* Tables */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Source Table */}
-        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-          <div className="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
-            <h3 className="text-sm font-bold text-slate-800">By Source Channel</h3>
-          </div>
-          <div className="overflow-auto max-h-72">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-white text-slate-500 border-b border-slate-200">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium">Source</th>
-                  <th className="text-right px-3 py-2 font-medium">Arrival</th>
-                  <th className="text-right px-3 py-2 font-medium">Selected</th>
-                  <th className="text-right px-3 py-2 font-medium">Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(sourceTable || []).map((row, i) => (
-                  <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium text-slate-800">{String(row.Name || "-")}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{n(row.TotalArrival)}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700 font-medium">{n(row.Selection)}</td>
-                    <td className="px-3 py-2 text-right text-blue-700">{pct(row.SelectionRate)}</td>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ChartCard
+          title="By Source Channel"
+          subtitle="Which channels bring candidates in, and how many convert."
+          action={
+            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+              {num((sourceTable || []).length)} channels
+            </span>
+          }
+        >
+          {(sourceTable || []).length === 0 ? (
+            <EmptyState label="No source data" height={160} />
+          ) : (
+            <div className="max-h-[320px] overflow-auto rounded-lg border border-slate-200">
+              <table className="w-full min-w-[420px] text-xs">
+                <thead className="sticky top-0 z-10 bg-slate-50">
+                  <tr className="border-b border-slate-200 text-slate-600">
+                    <th className="px-3 py-2 text-left font-semibold">Source</th>
+                    <th className="px-3 py-2 text-right font-semibold">Arrival</th>
+                    <th className="px-3 py-2 text-right font-semibold">Share</th>
+                    <th className="px-3 py-2 text-right font-semibold">Selected</th>
+                    <th className="px-3 py-2 text-right font-semibold">Sel %</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {(sourceTable || []).length === 0 && (
-              <p className="text-center text-xs text-slate-400 py-8">No source data</p>
-            )}
-          </div>
-        </div>
+                </thead>
+                <tbody>
+                  {(sourceTable || []).map((row, i) => (
+                    <tr key={`${S(row.Name)}-${i}`} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
+                      <td className="px-3 py-2 font-medium text-slate-800">{S(row.Name) || "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-700">{num(N(row.TotalArrival))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                        {pct(ratio(N(row.TotalArrival), sourceTotal) ?? 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700">
+                        {num(N(row.Selection))}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-blue-700">{pct(N(row.SelectionRate))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold text-slate-900">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{num(sourceTotal)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">100.0%</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {num((sourceTable || []).reduce((sum, r) => sum + N(r.Selection), 0))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {pct(
+                        ratio(
+                          (sourceTable || []).reduce((sum, r) => sum + N(r.Selection), 0),
+                          sourceTotal
+                        ) ?? 0
+                      )}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </ChartCard>
 
-        {/* Slot Table */}
-        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-          <div className="border-b border-slate-200 bg-slate-50 px-4 py-2.5">
-            <h3 className="text-sm font-bold text-slate-800">By Time Slot</h3>
-          </div>
-          <div className="overflow-auto max-h-72">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-white text-slate-500 border-b border-slate-200">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium">Slot</th>
-                  <th className="text-right px-3 py-2 font-medium">Arrival</th>
-                  <th className="text-right px-3 py-2 font-medium">Selected</th>
-                  <th className="text-right px-3 py-2 font-medium">SLA</th>
-                  <th className="text-right px-3 py-2 font-medium">Avg Wait</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(slotTable || []).map((row, i) => (
-                  <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium text-slate-800">{String(row.Name || "-")}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{n(row.TotalArrival)}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700 font-medium">{n(row.Selection)}</td>
-                    <td className="px-3 py-2 text-right text-amber-700">{n(row.SlaBreach)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">{mins(row.AvgWaitMinutes)}</td>
+        <ChartCard
+          title="By Time Slot"
+          subtitle="When candidates arrive, and where the waiting builds up."
+          action={
+            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+              {num((slotTable || []).length)} slots
+            </span>
+          }
+        >
+          {(slotTable || []).length === 0 ? (
+            <EmptyState label="No slot data" height={160} />
+          ) : (
+            <div className="max-h-[320px] overflow-auto rounded-lg border border-slate-200">
+              <table className="w-full min-w-[460px] text-xs">
+                <thead className="sticky top-0 z-10 bg-slate-50">
+                  <tr className="border-b border-slate-200 text-slate-600">
+                    <th className="px-3 py-2 text-left font-semibold">Slot</th>
+                    <th className="px-3 py-2 text-right font-semibold">Arrival</th>
+                    <th className="px-3 py-2 text-right font-semibold">Share</th>
+                    <th className="px-3 py-2 text-right font-semibold">Selected</th>
+                    <th className="px-3 py-2 text-right font-semibold">SLA Breach</th>
+                    <th className="px-3 py-2 text-right font-semibold">Avg Wait</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {(slotTable || []).length === 0 && (
-              <p className="text-center text-xs text-slate-400 py-8">No slot data</p>
-            )}
-          </div>
-        </div>
+                </thead>
+                <tbody>
+                  {(slotTable || []).map((row, i) => (
+                    <tr key={`${S(row.Name)}-${i}`} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
+                      <td className="px-3 py-2 font-medium text-slate-800">{S(row.Name) || "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-700">{num(N(row.TotalArrival))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                        {pct(ratio(N(row.TotalArrival), slotTotal) ?? 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700">
+                        {num(N(row.Selection))}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-amber-700">{num(N(row.SlaBreach))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{mins(row.AvgWaitMinutes)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </ChartCard>
       </div>
     </div>
   );

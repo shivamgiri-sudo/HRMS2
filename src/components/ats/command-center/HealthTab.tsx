@@ -1,341 +1,337 @@
-import { useState } from "react";
-import { CheckCircle, AlertTriangle, RefreshCcw, Activity, Shield } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, CheckCircle2, Plug, RefreshCcw, Shield, Bell } from "lucide-react";
 import { toast } from "sonner";
 
+import { hrmsApi } from "@/lib/hrmsApi";
+import {
+  ChartCard,
+  ChartSkeleton,
+  EmptyState,
+  StatTile,
+  num,
+  pct,
+  ratio,
+} from "@/components/analytics/analytics-kit";
+
+interface HealthCheck {
+  name?: string;
+  type?: string;
+  ok?: boolean;
+  count?: number;
+  detail?: string;
+}
+
 interface HealthTabProps {
+  /** Optional hook so the parent can react when checks are (re)run. */
   onLoadHealth?: () => void;
 }
 
-export function HealthTab({ onLoadHealth }: HealthTabProps) {
-  const [health, setHealth] = useState<any>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
+/**
+ * The four check categories, declared once.
+ *
+ * The previous implementation repeated a near-identical card block per category,
+ * so a fix to one (an icon, a label, an empty state) silently missed the other
+ * three. `countLabel` also differs per category — "issues" for integrity is not
+ * the same statement as "breaches" for SLA.
+ */
+const CATEGORIES = [
+  {
+    key: "data_integrity",
+    title: "Data Integrity",
+    icon: Shield,
+    okLabel: "OK",
+    failLabel: "Fix needed",
+    countLabel: (ok: boolean, n: number) => (ok ? `${num(n)} records verified` : `${num(n)} issues found`),
+  },
+  {
+    key: "sla",
+    title: "SLA Compliance",
+    icon: Activity,
+    okLabel: "Within target",
+    failLabel: "Attention",
+    countLabel: (ok: boolean, n: number) => (ok ? `${num(n)} compliant` : `${num(n)} breaches`),
+  },
+  {
+    key: "notification",
+    title: "Notifications",
+    icon: Bell,
+    okLabel: "Delivering",
+    failLabel: "Review",
+    countLabel: (ok: boolean, n: number) => (ok ? `${num(n)} delivered` : `${num(n)} pending or failed`),
+  },
+  {
+    key: "integration",
+    title: "Integrations",
+    icon: Plug,
+    okLabel: "Connected",
+    failLabel: "Disconnected",
+    countLabel: (_ok: boolean, n: number) => (n > 0 ? `${num(n)} endpoints` : ""),
+  },
+] as const;
 
-  async function loadHealth() {
+export function HealthTab({ onLoadHealth }: HealthTabProps) {
+  const [health, setHealth] = useState<{ ok?: boolean; checks?: HealthCheck[] } | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadHealth = useCallback(async () => {
     setHealthLoading(true);
+    setError("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+      const res = await hrmsApi.get<{ success: boolean; data: { ok?: boolean; checks?: HealthCheck[] } }>(
         `/api/ats-full-parity/health`
       );
-      setHealth(res.data);
+      setHealth(res.data ?? null);
+      onLoadHealth?.();
 
-      if (res.data.ok) {
-        toast.success("All health checks passed");
-      } else {
-        toast.warning("Some health checks need attention");
-      }
-    } catch (error) {
-      toast.error("Health check failed");
+      if (res.data?.ok) toast.success("All health checks passed");
+      else toast.warning("Some health checks need attention");
+    } catch (err: unknown) {
+      const message = (err as { message?: string })?.message || "Health check failed";
+      setError(message);
+      setHealth(null);
+      toast.error(message);
     } finally {
       setHealthLoading(false);
     }
-  }
+  }, [onLoadHealth]);
 
-  const checks = health?.checks || [];
-  const dataIntegrityChecks = checks.filter((c: any) => c.type === "data_integrity");
-  const slaChecks = checks.filter((c: any) => c.type === "sla");
-  const notificationChecks = checks.filter((c: any) => c.type === "notification");
-  const integrationChecks = checks.filter((c: any) => c.type === "integration");
+  // Run on mount. The parent already activates this tab on demand, so requiring
+  // a further button click just to see anything was an extra step for no gain.
+  useEffect(() => {
+    void loadHealth();
+  }, [loadHealth]);
 
-  const getCheckIcon = (ok: boolean) => {
-    return ok ? (
-      <CheckCircle className="h-5 w-5 text-emerald-600" />
-    ) : (
-      <AlertTriangle className="h-5 w-5 text-rose-600" />
-    );
-  };
+  const model = useMemo(() => {
+    const checks = health?.checks ?? [];
+    const passed = checks.filter((c) => c.ok).length;
+    const failed = checks.length - passed;
+    return {
+      checks,
+      passed,
+      failed,
+      // ratio() returns null on a zero denominator rather than dividing. The old
+      // expression computed passed/0 and rendered a literal "NaN%" whenever the
+      // endpoint came back with an empty checks array.
+      score: ratio(passed, checks.length),
+      byCategory: CATEGORIES.map((category) => ({
+        ...category,
+        items: checks.filter((c) => c.type === category.key),
+      })).filter((category) => category.items.length > 0),
+      uncategorised: checks.filter((c) => !CATEGORIES.some((cat) => cat.key === c.type)),
+    };
+  }, [health]);
 
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case "data_integrity":
-        return <Shield className="h-5 w-5 text-blue-600" />;
-      case "sla":
-        return <Activity className="h-5 w-5 text-amber-600" />;
-      default:
-        return <CheckCircle className="h-5 w-5 text-slate-600" />;
-    }
-  };
+  const { checks, passed, failed, score, byCategory, uncategorised } = model;
+  const allOk = health?.ok ?? (checks.length > 0 && failed === 0);
 
   return (
-    <div className="space-y-6">
-      {/* Health Overview */}
-      <Card className={health?.ok ? "border-emerald-300 bg-emerald-50" : health ? "border-rose-300 bg-rose-50" : ""}>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {health?.ok ? (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600">
-                  <CheckCircle className="h-6 w-6 text-white" />
-                </div>
-              ) : health ? (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-600">
-                  <AlertTriangle className="h-6 w-6 text-white" />
-                </div>
-              ) : (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-600">
-                  <Activity className="h-6 w-6 text-white" />
-                </div>
-              )}
-              <div>
-                <CardTitle className="text-2xl">
-                  {health ? (health.ok ? "System Healthy" : "Attention Required") : "System Health"}
-                </CardTitle>
-                <p className="text-sm text-slate-600 mt-1">
-                  {health
-                    ? health.ok
-                      ? "All system checks passed successfully"
-                      : "Some checks need attention"
-                    : "Run health checks to view system status"}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => loadHealth()}
-              disabled={healthLoading}
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              <RefreshCcw className={`h-4 w-4 ${healthLoading ? "animate-spin" : ""}`} />
-              {healthLoading ? "Running..." : health ? "Re-run Checks" : "Run Health Checks"}
-            </button>
+    <div className="space-y-4">
+      {/* ── Status banner ───────────────────────────────────────────────── */}
+      <header
+        className={`flex flex-col gap-3 rounded-xl border-2 px-4 py-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
+          healthLoading || !health
+            ? "border-slate-200 bg-white"
+            : allOk
+              ? "border-emerald-200 bg-emerald-50"
+              : "border-rose-200 bg-rose-50"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <span
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+              healthLoading || !health ? "bg-slate-100 text-slate-500" : allOk ? "bg-[#008300] text-white" : "bg-[#e34948] text-white"
+            }`}
+          >
+            {healthLoading ? (
+              <RefreshCcw className="h-5 w-5 animate-spin" />
+            ) : !health ? (
+              <Activity className="h-5 w-5" />
+            ) : allOk ? (
+              <CheckCircle2 className="h-5 w-5" />
+            ) : (
+              <AlertTriangle className="h-5 w-5" />
+            )}
+          </span>
+          <div className="min-w-0">
+            {/* Status carries an icon and words, never colour alone. */}
+            <h2 className="text-base font-bold text-slate-900">
+              {healthLoading
+                ? "Running health checks…"
+                : !health
+                  ? "System Health"
+                  : allOk
+                    ? "System healthy"
+                    : `${num(failed)} check${failed === 1 ? "" : "s"} need attention`}
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-600">
+              {health
+                ? `${num(passed)} of ${num(checks.length)} checks passing across data integrity, SLA, notifications and integrations.`
+                : "Data integrity, SLA compliance, notification delivery and integration connectivity."}
+            </p>
           </div>
-        </CardHeader>
-      </Card>
+        </div>
+        <button
+          onClick={() => void loadHealth()}
+          disabled={healthLoading}
+          className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition-colors duration-150 hover:bg-slate-700 disabled:opacity-60"
+        >
+          <RefreshCcw className={`h-3.5 w-3.5 ${healthLoading ? "animate-spin" : ""}`} />
+          {healthLoading ? "Running…" : "Re-run checks"}
+        </button>
+      </header>
 
-      {/* Loading State */}
-      {healthLoading && (
-        <Card>
-          <CardContent className="py-12">
-            <div className="flex flex-col items-center justify-center gap-3">
-              <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
-              <p className="text-sm font-semibold text-slate-600">Running health checks...</p>
+      {error && (
+        <div role="alert" className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+            <div className="text-xs text-rose-900">
+              <p className="font-bold">Health check could not run</p>
+              <p className="mt-1">{error}</p>
+              <p className="mt-1 text-rose-700">
+                A failed check run is not the same as a passing system — treat the status above as unknown.
+              </p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
-      {/* Health Check Results */}
-      {health && !healthLoading && (
+      {healthLoading && !health && <ChartSkeleton height={220} />}
+
+      {health && (
         <>
-          {/* Summary Stats */}
-          <div className="grid gap-4 md:grid-cols-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-slate-900">{checks.length}</p>
-                  <p className="text-sm text-slate-600 mt-1">Total Checks</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-emerald-300 bg-emerald-50">
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-emerald-600">
-                    {checks.filter((c: any) => c.ok).length}
-                  </p>
-                  <p className="text-sm text-emerald-700 mt-1">Passed</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-rose-300 bg-rose-50">
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-rose-600">
-                    {checks.filter((c: any) => !c.ok).length}
-                  </p>
-                  <p className="text-sm text-rose-700 mt-1">Failed</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-blue-600">
-                    {Math.round((checks.filter((c: any) => c.ok).length / checks.length) * 100)}%
-                  </p>
-                  <p className="text-sm text-slate-600 mt-1">Health Score</p>
-                </div>
-              </CardContent>
-            </Card>
+          {/* ── Scorecard ───────────────────────────────────────────────── */}
+          <div className="grid gap-3 grid-cols-2 xl:grid-cols-4">
+            <StatTile label="Total Checks" value={num(checks.length)} denominator="Run against the live system" />
+            <StatTile
+              label="Passed"
+              value={num(passed)}
+              denominator={score !== null ? `${pct(score)} of all checks` : "No checks returned"}
+              intent="good"
+            />
+            <StatTile
+              label="Failed"
+              value={num(failed)}
+              denominator={
+                checks.length > 0 ? `${pct(ratio(failed, checks.length) ?? 0)} of all checks` : "No checks returned"
+              }
+              intent={failed > 0 ? "critical" : "neutral"}
+            />
+            <StatTile
+              label="Health Score"
+              // Explicitly "—" rather than NaN% when the endpoint returns no checks.
+              value={score !== null ? pct(score, 0) : "—"}
+              denominator={score !== null ? "Passing checks ÷ total checks" : "Nothing to score"}
+              intent={score === null ? "neutral" : score === 100 ? "good" : score >= 80 ? "warning" : "critical"}
+            />
           </div>
 
-          {/* Data Integrity Checks */}
-          {dataIntegrityChecks.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-blue-600" />
-                  Data Integrity
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {dataIntegrityChecks.map((check: any, index: number) => (
-                    <div
-                      key={index}
-                      className={`flex items-center justify-between rounded-lg border p-4 ${
-                        check.ok
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-rose-200 bg-rose-50"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        {getCheckIcon(check.ok)}
-                        <div>
-                          <p className="font-semibold text-slate-900">{check.name}</p>
-                          {check.count > 0 && !check.ok && (
-                            <p className="text-sm text-rose-600 mt-1">
-                              {check.count} issues found
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <Badge variant={check.ok ? "secondary" : "destructive"}>
-                        {check.ok ? "OK" : "Fix Needed"}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+          {checks.length === 0 && (
+            <ChartCard title="Check Results" subtitle="Nothing was returned by the health endpoint.">
+              <EmptyState
+                label="No checks returned"
+                hint="The endpoint responded but reported zero checks — this is not the same as everything passing."
+                height={140}
+              />
+            </ChartCard>
           )}
 
-          {/* SLA Compliance Checks */}
-          {slaChecks.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-amber-600" />
-                  SLA Compliance
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {slaChecks.map((check: any, index: number) => (
-                    <div
-                      key={index}
-                      className={`flex items-center justify-between rounded-lg border p-4 ${
-                        check.ok
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-rose-200 bg-rose-50"
+          {/* ── One block per category, rendered from a single definition ── */}
+          {byCategory.map((category) => {
+            const Icon = category.icon;
+            const catFailed = category.items.filter((c) => !c.ok).length;
+            return (
+              <ChartCard
+                key={category.key}
+                title={category.title}
+                subtitle={`${num(category.items.length - catFailed)} of ${num(category.items.length)} passing`}
+                action={
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-bold ${
+                      catFailed === 0 ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {catFailed === 0 ? "All clear" : `${num(catFailed)} failing`}
+                  </span>
+                }
+              >
+                <ul className="space-y-1.5">
+                  {category.items.map((check, index) => (
+                    <li
+                      key={`${check.name ?? "check"}-${index}`}
+                      className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${
+                        check.ok ? "border-emerald-100 bg-emerald-50/50" : "border-rose-100 bg-rose-50/50"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        {getCheckIcon(check.ok)}
-                        <div>
-                          <p className="font-semibold text-slate-900">{check.name}</p>
-                          {check.count > 0 && (
-                            <p className="text-sm text-slate-600 mt-1">
-                              {check.count} {check.ok ? "compliant" : "breaches"}
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        {check.ok ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#008300]" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-[#e34948]" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-slate-900">{check.name || "Unnamed check"}</p>
+                          {Number(check.count ?? 0) > 0 && (
+                            <p className={`mt-0.5 text-[11px] ${check.ok ? "text-slate-500" : "text-rose-700"}`}>
+                              {category.countLabel(Boolean(check.ok), Number(check.count))}
                             </p>
                           )}
+                          {check.detail && <p className="mt-0.5 truncate text-[11px] text-slate-500">{check.detail}</p>}
                         </div>
                       </div>
-                      <Badge variant={check.ok ? "secondary" : "destructive"}>
-                        {check.ok ? "OK" : "Attention"}
-                      </Badge>
-                    </div>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                          check.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                        }`}
+                      >
+                        {check.ok ? category.okLabel : category.failLabel}
+                      </span>
+                    </li>
                   ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                </ul>
+              </ChartCard>
+            );
+          })}
 
-          {/* Notification Checks */}
-          {notificationChecks.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle className="h-5 w-5 text-purple-600" />
-                  Notifications
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {notificationChecks.map((check: any, index: number) => (
-                    <div
-                      key={index}
-                      className={`flex items-center justify-between rounded-lg border p-4 ${
-                        check.ok
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-rose-200 bg-rose-50"
+          {/* Checks with an unrecognised type were previously dropped entirely. */}
+          {uncategorised.length > 0 && (
+            <ChartCard
+              title="Other Checks"
+              subtitle="Checks whose category is not one of the four known types — shown so none are silently dropped."
+            >
+              <ul className="space-y-1.5">
+                {uncategorised.map((check, index) => (
+                  <li
+                    key={`${check.name ?? "other"}-${index}`}
+                    className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${
+                      check.ok ? "border-emerald-100 bg-emerald-50/50" : "border-rose-100 bg-rose-50/50"
+                    }`}
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      {check.ok ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-[#008300]" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-[#e34948]" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-slate-900">{check.name || "Unnamed check"}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500">Type: {check.type || "unspecified"}</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                        check.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        {getCheckIcon(check.ok)}
-                        <div>
-                          <p className="font-semibold text-slate-900">{check.name}</p>
-                          {check.count > 0 && (
-                            <p className="text-sm text-slate-600 mt-1">
-                              {check.count} {check.ok ? "delivered" : "pending/failed"}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <Badge variant={check.ok ? "secondary" : "destructive"}>
-                        {check.ok ? "OK" : "Review"}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Integration Checks */}
-          {integrationChecks.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-cyan-600" />
-                  Integrations
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {integrationChecks.map((check: any, index: number) => (
-                    <div
-                      key={index}
-                      className={`flex items-center justify-between rounded-lg border p-4 ${
-                        check.ok
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-rose-200 bg-rose-50"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        {getCheckIcon(check.ok)}
-                        <div>
-                          <p className="font-semibold text-slate-900">{check.name}</p>
-                        </div>
-                      </div>
-                      <Badge variant={check.ok ? "secondary" : "destructive"}>
-                        {check.ok ? "Connected" : "Disconnected"}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+                      {check.ok ? "OK" : "Review"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </ChartCard>
           )}
         </>
-      )}
-
-      {/* Initial State */}
-      {!health && !healthLoading && (
-        <Card>
-          <CardContent className="py-12">
-            <div className="flex flex-col items-center justify-center gap-3 text-center">
-              <Activity className="h-16 w-16 text-slate-300" />
-              <p className="text-lg font-semibold text-slate-600">
-                Run health checks to view system status
-              </p>
-              <p className="text-sm text-slate-500 max-w-md">
-                Health checks monitor data integrity, SLA compliance, notifications, and integrations
-              </p>
-            </div>
-          </CardContent>
-        </Card>
       )}
     </div>
   );

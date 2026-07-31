@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { FunnelChart, Funnel, LabelList, ResponsiveContainer, Tooltip } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FUNNEL_RAMP } from "@/components/analytics/analytics-kit";
 
 interface FunnelStage {
   stage: string;
@@ -20,13 +21,12 @@ export function HiringFunnelChart({ data, loading, className }: HiringFunnelChar
     return data.map((stage, index) => ({
       name: stage.stage,
       value: stage.count,
-      fill: [
-        "#1E40AF", // Deep blue
-        "#3B82F6", // Blue
-        "#60A5FA", // Light blue
-        "#93C5FD", // Lighter blue
-        "#DBEAFE", // Lightest blue
-      ][index % 5],
+      // Ordered progression (a funnel is ordinal, so a ramp is the right form),
+      // but every step stays dark enough to carry a white label. The previous
+      // tail (#93C5FD, #DBEAFE) sat under 2:1 on white, so the last two stages —
+      // usually Selected and Joined, the ones people care about — were the
+      // hardest to see on the chart.
+      fill: FUNNEL_RAMP[index % FUNNEL_RAMP.length],
     }));
   }, [data]);
 

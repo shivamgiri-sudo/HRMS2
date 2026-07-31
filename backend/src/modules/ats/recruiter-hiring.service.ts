@@ -1463,15 +1463,22 @@ async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean,
 
 async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: boolean, userId?: string) {
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
+  const F = funnelPredicates("");
   const [rows] = await db.execute<DashboardGroupRow[]>(
-    `SELECT COALESCE(${column}, 'Unmapped') AS label,
+    // Two corrections against the headline summary:
+    //  - `is_followup_attempt` is excluded here as it is there. Without it the
+    //    group rows counted follow-up attempts the headline total did not, so the
+    //    breakdowns summed to more than the total they sat beneath.
+    //  - stage counts use the shared monotonic predicates, not raw flags.
+    `SELECT COALESCE(NULLIF(TRIM(${column}), ''), 'Unmapped') AS label,
             COUNT(*) AS total,
-            SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS contacted,
-            SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END) AS selected,
-            SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END) AS joined
+            SUM(CASE WHEN ${F.IS_CONTACTED} THEN 1 ELSE 0 END) AS contacted,
+            SUM(CASE WHEN ${F.IS_WALKIN}    THEN 1 ELSE 0 END) AS walkins,
+            SUM(CASE WHEN ${F.IS_SELECTED}  THEN 1 ELSE 0 END) AS selected,
+            SUM(CASE WHEN ${F.IS_JOINED}    THEN 1 ELSE 0 END) AS joined
        FROM ats_recruiter_hiring_activity
-      WHERE ${sql}
-      GROUP BY COALESCE(${column}, 'Unmapped')
+      WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}
+      GROUP BY COALESCE(NULLIF(TRIM(${column}), ''), 'Unmapped')
       ORDER BY total DESC
       LIMIT 50`,
     params
@@ -1482,27 +1489,33 @@ async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: b
 export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
   const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
+  // Same funnel definitions as the Analytics tab — see funnelPredicates().
+  const F = funnelPredicates("");
   const [summary] = await db.execute<DashboardSummaryRow[]>(
     `SELECT
         COUNT(*) AS total_records,
-        SUM(CASE WHEN contacted_flag = 1 THEN 1 ELSE 0 END) AS total_contacted,
-        SUM(CASE WHEN contacted_flag = 0 THEN 1 ELSE 0 END) AS not_contacted,
-        SUM(CASE WHEN LOWER(recruiter_remarks) = 'shortlisted' THEN 1 ELSE 0 END) AS shortlisted,
-        SUM(CASE WHEN LOWER(recruiter_remarks) = 'rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
+        SUM(CASE WHEN ${F.IS_CONTACTED} THEN 1 ELSE 0 END) AS total_contacted,
+        SUM(CASE WHEN NOT ${F.IS_CONTACTED} THEN 1 ELSE 0 END) AS not_contacted,
+        SUM(CASE WHEN ${F.IS_SHORTLISTED} THEN 1 ELSE 0 END) AS shortlisted,
+        SUM(CASE WHEN LOWER(COALESCE(recruiter_remarks,'')) = 'rejected' THEN 1 ELSE 0 END) AS recruiter_rejected,
         SUM(CASE WHEN hr_interview_status = 'Selected' THEN 1 ELSE 0 END) AS hr_selected,
         SUM(CASE WHEN hr_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS hr_rejected,
         SUM(CASE WHEN ai_interview_result IN ('Selected','Pass') THEN 1 ELSE 0 END) AS ai_selected,
         SUM(CASE WHEN ai_interview_result IN ('Rejected','Fail') THEN 1 ELSE 0 END) AS ai_rejected,
         SUM(CASE WHEN ops_interview_status = 'Selected' THEN 1 ELSE 0 END) AS ops_selected,
         SUM(CASE WHEN ops_interview_status = 'Rejected' THEN 1 ELSE 0 END) AS ops_rejected,
-        SUM(CASE WHEN final_selection_flag = 1 THEN 1 ELSE 0 END) AS final_selected,
+        SUM(CASE WHEN ${F.IS_SELECTED} THEN 1 ELSE 0 END) AS final_selected,
         SUM(CASE WHEN offer_letter_status IN ('Issued','Sent','Offer Issued','Offer Sent') THEN 1 ELSE 0 END) AS offer_letter_issued,
-        SUM(CASE WHEN joined_flag = 1 THEN 1 ELSE 0 END) AS joined,
+        SUM(CASE WHEN ${F.IS_JOINED} THEN 1 ELSE 0 END) AS joined,
         SUM(CASE WHEN joining_status IN ('Pending','Joining Pending','Offer Accepted') THEN 1 ELSE 0 END) AS joining_pending,
-        SUM(CASE WHEN walkin_flag = 1 THEN 1 ELSE 0 END) AS walkins,
+        SUM(CASE WHEN ${F.IS_WALKIN} THEN 1 ELSE 0 END) AS walkins,
         SUM(CASE WHEN hiring_source = 'Employee Referral' THEN 1 ELSE 0 END) AS employee_referrals,
-        COUNT(DISTINCT recruiter_name_snapshot) AS active_recruiters,
-        COUNT(DISTINCT CASE WHEN updated_at < DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS recruiter_inactive_count
+        COUNT(DISTINCT recruiter_name_snapshot) AS recruiters_in_scope,
+        -- "Recently active" = logged something in the last 2 days. The previous
+        -- pair (distinct-recruiters vs distinct-recruiters-with-a-stale-row) could
+        -- both count the same person, so "inactive" was able to exceed "active".
+        -- These two now partition the same set exactly.
+        COUNT(DISTINCT CASE WHEN updated_at >= DATE_SUB(NOW(), INTERVAL 2 DAY) THEN recruiter_name_snapshot END) AS active_recruiters
       FROM ats_recruiter_hiring_activity
       WHERE COALESCE(is_followup_attempt, 0) = 0 AND ${sql}`,
     params
@@ -1527,9 +1540,12 @@ export async function getHiringDashboard(userId: string, role: string | undefine
     joining_pending: Number(summary[0]?.joining_pending ?? 0),
     walkins: Number(summary[0]?.walkins ?? 0),
     employee_referrals: Number(summary[0]?.employee_referrals ?? 0),
+    recruiters_in_scope: Number((summary[0] as any)?.recruiters_in_scope ?? 0),
     active_recruiters: Number(summary[0]?.active_recruiters ?? 0),
-    recruiter_inactive_count: Number(summary[0]?.recruiter_inactive_count ?? 0),
+    recruiter_inactive_count: 0,
   };
+  // Complement of active within the same scope, so the two always sum to the total.
+  metrics.recruiter_inactive_count = Math.max(0, metrics.recruiters_in_scope - metrics.active_recruiters);
   metrics.contacted_pct = metrics.total_records ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10 : 0;
 
   const [byRecruiter, bySource, byProcess, byBranch] = await Promise.all([
@@ -1563,8 +1579,34 @@ export async function getCallingDashboard(userId: string, role: string | undefin
   };
 }
 
+/**
+ * The single definition of every hiring funnel stage.
+ *
+ * Later stages imply all earlier ones. Without that implication a backfilled row
+ * carrying `joined_flag = 1` but `walkin_flag = 0` produces a funnel where more
+ * candidates joined than ever walked in — an impossible shape that immediately
+ * discredits the whole page.
+ *
+ * Every surface that reports hiring counts MUST build them from here. The Hiring
+ * Dashboard previously counted raw flags while the Analytics tab counted
+ * monotonically, so the two pages reported different totals for the same rows
+ * and the same filters.
+ *
+ * @param alias table alias for `ats_recruiter_hiring_activity` in the caller's query
+ */
+export function funnelPredicates(alias: string) {
+  const t = alias ? `${alias}.` : "";
+  const IS_JOINED      = `${t}joined_flag = 1`;
+  const IS_SELECTED    = `(${t}final_selection_flag = 1 OR ${IS_JOINED})`;
+  const IS_WALKIN      = `(${t}walkin_flag = 1 OR ${IS_SELECTED})`;
+  // "Shortlisted" also covers the free-text remarks recruiters use for intent.
+  const IS_SHORTLISTED = `(${IS_WALKIN} OR LOWER(COALESCE(${t}recruiter_remarks,'')) IN ('if interested','interested','will visit','expected walk-in','shortlisted'))`;
+  const IS_CONTACTED   = `(${t}contacted_flag = 1 OR ${IS_SHORTLISTED})`;
+  return { IS_JOINED, IS_SELECTED, IS_WALKIN, IS_SHORTLISTED, IS_CONTACTED };
+}
+
 export interface HiringActivityAnalytics {
-  funnel: { stage: string; count: number; pct: number }[];
+  funnel: { stage: string; count: number; pct: number; stagePct: number }[];
   byOutcome: { label: string; count: number }[];
   bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byProcess: { label: string; total: number; walkins: number; selected: number; joined: number }[];
@@ -1590,6 +1632,29 @@ export interface HiringActivityAnalytics {
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
   followupDueCount: number;
+  /**
+   * Reconciliation block. Every grouped breakdown above is capped to a top-N for
+   * readability; each cap is reported here alongside the grand total so the UI can
+   * state exactly what is on screen and what is folded into "Other". Without this
+   * a truncated chart silently understates its own denominator.
+   */
+  coverage: {
+    /** Grand total of base records in scope — the denominator for every share. */
+    totalRecords: number;
+    /** Per-breakdown truncation report. `shown` + `otherCount` always === totalRecords. */
+    breakdowns: Record<
+      "byOutcome" | "bySource" | "byProcess" | "byRecruiter" | "byBranch" | "byGender",
+      { distinctGroups: number; shownGroups: number; shownRecords: number; otherGroups: number; otherRecords: number }
+    >;
+    /** Trend window actually returned, and whether older dates were dropped. */
+    trendWindow: { distinctDates: number; shownDates: number; truncated: boolean; from: string | null; to: string | null };
+  };
+  /**
+   * Names of sub-queries that failed. A failed query yields zeros, which are
+   * indistinguishable from a real zero — the UI must flag these rather than
+   * present them as measurements.
+   */
+  degraded: string[];
 }
 
 export async function getHiringActivityAnalytics(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringActivityAnalytics> {
@@ -1623,10 +1688,14 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     )`);
     params.push(filters.branch, filters.branch, filters.branch);
   }
+  // `month` (YYYY-MM) and `education` were accepted by the route but never applied
+  // here, so callers received unfiltered totals under a filtered heading.
+  if (filters.month)       { clauses.push("DATE_FORMAT(arha.activity_date, '%Y-%m') = ?"); params.push(filters.month); }
   if (filters.process)     { clauses.push("arha.process_name LIKE ?");             params.push(`%${filters.process}%`); }
   if (filters.hiringSource){ clauses.push("arha.hiring_source LIKE ?");            params.push(`%${filters.hiringSource}%`); }
   if (filters.recruiter)   { clauses.push("arha.recruiter_name_snapshot LIKE ?");  params.push(`%${filters.recruiter}%`); }
   if (filters.gender)      { clauses.push("arha.gender = ?");                      params.push(filters.gender); }
+  if (filters.education)   { clauses.push("arha.education_qualification LIKE ?");  params.push(`%${filters.education}%`); }
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   if (scopedOnly) {
     if (branch) {
@@ -1660,14 +1729,7 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
 
   const W = clauses.join(" AND ");
 
-  // Later stages imply every earlier funnel stage. This keeps historical and
-  // backfilled records from producing impossible Selected > Walk-in funnels.
-  // Shortlisted: candidate expressed interest (or is already at a later stage).
-  const IS_JOINED      = `arha.joined_flag = 1`;
-  const IS_SELECTED    = `(arha.final_selection_flag = 1 OR ${IS_JOINED})`;
-  const IS_WALKIN      = `(arha.walkin_flag = 1 OR ${IS_SELECTED})`;
-  const IS_SHORTLISTED = `(${IS_WALKIN} OR LOWER(COALESCE(arha.recruiter_remarks,'')) IN ('if interested','interested','will visit','expected walk-in','shortlisted'))`;
-  const IS_CONTACTED   = `(arha.contacted_flag = 1 OR ${IS_SHORTLISTED})`;
+  const { IS_JOINED, IS_SELECTED, IS_WALKIN, IS_SHORTLISTED, IS_CONTACTED } = funnelPredicates("arha");
 
   // Build follow-up params reusing already-resolved branch
   const followupClauses: string[] = [
@@ -1677,18 +1739,55 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const followupParams: unknown[] = [];
   if (scopedOnly) {
     if (branch) {
-      followupClauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
-      followupParams.push(branch, userId, userId);
+      // Must mirror the branch matching used for the main WHERE. An exact
+      // `branch_name = ?` missed rows that store the branch code or a
+      // differently-cased/spaced name, so a recruiter could see branch-scoped
+      // funnel numbers next to a follow-up count of 0 for the same branch.
+      followupClauses.push(`(
+        LOWER(TRIM(COALESCE(branch_name, ''))) = LOWER(TRIM(?))
+        OR LOWER(TRIM(COALESCE(location_name, ''))) = LOWER(TRIM(?))
+        OR EXISTS (
+          SELECT 1
+            FROM branch_master bm_fu
+           WHERE LOWER(TRIM(COALESCE(bm_fu.branch_name, ''))) = LOWER(TRIM(?))
+             AND (
+               LOWER(TRIM(COALESCE(branch_name, ''))) IN (
+                 LOWER(TRIM(COALESCE(bm_fu.branch_name, ''))),
+                 LOWER(TRIM(COALESCE(bm_fu.branch_code, '')))
+               )
+               OR LOWER(TRIM(COALESCE(location_name, ''))) IN (
+                 LOWER(TRIM(COALESCE(bm_fu.branch_name, ''))),
+                 LOWER(TRIM(COALESCE(bm_fu.branch_code, '')))
+               )
+             )
+        )
+        OR created_by = ?
+        OR recruiter_id = ?
+      )`);
+      followupParams.push(branch, branch, branch, userId, userId);
     } else {
       followupClauses.push("(created_by = ? OR recruiter_id = ?)");
       followupParams.push(userId, userId);
     }
   }
 
-  // Safe wrapper — one failing query must not kill the entire analytics response
-  const safe = async <T>(fn: () => Promise<[T, ...unknown[]]>, fallback: T): Promise<T> => {
-    try { return (await fn())[0]; } catch { return fallback; }
+  // Safe wrapper — one failing query must not kill the entire analytics response.
+  // A failure still yields the fallback (usually an empty set, which renders as 0),
+  // so every failure is recorded and returned; a zero the caller cannot distinguish
+  // from a real measurement is worse than no number at all.
+  const degraded: string[] = [];
+  const safe = async <T>(name: string, fn: () => Promise<[T, ...unknown[]]>, fallback: T): Promise<T> => {
+    try {
+      return (await fn())[0];
+    } catch (error) {
+      console.error(`[Analytics] sub-query "${name}" failed:`, error);
+      degraded.push(name);
+      return fallback;
+    }
   };
+
+  // Top-N caps. Declared once so the response can report exactly what was cut.
+  const CAP = { outcome: 12, source: 10, process: 15, recruiter: 15, branch: 100, gender: 10, trendDays: 90 } as const;
 
   // ── Fire all queries in parallel ─────────────────────────────────────────
   const [
@@ -1704,8 +1803,10 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
     trendRows,
     followupRows,
     followupCountRows,
+    cardinalityRows,
+    trendMetaRows,
   ] = await Promise.all([
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("summary", () => db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*)                                                AS logged,
          SUM(CASE WHEN ${IS_CONTACTED}   THEN 1 ELSE 0 END)    AS contacted,
@@ -1716,44 +1817,60 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
        FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(arha.current_status,''), NULLIF(arha.recruiter_remarks,''), 'Pending') AS label,
+    safe("byOutcome", () => db.execute<RowDataPacket[]>(
+      // Outcome must be a single categorical axis. The previous version fell back to
+      // free-text recruiter_remarks, so "Rejected"/"rejected"/"REJECTED " each became
+      // their own slice and the donut double-counted the same outcome.
+      // Casing/whitespace are normalised and the label is derived from the pipeline
+      // flags first, which are the authoritative signal.
+      `SELECT CASE
+                WHEN ${IS_JOINED}   THEN 'Joined'
+                WHEN ${IS_SELECTED} THEN 'Selected'
+                WHEN LOWER(TRIM(COALESCE(arha.current_status,''))) LIKE '%reject%'
+                  OR LOWER(TRIM(COALESCE(arha.recruiter_remarks,''))) LIKE '%reject%' THEN 'Rejected'
+                WHEN LOWER(TRIM(COALESCE(arha.current_status,''))) LIKE '%no show%'
+                  OR LOWER(TRIM(COALESCE(arha.current_status,''))) LIKE '%no-show%' THEN 'No Show'
+                WHEN ${IS_WALKIN}      THEN 'Walked In'
+                WHEN ${IS_SHORTLISTED} THEN 'Shortlisted'
+                WHEN ${IS_CONTACTED}   THEN 'Contacted'
+                ELSE 'Not Contacted'
+              END AS label,
               COUNT(*) AS count
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY count DESC LIMIT 12`,
+         GROUP BY label ORDER BY count DESC`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("bySource", () => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.hiring_source,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY total DESC LIMIT 10`,
+         GROUP BY label ORDER BY total DESC LIMIT ${CAP.source}`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("byProcess", () => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.process_name,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY total DESC LIMIT 15`,
+         GROUP BY label ORDER BY total DESC LIMIT ${CAP.process}`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("byRecruiter", () => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown') AS label,
               COUNT(*) AS total,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY total DESC LIMIT 15`,
+         GROUP BY label ORDER BY total DESC LIMIT ${CAP.recruiter}`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("byBranch", () => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(
                 NULLIF(TRIM(arha.branch_name),''),
                 NULLIF(TRIM(arha.location_name),''),
@@ -1780,44 +1897,54 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
                     THEN 1 ELSE 0
                   END) AS joined_without_selection
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY total DESC LIMIT 100`,
+         GROUP BY label ORDER BY total DESC LIMIT ${CAP.branch}`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("branchMaster", () => db.execute<RowDataPacket[]>(
       `SELECT branch_name, branch_code
          FROM branch_master
         WHERE NULLIF(TRIM(branch_name), '') IS NOT NULL
         ORDER BY branch_name ASC`,
       []
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("byGender", () => db.execute<RowDataPacket[]>(
       `SELECT COALESCE(NULLIF(arha.gender,''),'Unknown') AS label,
               COUNT(*) AS count,
               SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
               SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected,
               SUM(CASE WHEN ${IS_JOINED}   THEN 1 ELSE 0 END) AS joined
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
-         GROUP BY label ORDER BY count DESC LIMIT 10`,
+         GROUP BY label ORDER BY count DESC LIMIT ${CAP.gender}`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("byDayOfWeek", () => db.execute<RowDataPacket[]>(
       `SELECT DAYOFWEEK(arha.activity_date) AS dow, COUNT(*) AS count
          FROM ats_recruiter_hiring_activity arha WHERE ${W}
          GROUP BY dow ORDER BY dow ASC`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
-      `SELECT arha.activity_date AS date,
-              COUNT(*) AS logged,
-              SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
-              SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected
-         FROM ats_recruiter_hiring_activity arha
-        WHERE ${W}
-        GROUP BY arha.activity_date ORDER BY arha.activity_date ASC
-        LIMIT 90`,
+    safe("trend", () => db.execute<RowDataPacket[]>(
+      // The cap must keep the MOST RECENT dates. Ordering ascending before LIMIT
+      // returned the OLDEST 90 days, so any dataset with more than 90 distinct
+      // activity dates rendered an "Activity Trend" of the earliest history on
+      // record while presenting it as current. Take newest-first, then re-sort
+      // ascending for charting.
+      `SELECT t.date, t.logged, t.walkins, t.selected
+         FROM (
+           SELECT arha.activity_date AS date,
+                  COUNT(*) AS logged,
+                  SUM(CASE WHEN ${IS_WALKIN}   THEN 1 ELSE 0 END) AS walkins,
+                  SUM(CASE WHEN ${IS_SELECTED} THEN 1 ELSE 0 END) AS selected
+             FROM ats_recruiter_hiring_activity arha
+            WHERE ${W}
+            GROUP BY arha.activity_date
+            ORDER BY arha.activity_date DESC
+            LIMIT ${CAP.trendDays}
+         ) t
+        ORDER BY t.date ASC`,
       params
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("followupDue", () => db.execute<RowDataPacket[]>(
       `SELECT id, candidate_name, mobile,
               DATE_FORMAT(followup_date,'%Y-%m-%d') AS followup_date,
               followup_reason
@@ -1826,11 +1953,28 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
         ORDER BY followup_date ASC LIMIT 50`,
       followupParams
     ), [] as RowDataPacket[]),
-    safe(() => db.execute<RowDataPacket[]>(
+    safe("followupCount", () => db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total
          FROM ats_recruiter_hiring_activity
         WHERE ${followupClauses.join(" AND ")}`,
       followupParams
+    ), [] as RowDataPacket[]),
+    // Distinct group counts per dimension. Compared against the capped result sets
+    // these tell the UI exactly how many groups were folded into "Other".
+    safe("cardinality", () => db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT COALESCE(NULLIF(arha.hiring_source,''),'Unknown'))            AS source_groups,
+         COUNT(DISTINCT COALESCE(NULLIF(arha.process_name,''),'Unknown'))             AS process_groups,
+         COUNT(DISTINCT COALESCE(NULLIF(arha.recruiter_name_snapshot,''),'Unknown'))  AS recruiter_groups,
+         COUNT(DISTINCT COALESCE(NULLIF(TRIM(arha.branch_name),''), NULLIF(TRIM(arha.location_name),''),'Unmapped')) AS branch_groups,
+         COUNT(DISTINCT COALESCE(NULLIF(arha.gender,''),'Unknown'))                   AS gender_groups
+       FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
+      params
+    ), [] as RowDataPacket[]),
+    safe("trendMeta", () => db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT arha.activity_date) AS distinct_dates
+         FROM ats_recruiter_hiring_activity arha WHERE ${W}`,
+      params
     ), [] as RowDataPacket[]),
   ]);
 
@@ -1843,14 +1987,21 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   const selected    = Number(s.selected    ?? 0);
   const joined      = Number(s.joined      ?? 0);
   const pct = (n: number) => logged ? Math.round(n / logged * 1000) / 10 : 0;
-  const funnel = [
-    { stage: "Logged",      count: logged,      pct: 100             },
-    { stage: "Contacted",   count: contacted,   pct: pct(contacted)   },
-    { stage: "Shortlisted", count: shortlisted, pct: pct(shortlisted) },
-    { stage: "Walked In",   count: walkins,     pct: pct(walkins)     },
-    { stage: "Selected",    count: selected,    pct: pct(selected)    },
-    { stage: "Joined",      count: joined,      pct: pct(joined)      },
-  ];
+  // Two denominators, both named. `pct` is share of the top of the funnel;
+  // `stagePct` is conversion from the immediately preceding stage. The UI
+  // previously showed one badge per stage without saying which it was, which is
+  // the single most argued-about number on the page.
+  const counts = [logged, contacted, shortlisted, walkins, selected, joined];
+  const stageNames = ["Logged", "Contacted", "Shortlisted", "Walked In", "Selected", "Joined"];
+  const funnel = counts.map((count, i) => {
+    const prev = i === 0 ? count : counts[i - 1];
+    return {
+      stage: stageNames[i],
+      count,
+      pct: i === 0 ? (logged ? 100 : 0) : pct(count),
+      stagePct: i === 0 ? (logged ? 100 : 0) : (prev > 0 ? Math.round((count / prev) * 1000) / 10 : 0),
+    };
+  });
 
   const byOutcome   = (outcomeRows as any[]).map((r) => ({ label: String(r.label), count: Number(r.count) }));
   const bySource    = (sourceRows as any[]).map((r) => ({ label: String(r.label || 'Unknown'), total: Number(r.total) || 0, walkins: Number(r.walkins) || 0, selected: Number(r.selected) || 0, joined: Number(r.joined) || 0 }));
@@ -1970,7 +2121,44 @@ export async function getHiringActivityAnalytics(userId: string, role: string | 
   }));
   const followupDueCount = Number((followupCountRows as any[])[0]?.total ?? followupDue.length);
 
-  return { funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions, byGender, byDayOfWeek, trend, followupDue, followupDueCount };
+  // ── Coverage / reconciliation ─────────────────────────────────────────────
+  // Each breakdown is capped for readability. Report the cap's effect so the UI
+  // can render an explicit "Other" row instead of letting a truncated chart
+  // silently understate its own total.
+  const card = (cardinalityRows as any[])[0] ?? {};
+  const sumBy = <T>(rows: T[], pick: (row: T) => number) => rows.reduce((acc, row) => acc + pick(row), 0);
+  const breakdown = (distinctGroups: number, shownGroups: number, shownRecords: number) => ({
+    distinctGroups,
+    shownGroups,
+    shownRecords,
+    otherGroups: Math.max(0, distinctGroups - shownGroups),
+    otherRecords: Math.max(0, logged - shownRecords),
+  });
+
+  const coverage = {
+    totalRecords: logged,
+    breakdowns: {
+      // byOutcome is a closed taxonomy (no cap), so it always reconciles exactly.
+      byOutcome:   breakdown(byOutcome.length, byOutcome.length, sumBy(byOutcome, (r) => r.count)),
+      bySource:    breakdown(Number(card.source_groups    ?? bySource.length),    bySource.length,    sumBy(bySource,    (r) => r.total)),
+      byProcess:   breakdown(Number(card.process_groups   ?? byProcess.length),   byProcess.length,   sumBy(byProcess,   (r) => r.total)),
+      byRecruiter: breakdown(Number(card.recruiter_groups ?? byRecruiter.length), byRecruiter.length, sumBy(byRecruiter, (r) => r.total)),
+      byBranch:    breakdown(Number(card.branch_groups    ?? byBranch.length),    byBranch.length,    sumBy(byBranch,    (r) => r.total)),
+      byGender:    breakdown(Number(card.gender_groups    ?? byGender.length),    byGender.length,    sumBy(byGender,    (r) => r.count)),
+    },
+    trendWindow: {
+      distinctDates: Number((trendMetaRows as any[])[0]?.distinct_dates ?? trend.length),
+      shownDates: trend.length,
+      truncated: Number((trendMetaRows as any[])[0]?.distinct_dates ?? trend.length) > trend.length,
+      from: trend[0]?.date ?? null,
+      to: trend[trend.length - 1]?.date ?? null,
+    },
+  };
+
+  return {
+    funnel, byOutcome, bySource, byProcess, byRecruiter, byBranch, branchOptions,
+    byGender, byDayOfWeek, trend, followupDue, followupDueCount, coverage, degraded,
+  };
 }
 
 export async function searchInterviewers(branchName: string | null, query: string | null, roundType: string, limit = 20, userId?: string) {

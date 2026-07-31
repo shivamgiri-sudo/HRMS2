@@ -1,15 +1,47 @@
-import { useState } from "react";
-import { Search, User, Award, Clock, CheckCircle, XCircle, Phone, Mail, MapPin } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { useCallback, useMemo, useState } from "react";
+import { Award, CheckCircle2, Mail, MapPin, Phone, Search, UserRound, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
+
+import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
+import {
+  ChartCard,
+  ChartSkeleton,
+  EmptyState,
+  FUNNEL_RAMP,
+  StatTile,
+  num,
+} from "@/components/analytics/analytics-kit";
 
 interface JourneyTabProps {
+  /** Optional hook so the parent can observe searches. */
   onSearch?: (query: string) => void;
+}
+
+const S = (v: unknown) => String(v ?? "").trim();
+
+/**
+ * Date rendering that cannot crash the tab.
+ *
+ * `format(new Date(value))` throws a RangeError on an unparseable value, and
+ * date-fns is called inside the render path — one malformed `stage_date` in the
+ * API response took the entire Journey tab down with it. Everything here is
+ * validated first and falls back to a dash.
+ *
+ * All timestamps use the same IST helper; the timeline previously mixed
+ * local-time date-fns formatting with IST formatting on the same screen, so two
+ * dates a few hours apart could appear a day apart.
+ */
+function safeDate(value: unknown): string {
+  const raw = S(value);
+  if (!raw) return "—";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  try {
+    return formatISTDate(raw);
+  } catch {
+    return "—";
+  }
 }
 
 export function JourneyTab({ onSearch }: JourneyTabProps) {
@@ -17,10 +49,12 @@ export function JourneyTab({ onSearch }: JourneyTabProps) {
   const [journeyLoading, setJourneyLoading] = useState(false);
   const [journeyError, setJourneyError] = useState("");
   const [journey, setJourney] = useState<any>(null);
+  const [searchedFor, setSearchedFor] = useState("");
 
-  async function runJourney() {
-    if (!journeyQuery.trim()) {
-      toast.error("Please enter a search term");
+  const runJourney = useCallback(async () => {
+    const query = journeyQuery.trim();
+    if (!query) {
+      toast.error("Enter a candidate ID, name, mobile, email or token");
       return;
     }
 
@@ -30,306 +64,262 @@ export function JourneyTab({ onSearch }: JourneyTabProps) {
 
     try {
       const res = await hrmsApi.get<{ success: boolean; data: any }>(
-        `/api/ats-full-parity/journey?query=${encodeURIComponent(journeyQuery.trim())}`
+        `/api/ats-full-parity/journey?query=${encodeURIComponent(query)}`
       );
+      setSearchedFor(query);
+      onSearch?.(query);
 
-      if (!res.data) {
-        setJourneyError("Candidate not found");
-      } else {
-        setJourney(res.data);
-      }
-    } catch (error: any) {
-      setJourneyError(error?.message || "Search failed");
+      if (!res.data) setJourneyError(`No candidate matched "${query}".`);
+      else setJourney(res.data);
+    } catch (err: unknown) {
+      const message = (err as { message?: string })?.message || "Search failed";
+      setJourneyError(message);
       toast.error("Failed to load candidate journey");
     } finally {
       setJourneyLoading(false);
     }
-  }
+  }, [journeyQuery, onSearch]);
 
-  const candidate = journey?.candidate || {};
-  const stageLogs = journey?.stageLogs || [];
-  const confirmations = journey?.confirmations || [];
+  const candidate = journey?.candidate ?? {};
+  const stageLogs: any[] = journey?.stageLogs ?? [];
+  const confirmations: any[] = journey?.confirmations ?? [];
+
+  /**
+   * Order the timeline explicitly by date, newest first.
+   *
+   * "Latest" was previously whatever the API happened to return at index 0,
+   * which is only correct while the endpoint sorts — a silent dependency.
+   */
+  const timeline = useMemo(() => {
+    return [...stageLogs].sort((a, b) => {
+      const ta = new Date(S(a.stage_date)).getTime();
+      const tb = new Date(S(b.stage_date)).getTime();
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+      if (Number.isNaN(ta)) return 1;
+      if (Number.isNaN(tb)) return -1;
+      return tb - ta;
+    });
+  }, [stageLogs]);
+
+  const displayName = S(candidate.FullName) || S(candidate.full_name) || "Unknown";
+  const status = S(candidate.Status) || S(candidate.status) || "Pending";
+  const statusTone =
+    status.toLowerCase() === "selected"
+      ? "bg-emerald-100 text-emerald-800"
+      : status.toLowerCase() === "rejected"
+        ? "bg-rose-100 text-rose-800"
+        : "bg-slate-100 text-slate-700";
 
   return (
-    <div className="space-y-6">
-      {/* Search Bar */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Search Candidate Journey</CardTitle>
-          <p className="text-sm text-slate-500">
-            Search by Candidate ID, Name, Mobile, Email, or Token
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-3">
+    <div className="space-y-4">
+      {/* ── Search ──────────────────────────────────────────────────────── */}
+      <ChartCard
+        title="Candidate Journey"
+        subtitle="Search by candidate ID, name, mobile, email or queue token to see the full history."
+      >
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               value={journeyQuery}
               onChange={(e) => setJourneyQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") runJourney();
+                if (e.key === "Enter") void runJourney();
               }}
-              placeholder="Enter Candidate ID, Name, Mobile, Email, or Token..."
-              className="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              placeholder="Candidate ID, name, mobile, email or token…"
+              className="h-9 w-full rounded-lg border border-slate-200 pl-9 pr-3 text-sm outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
-            <button
-              onClick={() => runJourney()}
-              disabled={journeyLoading || !journeyQuery.trim()}
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {journeyLoading ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Searching...
-                </>
-              ) : (
-                <>
-                  <Search className="h-4 w-4" />
-                  Search
-                </>
-              )}
-            </button>
           </div>
-          {journeyError && (
-            <div className="mt-3 flex items-center gap-2 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-700">
-              <XCircle className="h-4 w-4" />
-              {journeyError}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Loading State */}
-      {journeyLoading && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="pt-6">
-                <Skeleton className="h-20 w-full" />
-              </CardContent>
-            </Card>
-          ))}
+          <button
+            onClick={() => void runJourney()}
+            disabled={journeyLoading || !journeyQuery.trim()}
+            className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white transition-colors duration-150 hover:bg-blue-800 disabled:opacity-50"
+          >
+            {journeyLoading ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Searching…
+              </>
+            ) : (
+              <>
+                <Search className="h-3.5 w-3.5" />
+                Search
+              </>
+            )}
+          </button>
         </div>
-      )}
 
-      {/* Candidate Profile Card */}
+        {journeyError && (
+          <div role="alert" className="mt-2.5 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
+            <XCircle className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span>{journeyError}</span>
+          </div>
+        )}
+      </ChartCard>
+
+      {journeyLoading && <ChartSkeleton height={200} />}
+
       {journey && !journeyLoading && (
         <>
-          <Card className="border-2 border-blue-200">
-            <CardHeader className="bg-gradient-to-r from-blue-50 to-sky-50">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-4">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-600 text-white text-2xl font-bold">
-                    {(candidate.FullName || candidate.full_name || "?").charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <CardTitle className="text-2xl">
-                      {candidate.FullName || candidate.full_name || "Unknown"}
-                    </CardTitle>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <Badge variant="outline">
-                        ID: {candidate.CandidateID || candidate.candidate_code}
-                      </Badge>
-                      <Badge
-                        variant={
-                          candidate.Status === "Selected" || candidate.status === "Selected"
-                            ? "secondary"
-                            : candidate.Status === "Rejected" || candidate.status === "Rejected"
-                            ? "destructive"
-                            : "default"
-                        }
-                      >
-                        {candidate.Status || candidate.status || "Pending"}
-                      </Badge>
-                      <Badge variant="outline">
-                        {candidate.CurrentStage || candidate.current_stage || "Unknown Stage"}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-3xl font-bold text-blue-600">
-                    {candidate._candidateQualityScore || 0}
-                  </div>
-                  <p className="text-sm text-slate-600">Quality Score</p>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="flex items-start gap-3">
-                  <Phone className="h-5 w-5 text-blue-600 mt-0.5" />
-                  <div>
-                    <p className="text-xs text-slate-500">Mobile</p>
-                    <p className="font-semibold">{candidate.Mobile || candidate.mobile || "N/A"}</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <Mail className="h-5 w-5 text-blue-600 mt-0.5" />
-                  <div>
-                    <p className="text-xs text-slate-500">Email</p>
-                    <p className="font-semibold text-sm break-all">
-                      {candidate.Email || candidate.email || "N/A"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <MapPin className="h-5 w-5 text-blue-600 mt-0.5" />
-                  <div>
-                    <p className="text-xs text-slate-500">Branch</p>
-                    <p className="font-semibold">
-                      {candidate.Branch || candidate.applied_for_branch || "N/A"}
-                    </p>
+          {/* ── Profile ─────────────────────────────────────────────────── */}
+          <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+            <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3.5">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-blue-700 text-lg font-bold text-white">
+                  {displayName.charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <h2 className="truncate text-base font-bold text-slate-900">{displayName}</h2>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-600">
+                      {S(candidate.CandidateID) || S(candidate.candidate_code) || "no id"}
+                    </span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${statusTone}`}>{status}</span>
+                    <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                      {S(candidate.CurrentStage) || S(candidate.current_stage) || "Stage unknown"}
+                    </span>
                   </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+              {searchedFor && (
+                <span className="shrink-0 text-[11px] text-slate-400">Matched “{searchedFor}”</span>
+              )}
+            </header>
 
-          {/* Quality Metrics */}
-          <div className="grid gap-4 md:grid-cols-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-slate-500">Candidate Quality</p>
-                    <p className="text-2xl font-bold text-slate-900">
-                      {candidate._candidateQualityScore || 0}
-                    </p>
-                    <p className="text-xs text-slate-600 mt-1">
-                      {candidate._candidateQualityLabel || "N/A"}
-                    </p>
+            <div className="grid gap-3 px-4 py-3.5 sm:grid-cols-3">
+              {[
+                { icon: Phone, label: "Mobile", value: S(candidate.Mobile) || S(candidate.mobile) },
+                { icon: Mail, label: "Email", value: S(candidate.Email) || S(candidate.email) },
+                { icon: MapPin, label: "Branch", value: S(candidate.Branch) || S(candidate.applied_for_branch) },
+              ].map((field) => (
+                <div key={field.label} className="flex items-start gap-2.5">
+                  <field.icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{field.label}</p>
+                    <p className="break-all text-xs font-semibold text-slate-800">{field.value || "—"}</p>
                   </div>
-                  <Award className="h-8 w-8 text-amber-500" />
                 </div>
-              </CardContent>
-            </Card>
+              ))}
+            </div>
+          </section>
 
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-slate-500">Handling Quality</p>
-                    <p className="text-2xl font-bold text-slate-900">
-                      {candidate._handlingQualityScore || 0}
-                    </p>
-                    <p className="text-xs text-slate-600 mt-1">
-                      {candidate._handlingQualityLabel || "N/A"}
-                    </p>
-                  </div>
-                  <User className="h-8 w-8 text-blue-500" />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-slate-500">Role Applied</p>
-                    <p className="text-sm font-bold text-slate-900 mt-1">
-                      {candidate.RoleApplied || candidate.role_applied || "N/A"}
-                    </p>
-                  </div>
-                  <CheckCircle className="h-8 w-8 text-emerald-500" />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-slate-500">Source</p>
-                    <p className="text-sm font-bold text-slate-900 mt-1">
-                      {candidate.Source || candidate.source || "Direct"}
-                    </p>
-                  </div>
-                  <Clock className="h-8 w-8 text-slate-500" />
-                </div>
-              </CardContent>
-            </Card>
+          {/* ── Scores. Quality appeared twice before — once here only. ─── */}
+          <div className="grid gap-3 grid-cols-2 xl:grid-cols-4">
+            <StatTile
+              label="Candidate Quality"
+              value={num(Number(candidate._candidateQualityScore ?? 0))}
+              denominator={S(candidate._candidateQualityLabel) || "No grade recorded"}
+              icon={<Award className="h-4 w-4" />}
+            />
+            <StatTile
+              label="Handling Quality"
+              value={num(Number(candidate._handlingQualityScore ?? 0))}
+              denominator={S(candidate._handlingQualityLabel) || "No grade recorded"}
+              icon={<UserRound className="h-4 w-4" />}
+            />
+            <StatTile
+              label="Role Applied"
+              value={S(candidate.RoleApplied) || S(candidate.role_applied) || "—"}
+              denominator="Position on the application"
+              icon={<CheckCircle2 className="h-4 w-4" />}
+            />
+            <StatTile
+              label="Source"
+              value={S(candidate.Source) || S(candidate.source) || "Direct"}
+              denominator="Sourcing channel"
+            />
           </div>
 
-          {/* Stage Timeline */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Stage Timeline</CardTitle>
-              <p className="text-sm text-slate-500">Candidate progression through stages</p>
-            </CardHeader>
-            <CardContent>
-              {stageLogs.length > 0 ? (
-                <div className="space-y-4">
-                  {stageLogs.map((log: any, index: number) => (
-                    <div key={index} className="relative pl-8 pb-4 border-l-2 border-blue-200 last:border-transparent">
-                      <div className="absolute -left-2 top-0 h-4 w-4 rounded-full bg-blue-600 border-2 border-white" />
-                      <div className="rounded-lg border border-slate-200 bg-white p-4">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-bold text-slate-900">
-                                {log.from_stage || "Start"} → {log.to_stage}
-                              </p>
-                              {index === 0 && (
-                                <Badge variant="secondary">Latest</Badge>
-                              )}
-                            </div>
-                            {log.remarks && (
-                              <p className="text-sm text-slate-600 mt-1">{log.remarks}</p>
+          {/* ── Timeline ────────────────────────────────────────────────── */}
+          <ChartCard
+            title="Stage Timeline"
+            subtitle="Every recorded transition, newest first."
+            action={
+              <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                {num(timeline.length)} transition{timeline.length === 1 ? "" : "s"}
+              </span>
+            }
+          >
+            {timeline.length === 0 ? (
+              <EmptyState
+                label="No stage transitions recorded"
+                hint="The candidate exists but has no logged movement between stages."
+                height={140}
+              />
+            ) : (
+              <ol className="relative space-y-2 pl-6">
+                <span className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-200" aria-hidden />
+                {timeline.map((log, index) => (
+                  <li key={`${S(log.to_stage)}-${index}`} className="relative">
+                    <span
+                      className="absolute -left-[22px] top-3 h-3 w-3 rounded-full border-2 border-white"
+                      style={{ backgroundColor: FUNNEL_RAMP[Math.min(index, FUNNEL_RAMP.length - 1)] }}
+                      aria-hidden
+                    />
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="flex flex-wrap items-center gap-1.5 text-xs font-bold text-slate-900">
+                            <span>{S(log.from_stage) || "Start"}</span>
+                            <span className="text-slate-400">→</span>
+                            <span>{S(log.to_stage) || "Unknown"}</span>
+                            {index === 0 && (
+                              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-800">
+                                LATEST
+                              </span>
                             )}
-                          </div>
-                          <p className="text-xs text-slate-500">
-                            {log.stage_date ? format(new Date(log.stage_date), "MMM dd, yyyy") : "N/A"}
                           </p>
+                          {S(log.remarks) && <p className="mt-1 text-[11px] text-slate-600">{S(log.remarks)}</p>}
                         </div>
+                        <p className="shrink-0 text-[11px] tabular-nums text-slate-500">{safeDate(log.stage_date)}</p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-slate-500 py-8">No stage transitions recorded</p>
-              )}
-            </CardContent>
-          </Card>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </ChartCard>
 
-          {/* Confirmations */}
+          {/* ── Confirmations ───────────────────────────────────────────── */}
           {confirmations.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Confirmations</CardTitle>
-                <p className="text-sm text-slate-500">Candidate confirmation history</p>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {confirmations.map((conf: any, index: number) => (
-                    <div
-                      key={index}
-                      className="rounded-lg border border-slate-200 bg-slate-50 p-4"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold text-slate-900">
-                            Will Join: {conf.will_join || "N/A"}
-                          </p>
-                          <p className="text-sm text-slate-600 mt-1">
-                            Process: {conf.process_name || "N/A"}
-                          </p>
-                          {conf.hr_query && (
-                            <p className="text-sm text-slate-600 mt-1">
-                              Query: {conf.hr_query}
-                            </p>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          {conf.created_at ? formatISTDate(conf.created_at) : "N/A"}
+            <ChartCard
+              title="Confirmations"
+              subtitle="Joining intent captured from the candidate."
+              action={
+                <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                  {num(confirmations.length)} record{confirmations.length === 1 ? "" : "s"}
+                </span>
+              }
+            >
+              <ul className="space-y-2">
+                {confirmations.map((conf, index) => (
+                  <li key={`${S(conf.process_name)}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900">
+                          Will join: <span className="font-semibold">{S(conf.will_join) || "—"}</span>
                         </p>
+                        <p className="mt-0.5 text-[11px] text-slate-600">Process: {S(conf.process_name) || "—"}</p>
+                        {S(conf.hr_query) && (
+                          <p className="mt-0.5 text-[11px] text-slate-600">Query: {S(conf.hr_query)}</p>
+                        )}
                       </div>
+                      <p className="shrink-0 text-[11px] tabular-nums text-slate-500">{safeDate(conf.created_at)}</p>
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+                  </li>
+                ))}
+              </ul>
+            </ChartCard>
           )}
         </>
+      )}
+
+      {!journey && !journeyLoading && !journeyError && (
+        <EmptyState
+          label="Search for a candidate to see their journey"
+          hint="Any of: candidate ID, name, mobile, email, or queue token."
+          height={180}
+        />
       )}
     </div>
   );

@@ -17,18 +17,21 @@ interface DonutChartProps {
   colors?: string[];
 }
 
-const DEFAULT_COLORS = [
-  "#1E40AF", // Deep blue
-  "#3B82F6", // Blue
-  "#60A5FA", // Light blue
-  "#93C5FD", // Lighter blue
-  "#DBEAFE", // Lightest blue
-  "#D97706", // Amber
-  "#F59E0B", // Orange
-  "#EF4444", // Red
-  "#10B981", // Green
-  "#8B5CF6", // Purple
-];
+/**
+ * Categorical palette — distinct hues, not a lightness ramp.
+ *
+ * The previous default opened with five steps of one blue (#1E40AF → #DBEAFE).
+ * A sequential ramp encodes magnitude, so using it for identity implied an order
+ * between unrelated slices, and the pale tail (#93C5FD, #DBEAFE) fell far below
+ * 3:1 against white — those slices were effectively invisible.
+ *
+ * These hues are the shared validated set: adjacent-pair CVD ΔE 9.1 (protan) and
+ * normal-vision ΔE 19.6, both above their floors. Assigned in fixed order, never
+ * cycled.
+ */
+import { SERIES } from "@/components/analytics/analytics-kit";
+
+const DEFAULT_COLORS = [...SERIES];
 
 export function DonutChart({
   data,

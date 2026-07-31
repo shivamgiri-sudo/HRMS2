@@ -516,6 +516,8 @@ export interface PayrollAnalyticsKPI {
   total_net:           number;
   avg_net:             number;
   total_gross:         number;
+  total_deductions:    number;
+  total_basic:         number;
   total_pf_employer:   number;
   total_esic_employer: number;
 }
@@ -524,6 +526,7 @@ export interface PayrollAnalyticsResponse {
   runMonth: string | null;
   kpi:      PayrollAnalyticsKPI;
   data:     PayrollAnalyticsDimRow[];
+  meta:     PayrollAnalyticsMeta | null;
 }
 
 export interface PayrollTrendRow {
@@ -533,6 +536,17 @@ export interface PayrollTrendRow {
   total_deductions: number;
   total_net:        number;
   month_label?:     string;
+  run_status?:      string;
+  is_provisional?:  boolean;
+}
+
+/** Which payroll run the analytics figures were computed from. */
+export interface PayrollAnalyticsMeta {
+  runId:            string;
+  runStatus:        string;
+  isProvisional:    boolean;
+  otherRunsInMonth: number;
+  dimension:        string;
 }
 
 export function usePayrollAnalytics(
@@ -544,17 +558,28 @@ export function usePayrollAnalytics(
     queryFn: async () => {
       const p = new URLSearchParams({ dimension });
       if (runMonth) p.set("runMonth", runMonth);
-      const res = await hrmsApi.get<{ success: boolean; runMonth: string | null; kpi: any; data: any[] }>(
+      const res = await hrmsApi.get<{ success: boolean; runMonth: string | null; kpi: any; data: any[]; meta: any }>(
         `/api/payroll/analytics?${p}`
       );
       const totalNet = Number(res.kpi?.total_net ?? 0);
       return {
         runMonth: res.runMonth ?? null,
+        meta: res.meta
+          ? {
+              runId:            String(res.meta.runId ?? ""),
+              runStatus:        String(res.meta.runStatus ?? ""),
+              isProvisional:    Boolean(res.meta.isProvisional),
+              otherRunsInMonth: Number(res.meta.otherRunsInMonth ?? 0),
+              dimension:        String(res.meta.dimension ?? dimension),
+            }
+          : null,
         kpi: {
           headcount:           Number(res.kpi?.headcount           ?? 0),
           total_net:           Number(res.kpi?.total_net           ?? 0),
           avg_net:             Number(res.kpi?.avg_net             ?? 0),
           total_gross:         Number(res.kpi?.total_gross         ?? 0),
+          total_deductions:    Number(res.kpi?.total_deductions    ?? 0),
+          total_basic:         Number(res.kpi?.total_basic         ?? 0),
           total_pf_employer:   Number(res.kpi?.total_pf_employer   ?? 0),
           total_esic_employer: Number(res.kpi?.total_esic_employer ?? 0),
         },
@@ -728,6 +753,10 @@ export function usePayrollTrends(months = 6) {
           total_deductions: Number(row.total_deductions),
           total_net:        Number(row.total_net),
           month_label:      label,
+          run_status:       String(row.run_status ?? ""),
+          // A month whose canonical run is still draft/processing will move.
+          // Charting it identically to a disbursed month invites disputes.
+          is_provisional:   ["draft", "processing"].includes(String(row.run_status ?? "").toLowerCase()),
         };
       });
     },

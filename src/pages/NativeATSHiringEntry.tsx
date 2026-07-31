@@ -3,6 +3,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import {
   AlertCircle,
+  AlertTriangle,
   BadgeCheck,
   BarChart2,
   Bell,
@@ -100,8 +101,25 @@ type HiringListResponse = {
   limit: number;
 };
 
+type CoverageBreakdown = {
+  distinctGroups: number;
+  shownGroups: number;
+  shownRecords: number;
+  otherGroups: number;
+  otherRecords: number;
+};
+
+type AnalyticsCoverage = {
+  totalRecords: number;
+  breakdowns: Record<
+    "byOutcome" | "bySource" | "byProcess" | "byRecruiter" | "byBranch" | "byGender",
+    CoverageBreakdown
+  >;
+  trendWindow: { distinctDates: number; shownDates: number; truncated: boolean; from: string | null; to: string | null };
+};
+
 type AnalyticsData = {
-  funnel: { stage: string; count: number; pct: number }[];
+  funnel: { stage: string; count: number; pct: number; stagePct: number }[];
   byOutcome: { label: string; count: number }[];
   bySource: { label: string; total: number; walkins: number; selected: number; joined: number }[];
   byProcess: { label: string; total: number; walkins: number; selected: number; joined: number }[];
@@ -127,6 +145,8 @@ type AnalyticsData = {
   trend: { date: string; logged: number; walkins: number; selected: number }[];
   followupDue: { id: string; candidate_name: string; mobile: string; followup_date: string; followup_reason: string }[];
   followupDueCount: number;
+  coverage?: AnalyticsCoverage;
+  degraded?: string[];
 };
 
 type AnalyticsResponse = { success: boolean; data: AnalyticsData };
@@ -313,6 +333,51 @@ function KpiTile({ label, value, sub, color, icon }: {
 function AnalyticsEmptyState({ label }: { label: string }) {
   return (
     <div className="flex h-[180px] items-center justify-center text-sm text-slate-400">{label}</div>
+  );
+}
+
+/**
+ * States, in plain words, how much of the dataset a capped chart is actually
+ * showing. A top-N chart with no such note reads as "this is everything", which
+ * is how a dashboard loses the room's trust.
+ */
+function CoverageNote({ breakdown, unit = "records" }: { breakdown?: CoverageBreakdown; unit?: string }) {
+  if (!breakdown) return null;
+  const { shownGroups, distinctGroups, shownRecords, otherGroups, otherRecords } = breakdown;
+  const complete = otherGroups === 0 && otherRecords === 0;
+  return (
+    <div className={`mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium ${
+      complete ? "border-emerald-100 bg-emerald-50/60 text-emerald-700" : "border-amber-100 bg-amber-50/60 text-amber-700"
+    }`}>
+      {complete ? (
+        <span>Showing all {distinctGroups} groups · {shownRecords.toLocaleString()} {unit} · 100% of scope</span>
+      ) : (
+        <span>
+          Showing top {shownGroups} of {distinctGroups} groups ·{" "}
+          {shownRecords.toLocaleString()} {unit} charted ·{" "}
+          <strong className="font-bold">{otherRecords.toLocaleString()} {unit} in {otherGroups} other group{otherGroups === 1 ? "" : "s"} not shown</strong>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Surfaces sub-queries that failed, so their zeros are never read as measurements. */
+function DegradedBanner({ degraded }: { degraded?: string[] }) {
+  if (!degraded || degraded.length === 0) return null;
+  return (
+    <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-3.5">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+        <div className="text-xs text-rose-800">
+          <div className="font-black">Partial data — do not use these figures for reporting</div>
+          <div className="mt-1">
+            {degraded.length} section{degraded.length === 1 ? "" : "s"} failed to load and are showing zero rather
+            than a real value: <span className="font-bold">{degraded.join(", ")}</span>. Refresh, and escalate if it persists.
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1392,10 +1457,21 @@ export default function NativeATSHiringEntry() {
               const selPct      = selectionRate;
               const joinPct     = joiningRate;
 
-              // ApexCharts: outcome donut
-              const donutTotal   = analytics.byOutcome.reduce((a, b) => a + b.count, 0);
-              const donutSeries  = analytics.byOutcome.map((o) => o.count);
-              const donutLabels  = analytics.byOutcome.map((o) => o.label);
+              // Coverage drives every denominator on this tab. Summing a capped
+              // array to get a "Total" understates it, which inflates every share.
+              const coverage = analytics.coverage;
+              const scopeTotal = coverage?.totalRecords ?? fLogged;
+
+              // ApexCharts: outcome donut. byOutcome is a closed taxonomy, so it
+              // reconciles to the scope total exactly; assert that rather than assume it.
+              const outcomeSum   = analytics.byOutcome.reduce((a, b) => a + b.count, 0);
+              const outcomeGap   = Math.max(0, scopeTotal - outcomeSum);
+              const donutSlices  = outcomeGap > 0
+                ? [...analytics.byOutcome, { label: "Unclassified", count: outcomeGap }]
+                : analytics.byOutcome;
+              const donutTotal   = donutSlices.reduce((a, b) => a + b.count, 0);
+              const donutSeries  = donutSlices.map((o) => o.count);
+              const donutLabels  = donutSlices.map((o) => o.label);
               const donutOptions: ApexOptions = {
                 chart: { type: "donut", toolbar: { show: false }, animations: { enabled: true, speed: 600 } },
                 labels: donutLabels,
@@ -1457,12 +1533,14 @@ export default function NativeATSHiringEntry() {
 
               return (
                 <>
+                  <DegradedBanner degraded={analytics.degraded} />
+
                   {/* ── KPI tiles ── */}
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7">
                     <KpiTile
                       label="Candidate Records"
                       value={fLogged.toLocaleString()}
-                      sub="Base entries · follow-up attempts excluded"
+                      sub={`Base entries · ${aFromDate || aToDate ? `${aFromDate || "start"} → ${aToDate || "today"}` : "all dates"}${aBranch ? ` · ${aBranch}` : ""}`}
                       color="border-slate-300"
                       icon={<Users className="h-4 w-4 text-slate-400" />}
                     />
@@ -1526,9 +1604,12 @@ export default function NativeATSHiringEntry() {
                           const dropOff = i > 0 ? analytics.funnel[i - 1].count - stage.count : 0;
                           const dropPct = i > 0 && analytics.funnel[i - 1].count > 0
                             ? Math.round((dropOff / analytics.funnel[i - 1].count) * 100) : 0;
+                          // One colour per stage — the array previously held five
+                          // entries for six stages, so "Joined" reused the grey of "Logged".
                           const colors = [
                             "from-slate-500 to-slate-600",
                             "from-blue-500 to-blue-600",
+                            "from-sky-500 to-sky-600",
                             "from-amber-500 to-amber-600",
                             "from-emerald-500 to-emerald-600",
                             "from-violet-500 to-violet-600",
@@ -1551,11 +1632,19 @@ export default function NativeATSHiringEntry() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-sm font-bold">{stage.stage}</span>
                                 </div>
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2">
                                   <span className="text-lg font-black tabular-nums">{stage.count.toLocaleString()}</span>
-                                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-bold">
-                                    {stage.pct}%
+                                  {/* Both denominators, each named. A single unlabelled
+                                      badge next to a stage-to-stage drop % was the most
+                                      misread number on this page. */}
+                                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold" title="Share of all logged candidate records">
+                                    {stage.pct}% of logged
                                   </span>
+                                  {i > 0 && (
+                                    <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px] font-bold" title={`Conversion from ${analytics.funnel[i - 1].stage}`}>
+                                      {stage.stagePct}% of {analytics.funnel[i - 1].stage.toLowerCase()}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1592,7 +1681,14 @@ export default function NativeATSHiringEntry() {
                       {analytics.byOutcome.length === 0 ? (
                         <AnalyticsEmptyState label="No outcome data" />
                       ) : (
-                        <ReactApexChart type="donut" series={donutSeries} options={donutOptions} height={280} />
+                        <>
+                          <ReactApexChart type="donut" series={donutSeries} options={donutOptions} height={280} />
+                          <div className="mt-1 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-[10px] font-medium text-slate-600">
+                            Each record counted once, at its furthest stage reached ·{" "}
+                            <strong className="font-bold text-slate-800">{donutTotal.toLocaleString()}</strong> of{" "}
+                            {scopeTotal.toLocaleString()} records classified
+                          </div>
+                        </>
                       )}
                     </div>
 
@@ -1662,6 +1758,23 @@ export default function NativeATSHiringEntry() {
                           </BarChart>
                         )}
                       </ResponsiveContainer>
+                      {coverage?.trendWindow && (
+                        <div className={`mt-2 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium ${
+                          coverage.trendWindow.truncated
+                            ? "border-amber-100 bg-amber-50/60 text-amber-700"
+                            : "border-slate-100 bg-slate-50 text-slate-600"
+                        }`}>
+                          {coverage.trendWindow.from && coverage.trendWindow.to ? (
+                            <>
+                              {coverage.trendWindow.from} → {coverage.trendWindow.to} ·{" "}
+                              {coverage.trendWindow.shownDates} active day{coverage.trendWindow.shownDates === 1 ? "" : "s"}
+                              {coverage.trendWindow.truncated && (
+                                <> · <strong className="font-bold">most recent {coverage.trendWindow.shownDates} of {coverage.trendWindow.distinctDates} days — narrow the date filter to see older activity</strong></>
+                              )}
+                            </>
+                          ) : "No activity in range"}
+                        </div>
+                      )}
                     </div>
 
                     {/* Day of Week — ApexCharts */}
@@ -1699,6 +1812,7 @@ export default function NativeATSHiringEntry() {
                         height={280}
                       />
                     )}
+                    <CoverageNote breakdown={coverage?.breakdowns.bySource} />
                   </div>
 
                   {/* ── Row 4: Process + Branch Analytics ── */}
@@ -1723,6 +1837,7 @@ export default function NativeATSHiringEntry() {
                           </BarChart>
                         </ResponsiveContainer>
                       )}
+                      <CoverageNote breakdown={coverage?.breakdowns.byProcess} />
                     </div>
 
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -1758,6 +1873,13 @@ export default function NativeATSHiringEntry() {
                               <Bar dataKey="overallRate" fill="#8b5cf6" name="Overall conversion" radius={[0, 3, 3, 0]} />
                             </BarChart>
                           </ResponsiveContainer>
+                          {analytics.byBranch.length > 12 && (
+                            <div className="-mt-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-[10px] font-medium text-slate-600">
+                              Chart shows the 12 highest-volume branches. All{" "}
+                              <strong className="font-bold text-slate-800">{analytics.byBranch.length}</strong> branches
+                              are listed in the table below.
+                            </div>
+                          )}
 
                           <div className="overflow-x-auto rounded-xl border border-slate-200">
                             <table className="min-w-[1080px] w-full text-xs">
@@ -1849,6 +1971,7 @@ export default function NativeATSHiringEntry() {
                               </tbody>
                             </table>
                           </div>
+                          <CoverageNote breakdown={coverage?.breakdowns.byGender} unit="candidates" />
                         </div>
                       )}
                     </div>
@@ -1873,6 +1996,7 @@ export default function NativeATSHiringEntry() {
                           </BarChart>
                         </ResponsiveContainer>
                       )}
+                      <CoverageNote breakdown={coverage?.breakdowns.byRecruiter} />
                     </div>
                   </div>
 
@@ -1916,9 +2040,14 @@ export default function NativeATSHiringEntry() {
                   {/* ── Follow-ups due ── */}
                   {analytics.followupDue.length > 0 && (
                     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
-                      <div className="mb-3 flex items-center gap-2 text-sm font-black text-amber-800">
+                      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm font-black text-amber-800">
                         <Bell className="h-4 w-4" />
-                        Follow-ups Due (Next 7 Days) — {analytics.followupDue.length}
+                        Follow-ups Due (Next 7 Days) — {(analytics.followupDueCount ?? analytics.followupDue.length).toLocaleString()}
+                        {analytics.followupDueCount > analytics.followupDue.length && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                            showing first {analytics.followupDue.length}
+                          </span>
+                        )}
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[500px] text-sm">

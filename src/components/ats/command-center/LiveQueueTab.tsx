@@ -1,5 +1,15 @@
 import { useMemo } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Clock, TimerReset, Users } from "lucide-react";
+
+import {
+  ChartCard,
+  ChartSkeleton,
+  EmptyState,
+  StatTile,
+  num,
+  pct,
+  ratio,
+} from "@/components/analytics/analytics-kit";
 
 type AnyRow = Record<string, unknown>;
 
@@ -8,113 +18,160 @@ interface LiveQueueTabProps {
   loading?: boolean;
 }
 
+const N = (v: unknown) => Number(v || 0);
+const S = (v: unknown) => String(v ?? "");
+
 function mins(v: unknown) {
-  const m = Number(v || 0);
+  const m = Math.round(N(v));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 }
 
 export function LiveQueueTab({ queueRows, loading }: LiveQueueTabProps) {
-  const sorted = useMemo(
-    () => [...queueRows].sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0)),
-    [queueRows]
-  );
-
-  const slaBreachCount = sorted.filter((r) => r.SLAFlag).length;
-  const avgWait = sorted.length > 0
-    ? Math.round(sorted.reduce((sum, r) => sum + Number(r.WaitingMinutes || 0), 0) / sorted.length)
-    : 0;
+  const model = useMemo(() => {
+    const sorted = [...(queueRows || [])].sort((a, b) => N(b.WaitingMinutes) - N(a.WaitingMinutes));
+    const breaches = sorted.filter((r) => r.SLAFlag);
+    const totalWait = sorted.reduce((sum, r) => sum + N(r.WaitingMinutes), 0);
+    return {
+      sorted,
+      breachCount: breaches.length,
+      avgWait: sorted.length > 0 ? totalWait / sorted.length : 0,
+      // The median resists the single 4-hour outlier that drags the mean and makes
+      // a healthy queue look broken.
+      medianWait:
+        sorted.length > 0
+          ? N(sorted[Math.floor(sorted.length / 2)]?.WaitingMinutes)
+          : 0,
+      longest: sorted[0],
+    };
+  }, [queueRows]);
 
   if (loading) {
     return (
       <div className="space-y-4">
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-20 animate-pulse rounded-lg border border-slate-200 bg-slate-100" />
+            <div key={i} className="h-24 animate-pulse rounded-xl border border-slate-200 bg-slate-100" />
           ))}
         </div>
-        <div className="h-64 animate-pulse rounded-lg border border-slate-200 bg-slate-100" />
+        <ChartSkeleton height={300} />
       </div>
     );
   }
 
+  const { sorted, breachCount, avgWait, medianWait, longest } = model;
+
   return (
-    <div className="space-y-5">
-      {/* Metrics */}
+    <div className="space-y-4">
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        <Stat label="Queue Length" value={String(sorted.length)} />
-        <Stat label="Avg Wait" value={mins(avgWait)} />
-        <Stat label="SLA Breach" value={String(slaBreachCount)} alert={slaBreachCount > 0} />
-        <Stat label="Longest Wait" value={mins(sorted[0]?.WaitingMinutes)} />
+        <StatTile
+          label="Queue Length"
+          value={num(sorted.length)}
+          denominator="Candidates waiting now"
+          icon={<Users className="h-4 w-4" />}
+        />
+        <StatTile
+          label="Median Wait"
+          value={mins(medianWait)}
+          denominator={`Mean ${mins(avgWait)} — differs when a few wait far longer`}
+          icon={<Clock className="h-4 w-4" />}
+        />
+        <StatTile
+          label="SLA Breach"
+          value={num(breachCount)}
+          denominator={`${pct(ratio(breachCount, sorted.length) ?? 0)} of the queue`}
+          intent={breachCount > 0 ? "critical" : "good"}
+          icon={<AlertTriangle className="h-4 w-4" />}
+        />
+        <StatTile
+          label="Longest Wait"
+          value={mins(longest?.WaitingMinutes)}
+          denominator={longest ? `${S(longest.FullName) || "Unnamed"} · ${S(longest.Branch) || "no branch"}` : "Queue empty"}
+          intent={longest?.SLAFlag ? "critical" : "neutral"}
+          icon={<TimerReset className="h-4 w-4" />}
+        />
       </div>
 
-      {/* SLA alert */}
-      {slaBreachCount > 0 && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
-          <p className="flex items-center gap-2 text-xs font-bold text-rose-800">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            {slaBreachCount} candidate{slaBreachCount > 1 ? "s" : ""} in SLA breach
+      {breachCount > 0 && (
+        <div role="alert" className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3">
+          <p className="flex items-center gap-2 text-xs font-bold text-rose-900">
+            <AlertTriangle className="h-4 w-4" />
+            {num(breachCount)} candidate{breachCount === 1 ? "" : "s"} past the SLA target — highlighted in the table below
           </p>
         </div>
       )}
 
-      {/* Queue Table */}
-      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-        <div className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-800">Live Queue ({sorted.length})</h3>
-          <span className="text-[11px] text-slate-500">Sorted by longest wait</span>
-        </div>
-        <div className="overflow-auto max-h-[500px]">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-white text-slate-500 border-b border-slate-200">
-              <tr>
-                <th className="text-left px-3 py-2 font-medium">Token</th>
-                <th className="text-left px-3 py-2 font-medium">Candidate</th>
-                <th className="text-left px-3 py-2 font-medium">Branch</th>
-                <th className="text-left px-3 py-2 font-medium">Role</th>
-                <th className="text-left px-3 py-2 font-medium">Recruiter</th>
-                <th className="text-left px-3 py-2 font-medium">Stage</th>
-                <th className="text-right px-3 py-2 font-medium">Waiting</th>
-                <th className="text-center px-3 py-2 font-medium">SLA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((row, i) => (
-                <tr
-                  key={String(row.CandidateID || i)}
-                  className={`border-t border-slate-100 hover:bg-slate-50 ${row.SLAFlag ? "bg-rose-50" : ""}`}
-                >
-                  <td className="px-3 py-2 font-mono text-slate-700">{String(row.QToken || "-")}</td>
-                  <td className="px-3 py-2 font-medium text-slate-800">{String(row.FullName || "-")}</td>
-                  <td className="px-3 py-2 text-slate-600">{String(row.Branch || "-")}</td>
-                  <td className="px-3 py-2 text-slate-600 max-w-[100px] truncate">{String(row.RoleApplied || "-")}</td>
-                  <td className="px-3 py-2 text-slate-600">{String(row.RecruiterAssignedName || "-")}</td>
-                  <td className="px-3 py-2 text-slate-600">{String(row.CurrentStage || "-")}</td>
-                  <td className="px-3 py-2 text-right font-bold text-slate-900">{mins(row.WaitingMinutes)}</td>
-                  <td className="px-3 py-2 text-center">
-                    {row.SLAFlag ? (
-                      <span className="inline-flex rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">BREACH</span>
-                    ) : (
-                      <span className="inline-flex rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">OK</span>
-                    )}
-                  </td>
+      <ChartCard
+        title="Live Queue"
+        subtitle="Everyone currently waiting, longest first. Rows in breach are tinted and flagged."
+        action={
+          <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+            {num(sorted.length)} waiting
+          </span>
+        }
+      >
+        {sorted.length === 0 ? (
+          <EmptyState
+            label="Queue is empty"
+            hint="Nobody is waiting right now — this is a real zero, not a failed load."
+            height={200}
+          />
+        ) : (
+          <div className="max-h-[520px] overflow-auto rounded-lg border border-slate-200">
+            <table className="w-full min-w-[880px] text-xs">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="border-b border-slate-200 text-slate-600">
+                  <th className="px-3 py-2 text-left font-semibold">Token</th>
+                  <th className="px-3 py-2 text-left font-semibold">Candidate</th>
+                  <th className="px-3 py-2 text-left font-semibold">Branch</th>
+                  <th className="px-3 py-2 text-left font-semibold">Role</th>
+                  <th className="px-3 py-2 text-left font-semibold">Recruiter</th>
+                  <th className="px-3 py-2 text-left font-semibold">Stage</th>
+                  <th className="px-3 py-2 text-right font-semibold">Waiting</th>
+                  <th className="px-3 py-2 text-center font-semibold">SLA</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {sorted.length === 0 && (
-            <p className="text-center text-sm text-slate-400 py-12">Queue is empty</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, alert }: { label: string; value: string; alert?: boolean }) {
-  return (
-    <div className={`rounded-lg border px-4 py-3 ${alert ? "border-rose-200 bg-rose-50" : "border-slate-200 bg-white"}`}>
-      <p className="text-[11px] uppercase tracking-wider text-slate-500 font-medium">{label}</p>
-      <p className={`text-xl font-bold mt-0.5 ${alert ? "text-rose-700" : "text-slate-900"}`}>{value}</p>
+              </thead>
+              <tbody>
+                {sorted.map((row, i) => (
+                  <tr
+                    key={`${S(row.CandidateID)}-${i}`}
+                    className={`border-b border-slate-100 last:border-0 transition-colors duration-150 ${
+                      row.SLAFlag ? "bg-rose-50/70 hover:bg-rose-50" : "hover:bg-slate-50/60"
+                    }`}
+                  >
+                    <td className="px-3 py-2 font-mono text-slate-600">{S(row.QToken) || "—"}</td>
+                    <td className="px-3 py-2 font-medium text-slate-800">{S(row.FullName) || "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{S(row.Branch) || "—"}</td>
+                    <td className="max-w-[130px] truncate px-3 py-2 text-slate-600" title={S(row.RoleApplied)}>
+                      {S(row.RoleApplied) || "—"}
+                    </td>
+                    <td className="px-3 py-2 text-slate-600">{S(row.RecruiterAssignedName) || "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{S(row.CurrentStage) || "—"}</td>
+                    <td
+                      className={`px-3 py-2 text-right font-bold tabular-nums ${
+                        row.SLAFlag ? "text-rose-700" : "text-slate-900"
+                      }`}
+                    >
+                      {mins(row.WaitingMinutes)}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {/* Status carries an icon and a word, never colour alone. */}
+                      {row.SLAFlag ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800">
+                          <AlertTriangle className="h-3 w-3" /> BREACH
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                          OK
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ChartCard>
     </div>
   );
 }
