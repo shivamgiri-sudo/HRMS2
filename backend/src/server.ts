@@ -34,7 +34,6 @@ import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
-import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
 // WORKER GOVERNANCE: When WORKERS_PROCESS=external, ALL workers run in separate process
@@ -152,7 +151,6 @@ function startServer() {
         // other topology, which is exactly what happened to ats-reminders.
         // Gated by worker_config.enabled (0 by default) regardless of which starts it.
         startTatEscalationWorker();
-        startReportSubscriptionWorker();
         console.log(
           "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders, employee-lifecycle started",
         );

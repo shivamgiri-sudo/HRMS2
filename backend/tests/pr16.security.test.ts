@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import jwt from "jsonwebtoken";
 
 vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
@@ -13,37 +14,76 @@ vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue(
 
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
-import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
+// The supabaseAdmin module stays mocked above because app.ts pulls it in, but
+// authMiddleware no longer calls it — auth is MySQL JWT now, so mocking
+// getUser here would prove nothing.
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
-const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 
-const ADMIN = { Authorization: "Bearer admin.token" };
-const MGR   = { Authorization: "Bearer manager.token" };
-const RECR  = { Authorization: "Bearer recruiter.token" };
-const HR    = { Authorization: "Bearer hr.token" };
+/**
+ * Real JWTs, not the retired "<role>.token" placeholders this file used to send.
+ *
+ * Auth moved to MySQL JWTs: the middleware hands anything not starting with
+ * "mock-token" to verifyAccessToken, jwt.verify throws on "admin.token", and
+ * every request 401s — which is why all 15 failures here read "expected 401 to
+ * be <something>". The suite was asserting only that unauthenticated requests
+ * are rejected, not any of the scope, masking or audit rules it is named for.
+ *
+ * A mock-token-* demo token would authenticate but defeat the point: requireRole
+ * resolves demo users from req.authUser.role and never consults the database, so
+ * these role-scope tests would stop exercising the DB-driven path they exist to
+ * cover. Each role gets its own subject, matching the ids the helpers used.
+ */
+const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const bearer = (sub: string) => ({
+  Authorization: `Bearer ${jwt.sign(
+    { sub, email: `${sub}@mcn.com`, iat: Math.floor(Date.now() / 1000) },
+    JWT_SECRET,
+    { expiresIn: "1h" },
+  )}`,
+});
+
+const ADMIN = bearer("u-admin");
+const MGR   = bearer("u-mgr");
+const RECR  = bearer("u-recr");
+const HR    = bearer("u-hr");
+
+/**
+ * Route db.execute by the SQL it receives rather than by call order.
+ *
+ * Positional mockResolvedValueOnce chains cannot survive this auth path.
+ * authMiddleware caches resolved role context for 30 seconds per user id, so
+ * the first request for a subject costs several queries (user_roles,
+ * user_assignment_scope, auth_user) and every later one costs none — and on a
+ * cache hit requireRole reads req.authUser.roles and skips its own lookup too.
+ * Which test pays that cost depends on execution order, so a positional queue
+ * silently shifts underneath whichever tests run later.
+ *
+ * Writes answer with affectedRows so audit-log assertions still see a result;
+ * reads answer with `rows`, defaulting to empty.
+ */
+function mockDb(rows: unknown[] = [], roleKey?: string) {
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/FROM user_roles/i.test(text)) {
+      return [roleKey ? [{ role_key: roleKey }] : [], []];
+    }
+    if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
+    if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
+    return [rows, []];
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecute.mockReset();
   mockExecute.mockResolvedValue([[], []]);
 });
 
-function mockAdmin() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null });
-  mockExecute.mockResolvedValueOnce([[{ role_key: "admin" }], []]);
-}
-function mockHr() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: "u-hr" } }, error: null });
-  mockExecute.mockResolvedValueOnce([[{ role_key: "hr" }], []]);
-}
-function mockManager() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: "u-mgr" } }, error: null });
-  mockExecute.mockResolvedValueOnce([[{ role_key: "manager" }], []]);
-}
-function mockRecruiter() {
-  mockGetUser.mockResolvedValue({ data: { user: { id: "u-recr" } }, error: null });
-  mockExecute.mockResolvedValueOnce([[{ role_key: "recruiter" }], []]);
-}
+function mockAdmin(rows: unknown[] = [])     { mockDb(rows, "admin"); }
+function mockHr(rows: unknown[] = [])        { mockDb(rows, "hr"); }
+function mockManager(rows: unknown[] = [])   { mockDb(rows, "manager"); }
+function mockRecruiter(rows: unknown[] = []) { mockDb(rows, "recruiter"); }
 
 // ── a) GET /api/ats-ext/requisitions — 403 for manager ───────────────────────
 
@@ -55,8 +95,7 @@ describe("ATS scope: GET /api/ats-ext/requisitions", () => {
   });
 
   it("returns 200 for admin (baseline)", async () => {
-    mockAdmin();
-    mockExecute.mockResolvedValueOnce([[{ id: "r-1", req_code: "MR-1", status: "open" }], []]);
+    mockAdmin([{ id: "r-1", req_code: "MR-1", status: "open" }]);
     const r = await request(app).get("/api/ats-ext/requisitions").set(ADMIN);
     expect(r.status).toBe(200);
   });
@@ -72,10 +111,7 @@ describe("ATS scope: GET /api/ats-ext/analytics/funnel", () => {
   });
 
   it("returns 200 for hr (baseline)", async () => {
-    mockHr();
-    mockExecute.mockResolvedValueOnce([[
-      { sourcing_channel: "Walk-in", total_applied: 50, total_selected: 10, conversion_pct: 20.0 }
-    ], []]);
+    mockHr([{ sourcing_channel: "Walk-in", total_applied: 50, total_selected: 10, conversion_pct: 20.0 }]);
     const r = await request(app).get("/api/ats-ext/analytics/funnel").set(HR);
     expect(r.status).toBe(200);
   });
@@ -95,18 +131,15 @@ describe("ATS scope: GET /api/ats-ext/duplicates", () => {
 
 describe("ATS PII masking: GET /api/ats-ext/duplicates", () => {
   it("returns masked mobile fields and no raw mobile for admin", async () => {
-    mockAdmin();
-    mockExecute.mockResolvedValueOnce([[
-      {
-        id: "dup-1",
-        candidate_name: "Ravi Kumar",
-        matched_name: "Ravi K",
-        candidate_mobile_masked: "987****23",
-        matched_mobile_masked: "987****23",
-        match_reason: "mobile",
-        resolved: 0,
-      },
-    ], []]);
+    mockAdmin([{
+      id: "dup-1",
+      candidate_name: "Ravi Kumar",
+      matched_name: "Ravi K",
+      candidate_mobile_masked: "987****23",
+      matched_mobile_masked: "987****23",
+      match_reason: "mobile",
+      resolved: 0,
+    }]);
 
     const r = await request(app).get("/api/ats-ext/duplicates").set(ADMIN);
     expect(r.status).toBe(200);
@@ -128,8 +161,6 @@ describe("ATS PII masking: GET /api/ats-ext/duplicates", () => {
 describe("ATS audit: POST /api/ats-ext/duplicates/:id/resolve", () => {
   it("writes a sensitive_action_log entry when resolving a duplicate", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE resolved
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit insert
 
     const r = await request(app)
       .post("/api/ats-ext/duplicates/dup-1/resolve")
@@ -150,8 +181,6 @@ describe("ATS audit: POST /api/ats-ext/duplicates/:id/resolve", () => {
 describe("WFM audit: POST /api/wfm-ext/roster/swaps/:id/review", () => {
   it("writes a sensitive_action_log entry when reviewing a swap", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE swap status
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit insert
 
     const r = await request(app)
       .post("/api/wfm-ext/roster/swaps/sw-1/review")
@@ -168,8 +197,6 @@ describe("WFM audit: POST /api/wfm-ext/roster/swaps/:id/review", () => {
 
   it("writes audit log for rejected swap too", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
     const r = await request(app)
       .post("/api/wfm-ext/roster/swaps/sw-2/review")
@@ -190,8 +217,6 @@ describe("WFM audit: POST /api/wfm-ext/roster/swaps/:id/review", () => {
 describe("WFM audit: POST /api/wfm-ext/roster/conflicts/:id/resolve", () => {
   it("writes a sensitive_action_log entry when resolving a conflict", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE resolved
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit insert
 
     const r = await request(app)
       .post("/api/wfm-ext/roster/conflicts/cf-1/resolve")
@@ -211,8 +236,6 @@ describe("WFM audit: POST /api/wfm-ext/roster/conflicts/:id/resolve", () => {
 describe("WFM audit: POST /api/wfm-ext/coverage/snapshot", () => {
   it("writes a sensitive_action_log entry when upserting a coverage snapshot", async () => {
     mockAdmin();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT/upsert
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit insert
 
     const r = await request(app)
       .post("/api/wfm-ext/coverage/snapshot")
@@ -238,10 +261,7 @@ describe("WFM audit: POST /api/wfm-ext/coverage/snapshot", () => {
 
 describe("WFM audit: POST /api/wfm-ext/attrition/record", () => {
   it("writes a sensitive_action_log entry when recording attrition", async () => {
-    mockHr();
-    mockExecute.mockResolvedValueOnce([[{ process_id: "proc-1", branch_id: "branch-1", date_of_joining: "2024-01-01" }], []]); // employee lookup
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT attrition
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit insert
+    mockHr([{ process_id: "proc-1", branch_id: "branch-1", date_of_joining: "2024-01-01" }]);
 
     const r = await request(app)
       .post("/api/wfm-ext/attrition/record")
@@ -266,12 +286,8 @@ describe("WFM audit: POST /api/wfm-ext/attrition/record", () => {
 
 describe("ATS duplicate idempotency: logDuplicate skips existing unresolved pairs", () => {
   it("does not INSERT when an unresolved record already exists for the same pair", async () => {
-    // The SELECT for existing duplicate returns one row
-    mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null });
-
-    // Simulate calling duplicateService.logDuplicate via service layer:
-    // First call: SELECT finds existing unresolved row → service returns early
-    mockExecute.mockResolvedValueOnce([[{ id: "dup-existing" }], []]);
+    // SELECT for an existing duplicate returns one row → service returns early.
+    mockDb([{ id: "dup-existing" }]);
 
     // Import service at module scope to call it directly
     const { duplicateService } = await import("../src/modules/ats-extensions/ats-ext.service.js");
@@ -289,9 +305,8 @@ describe("ATS duplicate idempotency: logDuplicate skips existing unresolved pair
   });
 
   it("does INSERT when no existing unresolved record for the pair", async () => {
-    // SELECT finds no existing row → service proceeds to INSERT
-    mockExecute.mockResolvedValueOnce([[], []]); // SELECT → empty
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT
+    // SELECT finds no existing row → service proceeds to INSERT.
+    mockDb([]);
 
     const { duplicateService } = await import("../src/modules/ats-extensions/ats-ext.service.js");
     await duplicateService.logDuplicate("cand-C", "cand-D", "email", 90);
@@ -316,10 +331,7 @@ describe("WFM scope: GET /api/wfm-ext/attrition/summary", () => {
   });
 
   it("returns 200 for admin (baseline)", async () => {
-    mockAdmin();
-    mockExecute.mockResolvedValueOnce([[
-      { exit_type: "voluntary", count: 3, avg_tenure_days: 400 }
-    ], []]);
+    mockAdmin([{ exit_type: "voluntary", count: 3, avg_tenure_days: 400 }]);
     const r = await request(app).get("/api/wfm-ext/attrition/summary").set(ADMIN);
     expect(r.status).toBe(200);
   });
