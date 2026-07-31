@@ -70,6 +70,24 @@ const empJwt = jwt.sign(
 );
 const EMP_TOKEN = { Authorization: `Bearer ${empJwt}` };
 
+/**
+ * Same employee, but authenticated as "user-1".
+ *
+ * The audit assertion in e2 expects actor_user_id "user-1" — the identity the
+ * suite was written against. Signing the subject the assertion already names
+ * keeps that check testing what it was written to test (the audit trail records
+ * the authenticated actor), rather than relaxing the expectation to whatever the
+ * token happens to carry. A distinct user id also means a distinct auth-cache
+ * entry, so this test cannot inherit cached roles from the ones before it.
+ */
+const AUDIT_TOKEN = {
+  Authorization: `Bearer ${jwt.sign(
+    { sub: "user-1", email: "employee@mcn.com", iat: Math.floor(Date.now() / 1000) },
+    JWT_SECRET,
+    { expiresIn: "1h" },
+  )}`,
+};
+
 // Helper — authenticate as employee (user-emp) with no privileged roles
 function mockEmployee(userId = "user-emp") {
   mockGetUser.mockResolvedValue({
@@ -89,8 +107,37 @@ function mockEmployeeNoRoles(userId = "user-emp") {
   mockExecute.mockResolvedValueOnce([[], []]);
 }
 
+/**
+ * Route db.execute by the SQL it receives instead of by call order.
+ *
+ * The positional mockResolvedValueOnce chains these tests used cannot survive
+ * the auth layer. authMiddleware keeps a 30-second in-process context cache
+ * keyed by user id, so the FIRST request for a user costs three to four queries
+ * (user_roles, user_assignment_scope, sometimes auth_user role, then auth_user
+ * is_read_only) and every later one costs none — and on a cache hit requireRole
+ * reads req.authUser.roles and skips its own lookup too. Which test pays that
+ * cost depends on execution order, so a positional queue silently shifts under
+ * the tests that run later. vi.clearAllMocks() does not drain a once-queue
+ * either, so leftovers carry between tests as well.
+ *
+ * Keyed by SQL, call count and ordering stop mattering. Patterns are tried in
+ * order, so list the more specific table first (salary_prep_line_component
+ * before salary_prep_line). Anything unmatched returns an empty result set,
+ * which is also what an unmocked query should look like.
+ */
+function mockQueries(routes: Array<[RegExp, unknown[]]>) {
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    for (const [pattern, rows] of routes) {
+      if (pattern.test(text)) return [rows, []];
+    }
+    return [[], []];
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecute.mockReset();
   mockExecute.mockResolvedValue([[], []]);
 });
 
@@ -162,16 +209,18 @@ describe("e) Employee can view own payslip", () => {
       data: { user: { id: "user-emp-a", email: "empA@mcn.com" } },
       error: null,
     });
-    // hasRole check — no privileged role
-    mockExecute.mockResolvedValueOnce([[], []]);
-    // getEmployeeForUser — resolves to emp-A (same as URL param)
-    mockExecute.mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []]);
-    // payslipService.getPayslip
-    mockExecute.mockResolvedValueOnce([[{
-      id: "ps-1", run_id: "run-1", employee_id: "emp-A",
-      payslip_ref: "PS-2026-05-MCN001",
-      gross_salary: 25000, net_salary: 22600,
-    }], []]);
+    mockQueries([
+      // getEmployeeForUser — resolves the caller to emp-A, same as the URL param
+      [/FROM employees/i, [{ id: "emp-A", employee_code: "MCN001" }]],
+      // payslipService.getPayslip
+      [/FROM salary_prep_line/i, [{
+        id: "ps-1", run_id: "run-1", employee_id: "emp-A",
+        payslip_ref: "PS-2026-05-MCN001",
+        gross_salary: 25000, net_salary: 22600,
+      }]],
+      // Role lookups fall through to [] — the point of this test is that an
+      // employee with no privileged role can still read their OWN payslip.
+    ]);
 
     const r = await request(app)
       .get("/api/payroll/payslip/run-1/emp-A")
@@ -203,27 +252,29 @@ describe("e2) Employee payslip history", () => {
       data: { user: { id: "user-emp-a", email: "empA@mcn.com" } },
       error: null,
     });
-    mockExecute
-      .mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []])
-      .mockResolvedValueOnce([[{
+    mockQueries([
+      [/FROM employees/i, [{ id: "emp-A", employee_code: "MCN001" }]],
+      // More specific table first — salary_prep_line is a prefix of this one.
+      [/salary_prep_line_component/i, [{
+        component_code: "BASIC",
+        component_name: "Basic Salary",
+        component_type: "earning",
+        amount: 15000,
+        taxable: 1,
+      }]],
+      [/salary_prep_line/i, [{
         id: "line-1",
         employee_id: "emp-A",
         run_month: "2026-05",
         gross_salary: 25000,
         total_deductions: 2400,
         net_salary: 22600,
-      }], []])
-      .mockResolvedValueOnce([[{
-        component_code: "BASIC",
-        component_name: "Basic Salary",
-        component_type: "earning",
-        amount: 15000,
-        taxable: 1,
-      }], []]);
+      }]],
+    ]);
 
     const r = await request(app)
       .get("/api/payroll/payslip/my?year=2026")
-      .set(EMP_TOKEN);
+      .set(AUDIT_TOKEN);
 
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
@@ -247,10 +298,12 @@ describe("f) Employee cannot acknowledge Employee B payslip", () => {
       data: { user: { id: "user-emp-a", email: "empA@mcn.com" } },
       error: null,
     });
-    // getEmployeeForUser — resolves to emp-A
-    mockExecute.mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []]);
-    // payslipService.acknowledgePayslip SELECT: payslip belongs to emp-B
-    mockExecute.mockResolvedValueOnce([[{ id: "ps-2", employee_id: "emp-B" }], []]);
+    mockQueries([
+      // getEmployeeForUser — resolves the caller to emp-A
+      [/FROM employees/i, [{ id: "emp-A", employee_code: "MCN001" }]],
+      // acknowledgePayslip SELECT — the payslip belongs to emp-B, not the caller
+      [/FROM salary_payslip/i, [{ id: "ps-2", employee_id: "emp-B" }]],
+    ]);
 
     const r = await request(app)
       .post("/api/payroll/payslip/ps-2/acknowledge")
@@ -342,13 +395,15 @@ describe("k) Employee cannot GET /api/exit/ff/:exitRequestId", () => {
 
 describe("l) ffService.approveFF blocked when is_ff_provisional=1", () => {
   it("throws error when is_ff_provisional is 1", async () => {
-    mockExecute.mockResolvedValueOnce([[{
-      id: "ff-1",
-      exit_request_id: "exit-1",
-      employee_id: "emp-1",
-      status: "draft",
-      is_ff_provisional: 1,
-    }], []]);
+    mockQueries([
+      [/FROM full_final_calculation/i, [{
+        id: "ff-1",
+        exit_request_id: "exit-1",
+        employee_id: "emp-1",
+        status: "draft",
+        is_ff_provisional: 1,
+      }]],
+    ]);
 
     await expect(ffService.approveFF("ff-1", "admin-1")).rejects.toThrow(
       /provisional/i
