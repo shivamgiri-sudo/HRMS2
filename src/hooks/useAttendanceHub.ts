@@ -112,6 +112,7 @@ export interface PayslipComponent {
   component_type: "earning" | "deduction";
   amount: number;
   taxable: number;
+  reason?: string;
 }
 
 export interface PayslipDetail extends PayslipSummary {

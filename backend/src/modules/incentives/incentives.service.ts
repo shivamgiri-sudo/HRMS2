@@ -225,7 +225,7 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
   let applied = 0;
   for (const batch of batches as any[]) {
     const [lines] = await db.execute<RowDataPacket[]>(
-      `SELECT iul.employee_id, iul.amount
+      `SELECT iul.employee_id, iul.amount, iul.remarks
        FROM incentive_upload_line iul
        WHERE iul.batch_id=? AND iul.validation_status='ok'`,
       [batch.id]
@@ -242,12 +242,12 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       // Insert per-type component (INCEN_NSA, INCEN_PERF, etc.)
       await db.execute(
         `INSERT INTO salary_prep_line_component
-           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'incentive', ?)
-         ON DUPLICATE KEY UPDATE amount=VALUES(amount)`,
+           (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable, reason)
+         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'incentive', ?, ?)
+         ON DUPLICATE KEY UPDATE amount=VALUES(amount), reason=VALUES(reason)`,
         [randomUUID(), runId, prepLineId, line.employee_id,
          `INCEN_${batch.incentive_code}`, batch.incentive_name,
-         line.amount, batch.taxable ?? 1]
+         line.amount, batch.taxable ?? 1, line.remarks ?? null]
       );
 
       // Accumulate total for rollup

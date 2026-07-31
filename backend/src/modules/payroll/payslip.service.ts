@@ -55,6 +55,7 @@ export interface PayslipData {
     component_type: string;
     amount: number;
     taxable: number;
+    reason?: string | null;
   }>;
   deductions?: Array<{
     component_code: string;
@@ -62,6 +63,7 @@ export interface PayslipData {
     component_type: string;
     amount: number;
     taxable: number;
+    reason?: string | null;
   }>;
   components?: Array<{
     component_code: string;
@@ -69,6 +71,7 @@ export interface PayslipData {
     component_type: string;
     amount: number;
     taxable: number;
+    reason?: string | null;
   }>;
 }
 
@@ -221,7 +224,7 @@ export const payslipService = {
     if (!rec) throw new Error("Payslip not found");
 
     const [components] = await db.execute<RowDataPacket[]>(
-      `SELECT component_code, component_name, component_type, amount, taxable
+      `SELECT component_code, component_name, component_type, amount, taxable, reason
          FROM salary_prep_line_component
         WHERE line_id = ?
         ORDER BY component_type, component_code`,

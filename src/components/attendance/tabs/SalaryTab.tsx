@@ -113,9 +113,12 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                   {(detail.components ?? [])
                     .filter(c => c.component_type === "earning" && Number(c.amount) > 0)
                     .map(c => (
-                      <div key={c.component_code} className="flex justify-between text-xs">
-                        <span className="text-slate-600">{c.component_name}</span>
-                        <span className="font-medium text-slate-800">{INR(Number(c.amount))}</span>
+                      <div key={c.component_code} className="flex justify-between items-start text-xs gap-2">
+                        <span className="text-slate-600">
+                          <span>{c.component_name}</span>
+                          {c.reason && <span className="block text-[10px] text-slate-400 italic mt-0.5">↳ {c.reason}</span>}
+                        </span>
+                        <span className="font-medium text-slate-800 shrink-0">{INR(Number(c.amount))}</span>
                       </div>
                     ))}
                   {(detail.components ?? []).filter(c => c.component_type === "earning" && Number(c.amount) > 0).length === 0 && (
@@ -152,6 +155,34 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                       </div>
                     ))}
                 </div>
+                {/* Other Deductions (misc, with reasons) */}
+                {(detail.components ?? [])
+                  .filter(c =>
+                    c.component_type === "deduction" &&
+                    Number(c.amount) > 0 &&
+                    !["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV_REC"].includes(c.component_code.toUpperCase())
+                  ).length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-[9px] text-slate-400 uppercase font-semibold mb-2">Other Deductions</p>
+                    <div className="space-y-1">
+                      {(detail.components ?? [])
+                        .filter(c =>
+                          c.component_type === "deduction" &&
+                          Number(c.amount) > 0 &&
+                          !["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV_REC"].includes(c.component_code.toUpperCase())
+                        )
+                        .map(c => (
+                          <div key={c.component_code} className="flex justify-between items-start text-xs gap-2">
+                            <span className="text-slate-600">
+                              <span>{c.component_name}</span>
+                              {c.reason && <span className="block text-[10px] text-slate-400 italic mt-0.5">↳ {c.reason}</span>}
+                            </span>
+                            <span className="font-medium text-rose-600 shrink-0">{INR(Number(c.amount))}</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm font-bold border-t border-slate-200 pt-2 mt-3 px-1">
                   <span className="text-slate-700">Net Pay</span>
                   <span className="text-slate-950">{INR(detail.net_salary)}</span>

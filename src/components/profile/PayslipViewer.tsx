@@ -68,6 +68,7 @@ interface PayslipComponent {
   component_type: string;
   amount: number | string;
   taxable?: number;
+  reason?: string;
 }
 
 interface PayslipRecord {
@@ -343,6 +344,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         .map((component) => ({
           label: component.component_name,
           amount: Number(component.amount ?? 0),
+          reason: component.reason,
         }));
     }
 
@@ -366,6 +368,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         .map((component) => ({
           label: component.component_name,
           amount: Number(component.amount ?? 0),
+          reason: component.reason,
         }));
     }
 
@@ -702,7 +705,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                         </tr>
                         {allowanceBreakdown.map((item) => (
                           <tr key={item.label} className="border-b border-emerald-100">
-                            <td className="py-1.5 text-muted-foreground">{item.label}</td>
+                            <td className="py-1.5 text-muted-foreground">
+                              <div>{item.label}</div>
+                              {item.reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {item.reason}</div>}
+                            </td>
                             <td className="py-1.5 text-right font-mono font-semibold text-green-600">
                               {renderSensitive(`+${formatCurrency(item.amount)}`)}
                             </td>
@@ -740,7 +746,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                         <tbody>
                           {deductionBreakdown.map((item) => (
                             <tr key={item.label} className="border-b border-rose-100">
-                              <td className="py-1.5 text-muted-foreground">{item.label}</td>
+                              <td className="py-1.5 text-muted-foreground">
+                                <div>{item.label}</div>
+                                {item.reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {item.reason}</div>}
+                              </td>
                               <td className="py-1.5 text-right font-mono font-semibold text-red-600">
                                 {renderSensitive(`-${formatCurrency(item.amount)}`)}
                               </td>

@@ -20,6 +20,7 @@ export interface SalaryComponent {
   component_type: 'earning' | 'deduction' | 'employer_cost';
   amount: number;
   taxable?: boolean;
+  reason?: string;
 }
 
 export type PayrollDisplayStatus = "pending" | "processing" | "paid" | "cancelled";

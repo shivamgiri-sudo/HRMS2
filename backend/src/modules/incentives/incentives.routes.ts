@@ -218,6 +218,37 @@ incentivesRouter.post('/batches', requireRole('admin', 'hr', 'finance', 'wfm_spo
   res.status(201).json({ success: true, data });
 }));
 
+// Single-employee manual incentive entry
+incentivesRouter.post('/batches/single-entry', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  const { employee_id, incentive_code, amount, remarks, pay_month } = req.body;
+  if (!employee_id || !incentive_code || !amount || !remarks || !pay_month) {
+    return res.status(400).json({ error: 'employee_id, incentive_code, amount, remarks, and pay_month are required' });
+  }
+  if (String(remarks).trim().length < 5) {
+    return res.status(400).json({ error: 'remarks must be at least 5 characters' });
+  }
+  // Resolve employee_code from employee_id
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    'SELECT employee_code FROM employees WHERE id = ? AND active_status = 1',
+    [employee_id]
+  );
+  if (!(empRows as RowDataPacket[]).length) {
+    return res.status(400).json({ error: 'Employee not found or not active' });
+  }
+  const employee_code = (empRows as RowDataPacket[])[0].employee_code;
+  // Find or create a draft batch for this pay_month
+  const existingBatches = await svc.listBatches(pay_month);
+  const batches = Array.isArray(existingBatches) ? existingBatches : (existingBatches as any)?.data ?? [];
+  let batch = batches.find((b: any) => b.status === 'draft');
+  if (!batch) {
+    batch = await svc.createBatch({ incentive_id: incentive_code, pay_month, remarks: 'Single entry batch' }, req.authUser?.id ?? '');
+  }
+  const batchId = (batch as any).id ?? batch;
+  const lines = [{ employee_code: String(employee_code), amount: Number(amount), remarks: String(remarks).trim() }];
+  const result = await svc.importLines(String(batchId), lines);
+  res.status(201).json({ success: true, batch_id: batchId, data: result });
+}));
+
 incentivesRouter.get('/batches/:id', h(async (req, res) => {
   const data = await svc.getBatchById(req.params.id);
   if (!data) return res.status(404).json({ error: 'Batch not found' });

@@ -346,7 +346,10 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                           .filter(e => e.component_code !== 'BASIC' && Number(e.amount) > 0)
                           .map((comp) => (
                             <tr key={comp.component_code} className="border-b">
-                              <td className="py-1.5 text-muted-foreground">{comp.component_name}</td>
+                              <td className="py-1.5 text-muted-foreground">
+                                <div>{comp.component_name}</div>
+                                {comp.reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {comp.reason}</div>}
+                              </td>
                               <td className="py-1.5 text-right font-mono font-semibold text-emerald-600">
                                 +{fmt(Number(comp.amount))}
                               </td>
@@ -418,7 +421,10 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                           .filter(d => Number(d.amount) > 0)
                           .map((comp) => (
                             <tr key={comp.component_code} className="border-b">
-                              <td className="py-1.5 text-muted-foreground">{comp.component_name}</td>
+                              <td className="py-1.5 text-muted-foreground">
+                                <div>{comp.component_name}</div>
+                                {comp.reason && <div className="text-xs text-slate-400 italic mt-0.5">↳ {comp.reason}</div>}
+                              </td>
                               <td className="py-1.5 text-right font-mono font-semibold text-destructive">
                                 -{fmt(Number(comp.amount))}
                               </td>

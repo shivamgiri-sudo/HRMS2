@@ -52,6 +52,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1579,6 +1581,24 @@ interface DedPreviewRow {
   total_deduction: number; [key: string]: string | number;
 }
 
+interface DeductionEntry {
+  id: number; employee_id: number; employee_code: string; employee_name: string;
+  branch_name: string | null; process_name: string | null;
+  deduction_type_code: string; deduction_type_name: string;
+  amount: number; description: string; is_prorated: 0 | 1;
+  run_month: string | null; status: "active" | "inactive";
+  created_by_name: string | null; created_at: string;
+}
+interface DeductionEntriesResponse { entries: DeductionEntry[]; total: number; }
+
+function emptyEntryForm() {
+  return {
+    employee_search: "", employee_id: "" as string | number, employee_label: "",
+    deduction_type_code: "", amount: "", description: "",
+    is_prorated: false, run_month: currentMonthDed(), recurring: false,
+  };
+}
+
 function currentMonthDed(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -1607,6 +1627,70 @@ function CustomDeductionsTab() {
   const [typeErr, setTypeErr] = useState<string | null>(null);
 
   const invTypes = () => qc.invalidateQueries({ queryKey: ["deduction-types-all"] });
+  const invEntries = () => qc.invalidateQueries({ queryKey: ["deduction-entries"] });
+
+  // ── Entry state ─────────────────────────────────────────────────────────────
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [entryForm, setEntryForm] = useState(emptyEntryForm());
+  const [entryErr, setEntryErr] = useState<string | null>(null);
+  const [entrySearch, setEntrySearch] = useState("");
+  const [entryFilterType, setEntryFilterType] = useState("");
+  const [entryFilterStatus, setEntryFilterStatus] = useState("active");
+  const [entryFilterMonth, setEntryFilterMonth] = useState(currentMonthDed());
+  const [empSearchQuery, setEmpSearchQuery] = useState("");
+  const [deactivateId, setDeactivateId] = useState<number | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState("");
+
+  const { data: entriesResp } = useQuery<DeductionEntriesResponse>({
+    queryKey: ["deduction-entries", entrySearch, entryFilterType, entryFilterStatus, entryFilterMonth],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (entrySearch) params.set("search", entrySearch);
+      if (entryFilterType) params.set("type", entryFilterType);
+      if (entryFilterStatus) params.set("status", entryFilterStatus);
+      if (entryFilterMonth) params.set("month", entryFilterMonth);
+      params.set("limit", "50");
+      return hrmsApi.get(`/api/payroll/deductions?${params.toString()}`);
+    },
+  });
+  const entriesList: DeductionEntry[] = entriesResp?.entries ?? [];
+
+  const { data: empSearchResults } = useQuery<{ employees: { id: number; employee_code: string; name: string }[] }>({
+    queryKey: ["emp-search-ded", empSearchQuery],
+    queryFn: () => hrmsApi.get(`/api/employees?search=${encodeURIComponent(empSearchQuery)}&status=active&limit=10`),
+    enabled: empSearchQuery.length >= 2,
+  });
+
+  const addEntryM = useMutation({
+    mutationFn: (form: ReturnType<typeof emptyEntryForm>) =>
+      hrmsApi.post("/api/payroll/deductions", {
+        employee_id: String(form.employee_id),
+        deduction_type_code: form.deduction_type_code,
+        amount: Number(form.amount),
+        description: form.description,
+        is_prorated: form.is_prorated,
+        run_month: form.recurring ? null : (form.run_month || null),
+        recurring: form.recurring,
+      }),
+    onSuccess: () => {
+      invEntries();
+      setEntryOpen(false);
+      setEntryForm(emptyEntryForm());
+      setEntryErr(null);
+      setEmpSearchQuery("");
+    },
+    onError: (e: Error) => setEntryErr(e.message),
+  });
+
+  const deactivateM = useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason: string }) =>
+      hrmsApi.patch(`/api/payroll/deductions/${id}/deactivate`, { reason }),
+    onSuccess: () => {
+      invEntries();
+      setDeactivateId(null);
+      setDeactivateReason("");
+    },
+  });
 
   const addTypeM = useMutation({
     mutationFn: (b: ReturnType<typeof emptyDedTypeForm>) =>
@@ -1842,6 +1926,241 @@ function CustomDeductionsTab() {
           </div>
         )}
       </div>
+
+      {/* Section C: Individual Deduction Entries */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Individual Deduction Entries</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Add per-employee deductions that appear on payslip with reason</p>
+          </div>
+          <Button onClick={() => { setEntryForm(emptyEntryForm()); setEntryErr(null); setEmpSearchQuery(""); setEntryOpen(true); }}>
+            + Add Deduction
+          </Button>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="space-y-1">
+            <Label className="text-xs">Employee Search</Label>
+            <Input placeholder="Code or name..." value={entrySearch} onChange={(e) => setEntrySearch(e.target.value)} className="w-48" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Type</Label>
+            <select value={entryFilterType} onChange={(e) => setEntryFilterType(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-40">
+              <option value="">All Types</option>
+              {dedTypes.map((t) => <option key={t.id} value={t.deduction_code}>{t.deduction_name}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Status</Label>
+            <select value={entryFilterStatus} onChange={(e) => setEntryFilterStatus(e.target.value)} className="border rounded px-2 py-1.5 text-sm w-32">
+              <option value="">All</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Month</Label>
+            <Input type="month" value={entryFilterMonth} onChange={(e) => setEntryFilterMonth(e.target.value)} className="w-36" />
+          </div>
+          <Button variant="outline" size="sm" onClick={() => { setEntrySearch(""); setEntryFilterType(""); setEntryFilterStatus("active"); setEntryFilterMonth(currentMonthDed()); }}>
+            Clear
+          </Button>
+        </div>
+
+        {/* Entries Table */}
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-xs font-medium uppercase tracking-wide">
+              <tr>
+                <th className="px-4 py-3 text-left">Employee</th>
+                <th className="px-4 py-3 text-left">Branch / Process</th>
+                <th className="px-4 py-3 text-left">Type</th>
+                <th className="px-4 py-3 text-right">Amount</th>
+                <th className="px-4 py-3 text-left">Description</th>
+                <th className="px-4 py-3 text-left">Month / Recur</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-left">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {entriesList.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-slate-400">No deduction entries found.</td></tr>
+              )}
+              {entriesList.map((e) => (
+                <tr key={e.id} className={e.status === "inactive" ? "opacity-50 bg-slate-50" : "hover:bg-slate-50/50"}>
+                  <td className="px-4 py-3">
+                    <div className="font-mono text-xs text-slate-500">{e.employee_code}</div>
+                    <div className="font-medium text-slate-800">{e.employee_name}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-500">
+                    <div>{e.branch_name ?? "—"}</div>
+                    <div>{e.process_name ?? ""}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                      {e.deduction_type_name}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-semibold text-rose-600">
+                    ₹{Number(e.amount).toLocaleString("en-IN")}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600 max-w-[200px]">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger className="truncate block max-w-[180px] text-left">
+                          {e.description}
+                        </TooltipTrigger>
+                        <TooltipContent>{e.description}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-500">
+                    {e.run_month ?? <span className="italic">Recurring</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${e.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                      {e.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {e.status === "active" && (
+                      <Button size="sm" variant="destructive" onClick={() => { setDeactivateId(e.id); setDeactivateReason(""); }}>
+                        Deactivate
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Add Deduction Entry Dialog */}
+      <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Add Individual Deduction</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            {entryErr && (
+              <div className="text-sm text-red-600 bg-red-50 rounded p-2 flex justify-between">
+                <span>{entryErr}</span>
+                <button className="underline ml-2" onClick={() => setEntryErr(null)}>Dismiss</button>
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label>Employee *</Label>
+              <Input
+                placeholder="Type employee code or name (min 2 chars)..."
+                value={entryForm.employee_label || empSearchQuery}
+                onChange={(e) => {
+                  setEmpSearchQuery(e.target.value);
+                  setEntryForm((f) => ({ ...f, employee_id: "", employee_label: "" }));
+                }}
+              />
+              {empSearchQuery.length >= 2 && !entryForm.employee_id && (
+                <div className="border rounded bg-white shadow-sm mt-1 max-h-40 overflow-y-auto">
+                  {(empSearchResults?.employees ?? []).map((emp) => (
+                    <button
+                      key={emp.id}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                      onClick={() => {
+                        setEntryForm((f) => ({ ...f, employee_id: emp.id, employee_label: `${emp.employee_code} — ${emp.name}` }));
+                        setEmpSearchQuery(`${emp.employee_code} — ${emp.name}`);
+                      }}
+                    >
+                      <span className="font-mono text-xs text-slate-500 mr-2">{emp.employee_code}</span>
+                      {emp.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label>Deduction Type *</Label>
+              <select
+                value={entryForm.deduction_type_code}
+                onChange={(e) => setEntryForm((f) => ({ ...f, deduction_type_code: e.target.value }))}
+                className="w-full border rounded px-3 py-2 text-sm"
+              >
+                <option value="">Select type...</option>
+                {dedTypes.filter((t) => t.active_status).map((t) => (
+                  <option key={t.id} value={t.deduction_code}>{t.deduction_name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Amount (₹) *</Label>
+                <Input type="number" min="1" value={entryForm.amount} onChange={(e) => setEntryForm((f) => ({ ...f, amount: e.target.value }))} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Description * <span className="text-xs text-slate-400 font-normal">(This reason will appear on payslip)</span></Label>
+              <Textarea
+                placeholder="Min 5 characters..."
+                value={entryForm.description}
+                onChange={(e) => setEntryForm((f) => ({ ...f, description: e.target.value }))}
+                rows={2}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={entryForm.recurring}
+                onCheckedChange={(v) => setEntryForm((f) => ({ ...f, recurring: v }))}
+              />
+              <Label className="cursor-pointer">Recurring (apply every month)</Label>
+            </div>
+            {!entryForm.recurring && (
+              <div className="space-y-1">
+                <Label>Pay Month *</Label>
+                <Input type="month" value={entryForm.run_month} onChange={(e) => setEntryForm((f) => ({ ...f, run_month: e.target.value }))} className="w-44" />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEntryOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => addEntryM.mutate(entryForm)}
+              disabled={addEntryM.isPending || !entryForm.employee_id || !entryForm.deduction_type_code || !entryForm.amount || entryForm.description.trim().length < 5}
+            >
+              {addEntryM.isPending ? "Saving..." : "Add Deduction"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Deactivate Confirm Dialog */}
+      <Dialog open={deactivateId !== null} onOpenChange={(v) => { if (!v) setDeactivateId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Deactivate Deduction Entry</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              Deactivating this entry stops future payroll deductions. Past payroll runs will NOT be reversed.
+            </p>
+            <div className="space-y-1">
+              <Label>Reason * <span className="text-xs text-slate-400 font-normal">(min 5 characters)</span></Label>
+              <Textarea
+                placeholder="Reason for deactivation..."
+                value={deactivateReason}
+                onChange={(e) => setDeactivateReason(e.target.value)}
+                rows={2}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeactivateId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={deactivateM.isPending || deactivateReason.trim().length < 5}
+              onClick={() => { if (deactivateId !== null) deactivateM.mutate({ id: deactivateId, reason: deactivateReason }); }}
+            >
+              {deactivateM.isPending ? "Deactivating..." : "Confirm Deactivate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Type Dialog */}
       <Dialog open={addTypeOpen} onOpenChange={setAddTypeOpen}>

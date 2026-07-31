@@ -36,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ interface IncentiveLine {
   amount: number;
   validation_status?: string;
   validation_msg?: string;
+  remarks?: string;
 }
 
 interface BulkUploadResult {
@@ -100,6 +102,18 @@ function currentMonth(): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");
   return `${y}-${m}`;
+}
+
+function emptySingleEntryForm() {
+  return {
+    emp_search: "",
+    employee_id: "" as string | number,
+    employee_label: "",
+    incentive_code: "",
+    amount: "",
+    remarks: "",
+    pay_month: currentMonth(),
+  };
 }
 
 function statusColor(
@@ -452,6 +466,12 @@ function MonthlyUploadTab() {
   const qc = useQueryClient();
   const [selectedMonth, setSelectedMonth] = useState(currentMonth());
 
+  const [uploadMode, setUploadMode] = useState<"csv" | "single">("csv");
+  const [singleForm, setSingleForm] = useState(emptySingleEntryForm());
+  const [singleErr, setSingleErr] = useState<string | null>(null);
+  const [singleSuccess, setSingleSuccess] = useState<string | null>(null);
+  const [empQuery, setEmpQuery] = useState("");
+
   const { data: batchesData, isLoading: batchesLoading } = useQuery<
     { data: IncentiveBatch[] } | IncentiveBatch[]
   >({
@@ -463,6 +483,39 @@ function MonthlyUploadTab() {
   const batches: IncentiveBatch[] = Array.isArray(batchesData)
     ? batchesData
     : (batchesData as { data?: IncentiveBatch[] })?.data ?? [];
+
+  const { data: incentiveMasters } = useQuery<{ data: IncentiveMaster[] } | IncentiveMaster[]>({
+    queryKey: ["incentive-masters-active"],
+    queryFn: () => hrmsApi.get("/api/incentives/masters?active=true"),
+  });
+  const masters: IncentiveMaster[] = Array.isArray(incentiveMasters)
+    ? incentiveMasters
+    : (incentiveMasters as { data?: IncentiveMaster[] })?.data ?? [];
+
+  const { data: empResults } = useQuery<{ employees: { id: number; employee_code: string; name: string }[] }>({
+    queryKey: ["emp-search-incen", empQuery],
+    queryFn: () => hrmsApi.get(`/api/employees?search=${encodeURIComponent(empQuery)}&status=active&limit=10`),
+    enabled: empQuery.length >= 2,
+  });
+
+  const singleEntryM = useMutation({
+    mutationFn: (form: ReturnType<typeof emptySingleEntryForm>) =>
+      hrmsApi.post("/api/incentives/batches/single-entry", {
+        employee_id: Number(form.employee_id),
+        incentive_code: form.incentive_code,
+        amount: Number(form.amount),
+        remarks: form.remarks,
+        pay_month: form.pay_month || selectedMonth,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["incentive-batches", selectedMonth] });
+      setSingleSuccess("Incentive entry added. Submit the batch for approval.");
+      setSingleErr(null);
+      setSingleForm(emptySingleEntryForm());
+      setEmpQuery("");
+    },
+    onError: (e: Error) => setSingleErr(e.message),
+  });
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadResult, setUploadResult] = useState<BulkUploadResult | null>(null);
@@ -574,118 +627,221 @@ function MonthlyUploadTab() {
 
   return (
     <div className="space-y-6">
-      {/* Controls bar */}
-      <div className="flex flex-wrap items-end gap-4 bg-gray-50 rounded-lg p-4 border">
-        <div className="space-y-1">
-          <Label>Pay Month</Label>
-          <Input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => {
-              setSelectedMonth(e.target.value);
-              setUploadResult(null);
-              setPreviewRows([]);
-              setSelectedFile(null);
-            }}
-            className="w-44"
-          />
-        </div>
-        <Button variant="outline" onClick={downloadTemplate}>
-          Download Template
-        </Button>
-        <div className="space-y-1">
-          <Label>Upload Filled CSV</Label>
-          <Input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="w-64" />
-        </div>
-        {selectedFile && !uploadResult && (
-          <Button onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending}>
-            {uploadMutation.isPending ? "Uploading..." : "Upload CSV"}
-          </Button>
-        )}
+      {/* Mode toggle */}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+        <button
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${uploadMode === "csv" ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+          onClick={() => setUploadMode("csv")}
+        >
+          CSV Upload
+        </button>
+        <button
+          className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${uploadMode === "single" ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+          onClick={() => setUploadMode("single")}
+        >
+          Single Entry
+        </button>
       </div>
 
-      {uploadError && (
-        <div className="text-sm text-red-600 bg-red-50 rounded p-3 flex justify-between">
-          <span>{uploadError}</span>
-          <button className="underline ml-2" onClick={() => setUploadError(null)}>Dismiss</button>
-        </div>
-      )}
-
-      {/* Upload result */}
-      {uploadResult && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
-          <p className="font-semibold text-green-800">
-            Upload successful - {uploadResult.batches_created} batch(es), {uploadResult.lines_inserted} line(s) for {uploadResult.pay_month}
-          </p>
-          {Object.keys(uploadResult.per_type_totals).length > 0 && (
-            <div className="flex flex-wrap gap-3">
-              {Object.entries(uploadResult.per_type_totals).map(([code, total]) => (
-                <div key={code} className="bg-white rounded border px-3 py-2 text-sm">
-                  <span className="font-mono font-semibold text-blue-700">{code}</span>
-                  <span className="text-muted-foreground ml-2">
-                    Rs.{Number(total).toLocaleString("en-IN")}
-                  </span>
+      {/* Single Entry Form */}
+      {uploadMode === "single" && (
+        <div className="rounded-lg border bg-white p-5 space-y-4">
+          <h3 className="font-semibold text-slate-800">Add Single Incentive Entry</h3>
+          {singleErr && (
+            <div className="text-sm text-red-600 bg-red-50 rounded p-2 flex justify-between">
+              <span>{singleErr}</span>
+              <button className="underline ml-2" onClick={() => setSingleErr(null)}>Dismiss</button>
+            </div>
+          )}
+          {singleSuccess && (
+            <div className="text-sm text-green-700 bg-green-50 rounded p-2 flex justify-between">
+              <span>{singleSuccess}</span>
+              <button className="underline ml-2" onClick={() => setSingleSuccess(null)}>Dismiss</button>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <Label>Employee Search *</Label>
+              <Input
+                placeholder="Type code or name (min 2 chars)..."
+                value={singleForm.employee_label || empQuery}
+                onChange={(e) => {
+                  setEmpQuery(e.target.value);
+                  setSingleForm((f) => ({ ...f, employee_id: "", employee_label: "" }));
+                }}
+              />
+              {empQuery.length >= 2 && !singleForm.employee_id && (
+                <div className="border rounded bg-white shadow-sm mt-1 max-h-40 overflow-y-auto z-10 relative">
+                  {(empResults?.employees ?? []).map((emp) => (
+                    <button
+                      key={emp.id}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                      onClick={() => {
+                        setSingleForm((f) => ({ ...f, employee_id: emp.id, employee_label: `${emp.employee_code} — ${emp.name}` }));
+                        setEmpQuery(`${emp.employee_code} — ${emp.name}`);
+                      }}
+                    >
+                      <span className="font-mono text-xs text-slate-500 mr-2">{emp.employee_code}</span>
+                      {emp.name}
+                    </button>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-          {uploadResult.errors.length > 0 && (
-            <div className="text-xs text-red-700">
-              <p className="font-medium">Errors ({uploadResult.errors.length}):</p>
-              <ul className="list-disc list-inside mt-1">
-                {uploadResult.errors.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
-              </ul>
+            <div className="space-y-1">
+              <Label>Incentive Type *</Label>
+              <Select value={singleForm.incentive_code} onValueChange={(v) => setSingleForm((f) => ({ ...f, incentive_code: v }))}>
+                <SelectTrigger><SelectValue placeholder="Select incentive type..." /></SelectTrigger>
+                <SelectContent>
+                  {masters.filter((m) => m.status === "active").map((m) => (
+                    <SelectItem key={m.id} value={m.incentive_code}>{m.incentive_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          )}
+            <div className="space-y-1">
+              <Label>Amount (₹) *</Label>
+              <Input type="number" min="1" placeholder="e.g. 5000" value={singleForm.amount} onChange={(e) => setSingleForm((f) => ({ ...f, amount: e.target.value }))} />
+            </div>
+            <div className="space-y-1">
+              <Label>Pay Month *</Label>
+              <Input type="month" value={singleForm.pay_month} onChange={(e) => setSingleForm((f) => ({ ...f, pay_month: e.target.value }))} />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label>Remarks * (will appear on payslip)</Label>
+              <Textarea
+                placeholder="Reason for this incentive (min 5 characters)..."
+                value={singleForm.remarks}
+                onChange={(e) => setSingleForm((f) => ({ ...f, remarks: e.target.value }))}
+                rows={2}
+              />
+            </div>
+          </div>
+          <Button
+            onClick={() => singleEntryM.mutate(singleForm)}
+            disabled={singleEntryM.isPending || !singleForm.employee_id || !singleForm.incentive_code || !singleForm.amount || singleForm.remarks.trim().length < 5}
+          >
+            {singleEntryM.isPending ? "Saving..." : "Add Incentive Entry"}
+          </Button>
         </div>
       )}
 
-      {/* CSV Preview */}
-      {previewRows.length > 0 && !uploadResult && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            Preview ({previewRows.length} rows)
-          </h3>
-          <div className="overflow-x-auto rounded border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Emp Code</TableHead>
-                  <TableHead>Month</TableHead>
-                  <TableHead>Branch</TableHead>
-                  <TableHead>Cost Centre</TableHead>
-                  {previewCols.map((c) => <TableHead key={c} className="font-mono">{c}</TableHead>)}
-                  <TableHead className="text-right">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {previewRows.slice(0, 20).map((row, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="font-mono text-sm">{row.employee_code}</TableCell>
-                    <TableCell>{row.month}</TableCell>
-                    <TableCell>{row.branch}</TableCell>
-                    <TableCell>{row.cost_centre}</TableCell>
-                    {previewCols.map((c) => (
-                      <TableCell key={c} className="text-right">
-                        {Number(row[c] ?? 0) > 0 ? `Rs.${Number(row[c]).toLocaleString("en-IN")}` : "-"}
-                      </TableCell>
-                    ))}
-                    <TableCell className="text-right font-semibold">
-                      Rs.{Number(row.total_incentive).toLocaleString("en-IN")}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {previewRows.length > 20 && (
-                  <TableRow>
-                    <TableCell colSpan={5 + previewCols.length} className="text-center text-xs text-muted-foreground py-2">
-                      ... {previewRows.length - 20} more rows
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+      {/* Controls bar, upload result, CSV preview — CSV mode only */}
+      {uploadMode === "csv" && (
+        <>
+          <div className="flex flex-wrap items-end gap-4 bg-gray-50 rounded-lg p-4 border">
+            <div className="space-y-1">
+              <Label>Pay Month</Label>
+              <Input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  setUploadResult(null);
+                  setPreviewRows([]);
+                  setSelectedFile(null);
+                }}
+                className="w-44"
+              />
+            </div>
+            <Button variant="outline" onClick={downloadTemplate}>
+              Download Template
+            </Button>
+            <div className="space-y-1">
+              <Label>Upload Filled CSV</Label>
+              <Input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="w-64" />
+            </div>
+            {selectedFile && !uploadResult && (
+              <Button onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending}>
+                {uploadMutation.isPending ? "Uploading..." : "Upload CSV"}
+              </Button>
+            )}
           </div>
-        </div>
+
+          {uploadError && (
+            <div className="text-sm text-red-600 bg-red-50 rounded p-3 flex justify-between">
+              <span>{uploadError}</span>
+              <button className="underline ml-2" onClick={() => setUploadError(null)}>Dismiss</button>
+            </div>
+          )}
+
+          {/* Upload result */}
+          {uploadResult && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+              <p className="font-semibold text-green-800">
+                Upload successful - {uploadResult.batches_created} batch(es), {uploadResult.lines_inserted} line(s) for {uploadResult.pay_month}
+              </p>
+              {Object.keys(uploadResult.per_type_totals).length > 0 && (
+                <div className="flex flex-wrap gap-3">
+                  {Object.entries(uploadResult.per_type_totals).map(([code, total]) => (
+                    <div key={code} className="bg-white rounded border px-3 py-2 text-sm">
+                      <span className="font-mono font-semibold text-blue-700">{code}</span>
+                      <span className="text-muted-foreground ml-2">
+                        Rs.{Number(total).toLocaleString("en-IN")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {uploadResult.errors.length > 0 && (
+                <div className="text-xs text-red-700">
+                  <p className="font-medium">Errors ({uploadResult.errors.length}):</p>
+                  <ul className="list-disc list-inside mt-1">
+                    {uploadResult.errors.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CSV Preview */}
+          {previewRows.length > 0 && !uploadResult && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                Preview ({previewRows.length} rows)
+              </h3>
+              <div className="overflow-x-auto rounded border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Emp Code</TableHead>
+                      <TableHead>Month</TableHead>
+                      <TableHead>Branch</TableHead>
+                      <TableHead>Cost Centre</TableHead>
+                      {previewCols.map((c) => <TableHead key={c} className="font-mono">{c}</TableHead>)}
+                      <TableHead className="text-right">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {previewRows.slice(0, 20).map((row, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-mono text-sm">{row.employee_code}</TableCell>
+                        <TableCell>{row.month}</TableCell>
+                        <TableCell>{row.branch}</TableCell>
+                        <TableCell>{row.cost_centre}</TableCell>
+                        {previewCols.map((c) => (
+                          <TableCell key={c} className="text-right">
+                            {Number(row[c] ?? 0) > 0 ? `Rs.${Number(row[c]).toLocaleString("en-IN")}` : "-"}
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-right font-semibold">
+                          Rs.{Number(row.total_incentive).toLocaleString("en-IN")}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {previewRows.length > 20 && (
+                      <TableRow>
+                        <TableCell colSpan={5 + previewCols.length} className="text-center text-xs text-muted-foreground py-2">
+                          ... {previewRows.length - 20} more rows
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Existing batches */}
@@ -747,12 +903,13 @@ function MonthlyUploadTab() {
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Notes</TableHead>
+                  <TableHead>Remarks / Reason</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {lines.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-6">No lines.</TableCell>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-6">No lines.</TableCell>
                   </TableRow>
                 )}
                 {lines.map((line) => (
@@ -766,6 +923,7 @@ function MonthlyUploadTab() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-red-600">{line.validation_msg ?? ""}</TableCell>
+                    <TableCell className="text-xs text-slate-500 italic">{line.remarks ?? ""}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
