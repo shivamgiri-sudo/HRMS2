@@ -2,6 +2,9 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { missingTdsConfigKeys } from "./statutory-regime.js";
+// The closed-run set was `["locked", "disbursed"]`, which matched no row in
+// production — runs finish as FINALIZED — so this guard never fired.
+import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
 import type { SalaryPrepRun } from "./payroll.types.js";
@@ -20,7 +23,6 @@ interface TaxDeclarationRow {
   regime: string;
 }
 
-const LOCKED_STATUSES = new Set(["locked", "disbursed"]);
 
 // ─── Gratuity ─────────────────────────────────────────────────────────────────
 
@@ -271,7 +273,7 @@ export async function calculatePayrollRunScoped(
   );
   const run = (runRows as SalaryPrepRun[])[0];
   if (!run) throw new Error("Run not found");
-  if (LOCKED_STATUSES.has(run.status)) {
+  if (isRunClosed(run.status)) {
     throw new Error(`Cannot recalculate a ${run.status} run`);
   }
   // TDS mode: 'manual' = skip auto-TDS projection; Payroll HO uploads amounts separately.
@@ -1158,7 +1160,9 @@ export async function calculatePayrollRunScoped(
     // Reset run to draft so it can be retried cleanly
     try {
       await db.execute(
-        `UPDATE salary_prep_run SET status = 'draft' WHERE id = ? AND status NOT IN ('locked','disbursed')`,
+        // LOWER(status) because FINALIZED is stored uppercase; without it this
+        // error path could demote a settled run to draft.
+        `UPDATE salary_prep_run SET status = 'draft' WHERE id = ? AND LOWER(status) NOT IN (${CLOSED_RUN_STATUSES_SQL})`,
         [runId]
       );
     } catch {

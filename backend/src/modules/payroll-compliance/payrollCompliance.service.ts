@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { isRunClosed } from "../payroll/run-status.js";
 import { breakSpecialAllowance } from "../payroll/payroll.service.js";
 
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
@@ -250,7 +251,9 @@ export const payrollComplianceService = {
       [input.lineId]
     );
     const status = String((runRows[0] as any)?.status ?? "");
-    if (["locked", "disbursed"].includes(status)) throw new Error(`Cannot edit payroll line because run is ${status}`);
+    // isRunClosed rather than a literal list: runs finish as FINALIZED, which the
+    // old list omitted, so lines on settled runs stayed editable.
+    if (isRunClosed(status)) throw new Error(`Cannot edit payroll line because run is ${status}`);
 
     await db.execute(
       `INSERT INTO salary_prep_line_adjustment
