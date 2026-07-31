@@ -75,6 +75,7 @@ const NativeDispatchCenter           = lazy(() => import("@/pages/NativeDispatch
 const NativeDispatchHistory          = lazy(() => import("@/pages/NativeDispatchHistory"));
 const NativeNotificationPreferences  = lazy(() => import("@/pages/NativeNotificationPreferences"));
 const NativeCommunicationConfig      = lazy(() => import("@/pages/NativeCommunicationConfig"));
+const NativeEmailCommandCentre = lazy(() => import("@/pages/NativeEmailCommandCentre"));
 const NativeCallCentreConfig         = lazy(() => import("@/pages/NativeCallCentreConfig"));
 
 const REPORT_ROLES = [
@@ -201,6 +202,7 @@ export const platformRouteElements = (
       <Route path="/communication/history"       element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeDispatchHistory /></ProtectedRoute>} />
       <Route path="/communication/preferences"   element={<ProtectedRoute><NativeNotificationPreferences /></ProtectedRoute>} />
       <Route path="/settings/communication-config" element={<ProtectedRoute roles={['super_admin','admin']}><Suspense fallback={<PageLoader />}><NativeCommunicationConfig /></Suspense></ProtectedRoute>} />
+    <Route path="/communication/email-centre" element={<ProtectedRoute><Gate pageCode="EMAIL_COMMAND_CENTRE"><NativeEmailCommandCentre /></Gate></ProtectedRoute>} />
       <Route path="/settings/call-centre-config" element={<ProtectedRoute roles={['super_admin','admin']}><NativeCallCentreConfig /></ProtectedRoute>} />
   </>
 );

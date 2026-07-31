@@ -6,7 +6,7 @@ import {
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
-  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound,
+  Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, Mail,
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -409,6 +409,7 @@ export const navGroups: NavGroup[] = [
           { label: "Migration Console", href: "/migration-console",   icon: ic(Server),    roles: ["admin"],                             description: "Data migration" },
           { label: "Call Centre Config",href: "/settings/call-centre-config", icon: ic(Settings2), roles: ["admin"],                    description: "Call centre" },
           { label: "Comm. Config",      href: "/settings/communication-config", icon: ic(Settings2), roles: ["admin"],                  description: "Email/SMS" },
+          { label: "Email Centre",     href: "/communication/email-centre",     icon: ic(Mail),      pageCode: "EMAIL_COMMAND_CENTRE", description: "Events, recipients & delivery" },
           { label: "Comm. Templates",   href: "/communication/templates",        icon: ic(FileText),  roles: ["admin","hr"],             description: "Message templates" },
           { label: "Comm. Dispatch",    href: "/communication/dispatch",         icon: ic(Bell),      roles: ["admin","hr"],             description: "Send messages" },
           { label: "Comm. History",     href: "/communication/history",          icon: ic(FileText),  roles: ["admin","hr"],             description: "Dispatch history" },

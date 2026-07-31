@@ -108,6 +108,7 @@ import { performanceFeedbackRouter } from "./modules/performance-feedback/perfor
 import { engagementRouter } from "./modules/engagement/engagement.routes.js";
 import { peopleExperienceRouter } from "./modules/people-experience/people-experience.routes.js";
 import { communicationRouter } from "./modules/communication/communication.routes.js";
+import { notificationAdminRouter } from "./modules/communication/notification-admin.routes.js";
 import { emailTemplatesRouter } from "./modules/email-templates/email-templates.routes.js";
 import { securityCenterRouter } from "./modules/security/security-center.routes.js";
 import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.js";
@@ -454,6 +455,7 @@ app.use("/api/engagement", engagementRouter);
 app.use("/api/engagement-intelligence", engagementIntelligenceRouter);
 app.use("/api/people-experience", peopleExperienceRouter);
 app.use("/api/communication", communicationRouter);
+app.use("/api/notification-admin", notificationAdminRouter);
 app.use("/api/security-center", securityCenterRouter);
 app.use("/api/external-db", externalDbRouter);
 app.use("/api/apr", aprRouter);

@@ -30,6 +30,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/bulk-upload": "BULK_UPLOAD",
   "/career-planning": "CAREER_PLANNING",
   "/ceo/dashboard": "CEO_DASHBOARD",
+  "/communication/email-centre": "EMAIL_COMMAND_CENTRE",
   "/compliance/audit-report": "COMPLIANCE_AUDIT_REPORT",
   "/compliance/dpdp": "DPDP_COMPLIANCE",
   "/compliance/dpdp-withdrawal-admin": "DPDP_WITHDRAWAL_ADMIN",
