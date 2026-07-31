@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Check, X, Calendar, Clock, UserCheck } from "lucide-react";
+import { Check, X, Calendar, Clock, UserCheck, RotateCcw } from "lucide-react";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { formatDate, formatDateTime } from "@/lib/utils";
 
@@ -19,7 +19,7 @@ export interface LeaveRequest {
   endDate: string;
   days: number;
   reason: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
+  status: "pending" | "approved" | "rejected" | "cancelled" | "discarded";
   submittedAt?: string;
   reviewedBy?: {
     name: string;
@@ -32,6 +32,8 @@ interface LeaveRequestCardProps {
   request: LeaveRequest;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
+  /** Reverses an already-approved leave and credits the balance back. */
+  onDiscard?: (id: string) => void;
 }
 
 const statusStyles: Record<string, string> = {
@@ -39,6 +41,7 @@ const statusStyles: Record<string, string> = {
   approved: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
   rejected: "bg-destructive/10 text-destructive border-destructive/20",
   cancelled: "bg-muted text-muted-foreground border-muted",
+  discarded: "bg-slate-500/10 text-slate-600 border-slate-500/20",
 };
 
 const leaveTypeStyles: Record<string, string> = {
@@ -150,10 +153,25 @@ export function LeaveRequestCard({ request, onApprove, onReject }: LeaveRequestC
                 )}
               </>
             ) : (
-              <StatusBadge
-                status={normalizeStatus(request.status)}
-                label={request.status}
-              />
+              <>
+                <StatusBadge
+                  status={normalizeStatus(request.status)}
+                  label={request.status}
+                />
+                {/* An approved leave is the only thing worth discarding — the
+                    balance has been deducted and attendance already rewritten. */}
+                {request.status === "approved" && onDiscard && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-destructive/20 text-destructive hover:bg-destructive/10"
+                    onClick={() => onDiscard(request.id)}
+                  >
+                    <RotateCcw className="mr-1 h-4 w-4" />
+                    Discard
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </div>

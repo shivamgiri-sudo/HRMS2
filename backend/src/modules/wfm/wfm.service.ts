@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { queueAutoAwards } from "../engagement/badge.service.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { captureAttendanceSnapshot } from "../../shared/attendanceSnapshot.js";
 import type {
   AttendanceRegularization,
   PaginatedResult,
@@ -242,9 +243,13 @@ export const wfmService = {
   ): Promise<AttendanceRegularization> {
     // Duplicate check — block if any active (non-terminal) regularization exists for this date
     const [dupRows] = await db.execute<RowDataPacket[]>(
+      // 'discarded' counts as terminal here, otherwise discarding a wrongly
+      // approved regularization would permanently block the employee from
+      // raising a correct one for that date — the discarded row would keep
+      // matching as a duplicate.
       `SELECT id, status FROM attendance_regularization
         WHERE employee_id = ? AND session_date = ?
-          AND status NOT IN ('rejected', 'cancelled')
+          AND status NOT IN ('rejected', 'cancelled', 'discarded')
         LIMIT 1`,
       [input.employeeId, input.sessionDate]
     );
@@ -423,15 +428,26 @@ export const wfmService = {
       if (input.status === 'approved' && effectiveRequestedStatus) {
         const lwpMap: Record<string, number> = { present: 0, half_day: 0.5, absent: 1.0 };
 
-        // Capture before-state for audit trail
+        // Capture before-state for audit trail. SELECT * rather than the seven
+        // columns this method needs: the whole row is snapshotted below so a
+        // discard can put the day back exactly, and re-reading it there would be
+        // too late — by then it has already been overwritten.
         const [existingRows] = (await conn.execute(
-          `SELECT attendance_status, lwp_value, raw_minutes, dialler_minutes,
-                  is_locked, regularization_id, override_by
-             FROM attendance_daily_record
+          `SELECT * FROM attendance_daily_record
             WHERE employee_id = ? AND record_date = ? LIMIT 1`,
           [reg.employee_id, reg.session_date]
         )) as [RowDataPacket[], unknown];
         const existing = (existingRows as RowDataPacket[])[0] as any;
+
+        // Snapshot the pre-approval row before it is overwritten. INSERT IGNORE
+        // inside the helper means a re-approval cannot clobber the original.
+        await captureAttendanceSnapshot(conn, {
+          sourceType: reg.dispute_type ? "dispute" : "regularization",
+          sourceId: id,
+          employeeId: reg.employee_id,
+          dates: [String(reg.session_date).slice(0, 10)],
+          capturedBy: reviewerId,
+        });
 
         if (
           existing &&
@@ -550,7 +566,7 @@ export const wfmService = {
                    AND NOT EXISTS (
                      SELECT 1 FROM attendance_regularization ar
                       WHERE ar.employee_id = ?
-                        AND ar.status NOT IN ('approved','rejected','cancelled') ))
+                        AND ar.status NOT IN ('approved','rejected','cancelled','discarded') ))
                OR (type IN ('attendance_missing_punch','attendance_validation')
                    AND entity_id = ? AND action_url LIKE CONCAT('%date=', ?))
             )`,

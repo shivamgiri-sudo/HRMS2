@@ -10,6 +10,8 @@ import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { useCanDiscard } from "@/hooks/useDiscard";
+import { DiscardDialog } from "@/components/discard/DiscardDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +40,7 @@ import {
   Filter,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Scale,
   Search,
   Send,
@@ -134,6 +137,7 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   escalated_to_payroll: { label: "Escalated to Payroll", className: "bg-indigo-100 text-indigo-800 border-indigo-200" },
   approved: { label: "Approved", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   rejected: { label: "Rejected", className: "bg-red-100 text-red-800 border-red-200" },
+  discarded: { label: "Discarded", className: "bg-slate-100 text-slate-700 border-slate-300" },
 };
 
 const PAGE_SIZE = 20;
@@ -239,6 +243,10 @@ export default function NativeAttendanceDisputes() {
 
   // Detail drawer
   const [selectedDispute, setSelectedDispute] = useState<Dispute | null>(null);
+
+  // super_admin / wfm only — narrower than the approval queues above.
+  const { canDiscard } = useCanDiscard();
+  const [discardDisputeId, setDiscardDisputeId] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // Action dialog
@@ -724,6 +732,24 @@ export default function NativeAttendanceDisputes() {
                                     )}
                                   </div>
                                 )}
+                                {/* Reversing an already-approved dispute is a
+                                    different operation from the approval
+                                    workflow, so it does not go through
+                                    handleAction's manager/hr/payroll endpoints. */}
+                                {dispute.status === "approved" && canDiscard && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDiscardDisputeId(dispute.id);
+                                    }}
+                                    title="Discard this approved dispute"
+                                  >
+                                    <RotateCcw className="h-4 w-4" />
+                                  </Button>
+                                )}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -1148,6 +1174,14 @@ export default function NativeAttendanceDisputes() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <DiscardDialog
+        open={Boolean(discardDisputeId)}
+        onOpenChange={(open) => { if (!open) setDiscardDisputeId(null); }}
+        entityType="dispute"
+        entityId={discardDisputeId}
+        onDiscarded={() => { fetchDisputes(); fetchCounts(); }}
+      />
     </DashboardLayout>
   );
 }

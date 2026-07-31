@@ -1,20 +1,73 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// reviewRequest runs inside a transaction obtained from db.getConnection(), so
+// the mock must supply one. Without it every reviewRequest test threw
+// "db.getConnection is not a function", and because vi.clearAllMocks() does not
+// drain the mockResolvedValueOnce queue, the values those tests had queued
+// leaked into listRequests / getBalance / listHolidays / createHoliday and broke
+// them too.
+const { getConnection, connExecute } = vi.hoisted(() => ({
+  getConnection: vi.fn(),
+  connExecute: vi.fn(),
+}));
+
 vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
+  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection },
   pingDb: vi.fn(),
 }));
+vi.mock("../src/modules/inbox/inbox.service.js", () => ({
+  inboxService: { resolveItems: vi.fn().mockResolvedValue(undefined), createItem: vi.fn() },
+}));
+vi.mock("../src/modules/communication/sms.helper.js", () => ({
+  sendSMS: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { db } from "../src/db/mysql.js";
 import { leaveService } from "../src/modules/leave/leave.service.js";
 
 const exec = db.execute as ReturnType<typeof vi.fn>;
+
+const commit = vi.fn();
+const rollback = vi.fn();
+
+/**
+ * Route statements inside the transaction by SQL text rather than call order.
+ * Order-based mocking is what rotted here in the first place — every statement
+ * added to reviewRequest silently shifted the queue underneath these tests.
+ */
+function routeConn(handlers: Array<[RegExp, unknown]>) {
+  connExecute.mockImplementation((sql: string) => {
+    for (const [pattern, result] of handlers) {
+      if (pattern.test(sql)) return Promise.resolve(result);
+    }
+    return Promise.resolve([{ affectedRows: 1 }, []]);
+  });
+}
 
 const fakeType = { id: "lt-1", leave_code: "CL", leave_name: "Casual Leave", max_days_per_year: 12, carry_forward: 0, requires_approval: 1, paid_leave: 1, active_status: 1 };
 const fakeRequest = { id: "lr-1", employee_id: "emp-1", leave_type_id: "lt-1", from_date: "2026-06-01", to_date: "2026-06-03", total_days: 3, status: "pending" };
 const fakeBalance = { id: "bal-1", employee_id: "emp-1", leave_type_id: "lt-1", balance_year: 2026, allocated_days: 12, used_days: 0, adjusted_days: 0 };
 const fakeHoliday = { id: "hol-1", holiday_name: "Diwali", holiday_date: "2026-10-20", holiday_type: "national", active_status: 1 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  // mockReset, not clearAllMocks: clear leaves queued mockResolvedValueOnce
+  // values in place, so one test's unconsumed queue becomes the next test's
+  // first result.
+  exec.mockReset();
+  exec.mockResolvedValue([[], []]);
+  connExecute.mockReset();
+  connExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
+  commit.mockReset();
+  rollback.mockReset();
+  getConnection.mockReset();
+  getConnection.mockResolvedValue({
+    execute: connExecute,
+    beginTransaction: vi.fn().mockResolvedValue(undefined),
+    commit,
+    rollback,
+    release: vi.fn(),
+  });
+});
 
 describe("leaveService.listLeaveTypes", () => {
   it("returns leave types", async () => {
@@ -44,8 +97,13 @@ describe("leaveService.createLeaveType", () => {
 
 describe("leaveService.submitRequest", () => {
   it("creates leave request and returns it", async () => {
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    // Routed by SQL: submitRequest runs policy and eligibility reads before the
+    // INSERT, and their number is not something this test should depend on.
+    exec.mockImplementation((sql: string) => {
+      if (/FROM leave_request/i.test(sql)) return Promise.resolve([[fakeRequest], []]);
+      if (/^\s*INSERT/i.test(sql)) return Promise.resolve([{ affectedRows: 1 }, []]);
+      return Promise.resolve([[], []]);
+    });
     const r = await leaveService.submitRequest({
       employeeId: "emp-1", leaveTypeId: "lt-1",
       fromDate: "2026-06-01", toDate: "2026-06-03", totalDays: 3,
@@ -63,43 +121,122 @@ describe("leaveService.reviewRequest", () => {
   });
 
   it("approves request with existing balance ledger", async () => {
-    exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([[fakeBalance], []]); // check balance ledger exists
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // update used_days
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
-    exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "approved" }], []]); // re-fetch
+    exec.mockResolvedValueOnce([[fakeRequest], []]);                              // getRequest
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);       // re-fetch + post-commit reads
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
+      [/FROM attendance_daily_record/i, [[], []]],
+    ]);
+
     const r = await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
+
     expect(r.status).toBe("approved");
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rollback).not.toHaveBeenCalled();
+    const sql = connExecute.mock.calls.map(([s]) => s).join("\n");
+    expect(sql).toMatch(/UPDATE leave_balance_ledger[\s\S]*used_days = used_days \+/i);
+  });
+
+  it("captures a pre-approval attendance snapshot before overwriting attendance", async () => {
+    // The snapshot is what makes a later discard able to put the day back, so it
+    // must be written inside the same transaction and BEFORE the attendance upsert.
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[fakeBalance], []]],
+      [/FROM attendance_daily_record/i, [[], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
+
+    const statements = connExecute.mock.calls.map(([s]) => String(s));
+    const snapshotIdx = statements.findIndex((s) => /INSERT IGNORE INTO attendance_state_snapshot/i.test(s));
+    const upsertIdx = statements.findIndex((s) => /INSERT INTO attendance_daily_record/i.test(s));
+    expect(snapshotIdx).toBeGreaterThan(-1);
+    expect(upsertIdx).toBeGreaterThan(-1);
+    expect(snapshotIdx).toBeLessThan(upsertIdx);
+
+    // One snapshot row per calendar day of 2026-06-01..2026-06-03.
+    const snapshotParams = connExecute.mock.calls.find(([s]) =>
+      /INSERT IGNORE INTO attendance_state_snapshot/i.test(String(s)))![1] as any[];
+    expect(snapshotParams.filter((p) => p === "2026-06-01")).toHaveLength(1);
+    expect(snapshotParams).toContain("2026-06-02");
+    expect(snapshotParams).toContain("2026-06-03");
   });
 
   it("approves request and creates balance ledger when none exists", async () => {
-    exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([[], []]); // check balance ledger - none found
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT new ledger row
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
-    exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "approved" }], []]); // re-fetch
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "approved" }], []]);
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[], []]],   // no ledger row
+      [/FROM attendance_daily_record/i, [[], []]],
+    ]);
+
     const r = await leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1");
+
     expect(r.status).toBe("approved");
+    const sql = connExecute.mock.calls.map(([s]) => s).join("\n");
+    expect(sql).toMatch(/INSERT INTO leave_balance_ledger/i);
   });
 
-  it("throws when insufficient balance", async () => {
-    const lowBalance = { ...fakeBalance, allocated_days: 2, used_days: 0 };
-    exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([[lowBalance], []]); // check balance ledger
+  it("throws when insufficient balance and rolls back", async () => {
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    routeConn([
+      [/FROM leave_type_master/i, [[{ max_days_per_year: 12 }], []]],
+      [/FROM leave_balance_ledger/i, [[{ ...fakeBalance, allocated_days: 2, used_days: 0 }], []]],
+    ]);
+
     await expect(
       leaveService.reviewRequest("lr-1", { status: "approved" }, "mgr-1")
     ).rejects.toThrow("Insufficient leave balance");
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
   });
 
-  it("rejects request without updating balance", async () => {
-    exec.mockResolvedValueOnce([[fakeRequest], []]); // get request
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE request status
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT approval log
-    exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "rejected" }], []]); // re-fetch
+  it("cancelling an approved leave credits the balance back without inventing absences", async () => {
+    // Regression lock. The old revert wrote 'absent' + lwp_value 1.00 across every
+    // calendar day in the range, but approval also writes every calendar day — so
+    // cancelling a leave that spanned a weekend or holiday turned those days into
+    // unpaid absences the employee never took.
+    exec.mockResolvedValueOnce([[{ ...fakeRequest, status: "approved" }], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "cancelled" }], []]);
+    routeConn([
+      [/FROM attendance_daily_record/i, [[
+        { record_date: "2026-06-01", attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
+        { record_date: "2026-06-02", attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
+        { record_date: "2026-06-03", attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
+      ], []]],
+      [/FROM attendance_state_snapshot/i, [[], []]],
+    ]);
+
+    await leaveService.reviewRequest("lr-1", { status: "cancelled" }, "mgr-1");
+
+    const statements = connExecute.mock.calls.map(([s]) => String(s));
+    const joined = statements.join("\n");
+
+    expect(joined).toMatch(/UPDATE leave_balance_ledger[\s\S]*GREATEST\(0, used_days - \?\)/i);
+    // The specific defect: no blanket absent / LWP 1.00 write.
+    expect(joined).not.toMatch(/attendance_status = 'absent'/i);
+    expect(joined).not.toMatch(/lwp_value = 1\.00/i);
+    // Days are neutralised and unlocked so the engine can resolve week-off/holiday.
+    expect(joined).toMatch(/attendance_status = 'unreconciled'/i);
+    expect(joined).toMatch(/is_locked = 0/i);
+  });
+
+  it("rejects request without touching the balance ledger", async () => {
+    exec.mockResolvedValueOnce([[fakeRequest], []]);
+    exec.mockResolvedValue([[{ ...fakeRequest, status: "rejected" }], []]);
+    routeConn([]);
+
     const r = await leaveService.reviewRequest("lr-1", { status: "rejected" }, "mgr-1");
+
     expect(r.status).toBe("rejected");
+    const sql = connExecute.mock.calls.map(([s]) => s).join("\n");
+    expect(sql).not.toMatch(/UPDATE leave_balance_ledger/i);
+    expect(sql).not.toMatch(/INSERT IGNORE INTO attendance_state_snapshot/i);
   });
 });
 

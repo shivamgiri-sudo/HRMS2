@@ -34,6 +34,7 @@ const STATUS_STYLE: Record<string, string> = {
   approved:  "bg-emerald-100 text-emerald-800",
   rejected:  "bg-rose-100 text-rose-800",
   cancelled: "bg-slate-100 text-slate-600",
+  discarded: "bg-slate-100 text-slate-600",
 };
 
 function LeaveTypePill({ name }: { name?: string }) {

@@ -107,8 +107,18 @@ async function regularizationReviewRole(userId: string, regularizationId: string
   return wfmScoped ? "wfm" : null;
 }
 
+// Statuses a review can no longer act on. `approved` is terminal for review
+// specifically because re-approving rewrites attendance_daily_record a second
+// time: the before-state it captures is the ALREADY-corrected row, so
+// old_attendance_status and the 1023 snapshot would both be overwritten with
+// post-approval values and the original lost for good. Undoing an approval is
+// what /api/discard is for. `discarded` is listed for the same reason — a
+// discarded request must be raised afresh, not flipped back to approved.
+const TERMINAL_REGULARIZATION_STATUSES = ["approved", "rejected", "discarded"];
+
 function nextRegularizationStatus(role: "super_admin" | "manager" | "wfm", currentStatus: string, requestedStatus: string): string | null {
   if (!["approved", "rejected", "manager_approved"].includes(requestedStatus)) return null;
+  if (TERMINAL_REGULARIZATION_STATUSES.includes(currentStatus)) return null;
   if (role === "super_admin") return requestedStatus === "manager_approved" ? "approved" : requestedStatus;
   if (role === "manager") {
     if (currentStatus !== "pending") return null;
@@ -607,7 +617,7 @@ wfmRegularizationSecureRouter.get("/regularizations/date-range-preview", h(async
        FROM attendance_regularization
       WHERE employee_id = ?
         AND session_date BETWEEN ? AND ?
-        AND status NOT IN ('rejected', 'cancelled')`,
+        AND status NOT IN ('rejected', 'cancelled', 'discarded')`,
     [requestedEmployeeId, fromDate, toDate]
   );
   const alreadyRequested = new Set((existingRegs as RowDataPacket[]).map((r: any) => r.session_date));

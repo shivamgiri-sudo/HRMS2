@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,12 +80,12 @@ export async function checkAndReverseLeave(params: {
   const dateTo   = `${runMonth}-${String(lastDay).padStart(2, "0")}`;
 
   const [leaveRows] = await db.execute<RowDataPacket[]>(
-    `SELECT lr.id, lr.leave_type_id, lr.from_date, lr.to_date, lr.total_days, lt.is_paid
+    `SELECT lr.id, lr.leave_type_id, lr.from_date, lr.to_date, lr.total_days, lt.paid_leave AS is_paid
      FROM leave_request lr
      JOIN leave_type_master lt ON lt.id = lr.leave_type_id
      WHERE lr.employee_id = ?
        AND lr.status = 'approved'
-       AND lt.is_paid = 1
+       AND lt.paid_leave = 1
        AND lr.from_date BETWEEN ? AND ?
      ORDER BY lr.from_date ASC`,
     [employeeId, dateFrom, dateTo]
@@ -150,24 +151,26 @@ export async function checkAndReverseLeave(params: {
     );
 
     // ── 6e. Insert sensitive action log ───────────────────────────────────
-    await db.execute<ResultSetHeader>(
-      `INSERT INTO sensitive_action_log (
-         id, actor_id, actor_role, action_type, entity_type, entity_id,
-         old_value, new_value, ip_address, user_agent
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        randomUUID(),
-        "system",
-        "system",
-        "leave_reversal_payroll",
-        "leave_request",
-        leave.id,
-        JSON.stringify({ balance_before: balanceBefore, leave_type_id: leave.leave_type_id }),
-        JSON.stringify({ balance_after: balanceAfter, reversed_days: daysToReverse, leave_type_id: leave.leave_type_id }),
-        "127.0.0.1",
-        "payroll-engine",
-      ]
-    );
+    // Written through the shared helper rather than a raw INSERT: the previous
+    // statement named actor_id / old_value / new_value, none of which exist on
+    // sensitive_action_log (the real columns are actor_user_id, old_value_json
+    // and new_value_json), so it could never have succeeded.
+    await logSensitiveAction({
+      actor_user_id: "system",
+      actor_role: "system",
+      action_type: "leave_reversal_payroll",
+      module_key: "payroll",
+      entity_type: "leave_request",
+      entity_id: leave.id,
+      employee_id: employeeId,
+      reason: `Payroll month cap exceeded; reversed ${daysToReverse} paid leave day(s) for ${runMonth}`,
+      old_value_json: { balance_before: balanceBefore, leave_type_id: leave.leave_type_id },
+      new_value_json: {
+        balance_after: balanceAfter,
+        reversed_days: daysToReverse,
+        leave_type_id: leave.leave_type_id,
+      },
+    });
 
     reversedLog.push({
       leaveRequestId: leave.id,

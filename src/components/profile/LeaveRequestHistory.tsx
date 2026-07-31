@@ -17,7 +17,7 @@ interface LeaveRequest {
   to_date: string;
   total_days: number;
   reason: string | null;
-  status: "pending" | "pending_branch_head" | "approved" | "rejected" | "cancelled";
+  status: "pending" | "pending_branch_head" | "approved" | "rejected" | "cancelled" | "discarded";
   created_at?: string;
   applied_at?: string;
   leave_type_name: string | null;

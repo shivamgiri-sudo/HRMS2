@@ -51,6 +51,11 @@ describe("attendanceReconciliationService", () => {
     dbExecute.mockReset();
     ncosecQuery.mockReset();
     dbExecute.mockResolvedValue([[], []]);
+    // Same default as dbExecute above. Without it, any db.query call the test did
+    // not explicitly queue returns undefined, and `const [rows] = await db.query()`
+    // throws "is not iterable" — which is what resolveGoneIssues hit.
+    // Queued mockResolvedValueOnce values still take priority over this.
+    dbQuery.mockResolvedValue([[], []]);
   });
 
   it("flags dialler ADR rows that have biometric evidence but no APR or dialler source evidence", async () => {

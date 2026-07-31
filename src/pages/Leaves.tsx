@@ -42,6 +42,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLeaveRequests, useLeaveStats } from "@/hooks/useLeaves";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { useCanDiscard } from "@/hooks/useDiscard";
+import { DiscardDialog } from "@/components/discard/DiscardDialog";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 import { Badge } from "@/components/ui/badge";
@@ -204,6 +206,11 @@ const Leaves = () => {
   const [processedYearFilter, setProcessedYearFilter] = useState("all");
 
   const canApproveLeaves = isAdminOrHR || roles.includes("manager");
+
+  // Discarding an approved leave is a narrower privilege than approving one:
+  // super_admin and wfm only, never a manager or HR.
+  const { canDiscard } = useCanDiscard();
+  const [discardLeaveId, setDiscardLeaveId] = useState<string | null>(null);
 
   const { data: myEmployeeId, isLoading: isLoadingMyEmployee } = useQuery({
     queryKey: ["my-employee-id", user?.id],
@@ -1054,7 +1061,11 @@ const Leaves = () => {
                     <>
                       <div className="space-y-4">
                         {processedPagination.paginatedItems.map((request) => (
-                          <LeaveRequestCard key={request.id} request={request} />
+                          <LeaveRequestCard
+                            key={request.id}
+                            request={request}
+                            onDiscard={canDiscard ? (id) => setDiscardLeaveId(id) : undefined}
+                          />
                         ))}
                       </div>
 
@@ -1166,6 +1177,13 @@ const Leaves = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <DiscardDialog
+          open={Boolean(discardLeaveId)}
+          onOpenChange={(open) => { if (!open) setDiscardLeaveId(null); }}
+          entityType="leave"
+          entityId={discardLeaveId}
+        />
       </div>
     </DashboardLayout>
   );

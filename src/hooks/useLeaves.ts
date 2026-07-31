@@ -14,7 +14,7 @@ export interface LeaveRequest {
   endDate: string;
   days: number;
   reason: string;
-  status: "pending" | "pending_branch_head" | "approved" | "rejected" | "cancelled";
+  status: "pending" | "pending_branch_head" | "approved" | "rejected" | "cancelled" | "discarded";
   submittedAt: string;
   reviewedBy?: {
     name: string;

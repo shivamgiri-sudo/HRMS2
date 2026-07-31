@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/discard/**/*.ts",
+    "src/shared/attendanceSnapshot.ts",
+    "src/shared/attendanceRestore.ts",
+    "src/shared/rbacPageMatrix.ts",
+    "src/modules/leave/leave.service.ts",
+    "src/modules/leave/leave.secure.routes.ts",
+    "src/modules/wfm/wfm.service.ts",
+    "src/modules/wfm/wfm.regularization.secure.routes.ts",
+    "src/modules/payroll/leave-reversal.service.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

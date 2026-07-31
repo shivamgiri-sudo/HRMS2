@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { leavePolicyService } from "./leave-policy.service.js";
+import { captureAttendanceSnapshot, enumerateDates, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
+import { applyRestore, planLeaveRestore, rederiveDates, type DateRestorePlan } from "../../shared/attendanceRestore.js";
 import type {
   LeaveBalanceLedger,
   LeaveHoliday,
@@ -18,6 +20,24 @@ import type {
   LeaveRequestInput,
   ReviewLeaveInput,
 } from "./leave.validation.js";
+
+/** ADR rows for a set of dates, keyed YYYY-MM-DD, on the caller's transaction. */
+async function loadAttendanceRowsForRestore(
+  conn: any, employeeId: string, dates: string[]
+): Promise<Map<string, any>> {
+  const out = new Map<string, any>();
+  if (dates.length === 0) return out;
+  const placeholders = dates.map(() => "?").join(", ");
+  const [rows] = await conn.execute(
+    `SELECT * FROM attendance_daily_record
+      WHERE employee_id = ? AND record_date IN (${placeholders})`,
+    [employeeId, ...dates]
+  );
+  for (const row of rows as RowDataPacket[]) {
+    out.set(String((row as any).record_date).slice(0, 10), row);
+  }
+  return out;
+}
 
 export const leaveService = {
   async listLeaveTypes(employeeId?: string): Promise<LeaveType[]> {
@@ -239,6 +259,10 @@ export const leaveService = {
       );
     }
 
+    // Days whose attendance the engine must rebuild after commit. Populated only
+    // when an approved leave is reverted.
+    let revertPlans: DateRestorePlan[] = [];
+
     const conn = await (db as any).getConnection();
     try {
       await conn.beginTransaction();
@@ -303,6 +327,18 @@ export const leaveService = {
           );
         }
 
+        // Snapshot every calendar day in the range before the upsert below
+        // overwrites it. Without this a discard cannot tell which days already
+        // had an attendance row, and would resurrect deleted rows or strand
+        // rows it should have removed.
+        await captureAttendanceSnapshot(conn, {
+          sourceType: "leave",
+          sourceId: id,
+          employeeId: request.employee_id,
+          dates: enumerateDates(String(request.from_date), String(request.to_date)),
+          capturedBy: reviewerId,
+        });
+
         // Sync attendance records for the approved date range in a single query
         await conn.execute(
           `INSERT INTO attendance_daily_record
@@ -336,15 +372,18 @@ export const leaveService = {
           [duration, employeeId, leaveTypeId, year]
         );
 
-        // Revert attendance records in a single BETWEEN query
-        await conn.execute(
-          `UPDATE attendance_daily_record
-              SET attendance_status = 'absent', lwp_value = 1.00, override_reason = ?
-            WHERE employee_id = ?
-              AND record_date BETWEEN ? AND ?
-              AND attendance_status = 'leave_approved'
-              AND is_locked = 0`,
-          [`Leave ${input.status} — auto-reverted by leave service`, employeeId, request.from_date, request.to_date]
+        // Revert attendance through the shared restore, the same path a discard
+        // uses. The previous version wrote 'absent' + lwp_value 1.00 across every
+        // calendar day in the range — but approval also writes every calendar
+        // day, so cancelling a leave that spanned a weekend or a holiday turned
+        // those days into unpaid absences the employee never took.
+        const restoreDates = enumerateDates(String(request.from_date), String(request.to_date));
+        const adrRows = await loadAttendanceRowsForRestore(conn, employeeId, restoreDates);
+        const snapshots = await readAttendanceSnapshots(conn, "leave", id);
+        revertPlans = restoreDates.map((d) => planLeaveRestore(d, adrRows.get(d), snapshots.get(d)));
+        await applyRestore(
+          conn, employeeId, revertPlans, snapshots, reviewerId,
+          `Leave ${input.status} — auto-reverted by leave service`
         );
       }
 
@@ -364,6 +403,15 @@ export const leaveService = {
       throw err;
     } finally {
       conn.release();
+    }
+
+    // Rebuild any day the revert neutralised. Must run after commit AND after the
+    // status left 'approved', or attendance-engine would resolve these days back
+    // to leave_approved and undo the revert.
+    if (revertPlans.length > 0) {
+      try {
+        await rederiveDates(request.employee_id, revertPlans);
+      } catch { /* non-fatal: the nightly engine sweep will pick these up */ }
     }
 
     // The decision is made, so the approver's alert has served its purpose.

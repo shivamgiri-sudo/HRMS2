@@ -121,6 +121,7 @@ import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
 import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
 import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
+import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
 import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
@@ -474,6 +475,8 @@ app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
 app.use("/api/attendance", attendanceDisputeRouter);
 app.use("/api/attendance", attendanceManualOverrideRouter);
+// Discard of approved leave / regularization / dispute — super_admin + wfm only.
+app.use("/api/discard", discardRouter);
 app.use("/api/wfm/mismatches", mismatchReviewRouter);
 app.use("/api/attendance/billing-config", billingConfigRouter);
 app.use("/api/integrations/cosec", cosecMonitoringRouter);
