@@ -1,0 +1,174 @@
+/**
+ * Every API path the frontend calls must be served by a registered route.
+ *
+ * This is the automated form of the audit that found eight production defects in
+ * one week — three of them paths the client called and the backend never served
+ * (salary certificates, BGV manual review, onboarding resend), which stayed
+ * invisible because clientRouter applies requireAuth on the bare /api prefix, so
+ * a missing route 401s exactly like a real one. Probing cannot tell them apart;
+ * the registered route table can.
+ *
+ * A failure here means a client call has no route that could serve it. Either fix
+ * the path, add the route, or — if it is a known gap someone has consciously
+ * parked — add it to KNOWN_GAPS with a reason and a ticket. Silence is not an
+ * option the test offers.
+ *
+ * ONE CAVEAT, and it is not a flaw in the check: the result describes the tree it
+ * runs on. A worktree whose backend is stale relative to its frontend will report
+ * the routes the newer client calls as missing, because on that tree they genuinely
+ * are. That is what happens on this repo's shared worktree today — app.ts there has
+ * 0 references to notification-admin and discard while origin/main has 4, so their
+ * client calls surface here. They are deliberately NOT allow-listed: on a clean
+ * checkout, which is what CI runs, those routers are mounted and the calls resolve.
+ * If this test fails on paths whose router you can see in git, sync your tree
+ * before hunting for a bug.
+ */
+
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { resolve, relative, join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../db/mysql.js", () => ({
+  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection: vi.fn() },
+  pingDb: vi.fn(),
+}));
+
+vi.mock("../../db/supabaseAdmin.js", () => ({
+  supabaseAdmin: { from: vi.fn() },
+  supabaseAuthClient: { auth: { getUser: vi.fn() } },
+}));
+
+import { app } from "../../app.js";
+import {
+  enumerateRoutes,
+  extractFrontendCalls,
+  findOrphans,
+  orphanKey,
+  type FrontendCall,
+} from "../route-contract.js";
+
+const repoRoot = resolve(process.cwd(), "..");
+const frontendRoot = resolve(repoRoot, "src");
+
+/**
+ * Client calls with no backend route, each parked deliberately. Anything not on
+ * this list fails the suite. Keep the reason specific enough that the next person
+ * can tell "blocked on a decision" from "nobody has got to it".
+ */
+const KNOWN_GAPS: Record<string, string> = {
+  // ── Prefix mismatches: the route exists, the client addresses it wrongly.
+  // Same class as the three shipped on 2026-07-31 (salary certificates, BGV
+  // manual review, onboarding resend). Cheap to fix, listed so the gate can go
+  // green before someone picks them up.
+  "GET /api/assets/employee/:p":
+    "Prefix mismatch. assetsRouter mounts at /api/assets-mgmt, not /api/assets; the route itself (GET /employee/:employeeId) exists. Fix is a one-line client change in NativeEmployeeStatCard.",
+  "GET /api/departments":
+    "Prefix mismatch. org.routes builds CRUD at /departments under app.use('/api/org'), so the real path is /api/org/departments. Fix is a one-line client change in NativeProcurementPage.",
+
+  // ── No such route anywhere in origin/main. Each needs building or the client
+  // call removing; none has been triaged yet.
+  "POST /api/wfm/attendance/web-punch-in":
+    "No matching route in origin/main. Web punch-in is a real attendance path — triage before anything else in this block, since a silent failure here loses attendance data.",
+  "POST /api/wfm/attendance/web-punch-out":
+    "No matching route in origin/main. Pairs with web-punch-in; same priority.",
+  "GET /api/employees/me/promotions":
+    "No matching route in origin/main. Employee self-service promotion history; not yet triaged.",
+  "GET /api/employees/me/transfers":
+    "No matching route in origin/main. Employee self-service transfer history; not yet triaged.",
+  "GET /api/helpdesk/grievances/:p/timeline":
+    "No matching route in origin/main, though the grievances module exists. Called twice from NativeGrievanceCommandCenter; not yet triaged.",
+  "GET /api/org/companies":
+    "No matching route in origin/main. Called from NativePayrollHRValidation; not yet triaged.",
+  "GET /api/executive/quality-summary/process-breakdown":
+    "No matching route in origin/main. Executive quality drill-down; not yet triaged.",
+  "POST /api/ats/onboarding/requests":
+    "No matching route in origin/main under the onboarding router; not yet triaged.",
+  "POST /api/performance-feedback/quality/connect-sheet":
+    "No matching route in origin/main. Sheet-connect for quality feedback; not yet triaged.",
+
+  // ── Blocked on a decision, investigated in depth on 2026-07-31.
+  "POST /api/performance-feedback/reports":
+    "Blocked on a schema decision. The client sends review_period/status/comments/acknowledged_*; performance_feedback_report has none of them and is a generated artifact (report_generated_at, total_reviewers), not a hand-authored record. Needs a separate employee review table.",
+  "PATCH /api/performance-feedback/reports/:p":
+    "Same schema decision as POST /reports. The delete flow is PATCH {status:'deleted'} against a status column that does not exist.",
+  "DELETE /api/sales-upload/batch/:p":
+    "deleteUploadBatch() exists and is correct, but db_masmis is not granted to the app user, so the module returns empty for every read and there is no batch to delete. Blocked on DB provisioning, not on this route.",
+  "GET /api/wfm/roster":
+    "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
+  "GET /api/quality-dashboard/scores":
+    "Command centre tile, unbuilt pending a decision on what a row contains.",
+  "GET /api/performance-dashboard/ops":
+    "Command centre tile, unbuilt pending a decision on what a row contains.",
+  "GET /api/ats-full-parity/submissions":
+    "Command centre tile, unbuilt pending a decision on what a row contains.",
+};
+
+function collectSourceFiles(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry === "dist" || entry.startsWith(".")) continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) collectSourceFiles(full, acc);
+    else if (/\.(ts|tsx)$/.test(entry)) acc.push(full);
+  }
+  return acc;
+}
+
+function allFrontendCalls(): FrontendCall[] {
+  return collectSourceFiles(frontendRoot).flatMap((file) =>
+    extractFrontendCalls(readFileSync(file, "utf8"), relative(repoRoot, file).replace(/\\/g, "/")),
+  );
+}
+
+const routes = enumerateRoutes(app);
+const calls = allFrontendCalls();
+const orphans = findOrphans(calls, routes);
+
+describe("route contract — the audit, automated", () => {
+  it("enumerates a realistic route table (guards against a broken walk)", () => {
+    // A silently-empty walk would make every call look orphaned, or — worse, if
+    // inverted — make every missing route look fine. Both have happened.
+    expect(routes.length).toBeGreaterThan(500);
+    expect(routes.some((r) => r.path.startsWith("/api/"))).toBe(true);
+  });
+
+  it("finds the frontend calls (guards against a broken extractor)", () => {
+    expect(calls.length).toBeGreaterThan(200);
+    expect(calls.every((c) => c.path.startsWith("/api/"))).toBe(true);
+  });
+
+  it("every client call resolves to a registered route", () => {
+    const unexpected = orphans.filter((o) => !(orphanKey(o) in KNOWN_GAPS));
+
+    const report = unexpected
+      .map((o) => `  ${orphanKey(o)}\n      called from ${o.file}:${o.line}`)
+      .join("\n");
+
+    expect(
+      unexpected.length,
+      unexpected.length === 0
+        ? ""
+        : `\n${unexpected.length} frontend call(s) have no backend route.\n\n${report}\n\n` +
+          "Fix the path, add the route, or add it to KNOWN_GAPS with a reason.\n",
+    ).toBe(0);
+  });
+});
+
+describe("route contract — the allow-list stays honest", () => {
+  it("every known gap is still a real gap", () => {
+    // When someone finally builds one of these, this fails and the entry gets
+    // deleted — so the list cannot rot into a graveyard of stale excuses.
+    const stillOrphaned = new Set(orphans.map(orphanKey));
+    const fixed = Object.keys(KNOWN_GAPS).filter((key) => !stillOrphaned.has(key));
+
+    expect(
+      fixed,
+      fixed.length === 0 ? "" : `\nThese are now served — remove them from KNOWN_GAPS:\n  ${fixed.join("\n  ")}\n`,
+    ).toEqual([]);
+  });
+
+  it("every known gap carries a reason, not just a path", () => {
+    for (const [key, reason] of Object.entries(KNOWN_GAPS)) {
+      expect(reason.length, `${key} needs a real reason`).toBeGreaterThan(40);
+    }
+  });
+});

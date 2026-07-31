@@ -13,6 +13,7 @@
     "migrate": "tsx src/scripts/migrate.ts",
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "typecheck": "tsc --noEmit",
+    "check:routes": "vitest run src/platform/__tests__/route-contract.test.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
