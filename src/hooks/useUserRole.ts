@@ -180,6 +180,18 @@ export const useIsAdminOrHR = () => {
   const roleKeys = data?.roleKeys ?? [];
 
   return {
+    /**
+     * True once the role query has actually produced data — which is NOT the same as
+     * `!isLoading`.
+     *
+     * The query is `enabled: !!user?.id`. React Query v5 reports `isLoading` as
+     * `isPending && isFetching`, so a disabled query — and the first render after it is
+     * enabled, before the fetch effect runs — reports `isLoading === false` while `data`
+     * is still undefined. `roleKeys` then falls back to `[]`, which is indistinguishable
+     * from "this user genuinely has no roles". Callers that deny on an empty role list
+     * must wait for this flag, not for `isLoading` to clear.
+     */
+    isResolved: data !== undefined,
     isAdminOrHR:
       roleKeys.includes("super_admin") ||
       roleKeys.includes("admin") ||
@@ -234,6 +246,13 @@ export const useWorkforceAccess = () => {
     const isSuperAdmin = roleKeys.includes("super_admin");
 
     return {
+      /**
+       * True once page access has actually loaded. Distinct from `!isLoading` — see the
+       * note on useIsAdminOrHR.isResolved. `canViewPage` returns false for every code
+       * until data arrives, so a caller that denies on it without checking this flag
+       * denies every page for at least one render.
+       */
+      isResolved: roleQuery.data !== undefined,
       canViewPage: (pageCode: string) => isSuperAdmin || (!disabledPageSet.has(pageCode) && pageSet.has(pageCode)),
       visiblePageCodes: isSuperAdmin
         ? Array.from(pageSet)
