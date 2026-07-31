@@ -74,6 +74,48 @@ jobs:
           printf ' - %s\n' "${lint_files[@]}"
           npx eslint "${lint_files[@]}"
 
+  # On 31 July 2026 five commits removed merged work from main while describing
+  # something else. 9cb198b2 — "fix(budget): normalise copy-forward key" —
+  # contained no budget file and deleted four test suites and four SQL
+  # migrations. Branch protection does not catch this: these are ordinary
+  # pushes, not force-pushes. Several sessions share one working tree, so
+  # staging a file by explicit path commits whatever that file says on disk, and
+  # a stale copy silently reverts whoever changed it since.
+  #
+  # Deleting a test or a migration is sometimes right, so this does not forbid
+  # it — it requires the commit to say so, with [allow-deletions].
+  deletion-guard:
+    name: Deletion Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Refuse silent deletion of tests, migrations and workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch origin "$GITHUB_BASE_REF" --depth=1
+            range="origin/$GITHUB_BASE_REF...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              git fetch origin "$before" --depth=1 || true
+              range="$before..HEAD"
+            else
+              range="HEAD^..HEAD"
+            fi
+          fi
+          node scripts/guard-mass-deletion.mjs "$range"
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
