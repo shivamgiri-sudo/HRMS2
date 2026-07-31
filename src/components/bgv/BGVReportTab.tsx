@@ -14,7 +14,7 @@ import {
 import {
   Shield, CheckCircle2, XCircle, Clock, AlertTriangle,
   FileText, Lock, User, Banknote, GraduationCap,
-  Briefcase, MapPin, Fingerprint, Search, Download,
+  Briefcase, MapPin, Fingerprint, Download,
   Send, ExternalLink, RefreshCw,
 } from 'lucide-react';
 import { formatIST, formatISTDate } from '@/lib/utils';
