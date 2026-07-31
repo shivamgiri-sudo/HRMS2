@@ -1,0 +1,41 @@
+// Scoped type-check config — use this instead of a full `tsc -p tsconfig.json`.
+//
+// WHY
+// ---
+// Type-checking the whole backend takes long enough that it is routinely killed
+// by a command timeout. A killed `tsc` does not die cleanly: it leaves orphaned
+// node processes holding ~350MB each, they are not reachable from the shell that
+// started them, and several of them together will starve the machine. Recovering
+// means hunting PIDs in Task Manager.
+//
+// Checking only the files a change touches avoids that entirely — it completes
+// in seconds — while still catching the errors that matter, because tsc follows
+// imports and type-checks everything a listed file depends on.
+//
+// USE
+// ---
+//   1. Replace `include` below with the files your change touched.
+//   2. npx tsc -p tsconfig.scoped-check.json
+//   3. Check the EXIT CODE, not just the output:
+//        npx tsc -p tsconfig.scoped-check.json > /tmp/out.txt 2>&1; echo "exit=$?"
+//      Piping tsc into `head` reports head's exit status, so a piped run can
+//      look clean while tsc was actually failing.
+//
+// The list below is the last change this was used for and is meant to be
+// edited, not preserved. It is committed as a working example rather than a
+// fixed manifest.
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/payroll/run-status.ts",
+    "src/modules/payroll/statutory-config.loader.ts",
+    "src/modules/payroll/statutory-config.resolver.ts",
+    "src/modules/payroll/professional-tax-states.ts",
+    "src/modules/payroll/payrollCalculate.service.ts",
+    "src/modules/payroll/payrollWindowGuard.ts",
+    "src/modules/payroll/payroll-targeted-recalculation.service.ts",
+    "src/modules/payroll/payroll.routes.ts",
+    "src/modules/payroll-compliance/payrollCompliance.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}
