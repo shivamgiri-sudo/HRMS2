@@ -429,6 +429,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1027_ceo_my_kpi_revoke.sql",                   // CEO is not measured on operational KPIs — remove the hollow /my-kpi page from that role only
   "1030_statutory_config_versioning.sql",
   "1031_statutory_filing_act_2025_forms.sql",   // Income-tax Act 2025 renumbered the quarterly salary TDS statement from Form 24Q to Form 138; the ENUM is widened, never narrowed, so filed rows keep meaning what they meant         // statutory_config keys are UNIQUE, so a Finance Act change overwrote the old rates and a prior month could no longer be recomputed at the rates it was actually deducted under
+  "1033_sensitive_action_log_entity_id_width.sql", // entity_id was CHAR(36), so every composite key (employee:date, employee:FY, designation::role) overflowed and the audit row was silently dropped — 26 approved regularizations left no ATTENDANCE_RECORD_CORRECTED trail at all
   ];
 
 export type MigrationHealth = {
