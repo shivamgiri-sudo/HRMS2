@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -25,7 +25,40 @@ interface LiveEmployee {
   branch_name: string | null;
   process_name: string | null;
   designation: string | null;
+  stale?: number | boolean; // 1/true when last fix is older than the online window
 }
+
+// A worker is "offline" when their last fix is older than the 15-min online window.
+// Prefer the server-computed flag; fall back to comparing captured_at client-side.
+const ONLINE_WINDOW_MS = 15 * 60_000;
+function isStale(e: LiveEmployee): boolean {
+  if (e.stale != null) return e.stale === 1 || e.stale === true;
+  return Date.now() - new Date(e.captured_at).getTime() > ONLINE_WINDOW_MS;
+}
+
+// A fix is "approximate" when its GPS accuracy is worse than this — i.e. a
+// cell-tower / Wi-Fi fallback rather than a precise satellite fix. Below this,
+// the dot is effectively the worker's exact spot.
+const HIGH_ACCURACY_METERS = 100;
+function isApproximate(e: LiveEmployee): boolean {
+  return e.accuracy != null && Number(e.accuracy) > HIGH_ACCURACY_METERS;
+}
+
+// Colored map pin (SVG divIcon) — green = online, grey = offline/last-known.
+function pinIcon(color: string): L.DivIcon {
+  return L.divIcon({
+    className: "",
+    html: `<svg width="26" height="38" viewBox="0 0 26 38" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13 0C5.82 0 0 5.82 0 13c0 9.75 13 25 13 25s13-15.25 13-25C26 5.82 20.18 0 13 0z" fill="${color}"/>
+      <circle cx="13" cy="13" r="5" fill="#ffffff"/>
+    </svg>`,
+    iconSize: [26, 38],
+    iconAnchor: [13, 38],
+    popupAnchor: [0, -34],
+  });
+}
+const ONLINE_ICON = pinIcon("#22c55e");
+const OFFLINE_ICON = pinIcon("#9ca3af");
 
 interface BranchOption {
   id: string;
@@ -44,7 +77,11 @@ function minutesAgo(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (diff < 1) return "just now";
   if (diff === 1) return "1 min ago";
-  return `${diff} min ago`;
+  if (diff < 60) return `${diff} min ago`;
+  const hrs = Math.floor(diff / 60);
+  if (hrs < 24) return hrs === 1 ? "1 hr ago" : `${hrs} hrs ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
 // Haversine formula — returns distance in km between two lat/lng points
@@ -97,14 +134,20 @@ export default function LiveLocationMap() {
   const [searchQuery, setSearchQuery]     = useState("");
   const [branchFilter, setBranchFilter]   = useState("");
   const [processFilter, setProcessFilter] = useState("");
+  const [showOffline, setShowOffline]     = useState(false); // false = online only, true = include last-known
+  const [trailId, setTrailId]             = useState<string | null>(null); // employee whose day-route is shown
   const mapRef     = useRef<L.Map | null>(null);
   const markerRefs = useRef<Record<string, L.Marker>>({});
 
-  // Live location data — polls every 30s
+  // Live location data — polls every 30s.
+  // window=online → last 15 min; window=all → last 24h (offline workers at last-known spot).
+  const liveWindow = showOffline ? "all" : "online";
   const { data: liveData, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
-    queryKey: ["live-location"],
+    queryKey: ["live-location", liveWindow],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>("/api/location/live");
+      const res = await hrmsApi.get<{ success: boolean; data: LiveEmployee[] }>(
+        `/api/location/live?window=${liveWindow}`,
+      );
       return res.data ?? [];
     },
     refetchInterval: 30_000,
@@ -130,6 +173,19 @@ export default function LiveLocationMap() {
       return res.data ?? [];
     },
     staleTime: 5 * 60_000,
+  });
+
+  // Today's movement trail for the selected employee (only fetched when a route is toggled on)
+  const { data: trailData } = useQuery({
+    queryKey: ["location-trail", trailId],
+    enabled: !!trailId,
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { latitude: number; longitude: number; captured_at: string }[] }>(
+        `/api/location/history/${trailId}`,
+      );
+      return res.data ?? [];
+    },
+    staleTime: 60_000,
   });
 
   const employees    = liveData ?? [];
@@ -167,6 +223,15 @@ export default function LiveLocationMap() {
       return true;
     });
   }, [employees, searchQuery, branchFilter, processFilter]);
+
+  const onlineCount  = useMemo(() => filteredEmployees.filter((e) => !isStale(e)).length, [filteredEmployees]);
+  const offlineCount = filteredEmployees.length - onlineCount;
+
+  const trailPositions = useMemo<[number, number][]>(
+    () => (trailData ?? []).map((p) => [Number(p.latitude), Number(p.longitude)]),
+    [trailData],
+  );
+  const trailEmployee = trailId ? employees.find((e) => e.employee_id === trailId) : null;
 
   const lastUpdate = dataUpdatedAt
     ? new Date(dataUpdatedAt).toLocaleTimeString("en-IN")
@@ -209,10 +274,35 @@ export default function LiveLocationMap() {
               </h1>
             </div>
             <div className="flex items-center gap-3 flex-wrap text-xs">
-              <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-blue-700 font-medium">
-                <Users className="w-3.5 h-3.5" />
-                <span>{filteredEmployees.length} / {employees.length} Online</span>
+              {/* Online / All toggle — All includes offline workers at their last-known spot */}
+              <div className="flex items-center rounded-full border border-gray-200 bg-gray-100 p-0.5">
+                <button
+                  onClick={() => setShowOffline(false)}
+                  className={`px-3 py-1 rounded-full font-medium transition-colors ${
+                    !showOffline ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Online
+                </button>
+                <button
+                  onClick={() => setShowOffline(true)}
+                  className={`px-3 py-1 rounded-full font-medium transition-colors ${
+                    showOffline ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  All (24h)
+                </button>
               </div>
+              <div className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-full px-3 py-1 text-green-700 font-medium">
+                <Users className="w-3.5 h-3.5" />
+                <span>{onlineCount} online</span>
+              </div>
+              {showOffline && offlineCount > 0 && (
+                <div className="flex items-center gap-1.5 bg-gray-100 border border-gray-200 rounded-full px-3 py-1 text-gray-600 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-gray-400" />
+                  <span>{offlineCount} offline</span>
+                </div>
+              )}
               <button
                 onClick={() => void refetch()}
                 className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
@@ -307,7 +397,7 @@ export default function LiveLocationMap() {
                     }`}
                   >
                     <div className="flex items-start gap-2">
-                      <div className="w-2 h-2 rounded-full mt-1.5 shrink-0 bg-green-500" />
+                      <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${isStale(emp) ? "bg-gray-400" : "bg-green-500"}`} />
                       <div className="min-w-0 w-full">
                         <p className="text-sm font-medium text-gray-900 truncate">{emp.full_name}</p>
                         <p className="text-xs text-gray-500 truncate">
@@ -317,7 +407,17 @@ export default function LiveLocationMap() {
                           <p className="text-xs text-gray-400 truncate">{emp.designation}</p>
                         )}
                         <div className="flex items-center justify-between mt-0.5">
-                          <p className="text-xs text-gray-400">{minutesAgo(emp.captured_at)}</p>
+                          <p className="text-xs text-gray-400 flex items-center gap-1">
+                            {minutesAgo(emp.captured_at)}
+                            {isApproximate(emp) && (
+                              <span
+                                className="text-amber-600"
+                                title={`Approximate fix · ±${Math.round(Number(emp.accuracy))}m`}
+                              >
+                                · approx
+                              </span>
+                            )}
+                          </p>
                           {travel && (
                             <span className="flex items-center gap-0.5 text-xs text-amber-600 font-medium">
                               <Clock className="w-3 h-3" />
@@ -342,11 +442,35 @@ export default function LiveLocationMap() {
               </div>
             )}
 
+            {trailId && (
+              <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 bg-blue-600 text-white text-xs px-3 py-1.5 rounded-lg shadow">
+                <span className="w-3 h-0.5 bg-white/80 rounded" />
+                <span>
+                  Route today — {trailEmployee?.full_name ?? "employee"} · {trailPositions.length} pts
+                </span>
+                <button
+                  onClick={() => setTrailId(null)}
+                  className="ml-1 hover:text-blue-100"
+                  title="Clear route"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {!isLoading && !isError && employees.length === 0 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 z-[500] pointer-events-none">
                 <MapPin className="w-10 h-10 mb-2" />
-                <p className="text-sm font-medium">No employees online in the last 15 minutes</p>
-                <p className="text-xs mt-1">Employees send a heartbeat every 30 seconds when logged in</p>
+                <p className="text-sm font-medium">
+                  {showOffline
+                    ? "No location data in the last 24 hours"
+                    : "No employees online in the last 15 minutes"}
+                </p>
+                <p className="text-xs mt-1">
+                  {showOffline
+                    ? "Switch a worker's tracking on, or check back after their next shift"
+                    : "Employees send a heartbeat every 30 seconds when logged in"}
+                </p>
               </div>
             )}
 
@@ -365,12 +489,38 @@ export default function LiveLocationMap() {
               <MapRefCapture onMap={(m) => { mapRef.current = m; }} />
               <BoundsFitter employees={filteredEmployees} />
 
+              {trailId && trailPositions.length > 1 && (
+                <Polyline
+                  positions={trailPositions}
+                  pathOptions={{ color: "#2563eb", weight: 4, opacity: 0.75 }}
+                />
+              )}
+
               {filteredEmployees.map((emp) => {
                 const travel = getTravelInfo(emp);
+                const approx = isApproximate(emp);
+                // Show the ±accuracy circle where it matters: approximate fixes always,
+                // and the currently-selected worker so you can judge that dot's precision.
+                const showRadius = emp.accuracy != null && (approx || selectedId === emp.employee_id);
                 return (
+                  <Fragment key={emp.employee_id}>
+                  {showRadius && (
+                    <Circle
+                      center={[Number(emp.latitude), Number(emp.longitude)]}
+                      radius={Number(emp.accuracy)}
+                      pathOptions={{
+                        color: approx ? "#f59e0b" : "#3b82f6",
+                        weight: 1,
+                        opacity: 0.5,
+                        fillColor: approx ? "#f59e0b" : "#3b82f6",
+                        fillOpacity: 0.1,
+                      }}
+                    />
+                  )}
                   <Marker
-                    key={emp.employee_id}
                     position={[Number(emp.latitude), Number(emp.longitude)]}
+                    icon={isStale(emp) ? OFFLINE_ICON : ONLINE_ICON}
+                    opacity={isStale(emp) ? 0.7 : 1}
                     ref={(m) => {
                       if (m) markerRefs.current[emp.employee_id] = m;
                       else delete markerRefs.current[emp.employee_id];
@@ -379,9 +529,18 @@ export default function LiveLocationMap() {
                   >
                     <Popup>
                       <div style={{ minWidth: 190, fontSize: 13 }}>
-                        <strong style={{ display: "block", marginBottom: 4 }}>
+                        <strong style={{ display: "block", marginBottom: 2 }}>
                           {emp.full_name}
                         </strong>
+                        <span style={{
+                          display: "block",
+                          marginBottom: 4,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: isStale(emp) ? "#6b7280" : "#16a34a",
+                        }}>
+                          {isStale(emp) ? "● Offline · last known" : "● Online"}
+                        </span>
                         {emp.branch_name && (
                           <span style={{ color: "#555", display: "block" }}>
                             {emp.branch_name}
@@ -397,8 +556,17 @@ export default function LiveLocationMap() {
                           Last seen: {minutesAgo(emp.captured_at)}
                         </span>
                         {emp.accuracy != null && (
-                          <span style={{ display: "block", color: "#aaa", fontSize: 10, marginTop: 2 }}>
-                            ±{Math.round(emp.accuracy)}m accuracy
+                          <span style={{
+                            display: "inline-block",
+                            marginTop: 4,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                            color: isApproximate(emp) ? "#b45309" : "#15803d",
+                            background: isApproximate(emp) ? "#fef3c7" : "#dcfce7",
+                          }}>
+                            {isApproximate(emp) ? "Approximate" : "Exact GPS"} · ±{Math.round(Number(emp.accuracy))}m
                           </span>
                         )}
                         {travel && (
@@ -425,9 +593,27 @@ export default function LiveLocationMap() {
                             Travel time unavailable — add branch coordinates in Org Masters
                           </div>
                         )}
+                        <button
+                          onClick={() =>
+                            setTrailId(trailId === emp.employee_id ? null : emp.employee_id)
+                          }
+                          style={{
+                            marginTop: 8,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: "#2563eb",
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {trailId === emp.employee_id ? "Hide today's route" : "Show today's route"}
+                        </button>
                       </div>
                     </Popup>
                   </Marker>
+                  </Fragment>
                 );
               })}
             </MapContainer>

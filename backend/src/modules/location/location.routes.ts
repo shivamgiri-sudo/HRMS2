@@ -77,12 +77,39 @@ router.post("/heartbeat", h(async (req: AuthenticatedRequest, res: Response) => 
     ],
   );
 
+  // Append to the movement trail (route replay). Best-effort: if migration 423
+  // has not run yet the table is absent, so we swallow the error and never let
+  // it break the live heartbeat that the map depends on.
+  try {
+    await db.execute(
+      `INSERT INTO employee_location_history
+         (employee_id, latitude, longitude, accuracy, captured_at)
+       VALUES (?, ?, ?, ?, NOW())`,
+      [emp.id, latitude, longitude, accuracy ?? null],
+    );
+  } catch (err) {
+    console.warn("[location] history insert skipped:", (err as Error).message);
+  }
+
   return res.json({ success: true });
 }));
 
 // GET /api/location/live — super_admin only
-// Returns all employees whose heartbeat arrived in the last 5 minutes.
-router.get("/live", requireRole("super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
+// window=online (default) → heartbeats in the last 15 min (currently on-shift).
+// window=all             → last 24h, so offline workers still show at their last-known spot.
+// window=<minutes>       → custom lookback (capped at 7 days).
+// Each row carries a `stale` flag (1/0): 1 when the last fix is older than 15 min.
+const ONLINE_WINDOW_MINUTES = 15;
+router.get("/live", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const windowParam = String(req.query.window ?? "online").toLowerCase();
+  let minutes = ONLINE_WINDOW_MINUTES;
+  if (windowParam === "all") {
+    minutes = 24 * 60;
+  } else if (windowParam !== "online") {
+    const n = parseInt(windowParam, 10);
+    if (Number.isFinite(n) && n > 0) minutes = Math.min(n, 7 * 24 * 60);
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        ell.employee_id,
@@ -93,13 +120,44 @@ router.get("/live", requireRole("super_admin"), h(async (_req: AuthenticatedRequ
        ell.full_name,
        ell.branch_name,
        ell.process_name,
-       ell.designation
+       ell.designation,
+       (ell.captured_at < NOW() - INTERVAL ${ONLINE_WINDOW_MINUTES} MINUTE) AS stale
      FROM employee_live_location ell
-     WHERE ell.captured_at >= NOW() - INTERVAL 15 MINUTE
+     WHERE ell.captured_at >= NOW() - INTERVAL ? MINUTE
      ORDER BY ell.full_name ASC`,
+    [minutes],
   );
 
   return res.json({ success: true, data: rows });
+}));
+
+// GET /api/location/history/:employeeId?date=YYYY-MM-DD — super_admin only
+// Ordered GPS trail for one employee on a given day (default: today, server time).
+router.get("/history/:employeeId", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const employeeId = String(req.params.employeeId);
+  const dateParam  = String(req.query.date ?? "").trim();
+  const dayFilter  = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
+
+  // dayExpr is either a bound "?" (validated date) or CURDATE(); it appears twice.
+  const dayExpr = dayFilter ? "?" : "CURDATE()";
+  const params  = dayFilter ? [employeeId, dayFilter, dayFilter] : [employeeId];
+
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT latitude, longitude, accuracy, captured_at
+         FROM employee_location_history
+        WHERE employee_id = ?
+          AND captured_at >= ${dayExpr}
+          AND captured_at <  ${dayExpr} + INTERVAL 1 DAY
+        ORDER BY captured_at ASC`,
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    // Table absent until migration 423 runs — degrade gracefully, don't 500.
+    console.warn("[location] history query skipped:", (err as Error).message);
+    return res.json({ success: true, data: [] });
+  }
 }));
 
 export const locationRouter = router;
