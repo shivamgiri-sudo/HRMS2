@@ -827,12 +827,18 @@ export const discardService = {
       action_type: "ATTENDANCE_RECORD_RESTORED",
       module_key: "attendance",
       entity_type: "attendance_daily_record",
-      // employee_id alone: sensitive_action_log.entity_id is CHAR(36) and the
-      // `<uuid>:<date>` composite is 47 chars, so MySQL rejected the row with
-      // "Data too long for column 'entity_id'". auditLog swallows its own errors,
-      // so the audit trail lost the row silently. The date is in the payload
-      // instead. ATTENDANCE_RECORD_CORRECTED in wfm.regularization.secure.routes.ts
-      // uses the same composite and fails there for the same reason.
+      // employee_id alone, with the date in the payload.
+      //
+      // Originally forced: entity_id was CHAR(36), the `<uuid>:<date>` composite is
+      // 47 chars, MySQL rejected the row, and auditLog swallows its own errors — so
+      // the trail lost it silently. Migration 1033 has since widened the column to
+      // VARCHAR(100), and ATTENDANCE_RECORD_CORRECTED in
+      // wfm.regularization.secure.routes.ts does key on the composite again.
+      //
+      // Kept as the bare id here on purpose: this row is looked up by employee to
+      // answer "what was restored for this person", and a composite key would need
+      // a LIKE scan to serve that. The one production discard from before the fix
+      // (2026-07-31 19:58:40) has no row at all — nothing can recover it.
       entity_id: employeeId,
       employee_id: employeeId,
       actor_role: actor.role ?? undefined,
