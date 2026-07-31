@@ -131,7 +131,7 @@ function last4FromMasked(masked: unknown): string {
 // nothing, so every status-specific branch below was dead code and candidates got
 // the raw server string for conditions the product had proper wording for.
 function bgvErrorStatus(e: any): number | null {
-  const status = getHrmsApiErrorStatus(e) ?? e?.response?.status ?? e?.status;
+  const status = getHrmsApiErrorStatus(e) ?? e?.status;
   return typeof status === "number" ? status : null;
 }
 
@@ -139,7 +139,6 @@ function extractBgvError(e: any, fallback: string): string {
   const status = bgvErrorStatus(e);
   const serverMsg =
     e?.payload?.message ?? e?.payload?.error ??
-    e?.response?.data?.error ?? e?.response?.data?.message ??
     (typeof e?.message === "string" ? e.message : null);
   if (status === 503) return serverMsg ?? "Verification service is not configured — please contact HR.";
   if (status === 403) return serverMsg ?? "BGV consent required — please complete the consent step first.";
@@ -650,9 +649,12 @@ export function useOnboardingFull(token: string) {
     if (!uan) { setError("Please enter your UAN number in the KYC section (Step 3) before verifying."); return; }
     setSaving(true);
     try {
-      const res = await hrmsApi.post<{ data: { employment_history?: unknown[] } }>(`${BGV}/verify/uan`, { token, uanNumber: uan });
+      const res = await hrmsApi.post<{ data?: { employment_history?: unknown[] } }>(`${BGV}/verify/uan`, { token, uanNumber: uan });
       await load();
-      const count = res.data?.data?.employment_history?.length ?? 0;
+      // hrmsApi returns the `{ success, data }` body, so employment_history sits
+      // one .data down, not two. The extra hop made count always 0, so a UAN
+      // lookup that did return history never cleared the error banner.
+      const count = res.data?.employment_history?.length ?? 0;
       if (count > 0) setError(""); // clear any prior error; employment history fetched
     }
     catch (e: any) { setError(extractBgvError(e, "UAN verification failed")); }
@@ -726,7 +728,13 @@ export function useOnboardingFull(token: string) {
       else if (step === 8) await saveExperience(); // Experience
       else if (step === 9) await saveExperience(); // Family & Language
       else if (step === 10) await saveStatutory(); // Statutory
-    } catch { /* error shown in banner; still allow advance */ }
+    } catch {
+      // Stay on the step when its save failed. Advancing anyway is how candidates
+      // reached Submit believing their details were stored — the banner scrolls out
+      // of view and the next step looks like progress. The save is retryable, so
+      // holding here costs a tap; carrying on silently costs the data.
+      return;
+    }
     setStep((s) => Math.min(10, s + 1) as Step);
     hrmsApi.post(`${API}/progress`, { token, stepIdx: Math.min(10, step) }).catch((e) => console.warn("[onboarding] Background operation failed:", e));
   };
