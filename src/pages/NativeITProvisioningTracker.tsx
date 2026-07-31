@@ -681,12 +681,16 @@ export default function NativeITProvisioningTracker() {
   const { data: statCardData } = useQuery({
     queryKey: ["stat-card-provisioning", adminDialogEmployeeId],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; employee: any }>(`/api/employees/${adminDialogEmployeeId}/stat-card`);
-      return (res as any)?.employee ?? null;
+      // The endpoint answers { success, data: { employee, ... } } — reading res.employee
+      // silently yielded null, so the ID-card preview below never rendered.
+      const res = await hrmsApi.get<{ success: boolean; data: { employee: any } }>(`/api/employees/${adminDialogEmployeeId}/stat-card`);
+      return res?.data?.employee ?? null;
     },
     enabled: !!adminDialogEmployeeId,
     staleTime: 5 * 60_000,
   });
+  // Same precedence as NativeEmployeeStatCard: uploaded avatar wins over the legacy photo.
+  const statCardPhotoUrl = statCardData?.avatar_url ?? statCardData?.photo_url ?? null;
   const [evidenceNote, setEvidenceNote] = useState("");
   const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
   const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
@@ -1299,7 +1303,7 @@ export default function NativeITProvisioningTracker() {
                 <>
                   {statCardData && (
                     <div className="mb-4 flex flex-col items-center gap-2">
-                      {!statCardData.photo_url && (
+                      {!statCardPhotoUrl && (
                         <div className="w-full rounded-lg bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-800 font-medium flex items-start gap-2">
                           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
                           <span>Employee has not uploaded a profile photo. The ID card cannot be printed until a photo is available. Ask the employee to upload their photo from their Profile page first.</span>
@@ -1309,29 +1313,29 @@ export default function NativeITProvisioningTracker() {
                         employeeId={actionDialog.request!.employee_id}
                         employeeCode={statCardData.employee_code}
                         fullName={statCardData.full_name}
-                        designation={statCardData.designation ?? ""}
-                        department={statCardData.department}
-                        branchName={statCardData.branch_name}
-                        branchAddress={statCardData.branch_address}
-                        branchCity={statCardData.branch_city}
-                        branchState={statCardData.branch_state}
-                        hrContact={statCardData.branch_hr_contact}
-                        photoUrl={statCardData.photo_url}
-                        emergencyContact={statCardData.emergency_contact ?? ""}
-                        bloodGroup={statCardData.blood_group ?? ""}
+                        designation={statCardData.designation_name ?? "—"}
+                        department={statCardData.dept_name ?? undefined}
+                        branchName={statCardData.branch_name ?? undefined}
+                        branchAddress={statCardData.branch_address || undefined}
+                        branchCity={statCardData.branch_city ?? undefined}
+                        branchState={statCardData.branch_state ?? undefined}
+                        hrContact={statCardData.branch_hr_contact || "hr@teammas.in"}
+                        photoUrl={statCardPhotoUrl ?? undefined}
+                        emergencyContact={statCardData.emergency_contact?.mobile ?? "Contact HR"}
+                        bloodGroup={statCardData.blood_group ?? "—"}
                         printMode={false}
                       />
                       <button
                         type="button"
                         onClick={() => window.print()}
-                        disabled={!statCardData.photo_url}
+                        disabled={!statCardPhotoUrl}
                         className="text-xs text-blue-600 underline mt-1 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Print ID Card
                       </button>
                     </div>
                   )}
-                  <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} photoMissing={!statCardData?.photo_url} />
+                  <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} photoMissing={!statCardPhotoUrl} />
                 </>
               ) : isWfmTask ? (
                 <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />
