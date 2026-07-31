@@ -218,7 +218,12 @@ export interface PendingTask {
   tat_deadline?: string;
   created_at: string;
   aging_hours: number;
-  risk: "breached" | "due_soon" | "on_track";
+  /**
+   * "breached" means a real TAT deadline was missed. "aged" means the item has no
+   * deadline at all and is simply old — see calcRisk for why the two must not be
+   * conflated.
+   */
+  risk: "breached" | "aged" | "due_soon" | "on_track";
   employee_name?: string;
   branch_name?: string;
   branch_id?: string;
@@ -227,6 +232,8 @@ export interface PendingTask {
 export interface PendingSummary {
   total: number;
   breached: number;
+  /** Deadline-less items past the ageing threshold. Never counted as breached. */
+  aged: number;
   due_soon: number;
   on_track: number;
   by_module: Record<string, number>;
@@ -241,13 +248,30 @@ export interface TimelineEvent {
   source_table: string;
 }
 
-function calcRisk(deadlineStr?: string | null, createdStr?: string): "breached" | "due_soon" | "on_track" {
+/**
+ * Risk for a work item.
+ *
+ * A deadline-less item that is merely OLD returns "aged", never "breached".
+ *
+ * CEO UAT 31-Jul-2026 reported /work-inbox showing 23 items of which 100% read
+ * "TAT breached". None of them had a TAT: work_inbox_item carries no deadline
+ * column at all (createItem inserts none), so every row arrived here with
+ * deadlineStr = null and fell into the age branch, where anything older than 48h
+ * was labelled breached. Missing-punch items are generated per employee per date
+ * and never expire, so the label was guaranteed for essentially every row — a
+ * permanent red "SLA missed" for a service level that was never defined.
+ *
+ * This mirrors the distinction the dashboard contract already makes, where
+ * `overdue_count` counts only rows with a real due date and `aged_count` is the
+ * age-based signal "kept separate so an age is never presented as a missed
+ * deadline" (shared/dashboardMetricContract.ts).
+ */
+function calcRisk(deadlineStr?: string | null, createdStr?: string): "breached" | "aged" | "due_soon" | "on_track" {
   if (!deadlineStr) {
-    // No deadline: use age — >48h = breached, >24h = due_soon
     if (!createdStr) return "on_track";
     const ageH = (Date.now() - new Date(createdStr).getTime()) / 3_600_000;
-    if (ageH > 48) return "breached";
-    if (ageH > 24) return "due_soon";
+    // Old, but nothing was promised — "aged", not "breached".
+    if (ageH > 48) return "aged";
     return "on_track";
   }
   const remaining = new Date(deadlineStr).getTime() - Date.now();
@@ -355,6 +379,44 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     [userId],
   );
 
+  // Third source: work_item, the registry-backed table behind
+  // modules/work-inbox/action-item-registry.ts (22 declared item types including
+  // PAYROLL_SIGN_OFF_PENDING, LEAVE_APPROVAL_PENDING, RESIGNATION_PENDING_REVIEW and
+  // FF_CLEARANCE_PENDING).
+  //
+  // This endpoint previously unioned only task_tat_instance and work_inbox_item, so
+  // nothing written to work_item ever reached /work-inbox — while the page header
+  // claims "tasks across all platform modules". The CEO UAT reported exactly that:
+  // one item type, no approval, payroll or exit items.
+  //
+  // Adding the source does NOT by itself deliver those items. Verified against prod
+  // 31-Jul-2026: work_item holds 2 rows, both EMPLOYEE_CODE_PENDING. Of the 22
+  // registered types, only that one has a producer writing rows. The rest of the
+  // finding is missing producers, not missing wiring — but the wiring has to exist
+  // first, or a producer added later would still be invisible here.
+  //
+  // Role-assigned items are included deliberately: approvals are addressed to a role,
+  // not a person, so filtering on assigned_to_user_id alone would keep them hidden.
+  const [workItemRows] = await db.execute<RowDataPacket[]>(
+    `SELECT wi.id,
+            COALESCE(NULLIF(wi.module_code, ''), wi.item_type) AS module,
+            wi.title,
+            wi.description,
+            wi.entity_type,
+            wi.entity_id,
+            wi.priority,
+            wi.due_at,
+            wi.created_at,
+            e.full_name AS employee_name
+       FROM work_item wi
+       LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
+      WHERE wi.status NOT IN ('completed', 'cancelled')
+        AND (wi.assigned_to_user_id = ? OR wi.assigned_to_role IN (${rolePlaceholders}))
+      ORDER BY FIELD(wi.priority,'urgent','high','normal','low'), wi.created_at DESC
+      LIMIT 200`,
+    [userId, ...rolePool],
+  ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+
   const now = Date.now();
   const items: PendingTask[] = [
     ...filteredTat.map((row): PendingTask => {
@@ -396,10 +458,33 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         risk: calcRisk(null, createdAt),
       };
     }),
+    // work_item rows. Unlike work_inbox_item these DO carry a real deadline
+    // (due_at), so calcRisk can distinguish a genuine breach from mere age here.
+    ...(workItemRows as RowDataPacket[]).map((row): PendingTask => {
+      const createdAt = String(row.created_at ?? "");
+      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const dueAt = row.due_at ? String(row.due_at) : null;
+      return {
+        id: String(row.id),
+        source: "inbox",
+        module: String(row.module ?? "general"),
+        title: String(row.title ?? ""),
+        description: row.description ? String(row.description) : undefined,
+        entity_type: row.entity_type ? String(row.entity_type) : undefined,
+        entity_id: row.entity_id ? String(row.entity_id) : undefined,
+        priority: String(row.priority ?? "normal"),
+        tat_deadline: dueAt ?? undefined,
+        created_at: createdAt,
+        aging_hours: Math.round(agingH * 10) / 10,
+        risk: calcRisk(dueAt, createdAt),
+        employee_name: row.employee_name ? String(row.employee_name) : undefined,
+      };
+    }),
   ];
 
   // Sort by risk then priority
-  const riskOrder = { breached: 0, due_soon: 1, on_track: 2 };
+  // A real missed deadline outranks a merely old item.
+  const riskOrder = { breached: 0, due_soon: 1, aged: 2, on_track: 3 };
   const prioOrder: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
   items.sort((a, b) => {
     const rd = riskOrder[a.risk] - riskOrder[b.risk];
@@ -410,6 +495,7 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   const summary: PendingSummary = {
     total: items.length,
     breached: items.filter((i) => i.risk === "breached").length,
+    aged: items.filter((i) => i.risk === "aged").length,
     due_soon: items.filter((i) => i.risk === "due_soon").length,
     on_track: items.filter((i) => i.risk === "on_track").length,
     by_module: items.reduce<Record<string, number>>((acc, i) => {

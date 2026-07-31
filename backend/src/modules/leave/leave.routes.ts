@@ -240,7 +240,10 @@ leaveRouter.get("/balance", h(async (req: AuthenticatedRequest, res: Response) =
   }
   const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();
   const data = await leaveService.getBalance(callerEmp.id, year);
-  return res.json({ success: true, data });
+  // generatedAt lets the dashboard's Source Freshness panel show when this was
+  // computed. Without it the panel read "Timestamp unavailable" (CEO UAT); these
+  // figures are calculated live per request, so request time IS the freshness.
+  return res.json({ success: true, data, generatedAt: new Date().toISOString() });
 }));
 
 leaveRouter.get("/holidays",                      h(leaveController.listHolidays.bind(leaveController)));  // All can view

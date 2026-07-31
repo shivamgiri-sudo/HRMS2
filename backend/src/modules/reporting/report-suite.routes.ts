@@ -511,9 +511,27 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       const to = dateParam(req.query.to, from);
       addScopedEmployeeFilters(req, clauses, params);
       if (req.query.processId) { clauses.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-      clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
+      // Only active staff — the report is about who was expected to attend.
+      clauses.push("e.active_status = 1");
       // Pre-aggregate wfm_attendance_session to avoid multi-session row duplication.
       // One logical attendance day = earliest punch in, latest punch out, sum of minutes.
+      //
+      // DRIVEN FROM employees, NOT attendance_daily_record.
+      //
+      // This report declares its grain as "One row per employee per attendance date"
+      // (rowGrain, above) but drove from attendance_daily_record with an inner join to
+      // employees, so anyone with no ADR row for the date simply vanished. The CEO UAT
+      // of 31-Jul-2026 reported 350 rows against a headcount of 1,152 — the missing 800
+      // were not absent employees, they were employees the report could not see, which
+      // is precisely the population an attendance report exists to surface (no COSEC
+      // sync, no roster, not yet processed by the attendance engine).
+      //
+      // The date predicate moves into the LEFT JOIN condition. Leaving it in WHERE
+      // would filter out the NULL side and silently degrade this back to an inner join.
+      //
+      // Its two placeholders sit in the JOIN, which mysql2 binds positionally BEFORE
+      // every WHERE placeholder — hence unshift rather than push.
+      params.unshift(from, to);
       sql = `SELECT adr.record_date,
                     e.employee_code,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -539,8 +557,10 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     adr.lwp_value,
                     CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
                     adr.is_locked
-               FROM attendance_daily_record adr
-               JOIN employees e ON e.id = adr.employee_id
+               FROM employees e
+               LEFT JOIN attendance_daily_record adr
+                      ON adr.employee_id = e.id
+                     AND adr.record_date BETWEEN ? AND ?
                LEFT JOIN branch_master b ON b.id = e.branch_id
                LEFT JOIN process_master p ON p.id = e.process_id
                LEFT JOIN department_master d ON d.id = e.department_id

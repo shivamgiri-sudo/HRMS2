@@ -593,7 +593,9 @@ router.get("/learner-progress/:employee_id", h(async (req: any, res: Response) =
     [req.params.employee_id]
   );
   if (!rows.length) return res.status(404).json({ success: false, error: "No LMS record found" });
-  res.json({ success: true, data: rows[0] });
+  // generatedAt feeds the dashboard Source Freshness panel, which otherwise reads
+  // "Timestamp unavailable" (CEO UAT).
+  res.json({ success: true, data: rows[0], generatedAt: new Date().toISOString() });
 }));
 
 router.get("/batch-progress/:batch_no", requireRole("admin", "hr", "trainer", "operations_head"), h(async (req: any, res: Response) => {
