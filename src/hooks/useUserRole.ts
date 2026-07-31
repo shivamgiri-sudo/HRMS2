@@ -240,6 +240,14 @@ export const useWorkforceAccess = () => {
         : Array.from(pageSet).filter((pageCode) => !disabledPageSet.has(pageCode)),
       roleKeys,
       scopes: roleQuery.data?.scopes ?? [],
+      // useWorkforceAccess returns { ...roleQuery, ...access }. roleQuery is the
+      // react-query result, so primaryRole lives at roleQuery.data.primaryRole and
+      // was NOT reachable on the hook's own surface. PayslipCenterRoute destructures
+      // primaryRole straight off the hook, so it read undefined and every employee
+      // opening /payroll/payslips was served NativePayslipCenter — the admin payroll
+      // console — instead of their own payslips. Surfaced here alongside employeeId,
+      // which that same call site reads and which was already exposed.
+      primaryRole: roleQuery.data?.primaryRole ?? null,
       employeeId: roleQuery.data?.employeeId ?? null,
       employeeCode: roleQuery.data?.employeeCode ?? null,
       employeeName: roleQuery.data?.employeeName ?? null,
