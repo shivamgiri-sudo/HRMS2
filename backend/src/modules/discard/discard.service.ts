@@ -126,10 +126,16 @@ export interface DiscardResult {
  * attendance.manual-override.routes.ts, which is the established answer in this
  * codebase to "may I change attendance for this month". `status` collates
  * utf8mb4_unicode_ci, so lowercase 'finalized' matches the stored 'FINALIZED'
- * (verified: 51 rows). `approved` is excluded, consistent with that guard and
- * with payroll.secure.routes.ts, which groups it with in-progress statuses.
+ * (verified: 51 rows).
+ *
+ * `approved` is included here even though the manual-override guard omits it,
+ * because recalculation is not status-neutral: calculatePayrollRunScoped ends with
+ * an unconditional `UPDATE salary_prep_run SET status = 'processing'`
+ * (payrollCalculate.service.ts:1107). Recalculating an approved run would
+ * therefore silently revert its sign-off. 80 approved leaves sit in such months;
+ * they need a payroll adjustment rather than a discard.
  */
-export const PAYROLL_CLOSED_STATUSES = ["published", "disbursed", "locked", "finalized"];
+export const PAYROLL_CLOSED_STATUSES = ["published", "disbursed", "locked", "finalized", "approved"];
 
 function httpError(message: string, statusCode: number, code?: string): Error {
   return Object.assign(new Error(message), { statusCode, code });
@@ -214,7 +220,8 @@ async function checkPayrollMonths(
         code: "PAYROLL_MONTH_CLOSED",
         message:
           `Payroll is closed for ${closedMonths.map((m) => `${m.month} (${m.runStatus})`).join(", ")}. ` +
-          `A closed month cannot be changed by a discard — raise a payroll adjustment instead.`,
+          `A closed month cannot be changed by a discard — raise a payroll adjustment instead. ` +
+          `(An approved run counts as closed: recalculating it would revert its sign-off.)`,
       }
     : null;
 
@@ -249,11 +256,74 @@ async function recalcPayroll(
         actorUserId,
       });
       statuses.push(`${month}:${res.status}`);
+
+      // Nothing drains payroll_recalculation_queue — no worker, cron or job reads
+      // it, so a queued row stays 'pending' forever. Since a discard already
+      // refuses closed months, anything other than 'recalculated' means payroll
+      // did NOT move, and saying so is the difference between a visible problem
+      // and a silently wrong salary.
+      if (res.status !== "recalculated") {
+        warnings.push(
+          `Payroll was NOT recalculated for ${month} (${res.status}): ${res.message} ` +
+          `Nothing processes the recalculation queue automatically — this needs a manual payroll run.`
+        );
+      }
     } catch (err: any) {
       warnings.push(`Payroll recalculation failed for ${month}: ${err?.message ?? String(err)}`);
     }
   }
   return { status: statuses.length ? statuses.join(", ") : null, warnings };
+}
+
+/**
+ * Post-commit cache and snapshot refresh.
+ *
+ * The attendance and payroll numbers are already correct in the database by this
+ * point; these are the stores that would otherwise keep serving the pre-discard
+ * values. Each is isolated — the discard is durable and must not be undone by a
+ * cache or snapshot failure.
+ */
+async function refreshDerivedStores(
+  employeeId: string,
+  months: string[]
+): Promise<string[]> {
+  const warnings: string[] = [];
+
+  // /api/employees/hr-hub holds a 30s in-process cache with no invalidation hook,
+  // so the Attendance Hub would keep showing pre-discard present_days / lwp_days
+  // even on a forced refetch.
+  try {
+    const { invalidateHrHubCache } = await import("../employees/employee.routes.js");
+    invalidateHrHubCache();
+  } catch (err: any) {
+    warnings.push(`Attendance Hub cache could not be cleared: ${err?.message ?? String(err)}`);
+  }
+
+  // pnl_running_salary_snapshot feeds the P&L Agent/DSC/BMC people-cost lines and
+  // is otherwise only written by a manual refresh endpoint. Scoped to this one
+  // employee (~1.4s); a whole-branch refresh would take minutes.
+  for (const month of months) {
+    try {
+      const { refreshRunningSalarySnapshot } = await import(
+        "../process-pnl/pnl-running-salary.service.js"
+      );
+      await refreshRunningSalarySnapshot(month, { employeeId });
+    } catch (err: any) {
+      warnings.push(
+        `P&L running-salary snapshot not refreshed for ${month}: ${err?.message ?? String(err)}. ` +
+        `People-cost figures will show the pre-discard amount until the next manual refresh.`
+      );
+    }
+  }
+
+  // attendance_reconciliation_issue is only opened/closed by a full audit on a
+  // daily cron. Not triggered here — it is a lookback sweep across all employees.
+  warnings.push(
+    "Attendance reconciliation issues are recalculated by a daily job, so the " +
+    "control tower may lag this change by up to a day."
+  );
+
+  return warnings;
 }
 
 // ─── Entity loading ──────────────────────────────────────────────────────────
@@ -574,6 +644,7 @@ export const discardService = {
     warnings.push(...(await rederiveDates(employeeId, plans)));
     const payrollResult = await recalcPayroll(employeeId, months, "leave_discarded", id, actor.userId);
     warnings.push(...payrollResult.warnings);
+    warnings.push(...(await refreshDerivedStores(employeeId, months)));
 
     await logSensitiveAction({
       actor_user_id: actor.userId,
@@ -679,6 +750,7 @@ export const discardService = {
       employeeId, [month], "attendance_regularization_discarded", id, actor.userId
     );
     warnings.push(...payrollResult.warnings);
+    warnings.push(...(await refreshDerivedStores(employeeId, [month])));
 
     // Two audit rows, mirroring the approval pair: one on the request, one on the
     // attendance day keyed the same way as ATTENDANCE_RECORD_CORRECTED so the
@@ -701,12 +773,24 @@ export const discardService = {
       action_type: "ATTENDANCE_RECORD_RESTORED",
       module_key: "attendance",
       entity_type: "attendance_daily_record",
-      entity_id: `${employeeId}:${plans[0]?.date ?? ""}`,
+      // employee_id alone: sensitive_action_log.entity_id is CHAR(36) and the
+      // `<uuid>:<date>` composite is 47 chars, so MySQL rejected the row with
+      // "Data too long for column 'entity_id'". auditLog swallows its own errors,
+      // so the audit trail lost the row silently. The date is in the payload
+      // instead. ATTENDANCE_RECORD_CORRECTED in wfm.regularization.secure.routes.ts
+      // uses the same composite and fails there for the same reason.
+      entity_id: employeeId,
       employee_id: employeeId,
       actor_role: actor.role ?? undefined,
       reason,
-      old_value_json: { attendance_status: plans[0]?.currentStatus, lwp_value: plans[0]?.currentLwp },
-      new_value_json: { attendance_status: plans[0]?.restoredStatus, lwp_value: plans[0]?.restoredLwp, mode: plans[0]?.mode },
+      old_value_json: { record_date: plans[0]?.date, attendance_status: plans[0]?.currentStatus, lwp_value: plans[0]?.currentLwp },
+      new_value_json: {
+        record_date: plans[0]?.date,
+        attendance_status: plans[0]?.restoredStatus,
+        lwp_value: plans[0]?.restoredLwp,
+        mode: plans[0]?.mode,
+        rows_affected: plans[0]?.appliedRows ?? 0,
+      },
     }).catch(() => {});
 
     await notifyEmployee(employeeId, id, entityType, reason).catch(() => {});
@@ -785,8 +869,13 @@ function buildResult(
     daysRestored: extra.daysRestored,
     balanceBefore: extra.balanceBefore,
     balanceAfter: extra.balanceAfter,
-    datesRestored: plans.filter((p) => p.mode === "snapshot" || p.mode === "partial" || p.mode === "rederive").length,
-    datesDeleted: plans.filter((p) => p.mode === "delete").length,
+    // Counted from rows actually affected, not from what the plan intended. A
+    // discard once reported "1 date deleted" while the row was still present,
+    // because the DELETE matched nothing and nobody checked.
+    datesRestored: plans.filter(
+      (p) => (p.mode === "snapshot" || p.mode === "partial" || p.mode === "rederive") && (p.appliedRows ?? 0) > 0
+    ).length,
+    datesDeleted: plans.filter((p) => p.mode === "delete" && (p.appliedRows ?? 0) > 0).length,
     datesSkipped: plans.filter((p) => p.mode === "skip_locked" || p.mode === "skip_owned").length,
     attendance: plans,
     warnings,
