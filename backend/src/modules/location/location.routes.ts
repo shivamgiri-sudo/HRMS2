@@ -18,7 +18,8 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-const GEOFENCE_RADIUS_KM = parseFloat(process.env.GEOFENCE_RADIUS_KM ?? "1.0");
+const _geofenceRadius = parseFloat(process.env.GEOFENCE_RADIUS_KM ?? "1.0");
+const GEOFENCE_RADIUS_KM = Number.isFinite(_geofenceRadius) && _geofenceRadius > 0 ? _geofenceRadius : 1.0;
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>

@@ -44,7 +44,7 @@ export function useLocationHeartbeat() {
       lastPostRef.current = Date.now();
       console.log("[LocationHeartbeat] Posting:", { latitude, longitude, accuracy });
       try {
-        const data = await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
+        const data = await hrmsApi.post<{ success: boolean; geofence?: { outside: boolean; distanceKm: number; branchName: string } }>("/api/location/heartbeat", { latitude, longitude, accuracy });
         console.log("[LocationHeartbeat] Posted successfully");
         if (data?.geofence?.outside) {
           console.warn(
