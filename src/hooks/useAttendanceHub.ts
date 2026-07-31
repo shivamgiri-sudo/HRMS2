@@ -304,13 +304,11 @@ export function usePayslipHistory(employeeId: string | null) {
       const res = await hrmsApi.get<any>(`/api/payroll/payslip/history/${employeeId}?limit=24`);
       return (res?.data ?? res ?? []) as PayslipSummary[];
     },
-    staleTime: 120_000,
-  // refetchOnWindowFocus overrides the app-wide default (false in App.tsx) for
-  // this operational query only — the underlying data changes (a new punch,
-  // a leave approval, a salary run) independently of anything the user does
-  // here, so returning to the tab should re-check rather than show what was
-  // last fetched. Scoped per-query rather than flipping the global default,
-  // which would touch every one of the ~170 other useQuery call sites.
+    // staleTime: 0 — salary_prep_line is recalculated during any open run (COSEC
+    // sync, regularization approval, manual drift recalc). A 2-minute window means
+    // a recalculation that just fixed 30 paid days still shows 29 to anyone who
+    // opened the tab in the last 2 minutes. Payslip history is cheap to refetch.
+    staleTime: 0,
     refetchOnWindowFocus: true,
   });
 }
@@ -323,7 +321,12 @@ export function usePayslipDetail(runId: string | null, employeeId: string | null
       const res = await hrmsApi.get<any>(`/api/payroll/payslip/${runId}/${employeeId}`);
       return (res?.data ?? res) as PayslipDetail;
     },
-    staleTime: 300_000,
+    // staleTime: 0 — salary_prep_line changes on every recalculation during a
+    // processing run. A 5-minute stale window means recalculated values (paid days,
+    // net salary) show stale data to anyone with the detail expanded. Disbursed
+    // runs never change, so this is safe to refetch aggressively.
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 }
 
