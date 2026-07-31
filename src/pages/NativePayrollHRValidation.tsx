@@ -71,8 +71,7 @@ export default function NativePayrollHRValidation() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Master data
-  const [companies, setCompanies] = useState<any[]>([]);
+  // Master data
   const [designations, setDesignations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [processes, setProcesses] = useState<any[]>([]);
@@ -129,8 +128,10 @@ export default function NativePayrollHRValidation() {
 
   const loadMasterData = async () => {
     try {
+      // No companies request: /api/org/companies has no route and no company
+      // entity exists behind it. It sat first in this Promise.all, so every
+      // master list on the page depended on a call that always 404'd.
       const [
-        companiesRes,
         designationsRes,
         departmentsRes,
         processesRes,
@@ -139,7 +140,6 @@ export default function NativePayrollHRValidation() {
         shiftsRes,
         salarySlabsRes,
       ] = await Promise.all([
-        hrmsApi.get('/api/org/companies'),
         hrmsApi.get('/api/org/designations'),
         hrmsApi.get('/api/org/departments'),
         hrmsApi.get('/api/org/processes'),
@@ -147,9 +147,7 @@ export default function NativePayrollHRValidation() {
         hrmsApi.get('/api/employees?role=manager'),
         hrmsApi.get('/api/wfm/shifts'),
         hrmsApi.get('/api/payroll-masters/slabs'),
-      ]);
-
-      setCompanies(companiesRes.data || []);
+      ]);
       setDesignations(designationsRes.data || []);
       setDepartments(departmentsRes.data || []);
       setProcesses(processesRes.data || []);
@@ -393,21 +391,15 @@ export default function NativePayrollHRValidation() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Company *</label>
-                <select
-                  value={formData.company_id}
-                  onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                >
-                  <option value="">Select Company</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.company_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/*
+                The Company selector is deliberately absent. It was marked
+                required but its only source, GET /api/org/companies, has no
+                route, and there is no company entity behind it either — no
+                company_master table exists and no migration creates one. So the
+                dropdown was permanently empty while the field it fed was
+                mandatory, which is what made this form impossible to submit.
+                Branch already carries the organisational scope this page needs.
+              */}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Designation *</label>

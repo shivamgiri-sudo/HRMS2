@@ -102,7 +102,15 @@ payrollHRRouter.get('/candidate/:candidateId', h(async (req: AuthenticatedReques
 const salaryValidationSchema = z.object({
   candidate_id: z.string().uuid(),
   employment_type: z.enum(['onroll', 'offrole']),
-  company_id: z.string().uuid(),
+  // Optional because there is no company entity to select from. company_master
+  // is referenced nowhere else in the backend and is created by no migration, so
+  // the required uuid here could never be satisfied: the UI's Company dropdown
+  // was fed by GET /api/org/companies, which has no route, so it was always
+  // empty and the form posted company_id: "". Every submission failed zod with
+  // {"validation":"uuid","path":["company_id"]} — the whole Payroll HR
+  // Validation workflow was unusable. All three rows in the table have
+  // company_id NULL, consistent with it never having been supplied.
+  company_id: optionalUuid,
   designation_id: z.string().uuid(),
   department_id: z.string().uuid(),
   process_id: z.string().uuid(),

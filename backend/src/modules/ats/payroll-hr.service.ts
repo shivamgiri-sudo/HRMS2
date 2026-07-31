@@ -33,7 +33,8 @@ interface PendingCandidate {
 export interface SalaryValidationInput {
   candidate_id: string;
   employment_type: 'onroll' | 'offrole';
-  company_id: string;
+  /** No company entity exists; the column is retained and stays NULL. */
+  company_id?: string;
   designation_id: string;
   department_id: string;
   process_id: string;
@@ -320,7 +321,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         branchId,
         input.payroll_hr_id,
         input.employment_type,
-        input.company_id,
+        input.company_id ?? null,
         input.designation_id,
         input.department_id,
         input.process_id,
@@ -526,7 +527,6 @@ export async function getValidationRecord(candidateId: string) {
       c.mobile as candidate_mobile,
       c.email as candidate_email,
       hr.full_name as payroll_hr_name,
-      comp.company_name,
       dept.department_name,
       des.designation_name,
       proc.process_name,
@@ -535,7 +535,10 @@ export async function getValidationRecord(candidateId: string) {
     FROM ats_payroll_hr_validation phr
     LEFT JOIN ats_candidate c ON c.id = phr.candidate_id
     LEFT JOIN employees hr ON hr.id = phr.payroll_hr_id
-    LEFT JOIN company_master comp ON comp.id = phr.company_id
+    -- No company_master join: that table does not exist in mas_hrms and is
+    -- created by no migration, so this LEFT JOIN made the whole query fail with
+    -- ERROR 1146 and GET /api/ats/payroll-hr/validation/:candidateId returned
+    -- 500 for every candidate that had a validation record.
     LEFT JOIN department_master dept ON dept.id = phr.department_id
     LEFT JOIN designation_master des ON des.id = phr.designation_id
     LEFT JOIN process_master proc ON proc.id = phr.process_id
