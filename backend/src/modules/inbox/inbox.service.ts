@@ -379,6 +379,44 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
     [userId],
   );
 
+  // Third source: work_item, the registry-backed table behind
+  // modules/work-inbox/action-item-registry.ts (22 declared item types including
+  // PAYROLL_SIGN_OFF_PENDING, LEAVE_APPROVAL_PENDING, RESIGNATION_PENDING_REVIEW and
+  // FF_CLEARANCE_PENDING).
+  //
+  // This endpoint previously unioned only task_tat_instance and work_inbox_item, so
+  // nothing written to work_item ever reached /work-inbox — while the page header
+  // claims "tasks across all platform modules". The CEO UAT reported exactly that:
+  // one item type, no approval, payroll or exit items.
+  //
+  // Adding the source does NOT by itself deliver those items. Verified against prod
+  // 31-Jul-2026: work_item holds 2 rows, both EMPLOYEE_CODE_PENDING. Of the 22
+  // registered types, only that one has a producer writing rows. The rest of the
+  // finding is missing producers, not missing wiring — but the wiring has to exist
+  // first, or a producer added later would still be invisible here.
+  //
+  // Role-assigned items are included deliberately: approvals are addressed to a role,
+  // not a person, so filtering on assigned_to_user_id alone would keep them hidden.
+  const [workItemRows] = await db.execute<RowDataPacket[]>(
+    `SELECT wi.id,
+            COALESCE(NULLIF(wi.module_code, ''), wi.item_type) AS module,
+            wi.title,
+            wi.description,
+            wi.entity_type,
+            wi.entity_id,
+            wi.priority,
+            wi.due_at,
+            wi.created_at,
+            e.full_name AS employee_name
+       FROM work_item wi
+       LEFT JOIN employees e ON e.user_id = wi.assigned_to_user_id
+      WHERE wi.status NOT IN ('completed', 'cancelled')
+        AND (wi.assigned_to_user_id = ? OR wi.assigned_to_role IN (${rolePlaceholders}))
+      ORDER BY FIELD(wi.priority,'urgent','high','normal','low'), wi.created_at DESC
+      LIMIT 200`,
+    [userId, ...rolePool],
+  ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+
   const now = Date.now();
   const items: PendingTask[] = [
     ...filteredTat.map((row): PendingTask => {
@@ -418,6 +456,28 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
         created_at: createdAt,
         aging_hours: Math.round(agingH * 10) / 10,
         risk: calcRisk(null, createdAt),
+      };
+    }),
+    // work_item rows. Unlike work_inbox_item these DO carry a real deadline
+    // (due_at), so calcRisk can distinguish a genuine breach from mere age here.
+    ...(workItemRows as RowDataPacket[]).map((row): PendingTask => {
+      const createdAt = String(row.created_at ?? "");
+      const agingH = createdAt ? (now - new Date(createdAt).getTime()) / 3_600_000 : 0;
+      const dueAt = row.due_at ? String(row.due_at) : null;
+      return {
+        id: String(row.id),
+        source: "inbox",
+        module: String(row.module ?? "general"),
+        title: String(row.title ?? ""),
+        description: row.description ? String(row.description) : undefined,
+        entity_type: row.entity_type ? String(row.entity_type) : undefined,
+        entity_id: row.entity_id ? String(row.entity_id) : undefined,
+        priority: String(row.priority ?? "normal"),
+        tat_deadline: dueAt ?? undefined,
+        created_at: createdAt,
+        aging_hours: Math.round(agingH * 10) / 10,
+        risk: calcRisk(dueAt, createdAt),
+        employee_name: row.employee_name ? String(row.employee_name) : undefined,
       };
     }),
   ];
