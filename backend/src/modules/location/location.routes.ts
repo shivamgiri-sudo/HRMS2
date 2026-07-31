@@ -6,6 +6,20 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const GEOFENCE_RADIUS_KM = parseFloat(process.env.GEOFENCE_RADIUS_KM ?? "1.0");
+
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>
   (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -91,7 +105,36 @@ router.post("/heartbeat", h(async (req: AuthenticatedRequest, res: Response) => 
     console.warn("[location] history insert skipped:", (err as Error).message);
   }
 
-  return res.json({ success: true });
+  // Geofence check — best-effort, never fails the heartbeat
+  let geofenceResult: { outside: boolean; distanceKm: number; branchName: string } | undefined;
+  try {
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT b.id, b.branch_name, b.latitude, b.longitude
+         FROM employees e
+         JOIN branch_master b ON b.id = e.branch_id
+        WHERE e.id = ? AND b.latitude IS NOT NULL AND b.longitude IS NOT NULL
+        LIMIT 1`,
+      [emp.id],
+    );
+    if (branchRows.length) {
+      const br = branchRows[0] as { id: string; branch_name: string; latitude: number; longitude: number };
+      const distanceKm = haversineKm(latitude, longitude, Number(br.latitude), Number(br.longitude));
+      const outside = distanceKm > GEOFENCE_RADIUS_KM;
+      geofenceResult = { outside, distanceKm: parseFloat(distanceKm.toFixed(3)), branchName: br.branch_name };
+      if (outside) {
+        await db.execute(
+          `INSERT INTO employee_geofence_alerts
+             (employee_id, branch_id, branch_name, latitude, longitude, distance_km, radius_km)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [emp.id, br.id, br.branch_name, latitude, longitude, distanceKm, GEOFENCE_RADIUS_KM],
+        ).catch((err: Error) => console.warn("[location] geofence alert insert skipped:", err.message));
+      }
+    }
+  } catch (err) {
+    console.warn("[location] geofence check skipped:", (err as Error).message);
+  }
+
+  return res.json({ success: true, ...(geofenceResult ? { geofence: geofenceResult } : {}) });
 }));
 
 // GET /api/location/live

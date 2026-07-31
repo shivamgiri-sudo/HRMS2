@@ -44,8 +44,19 @@ export function useLocationHeartbeat() {
       lastPostRef.current = Date.now();
       console.log("[LocationHeartbeat] Posting:", { latitude, longitude, accuracy });
       try {
-        await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
+        const data = await hrmsApi.post("/api/location/heartbeat", { latitude, longitude, accuracy });
         console.log("[LocationHeartbeat] Posted successfully");
+        if (data?.geofence?.outside) {
+          console.warn(
+            `[location] Outside branch radius: ${data.geofence.distanceKm.toFixed(1)} km from ${data.geofence.branchName}`
+          );
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("Location Warning", {
+              body: `You are ${data.geofence.distanceKm.toFixed(1)} km from ${data.geofence.branchName}`,
+              icon: "/favicon.ico",
+            });
+          }
+        }
         await enqueuePosition({ latitude, longitude, accuracy });
         triggerBackgroundSync();
       } catch (err) {
