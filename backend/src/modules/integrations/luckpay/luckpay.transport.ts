@@ -227,7 +227,20 @@ export function getLuckpayDiagnostics() {
   return { ...diagnostics };
 }
 
-async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Retry a provider call.
+ *
+ * `idempotent` must be true ONLY for calls that can be repeated safely. Luckpay's
+ * business endpoints are not: each carries a clientTransactionId the vendor records
+ * on first receipt, so resending after a 5xx comes back as
+ * "Transaction ID <uuid> already exists" (HTTP 409), permanently. A live penny drop
+ * failed exactly that way, and because the vendor accepted the first request we may
+ * have paid for a verification whose result was then discarded.
+ *
+ * Only the token endpoint is safe to repeat: it carries no transaction id and simply
+ * mints another token.
+ */
+async function requestWithRetry<T>(fn: () => Promise<T>, opts: { idempotent: boolean }): Promise<T> {
   let attempt = 0;
   let delayMs = 400;
   while (true) {
@@ -236,7 +249,7 @@ async function requestWithRetry<T>(fn: () => Promise<T>): Promise<T> {
       return await fn();
     } catch (error: unknown) {
       const status = Number((error as { response?: { status?: number } })?.response?.status ?? 0);
-      if (attempt >= 3 || ![429, 500, 502, 503, 504].includes(status)) {
+      if (!opts.idempotent || attempt >= 3 || ![429, 500, 502, 503, 504].includes(status)) {
         const safeError = toSafeProviderError(error);
         diagnostics.lastFailureAt = new Date().toISOString();
         diagnostics.lastFailureMessage = safeError.message;
@@ -277,7 +290,7 @@ export async function getLuckpayAccessToken(cfg: LuckpayResolvedConfig): Promise
       timeout: cfg.timeoutMs,
       headers: { Authorization: `Basic ${cfg.basicToken}` },
     },
-  ));
+  ), { idempotent: true });
 
   const payload = (response as { data?: Record<string, unknown> })?.data ?? {};
   const inner = (payload as { data?: Record<string, unknown> })?.data ?? payload;
@@ -332,7 +345,7 @@ export async function luckpayPostJson(
         "Content-Type": "application/json",
       },
     },
-  ));
+  ), { idempotent: false });
   return toLuckpayResponse((response as { data?: unknown })?.data);
 }
 
@@ -369,7 +382,7 @@ export async function luckpayPostMultipart(
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
     },
-  ));
+  ), { idempotent: false });
   return toLuckpayResponse((response as { data?: unknown })?.data);
 }
 
